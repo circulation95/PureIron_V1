@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import tarfile
 from pathlib import Path
@@ -68,3 +69,15 @@ def image_store() -> Path:
     """
     configured = os.environ.get("PUREIRON_IMAGE_STORE")
     return Path(configured) if configured else Path.home() / "pureiron" / "images"
+
+
+def bash_executable() -> str:
+    """PATH 기준 bash의 전체 경로.
+
+    Windows의 CreateProcess는 PATH보다 System32를 먼저 찾아 `bash`가 WSL bash로 잡힌다(그러면
+    Windows 경로의 git worktree를 읽지 못한다). 그래서 이름이 아니라 전체 경로로 실행한다.
+    """
+    found = shutil.which("bash")
+    if found is None:
+        raise ImageError("bash not found on PATH")
+    return found

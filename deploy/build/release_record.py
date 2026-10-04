@@ -32,6 +32,17 @@ def _git(*args: str) -> str:
     ).stdout.strip()
 
 
+def _image_revision(tag: str) -> str:
+    """build_images.sh가 붙인 `org.opencontainers.image.revision` 라벨(빌드 커밋)."""
+    label = '{{index .Config.Labels "org.opencontainers.image.revision"}}'
+    return subprocess.run(
+        ["docker", "image", "inspect", "-f", label, tag],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
 def build_record(name: str, store: Path) -> dict[str, object]:
     if _git("status", "--porcelain", "--untracked-files=no"):
         raise SystemExit("release_record: working tree has uncommitted changes")
@@ -40,8 +51,14 @@ def build_record(name: str, store: Path) -> dict[str, object]:
     target = store / name
     target.mkdir(parents=True, exist_ok=True)
     images: dict[str, dict[str, str]] = {}
+    head = _git("rev-parse", "HEAD")
     for svc in RECORD_SERVICES:
         tag = f"pureiron/{svc}:{name}"
+        built_from = _image_revision(tag)
+        if built_from != head:
+            raise SystemExit(
+                f"release_record: {tag} was built from {built_from or '?'}, not {head}"
+            )
         tar = target / f"{svc}.tar"
         subprocess.run(["docker", "save", "-o", str(tar), tag], check=True)
         images[svc] = {"tag": tag, "config_digest": config_digest_from_tar(tar)}
@@ -55,7 +72,7 @@ def build_record(name: str, store: Path) -> dict[str, object]:
     return {
         "name": name,
         "release": name,
-        "commit": _git("rev-parse", "HEAD"),
+        "commit": head,
         "images": images,
         "schema": {
             "epoch": catalog.app_expected,
@@ -72,7 +89,9 @@ def main() -> int:
     args = parser.parse_args()
     record = build_record(args.name, args.store or image_store())
     out = RELEASES / f"{args.name}.json"
-    out.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    out.write_text(
+        json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
+    )
     print(out)
     return 0
 

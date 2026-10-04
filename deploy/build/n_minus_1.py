@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from images import config_digest_of_image, image_store, read_lock
+from images import bash_executable, config_digest_of_image, image_store, read_lock
 
 from pureiron_core.platform.migrate import load_catalog
 
@@ -218,7 +218,7 @@ def main() -> int:
         ).stdout.strip()
     )
     subprocess.run(
-        ["bash", "deploy/build/build_images.sh", "core"],
+        [bash_executable(), "deploy/build/build_images.sh", "core"],
         cwd=ROOT,
         env={**os.environ, "PUREIRON_RELEASE": current_release},
         check=True,
@@ -227,7 +227,11 @@ def main() -> int:
         f"n-minus-1: {previous.core_test} (epoch {previous.app_expected}) "
         f"against schema epoch {current_epoch} (core {current_release})"
     )
-    return run_gate(previous, current_release)
+    try:
+        return run_gate(previous, current_release)
+    finally:
+        # 커밋마다 생기는 ci-<sha> 이미지를 남기지 않는다(단일 runner 디스크, PD-24).
+        _docker("image", "rm", "-f", f"pureiron/core:{current_release}", check=False)
 
 
 if __name__ == "__main__":

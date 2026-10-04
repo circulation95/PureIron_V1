@@ -63,6 +63,13 @@ _ALLOWED_STATEMENTS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^INSERT\s+INTO\b.*\bON\s+CONFLICT\s+DO\s+NOTHING$"),
 )
 _TIMESCALE_SET = re.compile(r"^SET\s*\(\s*TIMESCALEDB\.")
+# 허용 목록은 구문 첫머리만 보므로, 구문 어디에든 나오면 거부할 파괴적 함수·형태를 따로 찾는다.
+_DESTRUCTIVE_CALL = re.compile(
+    r"\b(DROP_CHUNKS|REMOVE_\w+|ADD_RETENTION_POLICY|DECOMPRESS_CHUNK|COMPRESS_CHUNK|DETACH_\w+"
+    r"|DELETE_\w+|ALTER_JOB|SET_CHUNK_TIME_INTERVAL|ATTACH_\w+|MOVE_CHUNK|REORDER_CHUNK)\s*\("
+)
+_CREATE_TABLE_AS = re.compile(r"^CREATE\s+TABLE\b[^(]*\bAS\b")
+_TIMESCALE_SELECT = re.compile(r"^SELECT\s+\w+\s*\((.*)\)$")
 _TABLE_CONSTRAINT = re.compile(
     r"^ADD\s+(CONSTRAINT|CHECK|UNIQUE|PRIMARY\s+KEY|FOREIGN\s+KEY|EXCLUDE)\b"
 )
@@ -183,12 +190,32 @@ def _check_statement(
     if not code.startswith("DROP") and not any(p.match(code) for p in _ALLOWED_STATEMENTS):
         head = " ".join(code.split()[:4])
         report.add(filename, f"statement is not in the additive allowlist: {head} ...")
+    if call := _DESTRUCTIVE_CALL.search(code):
+        report.add(filename, f"destructive TimescaleDB call is not allowed: {call[1].lower()}")
+    if _CREATE_TABLE_AS.match(code):
+        report.add(
+            filename, "CREATE TABLE ... AS runs arbitrary queries; create the table, then insert"
+        )
+    if code.startswith("SELECT"):
+        _check_single_call(filename, code, report)
     if code.startswith("ALTER TABLE"):
         _check_alter_table(filename, code, report)
     if "TIMESCALEDB.CONTINUOUS" in code and "WITH NO DATA" not in code:
         report.add(
             filename, "continuous aggregate must be created WITH NO DATA (refresh via policy)"
         )
+
+
+def _check_single_call(filename: str, code: str, report: LintReport) -> None:
+    """허용되는 TimescaleDB SELECT는 FROM 없는 함수 호출 하나뿐이다(인자 안 쉼표는 허용)."""
+    match = _TIMESCALE_SELECT.match(code)
+    depth = 0
+    top_level_comma = False
+    for ch in match[1] if match else "":
+        depth += {"(": 1, ")": -1}.get(ch, 0)
+        top_level_comma = top_level_comma or (ch == "," and depth < 0)
+    if match is None or top_level_comma or " FROM " in code or depth != 0:
+        report.add(filename, "SELECT in a migration must be a single policy/hypertable call")
 
 
 def _check_no_transaction(filename: str, statements: list[Statement], report: LintReport) -> None:

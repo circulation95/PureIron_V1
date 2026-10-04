@@ -45,6 +45,8 @@ defaults:
 
 jobs:
   plan:
+    # 라벨 이벤트는 `full-gate`일 때만 게이트를 다시 돌린다(다른 라벨로 runner를 점유하지 않게).
+    if: github.event.action != 'labeled' || github.event.label.name == 'full-gate'
     runs-on: [self-hosted, g1]
     outputs:
       n_minus_1: ${{ steps.decide.outputs.n_minus_1 }}
@@ -77,6 +79,7 @@ jobs:
           fi
 
   lint-type:
+    needs: plan
     runs-on: [self-hosted, g1]
     steps: &python-job
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -89,26 +92,32 @@ jobs:
       - run: bash scripts/g1.sh "$GITHUB_JOB"
 
   import-linter:
+    needs: plan
     runs-on: [self-hosted, g1]
     steps: *python-job
 
   unit:
+    needs: plan
     runs-on: [self-hosted, g1]
     steps: *python-job
 
   contracts-diff:
+    needs: plan
     runs-on: [self-hosted, g1]
     steps: *python-job
 
   migration-lint:
+    needs: plan
     runs-on: [self-hosted, g1]
     steps: *python-job
 
   no-customer-branching:
+    needs: plan
     runs-on: [self-hosted, g1]
     steps: *python-job
 
   contracts-drift:
+    needs: plan
     runs-on: [self-hosted, g1]
     steps: &node-job
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -124,10 +133,12 @@ jobs:
       - run: bash scripts/g1.sh "$GITHUB_JOB"
 
   web:
+    needs: plan
     runs-on: [self-hosted, g1]
     steps: *node-job
 
   integration-compose:
+    needs: plan
     runs-on: [self-hosted, g1]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -79,6 +79,11 @@ def test_rejected_statements(tmp_path: Path, sql: str, fragment: str) -> None:
         "ALTER TABLE t ALTER COLUMN v SET NOT NULL;",
         "ALTER TABLE t ALTER COLUMN v DROP DEFAULT, ALTER COLUMN v SET DEFAULT 'x';",
         "INSERT INTO t (id) VALUES (1);",
+        "SELECT add_compression_policy('h', INTERVAL '2 days'), drop_chunks('h', INTERVAL '1d');",
+        "CREATE TABLE junk AS SELECT drop_chunks('h', INTERVAL '1 day');",
+        "INSERT INTO t (id) SELECT 1 FROM drop_chunks('h', INTERVAL '1d') ON CONFLICT DO NOTHING;",
+        "SELECT set_chunk_time_interval('h', INTERVAL '7 days');",
+        "SELECT add_compression_policy('h', INTERVAL '2 days') FROM t;",
     ],
 )
 def test_statements_outside_allowlist_are_rejected(tmp_path: Path, sql: str) -> None:
@@ -91,6 +96,7 @@ def test_statements_outside_allowlist_are_rejected(tmp_path: Path, sql: str) -> 
         "CREATE TABLE u (id int PRIMARY KEY, code text UNIQUE);",
         "INSERT INTO t (id) VALUES (1) ON CONFLICT DO NOTHING;",
         "SELECT create_hypertable('u', by_range('ts'));",
+        "SELECT add_compression_policy('u', INTERVAL '2 days', if_not_exists => TRUE);",
         "ALTER TABLE u SET (timescaledb.compress, timescaledb.compress_segmentby = 'id');",
         "CREATE TYPE mood AS ENUM ('ok');",
         "ALTER TABLE t ADD COLUMN w int;",

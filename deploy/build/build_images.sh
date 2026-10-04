@@ -12,6 +12,8 @@ cd "$ROOT"
 RELEASE="${PUREIRON_RELEASE:-0.1.0-dev}"
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct)}"
 export SOURCE_DATE_EPOCH
+# 이미지 config에 빌드 커밋을 남긴다 — release_record가 HEAD와 대조한다.
+REVISION="$(git rev-parse HEAD)"
 CACHE_FLAG=()
 if [ "${NO_CACHE:-0}" = "1" ]; then
   CACHE_FLAG=(--no-cache)
@@ -57,6 +59,7 @@ for svc in "${SERVICES[@]}"; do
       --platform linux/amd64 \
       --provenance=false --sbom=false \
       --build-arg SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
+      --label "org.opencontainers.image.revision=$REVISION" \
       --output "type=docker,name=pureiron/$svc:$RELEASE,rewrite-timestamp=true,dest=$OUT_DIR/$svc.tar" \
       -f "$dockerfile" .; then
       break

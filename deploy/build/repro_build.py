@@ -12,7 +12,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from images import SERVICES, config_digest_from_tar
+from images import SERVICES, bash_executable, config_digest_from_tar
 
 ROOT = Path(__file__).resolve().parents[2]
 IMAGES = ROOT / "artifacts" / "images"
@@ -22,7 +22,10 @@ OUT = ROOT / "artifacts" / "repro"
 def build_round(label: str) -> dict[str, str]:
     env = {**os.environ, "NO_CACHE": "1", "PUREIRON_RELEASE": f"repro-{label}"}
     subprocess.run(
-        ["bash", "deploy/build/build_images.sh", *SERVICES], cwd=ROOT, env=env, check=True
+        [bash_executable(), "deploy/build/build_images.sh", *SERVICES],
+        cwd=ROOT,
+        env=env,
+        check=True,
     )
     keep = OUT / label
     keep.mkdir(parents=True, exist_ok=True)
@@ -44,7 +47,7 @@ def main() -> int:
     mismatched = compare(first, second)
     report = {"first": first, "second": second, "mismatched": mismatched}
     (OUT / "report.json").write_text(
-        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
     )
     for svc in SERVICES:
         mark = "MISMATCH" if svc in mismatched else "same"
