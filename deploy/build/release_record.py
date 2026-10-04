@@ -92,7 +92,7 @@ def main() -> int:
     parser.add_argument("--version", required=True, help="제품 달력 버전 YYYY.M.N(예: 2026.10.0)")
     parser.add_argument("--store", type=Path, default=None, help="이미지 tar 보관 위치")
     args = parser.parse_args()
-    if not release_version_pattern().match(args.version):
+    if not release_version_pattern().fullmatch(args.version):
         parser.error(f"--version must match YYYY.M.N (contract release pattern): {args.version!r}")
     record = build_record(args.name, args.version, args.store or image_store())
     out = RELEASES / f"{args.name}.json"

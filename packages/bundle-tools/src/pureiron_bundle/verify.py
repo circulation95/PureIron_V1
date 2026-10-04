@@ -5,7 +5,8 @@
 ④ payload sha256·누락·초과·이미지 config digest(`E_DIGEST`) ⑤ 스키마 envelope(`E_SCHEMA`)·
 `min_updater`(`E_UPDATER`) ⑥ 드래프트 게이트(`E_DRAFT`).
 
-메타데이터는 payload를 해시하기 전에 읽고 서명을 확인한다. gen 판정이 NO_OP(이미 적용)이면
+메타데이터는 payload를 해시하기 전에 읽고 서명을 확인한다. payload는 해시만 하고, 이미지 tar는
+sha256이 맞은 추출본에서만 해석한다(hash first, parse later). gen 판정이 NO_OP(이미 적용)이면
 ④~⑥은 하지 않는다 — 적용할 것이 없으므로 payload·스키마·드래프트는 판단 대상이 아니다.
 판정 규칙(gen·스키마·드래프트·Updater 버전)은 Updater가 재검사에 쓰도록 순수 함수로 둔다.
 """
@@ -13,22 +14,24 @@
 from __future__ import annotations
 
 import re
+import shutil
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
-from pureiron_bundle.errors import BundleRejected, RejectCode
-from pureiron_bundle.images import ImageFormatError, config_digest_from_stream
+from pureiron_bundle.errors import BundleRejectedError, RejectCode
+from pureiron_bundle.images import ImageFormatError, config_digest_from_tar
 from pureiron_bundle.manifest import MANIFEST_FILE, Manifest, SchemaEnvelope, parse_manifest
 from pureiron_bundle.pib import (
     CERT_FILE,
     CERT_SIG,
     MANIFEST_SIG,
     TRUST_UPDATE_SIG,
-    HashingReader,
+    PayloadMember,
     PibReader,
+    hash_stream,
     open_pib,
     safe_target,
 )
@@ -41,8 +44,9 @@ from pureiron_bundle.trust import (
     verify_manifest_signature,
 )
 
-_IMAGE_PAYLOAD = re.compile(r"^images/([a-z][a-z0-9-]{0,31})\.tar(\.gz)?$")
-_SEMVER = re.compile(r"^([0-9]+)\.([0-9]+)\.([0-9]+)$")
+_IMAGE_PAYLOAD = re.compile(r"images/([a-z][a-z0-9-]{0,31})\.tar(\.gz)?")
+_SEMVER = re.compile(r"([0-9]+)\.([0-9]+)\.([0-9]+)")
+PART_SUFFIX = ".part"
 
 
 class AttemptResult(StrEnum):
@@ -122,13 +126,13 @@ def decide_generation(gen: int, state: GenState) -> GenDecision:
     """plan M2 gen 규칙. 거부는 `E_GEN`."""
     known = [g for g in (state.applied_gen, state.last_attempted_gen) if g is not None]
     if known and gen < max(known):
-        raise BundleRejected(RejectCode.E_GEN, f"generation {gen} < {max(known)}")
+        raise BundleRejectedError(RejectCode.E_GEN, f"generation {gen} < {max(known)}")
     if gen == state.applied_gen:
         return GenDecision.NO_OP
     if gen == state.last_attempted_gen:
         if state.last_result is AttemptResult.PENDING:
             return GenDecision.RESUME
-        raise BundleRejected(
+        raise BundleRejectedError(
             RejectCode.E_GEN,
             f"generation {gen} already attempted ({state.last_result}) — not retried",
         )
@@ -139,7 +143,7 @@ def decide_schema(envelope: SchemaEnvelope, current: int | None) -> SchemaDecisi
     """plan §6.6 Updater 판정. 거부는 `E_SCHEMA`."""
     expected, max_compatible = envelope.app_expected, envelope.app_max_compatible
     if max_compatible != expected + 1 or envelope.target != expected:
-        raise BundleRejected(
+        raise BundleRejectedError(
             RejectCode.E_SCHEMA,
             f"inconsistent schema envelope target={envelope.target} "
             f"app_expected={expected} app_max_compatible={max_compatible}",
@@ -147,11 +151,11 @@ def decide_schema(envelope: SchemaEnvelope, current: int | None) -> SchemaDecisi
     if current is None:
         return SchemaDecision(SchemaAction.MIGRATE, 0, envelope.target)
     if current > max_compatible:
-        raise BundleRejected(
+        raise BundleRejectedError(
             RejectCode.E_SCHEMA, f"schema epoch {current} > app_max_compatible {max_compatible}"
         )
     if expected - current > 1:
-        raise BundleRejected(
+        raise BundleRejectedError(
             RejectCode.E_SCHEMA,
             f"schema epoch {current} → {expected} skips epochs (apply stepwise releases)",
         )
@@ -161,7 +165,7 @@ def decide_schema(envelope: SchemaEnvelope, current: int | None) -> SchemaDecisi
 
 
 def parse_semver(text: str) -> tuple[int, int, int]:
-    match = _SEMVER.match(text)
+    match = _SEMVER.fullmatch(text)
     if match is None:
         raise ValueError(f"not a MAJOR.MINOR.PATCH version: {text!r}")
     return int(match[1]), int(match[2]), int(match[3])
@@ -169,7 +173,7 @@ def parse_semver(text: str) -> tuple[int, int, int]:
 
 def check_updater_version(min_updater: str, updater_version: str) -> None:
     if parse_semver(min_updater) > parse_semver(updater_version):
-        raise BundleRejected(
+        raise BundleRejectedError(
             RejectCode.E_UPDATER, f"bundle needs updater >= {min_updater}, have {updater_version}"
         )
 
@@ -181,12 +185,12 @@ def check_draft_gate(site_id: str, absorbs: Mapping[str, int], draft: DraftState
     absorbed = absorbs.get(site_id)
     if absorbed is not None:
         if draft.site_rev > absorbed:
-            raise BundleRejected(
+            raise BundleRejectedError(
                 RejectCode.E_DRAFT,
                 f"site_rev {draft.site_rev} has drafts not absorbed (absorbs {absorbed})",
             )
     elif draft.site_rev != draft.base_site_rev:
-        raise BundleRejected(
+        raise BundleRejectedError(
             RejectCode.E_DRAFT,
             f"site_rev {draft.site_rev} != base_site_rev {draft.base_site_rev} "
             "(unabsorbed site drafts)",
@@ -197,91 +201,100 @@ def _image_payloads(manifest: Manifest) -> dict[str, str]:
     """payload 경로 → 서비스. 이미지마다 payload가 정확히 하나여야 한다(`E_DIGEST`)."""
     found: dict[str, str] = {}
     for name in manifest.files:
-        match = _IMAGE_PAYLOAD.match(name)
+        match = _IMAGE_PAYLOAD.fullmatch(name)
         if match is not None:
             found[name] = match[1]
     images = manifest.product_release.images
     for name, service in found.items():
         if service not in images:
-            raise BundleRejected(
+            raise BundleRejectedError(
                 RejectCode.E_DIGEST, f"{name}: no product_release.images entry for {service!r}"
             )
     for service in images:
         count = sum(1 for svc in found.values() if svc == service)
         if count != 1:
-            raise BundleRejected(
+            raise BundleRejectedError(
                 RejectCode.E_DIGEST, f"image {service!r} needs exactly one payload, found {count}"
             )
     return found
 
 
+def _extract_member(extract_to: Path, member: PayloadMember) -> str:
+    """`<name>.part`에 쓰며 해시하고, 호출자가 sha256을 확인한 뒤 이름을 바꾼다."""
+    part = safe_target(extract_to, member.name + PART_SUFFIX)
+    try:
+        sink = part.open("xb")
+    except FileExistsError as exc:
+        raise BundleRejectedError(
+            RejectCode.E_FORMAT, f"{member.name}: path collides on extraction"
+        ) from exc
+    with sink:
+        return hash_stream(member.stream, sink)
+
+
 def _check_payload(
     reader: PibReader, manifest: Manifest, extract_to: Path | None
 ) -> dict[str, str]:
-    image_payloads = _image_payloads(manifest)
+    """payload sha256·누락·초과. 여기서는 해시만 하고 내용(이미지 tar)은 해석하지 않는다."""
     expected = dict(manifest.files)
     verified: dict[str, str] = {}
     for member in reader.iter_payload():
         want = expected.pop(member.name, None)
         if want is None:
-            raise BundleRejected(RejectCode.E_DIGEST, f"{member.name}: not listed in manifest")
-        sink = None
-        if extract_to is not None:
-            try:
-                sink = safe_target(extract_to, member.name).open("xb")
-            except FileExistsError as exc:
-                raise BundleRejected(
-                    RejectCode.E_FORMAT, f"{member.name}: path collides on extraction"
-                ) from exc
-        service = image_payloads.get(member.name)
-        digest: str | None = None
-        problem = ""
-        try:
-            hashing = HashingReader(member.stream, sink)
-            if service is not None:
-                try:
-                    digest = config_digest_from_stream(hashing, member.name)
-                except ImageFormatError as exc:
-                    problem = str(exc)
-            actual = hashing.drain()
-        finally:
-            if sink is not None:
-                sink.close()
+            raise BundleRejectedError(RejectCode.E_DIGEST, f"{member.name}: not listed in manifest")
+        if extract_to is None:
+            actual = hash_stream(member.stream)
+        else:
+            actual = _extract_member(extract_to, member)
         if actual != want:
-            raise BundleRejected(RejectCode.E_DIGEST, f"{member.name}: sha256 {actual} != {want}")
-        if service is not None:
-            recorded = manifest.product_release.images[service].config_digest
-            if digest != recorded:
-                raise BundleRejected(
-                    RejectCode.E_DIGEST,
-                    f"{member.name}: config digest {digest or problem} != manifest {recorded}",
-                )
+            raise BundleRejectedError(
+                RejectCode.E_DIGEST, f"{member.name}: sha256 {actual} != {want}"
+            )
+        if extract_to is not None:
+            part = extract_to.joinpath(*member.name.split("/"))
+            part.with_name(part.name + PART_SUFFIX).rename(part)
         verified[member.name] = actual
     if expected:
-        raise BundleRejected(RejectCode.E_DIGEST, f"missing payload files {sorted(expected)}")
+        raise BundleRejectedError(RejectCode.E_DIGEST, f"missing payload files {sorted(expected)}")
     return verified
 
 
+def _check_image_digests(manifest: Manifest, images: Mapping[str, str], extract_to: Path) -> None:
+    """sha256이 확인된(서명된) 추출본에서만 이미지 config digest를 읽는다."""
+    for name, service in sorted(images.items()):
+        recorded = manifest.product_release.images[service].config_digest
+        try:
+            actual = config_digest_from_tar(extract_to.joinpath(*name.split("/")))
+        except ImageFormatError as exc:
+            raise BundleRejectedError(RejectCode.E_DIGEST, str(exc)) from exc
+        if actual != recorded:
+            raise BundleRejectedError(
+                RejectCode.E_DIGEST, f"{name}: config digest {actual} != manifest {recorded}"
+            )
+
+
 def _prepare_extract_dir(extract_to: Path) -> None:
+    if extract_to.is_symlink():
+        raise ValueError(f"extract directory must not be a symlink: {extract_to}")
     extract_to.mkdir(parents=True, exist_ok=True)
     if any(extract_to.iterdir()):
         raise ValueError(f"extract directory must be empty: {extract_to}")
 
 
-def verify_bundle(
-    path: Path, ctx: VerifyContext, *, extract_to: Path | None = None
-) -> VerifiedBundle:
-    """`.pib`를 계약 순서대로 검증한다. 실패는 `BundleRejected`.
+def _clear_dir(directory: Path) -> None:
+    """거부된 번들의 추출물을 지운다(시작 시 비어 있음을 확인한 디렉터리)."""
+    for child in directory.iterdir():
+        if child.is_dir() and not child.is_symlink():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
 
-    `extract_to`(비어 있는 디렉터리)를 주면 payload를 해시하면서 그 아래에만 풀어 쓴다.
-    거부되면 풀린 파일은 신뢰할 수 없으므로 호출자가 디렉터리를 지운다.
-    """
+
+def _verify(path: Path, ctx: VerifyContext, extract_to: Path | None) -> VerifiedBundle:
     started = time.monotonic()
-    if extract_to is not None:
-        _prepare_extract_dir(extract_to)
     with open_pib(path) as reader:
         meta = reader.read_metadata()
-        # ① root → cert → manifest, cert 유효성은 서명된 created_at 기준
+        # ① root → cert → manifest(서명 확인 전에는 아무것도 해석하지 않는다)
         cert = verify_cert(ctx.root_pubkey, meta[CERT_FILE], meta[CERT_SIG])
         verify_manifest_signature(cert, meta[MANIFEST_FILE], meta[MANIFEST_SIG])
         manifest = parse_manifest(meta[MANIFEST_FILE])
@@ -295,7 +308,7 @@ def verify_bundle(
         )
         # ② site
         if manifest.site_id != ctx.site_id:
-            raise BundleRejected(
+            raise BundleRejectedError(
                 RejectCode.E_SITE, f"bundle is for site {manifest.site_id!r}, not {ctx.site_id!r}"
             )
         # ③ generation
@@ -304,8 +317,11 @@ def verify_bundle(
             return VerifiedBundle(
                 manifest, cert, generation, None, decision, {}, time.monotonic() - started
             )
-        # ④ payload sha256 + 이미지 config digest
+        # ④ payload sha256(해시 먼저) → 추출본의 이미지 config digest(해석은 나중)
+        images = _image_payloads(manifest)
         files = _check_payload(reader, manifest, extract_to)
+    if extract_to is not None:
+        _check_image_digests(manifest, images, extract_to)
     # ⑤ 스키마 envelope + Updater 버전
     schema = decide_schema(manifest.product_release.schema, ctx.schema_epoch)
     if ctx.updater_version is not None:
@@ -315,3 +331,28 @@ def verify_bundle(
     return VerifiedBundle(
         manifest, cert, generation, schema, decision, files, time.monotonic() - started
     )
+
+
+def verify_bundle(
+    path: Path, ctx: VerifyContext, *, extract_to: Path | None = None
+) -> VerifiedBundle:
+    """`.pib`를 계약 순서대로 검증한다. 실패는 `BundleRejectedError`.
+
+    `extract_to`(비어 있는 디렉터리, 링크 불가)를 주면 payload를 해시하며 그 아래에만 풀어 쓰고
+    (`<name>.part` → sha256 확인 후 이름 변경), 이미지 config digest를 추출본에서 확인한다.
+    거부·예외 시 `extract_to` 내용을 모두 지운다. 적용(`docker load` 등)은 반드시 이 추출본으로
+    하고 `.pib`를 다시 열지 않는다(검증과 적용 사이 바꿔치기 방지).
+
+    `extract_to` 없이 부르면 이미지 tar는 해석하지 않는다 — 그때 이미지 신원 확인은 Updater의
+    load 후 `check_loaded_image`(`.Id` 대조)뿐이다.
+    """
+    if ctx.updater_version is not None:
+        parse_semver(ctx.updater_version)
+    if extract_to is None:
+        return _verify(path, ctx, None)
+    _prepare_extract_dir(extract_to)
+    try:
+        return _verify(path, ctx, extract_to)
+    except BaseException:
+        _clear_dir(extract_to)
+        raise

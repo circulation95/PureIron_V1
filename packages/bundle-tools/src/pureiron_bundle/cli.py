@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from pureiron_bundle import keys
-from pureiron_bundle.errors import BundleRejected
+from pureiron_bundle.errors import BundleRejectedError
 from pureiron_bundle.pib import CERT_FILE, CERT_SIG
 from pureiron_bundle.trust import (
     DEFAULT_CERT_DAYS,
@@ -114,7 +114,7 @@ def _verify(args: argparse.Namespace) -> int:
     )
     try:
         result = verify_bundle(args.bundle, ctx, extract_to=args.extract_to)
-    except BundleRejected as exc:
+    except BundleRejectedError as exc:
         print(f"{exc.code}: {exc.detail}", file=sys.stderr)
         return 1
     manifest = result.manifest

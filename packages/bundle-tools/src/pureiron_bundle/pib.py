@@ -24,9 +24,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
-from pureiron_bundle.errors import BundleRejected, RejectCode
-from pureiron_bundle.images import Readable
+from pureiron_bundle.errors import BundleRejectedError, RejectCode
 from pureiron_bundle.manifest import MANIFEST_FILE, file_path_pattern
+from pureiron_bundle.tarsafe import PARSER_EXHAUSTION, open_tar_stream
 
 MANIFEST_SIG = "manifest.sig"
 CERT_FILE = "release-cert.json"
@@ -54,7 +54,7 @@ def tar_info(name: str, size: int) -> tarfile.TarInfo:
 def check_payload_name(name: str) -> None:
     if name in METADATA_ORDER:
         raise ValueError(f"payload path collides with bundle metadata: {name!r}")
-    if not file_path_pattern().match(name):
+    if not file_path_pattern().fullmatch(name):
         raise ValueError(f"invalid payload path: {name!r}")
 
 
@@ -84,8 +84,8 @@ def write_pib(out: Path, metadata: Mapping[str, bytes], payload: Mapping[str, Pa
         tmp.unlink(missing_ok=True)
 
 
-def _reject(detail: str) -> BundleRejected:
-    return BundleRejected(RejectCode.E_FORMAT, detail)
+def _reject(detail: str) -> BundleRejectedError:
+    return BundleRejectedError(RejectCode.E_FORMAT, detail)
 
 
 def _check_member(member: tarfile.TarInfo) -> None:
@@ -104,63 +104,46 @@ class PayloadMember:
     """이 멤버의 데이터(다음 멤버로 넘어가면 무효)."""
 
 
-class HashingReader(io.RawIOBase):
-    """읽는 바이트를 sha256과 (선택) 출력 파일에 함께 흘려보내는 읽기 래퍼."""
-
-    def __init__(self, source: Readable, sink: IO[bytes] | None = None) -> None:
-        super().__init__()
-        self._source = source
-        self._sink = sink
-        self._hash = hashlib.sha256()
-
-    def read(self, size: int = -1) -> bytes:
-        data = self._source.read(CHUNK if size < 0 else size)
-        self._hash.update(data)
-        if self._sink is not None:
-            self._sink.write(data)
-        return data
-
-    def readable(self) -> bool:
-        return True
-
-    def drain(self) -> str:
-        """남은 바이트를 모두 읽고 `sha256:<hex>`를 돌려준다."""
-        while self.read(CHUNK):
-            pass
-        return "sha256:" + self._hash.hexdigest()
+def hash_stream(source: IO[bytes], sink: IO[bytes] | None = None) -> str:
+    """끝까지 읽으며 sha256(`sha256:<hex>`)을 계산하고, 주면 `sink`에도 쓴다."""
+    digest = hashlib.sha256()
+    while chunk := source.read(CHUNK):
+        digest.update(chunk)
+        if sink is not None:
+            sink.write(chunk)
+    return "sha256:" + digest.hexdigest()
 
 
 @contextmanager
 def open_pib(path: Path) -> Generator[PibReader]:
     """`with open_pib(path) as reader:` — 파일과 tar 스트림을 함께 닫는다.
 
-    읽는 도중의 tar 손상(잘림·헤더 오류)은 `E_FORMAT`으로 바꾼다.
+    읽는 도중의 tar 손상(잘림·헤더 오류·헤더 제한 위반·파서 고갈)은 `E_FORMAT`으로 바꾼다.
     """
     with path.open("rb") as raw:
         try:
-            with tarfile.open(fileobj=raw, mode="r|") as tar:
-                yield PibReader(tar)
-        except tarfile.TarError as exc:
-            raise _reject(f"{path.name}: corrupt tar archive ({exc})") from exc
+            with open_tar_stream(raw, "r|") as tar:
+                yield PibReader(tar, raw)
+        except (tarfile.TarError, *PARSER_EXHAUSTION) as exc:
+            raise _reject(f"{path.name}: corrupt tar archive ({exc!r})") from exc
 
 
 class PibReader:
     """스트리밍 `.pib` 읽기(`open_pib`로 연다).
 
-    사용 순서: `read_metadata()` → (서명 확인) → `iter_payload()`.
+    사용 순서: `read_metadata()` → (서명 확인) → `iter_payload()`. payload를 끝까지 읽으면
+    아카이브 끝 표시(0 블록 2개)와 레코드 패딩이 모두 0이고 그 뒤에 아무것도 없는지 확인한다.
     """
 
-    def __init__(self, tar: tarfile.TarFile) -> None:
+    def __init__(self, tar: tarfile.TarFile, raw: IO[bytes]) -> None:
         self._tar = tar
+        self._raw = raw
         self._pending: tarfile.TarInfo | None = None
         self._seen: set[str] = set()
         self._metadata_done = False
 
     def _next(self) -> tarfile.TarInfo | None:
-        try:
-            member = self._tar.next()
-        except tarfile.TarError as exc:
-            raise _reject(f"corrupt tar archive ({exc})") from exc
+        member = self._tar.next()
         if member is not None:
             _check_member(member)
             if member.name in self._seen:
@@ -197,7 +180,7 @@ class PibReader:
         return metadata
 
     def iter_payload(self) -> Iterator[PayloadMember]:
-        """payload 멤버를 순서대로. 경로 패턴·정렬·메타데이터 이름 재등장을 검사한다."""
+        """payload 멤버를 순서대로. 경로 패턴·정렬·메타데이터 이름 재등장·끝 표시를 검사한다."""
         if not self._metadata_done:
             raise RuntimeError("read_metadata() first")
         member, self._pending = self._pending, None
@@ -207,7 +190,7 @@ class PibReader:
             name = member.name
             if name in METADATA_ORDER:
                 raise _reject(f"metadata member {name!r} after payload")
-            if not pattern.match(name):
+            if not pattern.fullmatch(name):
                 raise _reject(f"payload path {name!r} does not match the manifest files pattern")
             key = name.encode("utf-8")
             if previous is not None and key <= previous:
@@ -218,12 +201,32 @@ class PibReader:
                 raise _reject(f"payload member {name!r} unreadable")
             yield PayloadMember(name, member.size, handle)
             member = self._next()
+        self._check_trailer()
+
+    def _check_trailer(self) -> None:
+        """마지막 멤버 뒤 = 0 블록 2개 + RECORDSIZE 경계까지 0 패딩, 그 뒤 EOF."""
+        end = self._tar.offset
+        expected = -(-(end + 2 * tarfile.BLOCKSIZE) // tarfile.RECORDSIZE) * tarfile.RECORDSIZE
+        self._raw.seek(end)
+        remaining = expected - end
+        while remaining > 0:
+            chunk = self._raw.read(min(remaining, CHUNK))
+            if not chunk:
+                raise _reject("archive ends before the end-of-archive marker")
+            if chunk.count(0) != len(chunk):
+                raise _reject("non-zero bytes after the last member")
+            remaining -= len(chunk)
+        if self._raw.read(1):
+            raise _reject("trailing data after the tar record padding")
 
 
 def safe_target(root: Path, name: str) -> Path:
-    """`root` 아래 payload 경로. 기존 링크를 따라 root 밖으로 나가면 거부."""
+    """`root` 아래 payload 경로. 만들기 전과 후에 모두 root 안인지 확인한다(기존 링크 포함)."""
+    base = root.resolve()
     target = root.joinpath(*name.split("/"))
+    if not target.parent.resolve().is_relative_to(base):
+        raise _reject(f"payload path {name!r} escapes the extraction directory")
     target.parent.mkdir(parents=True, exist_ok=True)
-    if not target.parent.resolve().is_relative_to(root.resolve()):
+    if not target.parent.resolve(strict=True).is_relative_to(base):
         raise _reject(f"payload path {name!r} escapes the extraction directory")
     return target

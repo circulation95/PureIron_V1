@@ -5,12 +5,15 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import platform
 import shutil
 import tarfile
+import zlib
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
+import build_bundle
 import pytest
 from build_bundle import (
     SIZE_LIMIT,
@@ -24,7 +27,7 @@ from build_bundle import (
 )
 
 from pureiron_bundle import keys
-from pureiron_bundle.errors import BundleRejected, RejectCode
+from pureiron_bundle.errors import BundleRejectedError, RejectCode
 from pureiron_bundle.images import config_digest_from_tar
 from pureiron_bundle.trust import issue_cert
 from pureiron_bundle.verify import GenDecision, SchemaAction, VerifyContext, verify_bundle
@@ -94,6 +97,7 @@ class Setup:
         )
         (self.keys / "release-cert.json").write_bytes(cert_json)
         (self.keys / "release-cert.sig").write_bytes(cert_sig)
+        keys.write_public_key(self.keys / "root.pub", keys.public_key(ROOT_SEED))
         self.out = tmp / "out"
 
     def args(self, **overrides: str) -> list[str]:
@@ -102,6 +106,7 @@ class Setup:
             "--project-dir": str(self.project),
             "--release-key": str(self.keys / "release.key"),
             "--cert-dir": str(self.keys),
+            "--root-pub": str(self.keys / "root.pub"),
             "--fleet-commit": "abc1234",
             "--out": str(self.out),
             "--releases": str(self.releases),
@@ -159,10 +164,13 @@ def test_build_then_verify_end_to_end(setup: Setup, capsys: pytest.CaptureFixtur
         names = tar.getnames()
     assert names == sorted(names)
     assert "project.yaml" in names
-    metrics = json.loads((setup.out / "bundle-metrics.json").read_text(encoding="utf-8"))
+    metrics_file = setup.out / "pureiron-site-a-g7.bundle-metrics.json"
+    metrics = json.loads(metrics_file.read_text(encoding="utf-8"))
     assert metrics["size_bytes"] == setup.pib.stat().st_size
     assert sorted(metrics["image_sizes"]) == sorted(SERVICES)
     assert metrics["build_s"] >= 0
+    assert metrics["zlib"] == zlib.ZLIB_RUNTIME_VERSION
+    assert metrics["python"] == platform.python_version()
     assert not list(setup.out.glob(".staging-*"))
 
 
@@ -192,7 +200,7 @@ def test_tampered_bundles_are_rejected(setup: Setup) -> None:
         return path
 
     def code(path: Path, ctx: VerifyContext) -> RejectCode:
-        with pytest.raises(BundleRejected) as info:
+        with pytest.raises(BundleRejectedError) as info:
             verify_bundle(path, ctx)
         return info.value.code
 
@@ -213,6 +221,40 @@ def test_missing_store_image_or_digest_mismatch_fails(setup: Setup) -> None:
     assert not setup.pib.exists()
 
 
+def test_self_verify_failure_removes_bundle(setup: Setup) -> None:
+    keys.write_public_key(setup.keys / "other.pub", keys.public_key(bytes(range(64, 96))))
+    assert main(setup.args(root_pub=str(setup.keys / "other.pub"))) == 1
+    assert not setup.pib.exists()
+    assert main(setup.args(min_updater="0.1")) == 1
+    assert not setup.pib.exists()
+
+
+def test_size_budget_failure_removes_bundle(
+    setup: Setup, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(build_bundle, "SIZE_LIMIT", 1)
+    assert main(setup.args()) == 1
+    assert "::error::" in capsys.readouterr().out
+    assert not setup.pib.exists()
+
+
+def test_malformed_release_record_is_a_build_error(
+    setup: Setup, capsys: pytest.CaptureFixture[str]
+) -> None:
+    record = json.loads((setup.releases / "r1.json").read_text(encoding="utf-8"))
+    del record["schema"]["app_expected"]
+    (setup.releases / "r1.json").write_text(json.dumps(record), encoding="utf-8")
+    assert main(setup.args()) == 1
+    err = capsys.readouterr().err
+    assert "malformed release record" in err
+    assert "Traceback" not in err
+    record["schema"]["app_expected"] = 2
+    del record["images"]["web"]["tag"]
+    (setup.releases / "r1.json").write_text(json.dumps(record), encoding="utf-8")
+    assert main(setup.args()) == 1
+    assert "images.web" in capsys.readouterr().err
+
+
 def test_unknown_product_or_invalid_fleet_fails(setup: Setup) -> None:
     setup.fleet.write_text(FLEET.replace("2026.11.0", "2027.1.0"), encoding="utf-8")
     assert main(setup.args()) == 1
@@ -220,13 +262,19 @@ def test_unknown_product_or_invalid_fleet_fails(setup: Setup) -> None:
     assert main(setup.args()) == 1
 
 
-def test_compat_app_min_is_oldest_compatible_release() -> None:
+def test_compat_app_min_is_oldest_compatible_final_release() -> None:
     def rec(version: str, epoch: int) -> ReleaseRecord:
         return ReleaseRecord(version, version, {}, epoch, epoch, epoch + 1)
 
-    records = [rec("2026.12.0", 3), rec("2026.10.0", 1), rec("2026.11.0", 2)]
-    assert compat_app_min(records, 3) == "2026.11.0"
-    assert compat_app_min(records, 2) == "2026.10.0"
+    r10, r11, r12 = rec("2026.10.0", 1), rec("2026.11.0", 2), rec("2026.12.0", 3)
+    rc = rec("2026.9.0-rc.1", 2)
+    future = rec("2027.1.0", 4)
+    records = [r12, r10, rc, r11, future]
+    assert compat_app_min(records, r12) == "2026.11.0"
+    assert compat_app_min(records, r11) == "2026.10.0"
+    assert compat_app_min(records, future) == "2026.12.0"
+    first_rc = rec("2026.8.0-rc.1", 9)
+    assert compat_app_min([first_rc], first_rc) == "2026.8.0-rc.1"
     assert version_key("2026.10.0") > version_key("2026.9.5")
     assert version_key("2026.10.0") > version_key("2026.10.0-rc.1")
 

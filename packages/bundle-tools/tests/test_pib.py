@@ -9,8 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from pureiron_bundle.errors import BundleRejected, RejectCode
+from pureiron_bundle.errors import BundleRejectedError, RejectCode
 from pureiron_bundle.pib import METADATA_LIMIT, open_pib, write_pib
+from pureiron_bundle.tarsafe import BoundedTarInfo
 
 META = [
     ("manifest.json", b"{}"),
@@ -47,7 +48,7 @@ def read_all(path: Path) -> list[str]:
 
 
 def format_error(path: Path) -> str:
-    with pytest.raises(BundleRejected) as info:
+    with pytest.raises(BundleRejectedError) as info:
         read_all(path)
     assert info.value.code is RejectCode.E_FORMAT
     return info.value.detail
@@ -162,9 +163,93 @@ def test_truncated_payload_is_rejected(tmp_path: Path) -> None:
             for member in reader.iter_payload():
                 member.stream.read()
 
-    with pytest.raises(BundleRejected) as info:
+    with pytest.raises(BundleRejectedError) as info:
         consume()
     assert info.value.code is RejectCode.E_FORMAT
+
+
+def _block(info: tarfile.TarInfo, data: bytes) -> bytes:
+    info.size = len(data)
+    return info.tobuf(tarfile.USTAR_FORMAT) + data + b"\0" * (-len(data) % tarfile.BLOCKSIZE)
+
+
+def _pax_header(record: bytes = b"17 comment=abcde\n") -> bytes:
+    info = tarfile.TarInfo("././@PaxHeader")
+    info.type = tarfile.XHDTYPE
+    return _block(info, record)
+
+
+def _archive(*parts: bytes) -> bytes:
+    body = b"".join(parts) + b"\0" * (2 * tarfile.BLOCKSIZE)
+    return body + b"\0" * (-len(body) % tarfile.RECORDSIZE)
+
+
+def _meta_blocks() -> bytes:
+    return b"".join(_block(tarfile.TarInfo(name), data) for name, data in META)
+
+
+def test_chained_extended_headers_are_rejected_without_recursion(tmp_path: Path) -> None:
+    path = tmp_path / "x.pib"
+    payload = _block(tarfile.TarInfo("a"), b"x")
+    path.write_bytes(_archive(_meta_blocks(), *([_pax_header()] * 5000), payload))
+    with pytest.raises(RecursionError), tarfile.open(path) as plain:
+        plain.getmembers()
+    assert "chained" in format_error(path)
+    single = tmp_path / "single.pib"
+    single.write_bytes(_archive(_meta_blocks(), _pax_header(), payload))
+    assert read_all(single) == ["a"]
+
+
+def test_oversized_extended_header_is_rejected(tmp_path: Path) -> None:
+    value = b"a" * (70 * 1024)
+    record = b"comment=" + value + b"\n"
+    length = len(record) + len(str(len(record) + 6)) + 1
+    path = tmp_path / "x.pib"
+    path.write_bytes(_archive(_meta_blocks(), _pax_header(str(length).encode() + b" " + record)))
+    assert "exceeds" in format_error(path)
+
+
+def test_global_header_long_name_and_sparse_are_rejected(tmp_path: Path) -> None:
+    with tarfile.open(tmp_path / "g.pib", "w", format=tarfile.PAX_FORMAT, pax_headers={"x": "y"}):
+        pass
+    assert "not allowed" in format_error(tmp_path / "g.pib")
+    with tarfile.open(tmp_path / "l.pib", "w", format=tarfile.GNU_FORMAT) as tar:
+        for name, data in [*META, ("a/" + "b" * 120, b"x")]:
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    assert "not allowed" in format_error(tmp_path / "l.pib")
+    sparse = tarfile.TarInfo("a")
+    sparse.type = tarfile.GNUTYPE_SPARSE
+    assert "not allowed" in format_error(raw_tar(tmp_path / "s.pib", [*META, sparse]))
+
+
+def test_parser_exhaustion_is_e_format(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = raw_tar(tmp_path / "ok.pib", [*META, ("a", b"x")])
+
+    def exhausted(self: BoundedTarInfo, archive: tarfile.TarFile) -> tarfile.TarInfo:
+        raise RecursionError("simulated")
+
+    monkeypatch.setattr(BoundedTarInfo, "_base_proc_member", exhausted)
+    assert "RecursionError" in format_error(path)
+
+
+def _mutate(kind: str, data: bytes) -> bytes:
+    if kind == "flip-padding":
+        return data[:-1] + bytes([1])
+    if kind == "extra-zero-record":
+        return data + bytes(tarfile.RECORDSIZE)
+    if kind == "garbage":
+        return data + b"garbage"
+    return data[: -tarfile.RECORDSIZE]
+
+
+@pytest.mark.parametrize("kind", ["flip-padding", "extra-zero-record", "garbage", "truncated"])
+def test_end_of_archive_must_be_exact_zero_padding(tmp_path: Path, kind: str) -> None:
+    path = raw_tar(tmp_path / "x.pib", [*META, ("a", b"x")])
+    assert read_all(path) == ["a"]
+    path.write_bytes(_mutate(kind, path.read_bytes()))
+    format_error(path)
 
 
 def test_writer_rejects_bad_inputs(tmp_path: Path) -> None:

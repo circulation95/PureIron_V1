@@ -24,8 +24,8 @@ import rfc8785
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
 
-from pureiron_bundle.errors import BundleRejected, RejectCode
-from pureiron_bundle.trust import parse_timestamp
+from pureiron_bundle.errors import BundleRejectedError, RejectCode
+from pureiron_bundle.trust import loads_strict, parse_timestamp
 
 type Json = bool | int | float | str | list[Json] | dict[str, Json] | None
 
@@ -65,9 +65,26 @@ def _validator(name: SchemaName) -> _Validator:
     return cast(_Validator, Draft202012Validator(contract_schema(name), registry=registry))
 
 
+def _control_chars(value: object, path: str) -> Iterator[str]:
+    """제어 문자가 든 문자열·키. JSON Schema `pattern`은 `re.search`라 `…$`가 끝 줄바꿈을
+    허용하므로(예: `"site-a\\n"`), 계약 문서에서는 제어 문자 자체를 거부한다."""
+    if isinstance(value, str):
+        if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value):
+            yield f"{path}: control characters are not allowed"
+    elif isinstance(value, dict):
+        for key, item in cast(dict[str, object], value).items():
+            yield from _control_chars(key, f"{path}.<key>")
+            yield from _control_chars(item, f"{path}.{key}")
+    elif isinstance(value, list):
+        for i, item in enumerate(cast(list[object], value)):
+            yield from _control_chars(item, f"{path}[{i}]")
+
+
 def validate(name: SchemaName, document: object) -> list[str]:
-    """스키마 위반 메시지(`<json path>: <message>`), 정렬."""
-    return sorted(f"{e.json_path}: {e.message}" for e in _validator(name).iter_errors(document))
+    """스키마 위반·제어 문자 메시지(`<json path>: <message>`), 정렬."""
+    problems = {f"{e.json_path}: {e.message}" for e in _validator(name).iter_errors(document)}
+    problems.update(_control_chars(document, "$"))
+    return sorted(problems)
 
 
 @cache
@@ -138,15 +155,6 @@ def manifest_bytes(document: Mapping[str, Json]) -> bytes:
     return rfc8785.dumps(dict(document))
 
 
-def _no_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    out: dict[str, object] = {}
-    for key, value in pairs:
-        if key in out:
-            raise ValueError(f"duplicate key {key!r}")
-        out[key] = value
-    return out
-
-
 def _image(data: Mapping[str, str]) -> ImageRef:
     return ImageRef(
         config_digest=data["config_digest"],
@@ -159,17 +167,21 @@ def _image(data: Mapping[str, str]) -> ImageRef:
 def parse_manifest(data: bytes) -> Manifest:
     """서명 확인이 끝난 manifest 바이트 → 계약 검증 → 타입 접근자. 위반은 `E_FORMAT`."""
     try:
-        document: object = json.loads(data, object_pairs_hook=_no_duplicates)
+        document = loads_strict(data)
     except (UnicodeDecodeError, ValueError) as exc:
-        raise BundleRejected(RejectCode.E_FORMAT, f"{MANIFEST_FILE}: invalid JSON ({exc})") from exc
+        raise BundleRejectedError(
+            RejectCode.E_FORMAT, f"{MANIFEST_FILE}: invalid JSON ({exc})"
+        ) from exc
     problems = validate(SchemaName.MANIFEST, document)
     if problems:
-        raise BundleRejected(RejectCode.E_FORMAT, f"{MANIFEST_FILE}: " + "; ".join(problems))
+        raise BundleRejectedError(RejectCode.E_FORMAT, f"{MANIFEST_FILE}: " + "; ".join(problems))
     doc = cast(dict[str, Json], document)
     try:
         created_at = parse_timestamp(cast(str, doc["created_at"]))
     except ValueError as exc:
-        raise BundleRejected(RejectCode.E_FORMAT, f"{MANIFEST_FILE}: created_at {exc}") from exc
+        raise BundleRejectedError(
+            RejectCode.E_FORMAT, f"{MANIFEST_FILE}: created_at {exc}"
+        ) from exc
     release = cast(dict[str, Json], doc["product_release"])
     project = cast(dict[str, Json], doc["project"])
     schema = cast(dict[str, Json], release["schema"])

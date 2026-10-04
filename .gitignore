@@ -19,8 +19,12 @@ node_modules/
 .env
 .env.*
 !.env.example
+# 개인키(번들 서명 seed 포함)는 어디에도 커밋하지 않는다. PEM은 TLS 개인키일 수 있어 막되,
+# deploy/keys/의 공개키 PEM(root.pem 등, 공개 정보)만 예외로 둔다.
 *.key
+*.seed
 *.pem
+!deploy/keys/*.pem
 
 # Local agent/tool state
 .omc/

@@ -16,9 +16,10 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from pureiron_bundle import keys
 from pureiron_bundle.cli import main
-from pureiron_bundle.errors import BundleRejected, RejectCode
+from pureiron_bundle.errors import BundleRejectedError, RejectCode
 from pureiron_bundle.images import ImageFormatError, check_loaded_image, config_digest_from_tar
 from pureiron_bundle.sign import write_signed_bundle
+from pureiron_bundle.tarsafe import BoundedTarInfo
 
 HEX = "ab" * 32
 
@@ -108,9 +109,43 @@ def test_config_digest_rejects_non_tar(tmp_path: Path) -> None:
         config_digest_from_tar(path)
 
 
+def _raw_member(name: str, data: bytes, kind: bytes = tarfile.REGTYPE) -> bytes:
+    info = tarfile.TarInfo(name)
+    info.type = kind
+    info.size = len(data)
+    return info.tobuf(tarfile.USTAR_FORMAT) + data + b"\0" * (-len(data) % tarfile.BLOCKSIZE)
+
+
+def test_config_digest_rejects_chained_headers_and_duplicate_manifest(tmp_path: Path) -> None:
+    manifest = json.dumps([{"Config": f"blobs/sha256/{HEX}"}]).encode()
+    pax = _raw_member("././@PaxHeader", b"17 comment=abcde\n", tarfile.XHDTYPE)
+    chained = tmp_path / "chained.tar"
+    chained.write_bytes(pax * 5000 + _raw_member("manifest.json", manifest) + b"\0" * 10240)
+    with pytest.raises(ImageFormatError, match="chained"):
+        config_digest_from_tar(chained)
+    duplicate = tmp_path / "dup.tar"
+    entry = _raw_member("manifest.json", manifest)
+    duplicate.write_bytes(entry + entry + b"\0" * 10240)
+    with pytest.raises(ImageFormatError, match="duplicate"):
+        config_digest_from_tar(duplicate)
+
+
+def test_config_digest_parser_exhaustion_is_image_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _image(tmp_path / "img.tar", [{"Config": f"blobs/sha256/{HEX}"}])
+
+    def exhausted(self: BoundedTarInfo, archive: tarfile.TarFile) -> tarfile.TarInfo:
+        raise MemoryError("simulated")
+
+    monkeypatch.setattr(BoundedTarInfo, "_base_proc_member", exhausted)
+    with pytest.raises(ImageFormatError, match="MemoryError"):
+        config_digest_from_tar(path)
+
+
 def test_check_loaded_image() -> None:
     check_loaded_image("core", f"sha256:{HEX}\n", f"sha256:{HEX}")
-    with pytest.raises(BundleRejected) as info:
+    with pytest.raises(BundleRejectedError) as info:
         check_loaded_image("core", "sha256:" + "0" * 64, f"sha256:{HEX}")
     assert info.value.code is RejectCode.E_DIGEST
 
@@ -182,4 +217,9 @@ def test_cli_keys_cert_and_verify(tmp_path: Path, capsys: pytest.CaptureFixture[
     assert capsys.readouterr().err.startswith("E_SITE:")
     assert main([*verify, "--site", "site-a", "--updater-version", "0.0.9"]) == 1
     assert capsys.readouterr().err.startswith("E_UPDATER:")
+    staging = tmp_path / "staging"
+    rejected = [*verify, "--site", "site-a", "--updater-version", "0.0.9"]
+    assert main([*rejected, "--extract-to", str(staging)]) == 1
+    assert list(staging.iterdir()) == []
+    assert main([*verify, "--site", "site-a", "--updater-version", "0.1"]) == 2
     assert main(["keys", "fingerprint", str(tmp_path / "missing.pub")]) == 2

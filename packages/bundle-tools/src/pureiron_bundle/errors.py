@@ -26,7 +26,7 @@ class RejectCode(StrEnum):
     """tar 구조·메타데이터 형식 오류(경로 이탈, 링크, 중복, 순서, 계약 위반 manifest)."""
 
 
-class BundleRejected(Exception):
+class BundleRejectedError(Exception):
     """번들 거부. `code`는 보고(ApplyAttempt)에 그대로 쓰인다."""
 
     def __init__(self, code: RejectCode, detail: str) -> None:

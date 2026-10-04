@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from pureiron_bundle import keys
-from pureiron_bundle.errors import BundleRejected, RejectCode
+from pureiron_bundle.errors import BundleRejectedError, RejectCode
 from pureiron_bundle.manifest import Json, manifest_bytes
 from pureiron_bundle.sign import write_signed_bundle
 from pureiron_bundle.trust import TrustState, format_timestamp, issue_cert, sign_trust_update
@@ -162,7 +162,7 @@ def write_members(path: Path, items: list[tuple[str, bytes]]) -> Path:
 
 
 def reject(path: Path, context: VerifyContext | None = None, **kw: Path) -> RejectCode:
-    with pytest.raises(BundleRejected) as info:
+    with pytest.raises(BundleRejectedError) as info:
         verify_bundle(path, context or ctx(), **kw)
     return info.value.code
 
@@ -214,6 +214,45 @@ def test_swapped_manifest_is_e_sig(kit: Kit) -> None:
     items = members(good)
     items[0] = ("manifest.json", dict(members(other))["manifest.json"])
     assert reject(write_members(kit.tmp / "swapped.pib", items)) is RejectCode.E_SIG
+
+
+def test_malformed_manifest_with_wrong_signature_is_e_sig(kit: Kit) -> None:
+    items = members(kit.build())
+    items[0] = ("manifest.json", b"{not json")
+    assert reject(write_members(kit.tmp / "m.pib", items)) is RejectCode.E_SIG
+
+
+def test_malformed_cert_with_wrong_signature_is_e_sig(kit: Kit) -> None:
+    items = members(kit.build())
+    items[2] = ("release-cert.json", b"{not json")
+    assert reject(write_members(kit.tmp / "c.pib", items)) is RejectCode.E_SIG
+
+
+def _with_cert(kit: Kit, cert_json: bytes) -> Path:
+    """빌더 검사를 거치지 않고 root가 서명한 임의 cert로 바꾼 번들."""
+    items = members(kit.build())
+    items[2] = ("release-cert.json", cert_json)
+    items[3] = ("release-cert.sig", keys.sign(ROOT_SEED, cert_json))
+    return write_members(kit.tmp / "cert.pib", items)
+
+
+@pytest.mark.parametrize(
+    "cert_json",
+    [
+        b'{"format":1,"release_pubkey":"00","serial":1}',
+        b'{"format":1,"format":1}',
+        b'{"format":1.0}',
+    ],
+)
+def test_root_signed_malformed_cert_is_e_format(kit: Kit, cert_json: bytes) -> None:
+    assert reject(_with_cert(kit, cert_json)) is RejectCode.E_FORMAT
+
+
+def test_root_signed_cert_without_purpose_is_e_format(kit: Kit) -> None:
+    cert_json, _ = cert()
+    document = json.loads(cert_json)
+    del document["purpose"]
+    assert reject(_with_cert(kit, manifest_bytes(document))) is RejectCode.E_FORMAT
 
 
 def test_cert_signed_by_release_key_is_e_sig(kit: Kit) -> None:
@@ -282,6 +321,16 @@ def test_trust_update_never_lowers_floor(kit: Kit) -> None:
     )
     result = verify_bundle(path, ctx(trust=TrustState(min_cert_serial=4)))
     assert result.trust.state.min_cert_serial == 4
+
+
+def test_trust_update_signature_without_purpose_is_ignored(kit: Kit) -> None:
+    undomained = keys.sign(ROOT_SEED, manifest_bytes({"min_cert_serial": 3}))
+    path = kit.build(
+        document=kit.document(trust_update={"min_cert_serial": 3}),
+        certificate=cert(serial=2),
+        trust_update_sig=undomained,
+    )
+    assert not verify_bundle(path, ctx()).trust.trust_update_applied
 
 
 @pytest.mark.parametrize("signer", [None, RELEASE_SEED, "wrong-value"])
@@ -354,7 +403,28 @@ def test_image_config_digest_mismatch_is_e_digest(kit: Kit) -> None:
     images = release["images"]
     assert isinstance(images, dict)
     images["web"] = {"config_digest": "sha256:" + "f" * 64, "tag": "pureiron/web:r0"}
-    assert reject(kit.build(document=doc)) is RejectCode.E_DIGEST
+    path = kit.build(document=doc)
+    target = kit.tmp / "staging"
+    assert reject(path, extract_to=target) is RejectCode.E_DIGEST
+    assert list(target.iterdir()) == []
+    # 추출 없이 검증하면 이미지 tar를 해석하지 않는다 — 신원은 load 후 `.Id` 대조가 맡는다.
+    assert verify_bundle(path, ctx()).generation is GenDecision.APPLY
+
+
+def test_duplicate_image_payload_for_one_service_is_e_digest(kit: Kit) -> None:
+    plain = kit.tmp / "src" / "images" / "web.tar"
+    image_tar(plain, "web", gz=False)
+    assert reject(kit.build(payload={**kit.payload, "images/web.tar": plain})) is (
+        RejectCode.E_DIGEST
+    )
+
+
+def test_image_payload_for_unknown_service_is_e_digest(kit: Kit) -> None:
+    extra = kit.tmp / "src" / "images" / "extra.tar.gz"
+    image_tar(extra, "extra")
+    assert reject(kit.build(payload={**kit.payload, "images/extra.tar.gz": extra})) is (
+        RejectCode.E_DIGEST
+    )
 
 
 def test_image_without_payload_is_e_digest(kit: Kit) -> None:
@@ -394,12 +464,52 @@ def test_unabsorbed_drafts_are_e_draft(kit: Kit) -> None:
     assert ok.generation is GenDecision.APPLY
 
 
-def test_signed_manifest_violating_contract_is_e_format(kit: Kit) -> None:
+def _resigned(kit: Kit, manifest: bytes) -> Path:
     items = members(kit.build())
-    bad = manifest_bytes({"format": 1, "kind": "site"})
-    items[0] = ("manifest.json", bad)
-    items[1] = ("manifest.sig", keys.sign(RELEASE_SEED, bad))
-    assert reject(write_members(kit.tmp / "bad.pib", items)) is RejectCode.E_FORMAT
+    items[0] = ("manifest.json", manifest)
+    items[1] = ("manifest.sig", keys.sign(RELEASE_SEED, manifest))
+    return write_members(kit.tmp / "resigned.pib", items)
+
+
+def test_signed_manifest_violating_contract_is_e_format(kit: Kit) -> None:
+    assert reject(_resigned(kit, manifest_bytes({"format": 1, "kind": "site"}))) is (
+        RejectCode.E_FORMAT
+    )
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        (b'"generation":5', b'"generation":5.0'),
+        (b'"generation":5', b'"generation":true'),
+        (b'"generation":5', b'"generation":5,"generation":5'),
+        (b'"site_id":"site-a"', b'"site_id":"site-a\n"'),
+    ],
+)
+def test_signed_manifest_non_integer_duplicate_or_control_chars_is_e_format(
+    kit: Kit, old: bytes, new: bytes
+) -> None:
+    data = dict(members(kit.build()))["manifest.json"]
+    assert old in data
+    assert reject(_resigned(kit, data.replace(old, new))) is RejectCode.E_FORMAT
+
+
+def test_invalid_updater_version_fails_before_reading(kit: Kit) -> None:
+    with pytest.raises(ValueError, match="MAJOR"):
+        verify_bundle(kit.tmp / "does-not-exist.pib", ctx(updater_version="1.0"))
+    with pytest.raises(ValueError, match="MAJOR"):
+        verify_bundle(kit.tmp / "does-not-exist.pib", ctx(updater_version="1.0.0\n"))
+
+
+def test_trailing_bytes_after_archive_are_e_format(kit: Kit) -> None:
+    data = kit.build().read_bytes()
+    assert data[-1] == 0
+    flipped = kit.tmp / "pad.pib"
+    flipped.write_bytes(data[:-1] + b"\x01")
+    assert reject(flipped) is RejectCode.E_FORMAT
+    appended = kit.tmp / "append.pib"
+    appended.write_bytes(data + b"\x00" * 10240)
+    assert reject(appended) is RejectCode.E_FORMAT
 
 
 # 추출 ---------------------------------------------------------------------------
@@ -415,6 +525,20 @@ def test_extract_to_writes_only_payload_under_directory(kit: Kit) -> None:
         assert (target / name).read_bytes() == source.read_bytes()
     after = {p for p in kit.tmp.rglob("*") if not p.is_relative_to(target)}
     assert after - before == {kit.tmp / "bundle.pib"}
+
+
+def test_rejected_bundle_leaves_extract_dir_empty(kit: Kit) -> None:
+    items = members(kit.build())
+    name, data = items[-1]
+    items[-1] = (name, bytes([data[0] ^ 1]) + data[1:])
+    target = kit.tmp / "staging"
+    assert reject(write_members(kit.tmp / "flip.pib", items), extract_to=target) is (
+        RejectCode.E_DIGEST
+    )
+    assert list(target.iterdir()) == []
+    path = kit.build("ok.pib")
+    assert reject(path, ctx(draft=DraftState(9, 9)), extract_to=target) is RejectCode.E_DRAFT
+    assert list(target.iterdir()) == []
 
 
 def test_extract_to_must_be_empty(kit: Kit) -> None:
