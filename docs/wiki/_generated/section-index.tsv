@@ -7,7 +7,7 @@
 # 열: doc_id	path	anchor	offset	limit	bytes	level	heading
 #   offset/limit = 파일 전체 기준 1-indexed 시작 줄 / 줄 수 (Read 인자 그대로)
 #   bytes        = 해당 절을 읽는 비용 (한국어는 대략 1.5~2바이트/토큰)
-adr-index	docs/wiki/adr/index.md	architecture-decision-records	19	639	41531	h1	Architecture Decision Records
+adr-index	docs/wiki/adr/index.md	architecture-decision-records	19	639	41774	h1	Architecture Decision Records
 adr-index	docs/wiki/adr/index.md	1-adr-경계	25	15	723	h2	1. ADR 경계
 adr-index	docs/wiki/adr/index.md	2-제품사업을-기준으로-한-최상위-결정	40	12	917	h2	2. 제품·사업을 기준으로 한 최상위 결정
 adr-index	docs/wiki/adr/index.md	3-기술-adr-요약	52	35	3226	h2	3. 기술 ADR 요약
@@ -32,13 +32,13 @@ adr-index	docs/wiki/adr/index.md	adr-018-device-health-is-not-a-tag	413	20	1165	
 adr-index	docs/wiki/adr/index.md	adr-019-현장-서비스-분할--collector--core--ai--web	433	21	1912	h2	ADR-019: 현장 서비스 분할 — collector / core / ai / web
 adr-index	docs/wiki/adr/index.md	adr-020-collector--core-grpc-계약--ack--replay-의미론	454	20	1875	h2	ADR-020: collector ↔ core gRPC 계약 · Ack · replay 의미론
 adr-index	docs/wiki/adr/index.md	adr-021-timescaledb-유지--기록-정책	474	19	1207	h2	ADR-021: TimescaleDB 유지 · 기록 정책
-adr-index	docs/wiki/adr/index.md	adr-022-desiredstate-gitops--generation-카운터	493	22	1993	h2	ADR-022: DesiredState GitOps · generation 카운터
+adr-index	docs/wiki/adr/index.md	adr-022-desiredstate-gitops--generation-카운터	493	22	2097	h2	ADR-022: DesiredState GitOps · generation 카운터
 adr-index	docs/wiki/adr/index.md	adr-023-단일-서명-번들--신뢰-루트--이미지-신원config-digest	515	20	2189	h2	ADR-023: 단일 서명 번들 · 신뢰 루트 · 이미지 신원(config digest)
 adr-index	docs/wiki/adr/index.md	adr-024-확장형-마이그레이션--epoch-envelope--백업-경계	535	20	2043	h2	ADR-024: 확장형 마이그레이션 · epoch envelope · 백업 경계
 adr-index	docs/wiki/adr/index.md	adr-025-프로젝트-정본--드래프트-회수단조-site_rev	555	19	1635	h2	ADR-025: 프로젝트 정본 · 드래프트 회수(단조 site_rev)
 adr-index	docs/wiki/adr/index.md	adr-026-repo-레이아웃--고객별-repo	574	19	1532	h2	ADR-026: repo 레이아웃 · 고객별 repo
 adr-index	docs/wiki/adr/index.md	adr-027-지원-호스트-매트릭스	593	19	1281	h2	ADR-027: 지원 호스트 매트릭스
-adr-index	docs/wiki/adr/index.md	adr-028-3단-검증-게이트--generated--authored--runner-격리	612	20	2086	h2	ADR-028: 3단 검증 게이트 · generated ≠ authored · runner 격리
+adr-index	docs/wiki/adr/index.md	adr-028-3단-검증-게이트--generated--authored--runner-격리	612	20	2225	h2	ADR-028: 3단 검증 게이트 · generated ≠ authored · runner 격리
 adr-index	docs/wiki/adr/index.md	4-새-adr-추가-규칙	632	26	455	h2	4. 새 ADR 추가 규칙
 archive-manual-legacy	docs/wiki/archive/manual-legacy.md	archive-legacy-user-manual	12	35	2432	h1	(Archive) Legacy User Manual
 archive-manual-legacy	docs/wiki/archive/manual-legacy.md	원본	16	4	150	h2	원본

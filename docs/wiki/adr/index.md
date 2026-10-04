@@ -497,7 +497,7 @@ collector와 core는 `packages/contracts/collector.proto`의 양방향 스트림
 **결정**
 현장별 배포 목표(DesiredState)는 벤더 내부 repo `pureiron-fleet`의 `sites/<site>.yaml`이 정본이다(product release, 프로젝트 repo·버전, 적용 창). **이 PR의 승인·merge가 곧 배포 승인**이다. 파일 안 `generation: N` 카운터는 PR마다 정확히 +1이어야 하고(`check-gen.yml`), 중앙 `control-api`에 이미 게시된 최대 gen보다 커야 한다. 현장 Updater 규칙: 같은 gen은 멱등(no-op), 낮은 gen은 `E_GEN` 거부, 실패 후 **자동 재시도 없음**, 취소는 이전 내용으로 되돌린 **더 높은 gen**(revert PR). 현장은 중앙을 polling만 하고 중앙이 현장에 접속하지 않는다. control-web은 읽기 전용이다.
 
-PoC 무료 모드(첫 유료 계약 전): GitHub Free private repo라 branch protection·Environment 승인이 없으므로, fleet `publish.yml`이 서명 직전 merge된 PR의 승인(허용 승인자 목록, 작성자 제외)을 API로 확인하고 없으면 `E_APPROVAL`로 서명을 거부한다. 유료 전환 시 GitHub 기능(branch protection, Environment required reviewer)으로 되돌린다.
+PoC 무료 모드(첫 유료 계약 전): GitHub Free private repo라 branch protection·Environment 승인이 없으므로, fleet `publish.yml`이 서명 직전 merge된 PR의 승인(허용 승인자 목록, 작성자 제외)을 API로 확인하고 없으면 `E_APPROVAL`로 서명을 거부한다. PR을 거치지 않은 main 직접 push(merge commit에 PR 연결이 없음)도 서명을 거부한다. 유료 전환 시 GitHub 기능(branch protection, Environment required reviewer)으로 되돌린다.
 
 **이유**
 
@@ -614,7 +614,7 @@ PoC 무료 모드(첫 유료 계약 전): GitHub Free private repo라 branch pro
 **상태**: Accepted — target design(미구현).
 
 **결정**
-검증은 3단이다. **G1**(PR마다): ruff, pyright strict, tsc/eslint strict-type-checked, import-linter(+음성 fixture), 계약 호환성 diff(`buf breaking`, `oasdiff`, schema diff)와 생성물 drift, migration lint, 단위·통합, 재현 빌드, N-1 스키마 호환, 고객 분기 금지 검사 — **부채 예외 없음**(`type: ignore`·`eslint-disable`·`as any`·`@ts-ignore` 0건). **G2**(nightly): VM 3대(site-a·site-b·central) e2e로 설치·예약 업데이트·격리·롤백·거부·장애 주입·폐쇄망·드래프트 회수·fleet 표시. **G3**(release candidate): 중앙 차단 24h, 백업·복원, 2,000태그 성능 측정. 계약(proto·OpenAPI·JSON Schema)이 정본이고 코드 생성물(`src/<pkg>/_gen/`, `schema.d.ts`)은 커밋하되 **generated ≠ authored**: 생성 `.py`는 pyright·ruff 대상에서 빼고 `.pyi`(mypy-protobuf)를 타입 정본으로 strict 소비하며, 재생성 diff로 drift를 막는다. runner는 PoC 동안 개발 PC의 self-hosted 3개(`g1`, `e2e`, `publish`)를 repo 단위로 등록하고, nightly·runner는 별도 repo `pureiron-fleet-e2e`에 둔다. V1에는 legacy workflow가 없어 legacy job이 새 runner를 점유하지 않는다.
+검증은 3단이다. **G1**(PR마다): ruff, pyright strict, tsc/eslint strict-type-checked, import-linter(+음성 fixture), 계약 호환성 diff(`buf breaking`, `oasdiff`, schema diff)와 생성물 drift, migration lint, 단위·통합, 재현 빌드, N-1 스키마 호환, 고객 분기 금지 검사 — **부채 예외 없음**(`type: ignore`·`eslint-disable`·`as any`·`@ts-ignore` 0건). **G2**(nightly): VM 3대(site-a·site-b·central) e2e로 설치·예약 업데이트·격리·롤백·거부·장애 주입·폐쇄망·드래프트 회수·fleet 표시. **G3**(release candidate): 중앙 차단 24h, 백업·복원, 2,000태그 성능 측정. 계약(proto·OpenAPI·JSON Schema)이 정본이고 코드 생성물(`src/<pkg>/_gen/`, `schema.d.ts`)은 커밋하되 **generated ≠ authored**: 생성 `.py`는 pyright·ruff 대상에서 빼고 `.pyi`(mypy-protobuf)를 타입 정본으로 strict 소비하며, 재생성 diff로 drift를 막는다(설정 원문: `[tool.pyright] ignore = ["src/<pkg>/_gen/**/*.py"]`, ruff `extend-exclude = ["src/*/_gen"]`, 검사 job `contracts-drift`). runner는 PoC 동안 개발 PC의 self-hosted 3개(`g1`, `e2e`, `publish`)를 repo 단위로 등록하고, nightly·runner는 별도 repo `pureiron-fleet-e2e`에 둔다. V1에는 legacy workflow가 없어 legacy job이 새 runner를 점유하지 않는다.
 
 **이유**
 

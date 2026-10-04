@@ -3,12 +3,12 @@
   "docs": [
     {
       "audience": "both",
-      "bytes": 41927,
+      "bytes": 42170,
       "id": "adr-index",
       "last_verified": "2026-10-04",
       "path": "docs/wiki/adr/index.md",
       "section_count": 33,
-      "sha256": "015a7eed5a078e84dcf2d7912477aa5473a0c3b8709fbbc1d7c01aff5de882fa",
+      "sha256": "5ffb4af494cf0e23b03376b077e0cc41a0b0dcdd94f6bdc63fa54c7c954248f7",
       "source_globs": [],
       "sources": [
         "docs/ADR.md",
