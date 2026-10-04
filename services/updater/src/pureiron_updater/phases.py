@@ -51,7 +51,6 @@ from pureiron_updater.compose import (
 )
 from pureiron_updater.images import check_running, load_images, pin_images
 from pureiron_updater.ports import (
-    LOCK_OWNER,
     Clock,
     CommandError,
     Compose,
@@ -84,6 +83,8 @@ E_BACKUP = "E_BACKUP"
 E_MIGRATE = "E_MIGRATE"
 E_SWITCH = "E_SWITCH"
 E_HEALTH = "E_HEALTH"
+E_SUPERSEDED = "E_SUPERSEDED"
+E_BUNDLE = "E_BUNDLE"
 _IMAGE_PAYLOAD = re.compile(r"images/([a-z][a-z0-9-]{0,31})\.tar(\.gz)?")
 
 
@@ -129,6 +130,8 @@ class Updater:
         self.deps = deps
         self.store = store or StateStore(settings.state_dir)
         self.state = self.store.load()
+        self.finished: list[Attempt] = []
+        """이 프로세스에서 끝난 시도(CLI 종료 코드 판정용)."""
 
     # ── 상태 기록 ──────────────────────────────────────────────────────────
 
@@ -169,13 +172,20 @@ class Updater:
             raise AttemptInProgressError(
                 f"generation {current.generation} is in {current.phase} (run recover first)"
             )
-        if current is not None and current.phase in TERMINAL:
-            self.advance()
-            if self.state.attempt is not None:
-                raise AttemptInProgressError("previous attempt could not release the edit lock")
-        elif current is not None:
-            log.info("superseding waiting attempt (generation %s)", current.generation)
-            self._cleanup(current, keep_bundle=Path(current.bundle) == bundle)
+        if current is not None and current.phase in PRE_COMMIT:
+            if current.bundle_sha256 == sha256:
+                log.info("bundle %s is already waiting", sha256)
+                return
+            if Phase.COMMITTED.value in current.timeline:
+                # 커밋된(pending) 시도는 결과를 남기고 잠금을 푼 뒤에만 대체한다.
+                self._end(current, Phase.FAILED, E_SUPERSEDED, f"superseded by {sha256}")
+            else:
+                log.info("superseding waiting attempt (generation %s)", current.generation)
+                self._cleanup(current, keep_bundle=Path(current.bundle) == bundle)
+                self._save(replace(self.state, attempt=None))
+        # 남은 것이 종료 phase면 잠금 해제·보고를 마무리한 뒤에만 새 시도를 받는다.
+        if self.state.attempt is not None and self.advance().attempt is not None:
+            raise AttemptInProgressError("previous attempt could not release the edit lock")
         attempt = Attempt(
             phase=Phase.FETCHED,
             bundle=str(bundle),
@@ -199,6 +209,10 @@ class Updater:
             Phase.CHECKING: self._check,
             Phase.ROLLING_BACK: self._rollback,
         }
+        if self.state.attempt is not None and not self.deps.docker.available():
+            # 재부팅 직후 등: 일시 장애를 실패로 분류하지 않고 다음 tick에 그대로 이어 간다.
+            log.warning("docker daemon unavailable; retrying next tick")
+            return self.state
         while (attempt := self.state.attempt) is not None:
             if not steps.get(attempt.phase, self._finish)(attempt):
                 break
@@ -215,7 +229,7 @@ class Updater:
             return False
 
     def release_lock(self, attempt: Attempt) -> bool:
-        """편집 잠금 해제. core HTTP가 없으면 compose run으로. 풀었거나 우리 잠금이 없으면 True."""
+        """편집 잠금 해제. core HTTP가 없으면 site-db에서 직접(이미지 버전 무관). 풀렸으면 True."""
         if attempt.first_install:
             return True
         try:
@@ -224,10 +238,10 @@ class Updater:
         except LockConflictError:
             return True
         except CoreUnavailableError as exc:
-            log.warning("edit-lock release over HTTP failed (%s); using core CLI", exc)
+            log.warning("edit-lock release over HTTP failed (%s); using site-db", exc)
         target = self._applied_target() or self._target(self._gen(attempt))
         try:
-            self.deps.compose.run_core(target, ["project", "unlock", "--owner", LOCK_OWNER])
+            self.deps.compose.release_lock_db(target)
             return True
         except CommandError as exc:
             log.error("edit-lock release failed: %s", exc)
@@ -266,12 +280,13 @@ class Updater:
         applied = self._applied_target()
         if applied is None:
             return
-        current = read_manifest(applied).product_release.images["site-db"].config_digest
-        wanted = manifest.product_release.images["site-db"].config_digest
-        if current != wanted:
+        current = read_manifest(applied).product_release.images["site-db"]
+        wanted = manifest.product_release.images["site-db"]
+        if (current.config_digest, current.tag) != (wanted.config_digest, wanted.tag):
             raise BundleRejectedError(
                 RejectCode.E_DIGEST,
-                f"site-db {current} → {wanted} needs a separate db-step release (not supported)",
+                f"site-db {current.tag}@{current.config_digest} → "
+                f"{wanted.tag}@{wanted.config_digest} needs a db-step release (not supported)",
             )
 
     def _prepare(self, manifest: Manifest, extract: Path) -> float:
@@ -293,6 +308,8 @@ class Updater:
     def _verify(self, attempt: Attempt) -> bool:
         bundle, extract = Path(attempt.bundle), Path(attempt.extract_dir)
         if not bundle.is_file():
+            if Phase.COMMITTED.value in attempt.timeline:
+                return self._end(attempt, Phase.FAILED, E_BUNDLE, f"{bundle} vanished")
             log.warning("bundle %s vanished; dropping attempt", bundle)
             self.drop(attempt)
             return False
@@ -409,8 +426,9 @@ class Updater:
     def _migrate(self, attempt: Attempt) -> bool:
         target = self._target(self._gen(attempt))
         try:
-            if attempt.first_install:
-                self.deps.compose.up(target, ["site-db"])
+            # 재부팅 직후 DB가 아직 준비 안 됐을 수 있다 — health까지 기다린다(digest·태그 불변이라
+            # 재생성 없음). 최초 설치는 여기서 site-db가 처음 뜬다.
+            self.deps.compose.up(target, ["site-db"])
             if attempt.migrate_to is not None:
                 self.deps.compose.run_core(
                     target, ["migrate", "up", "--to", str(attempt.migrate_to)]
@@ -546,5 +564,6 @@ class Updater:
         self._cleanup(attempt)
         state = replace(state, attempt=None)
         self._save(state)
+        self.finished.append(attempt)
         metrics.write_prom(self.settings.state_dir, state, attempt, ended)
         return False

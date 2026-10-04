@@ -66,6 +66,10 @@ class Docker(Protocol):
 
     def tag(self, source: str, target: str) -> None: ...
 
+    def available(self) -> bool:
+        """docker 데몬이 응답하는지(재부팅 직후 등 일시 장애 구분)."""
+        ...
+
 
 class Compose(Protocol):
     """`docker compose -p pureiron -f <target>/compose.yml --env-file <target>/.env …`."""
@@ -98,6 +102,10 @@ class Compose(Protocol):
 
     def down(self, target: ComposeTarget) -> None:
         """`down`(볼륨 유지)."""
+        ...
+
+    def release_lock_db(self, target: ComposeTarget) -> None:
+        """`exec -T site-db psql`로 updater 잠금만 해제(core HTTP가 없을 때, core 이미지 무관)."""
         ...
 
 

@@ -54,6 +54,11 @@ def normalize_sha256(value: str) -> str:
     return "sha256:" + hexpart
 
 
+def _origin(url: str) -> tuple[str, str]:
+    parts = urllib.parse.urlsplit(url)
+    return parts.scheme.lower(), parts.netloc.lower()
+
+
 class ControlApi:
     def __init__(self, base_url: str, site_id: str, token_file: Path) -> None:
         self._base = base_url.rstrip("/")
@@ -63,9 +68,12 @@ class ControlApi:
         self._last: Desired | None = None
 
     def _request(self, url: str, headers: dict[str, str]) -> urllib.request.Request:
-        request = urllib.request.Request(urllib.parse.urljoin(self._base + "/", url))
-        token = self._token_file.read_text(encoding="utf-8").strip()
-        request.add_header("Authorization", f"Bearer {token}")
+        full = urllib.parse.urljoin(self._base + "/", url)
+        request = urllib.request.Request(full)
+        # 토큰은 control-api와 같은 출처에만 보낸다(다른 호스트의 번들 URL·redirect에는 없음).
+        if _origin(full) == _origin(self._base):
+            token = self._token_file.read_text(encoding="utf-8").strip()
+            request.add_unredirected_header("Authorization", f"Bearer {token}")
         for key, value in headers.items():
             request.add_header(key, value)
         return request

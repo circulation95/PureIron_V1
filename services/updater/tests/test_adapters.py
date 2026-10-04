@@ -52,8 +52,10 @@ def test_compose_commands_pin_project_file_and_env(tmp_path: Path) -> None:
     compose.run_core(target, ["migrate", "up", "--to", "2"], mounts={tmp_path / "p.json": "/x"})
     compose.dump_db(target, tmp_path / "db.dump")
     compose.down(target)
-    assert runner.calls[0] == [*base, "up", "-d", "--wait", "--remove-orphans"]
-    assert runner.calls[1] == [*base, "up", "-d", "--wait", "site-db"]
+    compose.release_lock_db(target)
+    wait = ["up", "-d", "--wait", "--wait-timeout", "180"]
+    assert runner.calls[0] == [*base, *wait, "--remove-orphans"]
+    assert runner.calls[1] == [*base, *wait, "site-db"]
     assert runner.calls[2] == [
         *base,
         *("run", "--rm", "--no-deps", "-T", "--volume", f"{tmp_path / 'p.json'}:/x:ro"),
@@ -65,6 +67,9 @@ def test_compose_commands_pin_project_file_and_env(tmp_path: Path) -> None:
     assert "--exclude-table-data=_timescaledb_internal.*" in dump
     assert (tmp_path / "db.dump").read_bytes() == b"dump"
     assert runner.calls[4] == [*base, "down"]
+    unlock = runner.calls[5]
+    assert unlock[len(base) :][:4] == ["exec", "-T", "site-db", "psql"]
+    assert "WHERE id AND edit_lock_owner = 'updater'" in unlock[-1]
 
 
 def test_compose_reads_config_and_running_images(tmp_path: Path) -> None:
@@ -100,6 +105,8 @@ def test_docker_image_id_missing_is_none() -> None:
         docker.image_id("y")
     docker.load(Path("core.tar.gz"))
     assert runner.calls[-1] == ["docker", "load", "--input", "core.tar.gz"]
+    assert docker.available()
+    assert not DockerCli(FakeRunner([Result(1, "", "Cannot connect")])).available()
 
 
 # ── 로컬 HTTP 서버 ────────────────────────────────────────────────────────
@@ -259,3 +266,20 @@ def test_poll_discards_corrupt_download(tmp_path: Path, server: Server) -> None:
         poll_once(site.updater(), api)
     assert not (site.settings.bundles_dir / "g1.pib.part").exists()
     assert site.updater().state.attempt is None
+
+
+def test_poll_sends_token_only_to_control_api_origin(tmp_path: Path, server: Server) -> None:
+    site = Site(root=tmp_path / "pureiron", kit=Kit(tmp_path))
+    token = site.settings.secrets_dir / "control_api_token"
+    token.parent.mkdir(parents=True)
+    token.write_text("ctl", encoding="utf-8")
+    blob = site.kit.bundle(1, "r0").read_bytes()
+    _desired(server, 1, blob)
+    # 같은 서버지만 호스트 이름이 다르면 다른 출처다(CDN·사전 서명 URL 흉내).
+    desired = json.loads(server.routes[("GET", "/sites/site-a/desired")][1])
+    desired["bundle_url"] = desired["bundle_url"].replace("127.0.0.1", "localhost")
+    server.routes[("GET", "/sites/site-a/desired")] = (200, json.dumps(desired).encode())
+    assert poll_once(site.updater(), ControlApi(server.url, "site-a", token))
+    by_path = {p: h for _, p, h, _ in server.requests}
+    assert by_path["/sites/site-a/desired"]["authorization"] == "Bearer ctl"
+    assert "authorization" not in by_path["/bundle.pib"]

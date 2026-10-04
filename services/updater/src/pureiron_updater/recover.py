@@ -27,12 +27,19 @@ log = logging.getLogger(__name__)
 _PRE_SERVICE = frozenset({Phase.COMMITTED, Phase.LOCKED, Phase.BACKED_UP})
 
 
-def recover(updater: Updater) -> UpdaterState:
+def recover(updater: Updater, *, reverify: bool = True) -> UpdaterState:
+    """끊긴 시도를 위 표대로 되돌린 뒤 `advance()`.
+
+    서비스 loop는 매 tick `reverify=False`로 부른다 — 다른 프로세스(`pureiron-site apply`)가
+    서비스 영향 전 단계에서 죽었어도 창 규칙을 지키기 위해서다. `verified` 재검증(전체 해시)은
+    프로세스 시작 때만 한다.
+    """
     attempt = updater.state.attempt
-    if attempt is None:
+    if attempt is None or not updater.deps.docker.available():
+        # 데몬이 없으면(재부팅 직후) 아무것도 바꾸지 않고 다음 tick을 기다린다.
         return updater.state
     log.info("recovering generation %s from %s", attempt.generation, attempt.phase.value)
-    if attempt.phase is Phase.VERIFIED:
+    if attempt.phase is Phase.VERIFIED and reverify:
         # 재검증: 추출본·이미지·compose 정의를 같은 코드로 다시 확인한다.
         updater.reset_phase(attempt, Phase.FETCHED)
     elif attempt.phase in _PRE_SERVICE:

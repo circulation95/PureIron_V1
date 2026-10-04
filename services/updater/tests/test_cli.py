@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
-from updater_fakes import Kit, Site, release_ids
+from updater_fakes import T0, Crash, Kit, Site, open_window, release_ids
 
 from pureiron_updater import cli
-from pureiron_updater.phases import Deps
+from pureiron_updater.phases import Deps, Updater
 from pureiron_updater.settings import Settings
+from pureiron_updater.state import Phase, UpdaterState
 
 
 @pytest.fixture
@@ -67,3 +70,31 @@ def test_bundle_verify_has_no_side_effects(site: Site, capsys: pytest.CaptureFix
 def test_missing_site_id_is_config_error(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("PUREIRON_SITE_ID", raising=False)
     assert cli.main(["status"]) == cli.EXIT_CONFIG
+
+
+def test_same_rejected_bundle_exits_1_every_time(site: Site) -> None:
+    pib = site.kit.bundle(1, "r0", site="site-b")
+    assert cli.main(["apply", str(pib)]) == cli.EXIT_FAILED
+    assert cli.main(["apply", str(pib)]) == cli.EXIT_FAILED
+
+
+def test_service_tick_enforces_window_after_killed_apply(site: Site) -> None:
+    """`apply`가 잠금 단계에서 죽고 창이 닫히면, 서비스 tick은 진행하지 않고 대기로 되돌린다."""
+    assert cli.main(["apply", str(site.kit.bundle(1, "r0"))]) == cli.EXIT_OK
+    site.submit(site.kit.bundle(2, "r1", window=open_window(T0 - timedelta(hours=1), 2)))
+
+    def killed_when_locked(state: UpdaterState) -> None:
+        if state.attempt is not None and state.attempt.phase is Phase.LOCKED:
+            raise Crash("apply killed")
+
+    killer = Updater(site.settings, replace(site.deps(), on_save=killed_when_locked))
+    with pytest.raises(Crash):
+        killer.advance()
+    assert site.world.lock == ("updater", 2)
+    site.clock.t = T0 + timedelta(hours=3)  # 창 닫힘
+    cli.tick(site.settings, None, first=False)
+    state = site.updater().state
+    assert state.attempt is not None
+    assert state.attempt.phase is Phase.VERIFIED
+    assert site.world.lock is None
+    assert site.world.running == release_ids("r0")

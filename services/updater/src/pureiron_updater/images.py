@@ -19,7 +19,7 @@ from pathlib import Path
 from pureiron_bundle.errors import BundleRejectedError, RejectCode
 from pureiron_bundle.images import check_loaded_image
 from pureiron_bundle.manifest import ImageRef
-from pureiron_updater.ports import Docker
+from pureiron_updater.ports import CommandError, Docker
 from pureiron_updater.proc import Result, Runner, check, subprocess_runner
 
 
@@ -44,6 +44,13 @@ class DockerCli:
     def tag(self, source: str, target: str) -> None:
         argv = [self._docker, "tag", source, target]
         check(self._run(argv, timeout=60), argv)
+
+    def available(self) -> bool:
+        argv = [self._docker, "version", "--format", "{{.Server.Version}}"]
+        try:
+            return self._run(argv, timeout=30).returncode == 0
+        except CommandError:
+            return False
 
 
 def ensure_image(docker: Docker, service: str, ref: ImageRef, archive: Path | None) -> bool:

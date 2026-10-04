@@ -32,12 +32,15 @@ from pureiron_updater import __version__
 from pureiron_updater.compose import ComposeCli
 from pureiron_updater.core import CoreHttp
 from pureiron_updater.images import DockerCli
+from pureiron_updater.metrics import result_of
 from pureiron_updater.phases import AttemptInProgressError, Deps, Updater
 from pureiron_updater.poll import TOKEN_FILE, ControlApi, PollError, poll_once
 from pureiron_updater.recover import recover
 from pureiron_updater.settings import Settings, SettingsError
 from pureiron_updater.state import (
+    TERMINAL,
     BusyError,
+    Phase,
     StateError,
     StateStore,
     UpdaterState,
@@ -121,28 +124,27 @@ def _summary(state: UpdaterState) -> str:
     return "\n".join(lines)
 
 
-def _outcome(before: UpdaterState, after: UpdaterState) -> int:
-    print(_summary(after))
-    if after.attempt is not None:
-        return EXIT_OK  # 창 대기·일시 장애로 멈춤 — 서비스 loop가 이어 간다
-    if after.last_result in (AttemptResult.FAILED, AttemptResult.REJECTED) and (
-        after.last_attempted_gen != before.last_attempted_gen
-        or after.last_result != before.last_result
-    ):
-        return EXIT_FAILED
-    if after.skipped_bundles != before.skipped_bundles:
-        return EXIT_FAILED
-    return EXIT_OK
+def _outcome(updater: Updater) -> int:
+    """이번 실행에서 끝난 시도·남은 시도로 판정한다(0 성공·대기·no-op, 1 실패·거부)."""
+    state = updater.state
+    print(_summary(state))
+    attempt = state.attempt
+    if attempt is not None and attempt.phase in TERMINAL:
+        # 결과는 났지만 잠금을 아직 못 풀었다 — 서비스 loop가 마무리한다.
+        return EXIT_OK if attempt.phase is Phase.SUCCEEDED else EXIT_FAILED
+    failed = [a for a in updater.finished if result_of(a) is not AttemptResult.SUCCEEDED]
+    return EXIT_FAILED if failed else EXIT_OK
 
 
 def _apply(settings: Settings, pib: Path) -> int:
     with process_lock(settings.state_dir):
         updater = Updater(settings, real_deps(settings))
         recover(updater)
-        before = updater.state
+        updater.finished.clear()  # 이전 시도의 마무리는 이번 apply 결과가 아니다
         bundle, sha = _copy_in(pib, settings.bundles_dir)
         updater.submit(bundle, sha)
-        return _outcome(before, updater.advance())
+        updater.advance()
+        return _outcome(updater)
 
 
 def _verify_only(settings: Settings, pib: Path) -> int:
@@ -181,8 +183,8 @@ def _status(settings: Settings, *, as_json: bool) -> int:
 def _recover(settings: Settings) -> int:
     with process_lock(settings.state_dir):
         updater = Updater(settings, real_deps(settings))
-        before = updater.state
-        return _outcome(before, recover(updater))
+        recover(updater)
+        return _outcome(updater)
 
 
 def _control_api(settings: Settings) -> ControlApi | None:
@@ -191,11 +193,11 @@ def _control_api(settings: Settings) -> ControlApi | None:
     return ControlApi(settings.control_api, settings.site_id, settings.secrets_dir / TOKEN_FILE)
 
 
-def _tick(settings: Settings, api: ControlApi | None, *, first: bool) -> None:
+def tick(settings: Settings, api: ControlApi | None, *, first: bool) -> None:
+    """서비스 loop 한 번: 복구 규칙(창) 적용 → poll → advance. 재검증은 첫 tick에만."""
     with process_lock(settings.state_dir):
         updater = Updater(settings, real_deps(settings))
-        if first:
-            recover(updater)
+        recover(updater, reverify=first)
         if api is not None:
             try:
                 poll_once(updater, api)
@@ -209,7 +211,7 @@ def _run(settings: Settings) -> int:
     first = True
     while True:
         try:
-            _tick(settings, api, first=first)
+            tick(settings, api, first=first)
             first = False
         except BusyError as exc:
             log.info("skipping tick: %s", exc)

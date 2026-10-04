@@ -13,16 +13,20 @@
 | `committed` | 창 안에서만. `last_attempted_gen=gen`, `last_result=pending`, trust 상태 저장 | — |
 | `locked` | `POST edit-lock{gen}` → 반환 site_rev + `GET /project` base로 드래프트 게이트 재검사, GOOD 비율 baseline | `rejected(E_DRAFT)` / core 없음 → `verified`로 대기 |
 | `backed_up` | `backups/g<gen>/`: `pg_dump -Fc`(tag_history·Timescale 내부 제외), project export, 직전 compose, secret 이름 | `failed(E_BACKUP)` |
-| `migrating` | 새 core 이미지로 `migrate up --to <target>`(최초 설치는 site-db 먼저 기동) | `rolling_back(E_MIGRATE)` |
+| `migrating` | `up --wait site-db`(DB 준비 대기) → 새 core 이미지로 `migrate up --to <target>` | `rolling_back(E_MIGRATE)` |
 | `switching` | 태그 `.Id` 재확인 → `up -d --wait --remove-orphans` → 실행 컨테이너 `.Image` 확인 → `project apply` | `rolling_back(E_SWITCH)` |
 | `checking` | `/readyz` ready + collector 세션(+ baseline > 0이면 GOOD 비율 ≥ baseline − 2%p), 제한 90 s | `rolling_back(E_HEALTH)` |
 | `rolling_back` | 직전 compose `up -d` + `.Id` 확인 + project restore(site_rev·base 포함) + ready | 2회 실패 → `failed_manual`(경보) |
-| 종료 | 편집 잠금 해제(HTTP 실패 시 `pureiron-core project unlock`) → 보고 → 확정 | 해제 실패 → 종료 phase로 남아 다음 tick에 재시도 |
+| 종료 | 편집 잠금 해제(HTTP 실패 시 site-db `psql`로 updater 잠금만 해제 — core 이미지 무관) → 보고 → 확정 | 해제 실패 → 종료 phase로 남아 다음 tick에 재시도 |
 
+- docker 데몬이 응답하지 않으면(재부팅 직후 등) `advance`·`recover`는 아무것도 바꾸지 않고 다음 tick을 기다린다 — 일시 장애를 영구 실패로 분류하지 않는다.
+- 커밋된(pending) 대기 시도를 새 번들이 대체하면 `failed(E_SUPERSEDED)`로 보고하고 잠금을 푼 뒤에만 대체한다(못 풀면 거부). 커밋 후 번들 사본이 사라지면 `failed(E_BUNDLE)`.
+- 서비스 loop는 매 tick 복구 규칙을 적용한다 — `apply`가 서비스 영향 전 단계에서 죽고 창이 닫히면 `verified`로 되돌린다.
 - 최초 설치(적용 이력 없음)는 창·잠금·백업이 없고, 실패해도 되돌릴 대상이 없어 띄운 스택을 진단용으로 남긴다.
-- 스키마는 전진만 한다. 롤백은 앱 이미지·프로젝트만 직전으로 되돌린다. site-db digest가 바뀌는 번들은 `E_DIGEST`로 거부한다(db-step release는 아직 미지원).
+- 스키마는 전진만 한다. 롤백은 앱 이미지·프로젝트만 직전으로 되돌린다. site-db digest·태그가 바뀌는 번들은 `E_DIGEST`로 거부한다(db-step release는 아직 미지원).
 - `recover()` 규칙은 `recover.py` docstring 표. 서비스 영향 전 단계는 창 밖이면 `verified`로, `migrating` 이후는 창과 무관하게 끝까지 간다.
-- compose 정의는 번들 payload `compose/site.compose.yml`(서명 대상)이고, `.env`는 manifest 태그에서 만든다.
+- compose 정의는 번들 payload `compose/site.compose.yml`(서명 대상)이고, `.env`는 manifest 태그에서 만든다. `up`은 `--wait --wait-timeout 180`.
+- poll 토큰은 control-api와 같은 출처에만 보낸다(다른 호스트 번들 URL·redirect 제외).
 
 ## 결과 기록
 
@@ -43,4 +47,4 @@ pureiron-site run                  # 서비스 loop(systemd): recover → poll �
 
 ## 테스트
 
-docker·compose·core는 `tests/updater_fakes.py`의 fake 세계로 대신한다. `test_recover.py`는 시나리오(최초 설치·업데이트·migrate/health/rollback 실패)마다 모든 바깥 호출·상태 저장 지점에 crash를 주입하고, 새 프로세스의 `recover()`가 crash 없는 실행과 같은 결과로 수렴하는지(복구 중 재crash, 창 닫힌 뒤 복구 포함) 검사한다. 실제 docker·VM 검증은 M2d.
+docker·compose·core는 `tests/updater_fakes.py`의 fake 세계로 대신한다. `test_recover.py`는 시나리오(최초 설치·업데이트·migrate/health/rollback 실패)마다 모든 바깥 호출·상태 저장 지점에 crash를 주입하고, 새 프로세스의 `recover()`가 crash 없는 실행과 같은 결과로 수렴하는지(복구 중 재crash, 창 닫힌 뒤 복구 포함) 검사한다. 같은 지점들에서 "호스트 재부팅"(데몬 정지 → DB·core 복구 중 → 복구)도 주입한다. 실제 docker·VM 검증은 M2d.

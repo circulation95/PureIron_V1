@@ -25,6 +25,11 @@ from pureiron_updater.state import atomic_write
 
 COMPOSE_PAYLOAD = "compose/site.compose.yml"
 PG_DUMP_EXCLUDE = ("tag_history", "_timescaledb_internal.*")
+WAIT_TIMEOUT_S = 180
+UNLOCK_SQL = (
+    "UPDATE project_state SET edit_lock_owner = NULL, edit_lock_gen = NULL, updated_at = now() "
+    "WHERE id AND edit_lock_owner = 'updater'"
+)
 
 
 def target_dir(compose_root: Path, generation: int) -> ComposeTarget:
@@ -103,7 +108,7 @@ class ComposeCli:
         return {name: str(svc.get("image", "")) for name, svc in services.items()}
 
     def up(self, target: ComposeTarget, services: Sequence[str] = ()) -> None:
-        argv = [*self._base(target), "up", "-d", "--wait"]
+        argv = [*self._base(target), "up", "-d", "--wait", "--wait-timeout", str(WAIT_TIMEOUT_S)]
         argv += list(services) if services else ["--remove-orphans"]
         self._check(argv, 600)
 
@@ -140,3 +145,8 @@ class ComposeCli:
 
     def down(self, target: ComposeTarget) -> None:
         self._check([*self._base(target), "down"], 300)
+
+    def release_lock_db(self, target: ComposeTarget) -> None:
+        argv = [*self._base(target), "exec", "-T", "site-db", "psql", "-U", "pureiron"]
+        argv += ["-d", "pureiron", "-v", "ON_ERROR_STOP=1", "-c", UNLOCK_SQL]
+        self._check(argv, 60)

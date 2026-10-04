@@ -69,10 +69,6 @@ def _parser() -> argparse.ArgumentParser:
     export.add_argument("--out", type=Path, default=None)
     restore = proj_sub.add_parser("restore")
     restore.add_argument("--from", dest="source", type=Path, required=True)
-    unlock = proj_sub.add_parser(
-        "unlock", help="편집 잠금 해제(core HTTP가 없을 때 Updater 복구 경로, plan M2 recover)"
-    )
-    unlock.add_argument("--owner", required=True)
     return parser
 
 
@@ -156,9 +152,6 @@ async def _project(
                 project_id=args.project_id, version=args.version, content_hash=args.content_hash
             )
         elif command == "export":
-            state = await store.get()
-        elif command == "unlock":
-            await store.release_edit_lock(args.owner)
             state = await store.get()
         elif snapshot is not None:
             state = await store.restore(snapshot)

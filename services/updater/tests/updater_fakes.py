@@ -235,6 +235,9 @@ class World:
     unhealthy_ids: set[str] = field(default_factory=set[str])
     fail_up_ids: set[str] = field(default_factory=set[str])
     core_http_down: bool = False
+    docker_down: bool = False
+    db_ready: bool = True
+    """site-db 컨테이너가 떠 있어도 접속을 받는지(재부팅 직후 WAL 복구 중이면 False)."""
     # crash 주입
     ops: int = 0
     crash_at: int | None = None
@@ -247,6 +250,21 @@ class World:
         if self.crash_at is not None and self.ops == self.crash_at:
             self.crash_at = None
             raise Crash(f"crash after #{self.ops} {name}")
+
+    def reboot(self) -> None:
+        """재부팅 직후: 데몬 정지·DB 복구 중·core HTTP 없음(컨테이너·이미지는 유지)."""
+        self.docker_down = True
+        self.db_ready = False
+        self.core_http_down = True
+
+    def daemon(self) -> None:
+        if self.docker_down:
+            raise CommandError("Cannot connect to the Docker daemon")
+
+    def db(self) -> None:
+        self.daemon()
+        if "site-db" not in self.running or not self.db_ready:
+            raise CommandError("site-db: connection refused")
 
     def resolve(self, ref: str) -> str | None:
         return self.tags.get(ref) or (ref if ref in self.ids else None)
@@ -268,7 +286,11 @@ class FakeDocker:
         self.w = world
 
     def image_id(self, ref: str) -> str | None:
+        self.w.daemon()
         return self.w.resolve(ref)
+
+    def available(self) -> bool:
+        return not self.w.docker_down
 
     def load(self, archive: Path) -> None:
         digest = config_digest_from_tar(archive)
@@ -299,6 +321,7 @@ class FakeCompose:
 
     def up(self, target: ComposeTarget, services: Sequence[str] = ()) -> None:
         self.calls.append(("up", target.directory.name, *services))
+        self.w.daemon()
         self.w.up_calls += 1
         resolved = resolve_compose(target)
         names = list(services) or list(resolved)
@@ -315,6 +338,11 @@ class FakeCompose:
             for name in list(self.w.running):
                 if name not in resolved:
                     del self.w.running[name]
+        # `--wait`는 healthcheck까지 기다린다: DB는 접속 가능, core HTTP는 응답한다.
+        if "site-db" in names:
+            self.w.db_ready = True
+        if "core" in names:
+            self.w.core_http_down = False
         self.w.op(f"up {target.directory.name} {' '.join(services)}".strip())
 
     def running_images(self, target: ComposeTarget) -> Mapping[str, str]:
@@ -324,8 +352,7 @@ class FakeCompose:
         image = self.w.resolve(resolve_compose(target)["core"])
         if image is None:
             raise CommandError("core image missing")
-        if "site-db" not in self.w.running:
-            raise CommandError("site-db is not running")
+        self.w.db()
         return image
 
     def run_core(
@@ -357,9 +384,6 @@ class FakeCompose:
                 w.base_site_rev = cast(int, snap["base_site_rev"])
                 owner, gen = snap["edit_lock_owner"], snap["edit_lock_gen"]
                 w.lock = None if owner is None else (cast(str, owner), cast(int, gen))
-            case ["project", "unlock", "--owner", owner]:
-                if w.lock is not None and w.lock[0] == owner:
-                    w.lock = None
             case _:
                 raise AssertionError(f"unexpected core command {args}")
         w.op("run_core " + " ".join(args[:2]))
@@ -376,14 +400,21 @@ class FakeCompose:
         }
 
     def dump_db(self, target: ComposeTarget, out: Path) -> None:
-        if "site-db" not in self.w.running:
-            raise CommandError("site-db is not running")
+        self.w.db()
         out.write_bytes(b"PGDMP")
         self.w.op("pg_dump")
 
     def down(self, target: ComposeTarget) -> None:
+        self.w.daemon()
         self.w.running.clear()
         self.w.op("down")
+
+    def release_lock_db(self, target: ComposeTarget) -> None:
+        self.calls.append(("release_lock_db", target.directory.name))
+        self.w.db()
+        if self.w.lock is not None and self.w.lock[0] == "updater":
+            self.w.lock = None
+        self.w.op("unlock sql")
 
 
 class FakeCore:
@@ -391,7 +422,8 @@ class FakeCore:
         self.w = world
 
     def _up(self) -> None:
-        if self.w.core_http_down or "core" not in self.w.running:
+        w = self.w
+        if w.docker_down or w.core_http_down or "core" not in w.running or not w.db_ready:
             raise CoreUnavailableError("connection refused")
 
     def acquire_lock(self, generation: int) -> int:

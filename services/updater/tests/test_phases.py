@@ -21,8 +21,9 @@ from updater_fakes import (
 )
 
 from pureiron_bundle.verify import AttemptResult
-from pureiron_updater.phases import Updater
+from pureiron_updater.phases import AttemptInProgressError, Updater
 from pureiron_updater.ports import CoreUnavailableError
+from pureiron_updater.recover import recover
 from pureiron_updater.state import Phase, UpdaterState
 
 
@@ -291,7 +292,7 @@ class NoReleaseCore(FakeCore):
         raise CoreUnavailableError("connection reset")
 
 
-def test_lock_released_through_core_cli_when_http_is_down(site: Site) -> None:
+def test_lock_released_in_site_db_when_http_is_down(site: Site) -> None:
     installed(site)
     deps = replace(site.deps(), core=NoReleaseCore(site.world))
     site.submit(site.kit.bundle(2, "r1"))
@@ -300,7 +301,7 @@ def test_lock_released_through_core_cli_when_http_is_down(site: Site) -> None:
     assert site.world.lock is None
     compose = deps.compose
     assert isinstance(compose, FakeCompose)
-    assert ("run_core", "g1", "project", "unlock", "--owner", "updater") in compose.calls
+    assert ("release_lock_db", "g1") in compose.calls
 
 
 def test_unreleasable_lock_keeps_terminal_attempt_until_released(site: Site) -> None:
@@ -351,3 +352,76 @@ def test_state_file_is_persisted_after_every_phase(site: Site) -> None:
     final: UpdaterState = site.saves[-1]
     assert final.attempt is None
     assert site.updater().state == final
+
+
+class StuckCore(NoReleaseCore):
+    """잠금은 잡히지만 그 뒤 core가 응답하지 않는다(잠금 아래 project 조회·해제 실패)."""
+
+    def project(self) -> tuple[int, int]:
+        raise CoreUnavailableError("timeout")
+
+
+def strand_lock(site: Site) -> None:
+    """g2를 커밋 후 `verified`로 되돌리되 잠금을 풀지 못한 상태(리뷰 HIGH-1 재현 조건)."""
+    deps = replace(site.deps(), core=StuckCore(site.world))
+    site.submit(site.kit.bundle(2, "r1"))
+    site_db = site.world.running.pop("site-db")  # site-db 경로 해제도 실패
+    state = Updater(site.settings, deps).advance()
+    site.world.running["site-db"] = site_db
+    assert state.attempt is not None
+    assert (state.attempt.phase, state.attempt.lock_held) == (Phase.VERIFIED, True)
+    assert (state.last_attempted_gen, state.last_result) == (2, AttemptResult.PENDING)
+    assert site.world.lock == ("updater", 2)
+
+
+def test_superseding_committed_attempt_reports_it_and_releases_lock(site: Site) -> None:
+    installed(site)
+    strand_lock(site)
+    state = site.apply(site.kit.bundle(3, "r1", site="site-b"))  # 대체 후 거부되는 번들
+    assert state.attempt is None
+    assert site.world.lock is None
+    g2, g3 = reports(site)[-2:]
+    assert (g2["generation"], g2["result"], g2["code"]) == (2, "failed", "E_SUPERSEDED")
+    assert (g3["result"], g3["code"]) == ("rejected", "E_SITE")
+    assert (state.last_attempted_gen, state.last_result) == (2, AttemptResult.FAILED)
+
+
+def test_supersede_refused_while_lock_cannot_be_released(site: Site) -> None:
+    installed(site)
+    strand_lock(site)
+    site.world.core_http_down = True
+    site.world.running.pop("site-db")
+    with pytest.raises(AttemptInProgressError):
+        site.submit(site.kit.bundle(3, "r1"))
+    assert site.world.lock == ("updater", 2)
+
+
+def test_same_bundle_resubmitted_keeps_waiting_attempt(site: Site) -> None:
+    installed(site)
+    pib = site.kit.bundle(2, "r1", window=closed_window())
+    first = site.apply(pib).attempt
+    again = site.apply(pib).attempt
+    assert first is not None
+    assert again == first
+
+
+def test_vanished_bundle_after_commit_fails_and_releases_lock(site: Site) -> None:
+    installed(site)
+    strand_lock(site)
+    attempt = site.updater().state.attempt
+    assert attempt is not None
+    Path(attempt.bundle).unlink()
+    state = recover(site.updater())
+    assert state.attempt is None
+    assert site.world.lock is None
+    assert reports(site)[-1]["code"] == "E_BUNDLE"
+
+
+def test_docker_down_makes_no_progress(site: Site) -> None:
+    installed(site)
+    updater = site.submit(site.kit.bundle(2, "r1"))
+    site.world.docker_down = True
+    before = updater.state
+    assert updater.advance() == before
+    site.world.docker_down = False
+    assert updater.advance().applied_gen == 2

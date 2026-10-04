@@ -26,7 +26,7 @@ from updater_fakes import T0, Crash, Kit, Site, open_window, release_ids
 
 from pureiron_bundle.verify import AttemptResult
 from pureiron_updater.recover import recover
-from pureiron_updater.state import Phase
+from pureiron_updater.state import TERMINAL, Phase
 
 Setup = Callable[[Site, Path], None]
 
@@ -240,3 +240,31 @@ def test_recover_after_window_closed(tmp_path: Path, name: str) -> None:
         assert state.attempt.phase is Phase.VERIFIED, (at, phase)
         assert site.world.running == prev, (at, phase)
         assert site.world.schema_epoch == 1, (at, phase)
+
+
+@pytest.mark.parametrize("name", ["update", "health_fail", "migrate_fail"])
+def test_reboot_at_every_point_converges(tmp_path: Path, name: str) -> None:
+    """crash가 호스트 재부팅이면: 데몬이 뜨기 전엔 아무것도 하지 않고, DB가 복구 중이어도
+    일시 장애를 영구 실패로 분류하지 않으며, 결국 crash 없는 실행과 같은 결과로 수렴한다."""
+    harness = Harness(tmp_path, SCENARIOS[name])
+    expected, total = harness.reference()
+    for at in range(1, total + 1):
+        site, phase = harness.crash(at)
+        site.world.reboot()
+        before = site.updater().state
+        assert recover(site.updater()) == before, (at, phase)  # 데몬 없음 → 변화 없음
+        site.world.docker_down = False  # 데몬은 떴지만 DB·core는 아직 복구 중
+        state = recover(site.updater())
+        if state.attempt is None:
+            assert outcome(site) == expected, (at, phase, site.world.log)
+            continue
+        assert state.attempt.phase is Phase.VERIFIED or state.attempt.phase in TERMINAL, (
+            at,
+            phase,
+            state.attempt.phase,
+        )
+        site.world.db_ready = True  # DB·core가 스스로 복구됨
+        site.world.core_http_down = False
+        state = recover(site.updater())
+        assert state.attempt is None, (at, phase)
+        assert outcome(site) == expected, (at, phase, site.world.log)
