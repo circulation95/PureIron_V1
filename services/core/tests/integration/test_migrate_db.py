@@ -89,11 +89,20 @@ async def test_baseline_timescale_objects(site_db: SiteDb) -> None:
             )
             == 1
         )
-        assert await conn.fetchval("SELECT count(*) FROM tag_history_1m") == 0
         assert await conn.fetchval("SELECT count(*) FROM project_state") == 1
         epoch = await migrate.read_epoch(conn)
         assert epoch is not None
         assert epoch >= 1
+    finally:
+        await conn.close()
+
+
+@pytest.mark.fresh_db
+async def test_cagg_is_created_without_data(site_db: SiteDb) -> None:
+    """WITH NO DATA: 채우기는 refresh policy 몫. 새 DB에서만 성립(n-minus-1 DB는 시드·refresh됨)."""
+    conn = await asyncpg.connect(site_db.dsn, password=site_db.password)
+    try:
+        assert await conn.fetchval("SELECT count(*) FROM tag_history_1m") == 0
     finally:
         await conn.close()
 
