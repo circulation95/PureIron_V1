@@ -478,7 +478,10 @@ def test_preinstalled_docker_of_the_same_version_is_kept_on_rollback(
     built: Built, staged: tuple[Path, Host, Path]
 ) -> None:
     """코드 리뷰 M-4: 이번 실행 전부터 있던 패키지는 되돌릴 때 지우지 않는다."""
-    dest, host, _prefix = staged
+    dest, host, prefix = staged
+    daemon = prefix / "etc/docker/daemon.json"
+    daemon.parent.mkdir(parents=True)
+    daemon.write_bytes((ROOT / "deploy/install/daemon.json").read_bytes())
     env = {
         "STUB_PREINSTALLED": "docker-ce",
         "STUB_PREINSTALLED_VERSION": "5:28.3.3-1",
@@ -553,3 +556,17 @@ def test_bootstrap_refuses_a_writable_metadata_directory(built: Built, tmp_path:
     )
     assert run.returncode == 1
     assert "not group/world-writable" in run.stderr
+
+
+@LINUX_ONLY
+def test_preinstalled_docker_without_classic_store_config_stops(
+    built: Built, staged: tuple[Path, Host, Path]
+) -> None:
+    """재검토 LOW: 기존 Docker에 daemon.json을 새로 두면 저장소가 바뀐다 — 바꾸기 전에 멈춤."""
+    dest, host, prefix = staged
+    env = {"STUB_PREINSTALLED": "docker-ce", "STUB_PREINSTALLED_VERSION": "5:28.3.3-1"}
+    run = install(dest, host, built.pib, env=env)
+    assert run.returncode != 0
+    assert "PD-19" in run.stderr
+    assert "dpkg" not in host.log.read_text(encoding="utf-8")
+    assert not (prefix / "etc/docker/daemon.json").exists()

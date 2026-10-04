@@ -43,7 +43,7 @@ pureiron-site bundle verify <pib> [--kind install]   # 현재 상태 기준 검�
 pureiron-site status [--json]
 pureiron-site recover
 pureiron-site run                  # 서비스 loop(systemd): recover → poll → advance, 60 s
-pureiron-site enroll --site <id> [--re-enroll [--next-seq N]] [--out FILE]
+pureiron-site enroll --site <id> [--re-enroll] [--next-seq N] [--out FILE]
 pureiron-site secret set <name> [--generate] [--if-missing]   # 값은 stdin 한 줄
 pureiron-site report export --out DIR                          # 폐쇄망 보고 묶음
 ```
@@ -53,9 +53,9 @@ pureiron-site report export --out DIR                          # 폐쇄망 보�
 ### 등록·secret·보고 (PD-3·PD-4, `enroll.py`·`secret_store.py`)
 
 - `enroll`: `state/site.key`(Ed25519 seed, 0600) + `state/site.json`(`site_id`·지문·`next_report_seq`) + `state/enrollment.json`(`site-enrollment` 서명 봉투, 자기 키 서명). 같은 현장에서 다시 부르면 키는 두고 enrollment만 다시 쓴다. 다른 현장 id·키/상태 불일치는 거부(`--re-enroll` 필요).
-- `enroll --re-enroll`: 새 키쌍, `report_seq`는 `site.json`이 남아 있으면 이어서. `site.json`까지 잃었으면 `seq_pending`이 되어 report export를 거부하고, 벤더가 rekey 등록 후 돌려준 `next_seq`를 `enroll --site <id> --next-seq N`(키는 그대로, 카운터만 — 단조 증가)으로 반영한 뒤에 풀린다. 키·`site.json`을 잃었는데 적용·보고 이력이 남은 호스트에서 플래그 없는 신규 enroll은 거부한다(seq 1부터 다시 세면 control-api가 새 보고를 이력으로만 저장한다).
+- `enroll --re-enroll`: 새 키쌍, `report_seq`는 `site.json`이 남아 있으면 이어서. `site.json`까지 잃었으면 `seq_pending`이 되어 report export를 거부하고, 벤더가 rekey 등록 후 돌려준 `next_seq`를 `enroll --site <id> --next-seq N`(키는 그대로, 카운터만 — 단조 증가)으로 반영한 뒤에 풀린다. 키·`site.json`을 잃었는데 적용·보고 이력이 남은 호스트에서 플래그 없는 신규 enroll은 거부한다(seq 1부터 다시 세면 control-api가 새 보고를 이력으로만 저장한다). 상태 디렉터리를 통째로 잃으면 신규와 구별할 수 없다 — 벤더가 `POST /sites` 중복을 거부하면 `--re-enroll`로 다시 하고 rekey 응답을 `--next-seq`로 반영한다.
 - `secret set`: `state/secrets/<name>`(0600, root면 소유자 `PUREIRON_SECRET_UID`=10001 — compose 파일 secret은 bind mount라 컨테이너 서비스 사용자가 읽어야 한다). `install.sh`가 `db_password`·`updater_token`을 `--generate --if-missing`으로 만든다. 온라인 현장은 `control_api_token`을 등록 때 받은 값으로 넣는다.
-- `report export`: 저널(`reports/.export.json`: 첫 seq + 묶을 이름)을 쓰고 카운터를 예약한 뒤 `site-reports` 봉투(`pureiron-reports-<site>-<첫 seq>-<끝 seq>.json`)를 쓰고 원본을 옮긴다. 도중에 죽으면 다음 실행이 저널대로 같은 seq·같은 보고로 끝낸다(seq 재사용 없음). 봉투 형식·검증은 `pureiron_bundle.sitesign` — 자기 키 검증은 enrollment에서만, 보고는 등록된 키로만 검증한다.
+- `report export`: 저널(`reports/.export.journal`: 첫 seq + 묶을 이름)을 쓰고 카운터를 예약한 뒤 `site-reports` 봉투(`pureiron-reports-<site>-<첫 seq>-<끝 seq>.json`)를 쓰고 원본을 옮긴다. 도중에 죽으면 다음 실행이 저널대로 같은 seq·같은 보고로 끝내고, 그 뒤 쌓인 보고도 같은 호출에서 다음 묶음으로 낸다(seq 재사용 없음). 저널이나 그것이 가리키는 보고가 깨져 export가 멈추면 저널을 지우고 다시 실행한다 — 예약했던 seq 구간은 비게 된다(gap은 수신 측에서 허용, 재사용보다 안전). 봉투 형식·검증은 `pureiron_bundle.sitesign` — 자기 키 검증은 enrollment에서만, 보고는 등록된 키로만 검증한다.
 - env 파일: `enroll`은 서비스가 실제로 읽는 env 파일에 `PUREIRON_SITE_ID`가 없으면 항상 기록한다(프로세스 환경에 값이 있어도).
 
 ## 테스트

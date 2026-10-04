@@ -1,8 +1,9 @@
 """control-api polling(현장발, plan §6.4) → 번들 다운로드(`fetched`, 창 밖 허용).
 
 - `GET /sites/{site}/desired` → `{generation, bundle_url, sha256, size}`(ETag = gen, 304).
-- 새 generation이면 `bundles/g<gen>.pib.part`에 **Range로 이어 받고**, 크기·sha256이 맞으면
-  `g<gen>.pib`로 이름을 바꿔 시도로 등록한다. 틀리면 `.part`를 지우고 다음 poll에서 처음부터.
+- 새 generation이면 `bundles/poll-<sha256 16자>.pib.part`에 **Range로 이어 받고**, 크기·sha256이
+  맞으면 `.part`를 떼어 시도로 등록한다(이름은 서명 전 믿을 수 없는 gen이 아니라 기대 sha256).
+  틀리면 `.part`를 지우고 다음 poll에서 처음부터.
 - 받기 전 여유 공간 ≥ 2배 번들 + 직전 백업 크기(PM-2 ⑥). 부족하면 받지 않고 기다린다.
 - 커밋된 시도가 진행 중이면 polling은 아무것도 하지 않는다.
 

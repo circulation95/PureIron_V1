@@ -5,7 +5,7 @@
     pureiron-site status [--json]
     pureiron-site recover                # 끊긴 시도 수렴(서비스 첫 tick과 같은 동작)
     pureiron-site run                    # 서비스 loop: recover → (poll →) advance, 주기 반복
-    pureiron-site enroll --site <id> [--re-enroll [--next-seq N]] [--out FILE]
+    pureiron-site enroll --site <id> [--re-enroll] [--next-seq N] [--out FILE]
     pureiron-site secret set <name> [--generate] [--if-missing]   # 값은 stdin(한 줄)
     pureiron-site report export --out DIR                          # 폐쇄망 보고 묶음(USB)
 
@@ -107,7 +107,9 @@ def _parser() -> argparse.ArgumentParser:
     enroll_cmd = sub.add_parser("enroll", help="site 키 생성·enrollment 파일 출력")
     enroll_cmd.add_argument("--site", required=True)
     enroll_cmd.add_argument("--re-enroll", action="store_true", help="새 키쌍(키 분실·유출)")
-    enroll_cmd.add_argument("--next-seq", type=int, default=None, help="벤더 rekey 응답 next_seq")
+    enroll_cmd.add_argument(
+        "--next-seq", type=int, default=None, help="벤더 rekey 응답 next_seq(카운터만 앞으로)"
+    )
     enroll_cmd.add_argument("--out", type=Path, default=None, help="enrollment 사본(USB 반출)")
     secret = sub.add_parser("secret", help="secret 파일")
     secret_sub = secret.add_subparsers(dest="secret_command", required=True)
@@ -264,13 +266,15 @@ def _secret_set(settings: Settings, args: argparse.Namespace) -> int:
 
 
 def _report_export(settings: Settings, out: Path) -> int:
+    """대기 보고가 없을 때까지 내보낸다 — 끊긴 export를 먼저 끝내고 그 뒤 쌓인 보고도 묶는다."""
+    written = 0
     with process_lock(settings.state_dir):
-        result = export_reports(settings, out, now=datetime.now(UTC))
-    if result is None:
+        while (result := export_reports(settings, out, now=datetime.now(UTC))) is not None:
+            path, count = result
+            print(f"{count} report(s) → {path}")
+            written += 1
+    if not written:
         print("no pending reports")
-        return EXIT_OK
-    path, count = result
-    print(f"{count} report(s) → {path}")
     return EXIT_OK
 
 

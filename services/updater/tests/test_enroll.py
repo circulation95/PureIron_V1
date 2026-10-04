@@ -239,7 +239,7 @@ def test_interrupted_export_resumes_with_the_same_seq(
     assert [r["generation"] for r in found if isinstance(r, dict)] == [1]
     assert cli.main(["report", "export", "--out", str(out)]) == cli.EXIT_OK
     assert (out / "pureiron-reports-site-a-000002-000002.json").exists()
-    assert not (reports / ".export.json").exists()
+    assert not (reports / ".export.journal").exists()
 
 
 def test_report_export_rejects_non_object_report(host: Host) -> None:

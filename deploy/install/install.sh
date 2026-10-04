@@ -163,6 +163,12 @@ if [ "$UPDATER_ONLY" = 0 ]; then
       *) missing+=("$pkg") ;;
     esac
   done
+  # 이미 깔린 Docker가 있는데 PD-19 daemon.json이 없으면 이미지 저장소 종류가 바뀌게 된다(기존
+  # 이미지가 안 보임) — 바꾸기 전에 멈춘다. 저장소 전환은 운영자가 의식적으로 한다.
+  if [ "${#missing[@]}" -lt "${#DEBS[@]}" ] && [ ! -e "$DAEMON_JSON" ]; then
+    echo "install: Docker is already installed without $DAEMON_JSON (PD-19 classic store) — configure it first" >&2
+    false
+  fi
   install_file "$HERE/install/daemon.json" "$DAEMON_JSON" 0644
   deb_files=()
   for pkg in "${DEBS[@]}"; do deb_files+=("$HERE/debs/$pkg.deb"); done

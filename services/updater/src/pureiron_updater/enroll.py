@@ -14,7 +14,7 @@
 `enroll --site <id> --next-seq N`으로 반영(키는 그대로, 카운터만 올림 — 단조 증가만 허용).
 `site.json`이 남아 있으면 카운터를 이어 쓰므로 이 단계가 없어도 된다.
 
-`report export`는 저널(`reports/.export.json`: 첫 seq + 묶을 파일 이름)을 먼저 쓰고 카운터를
+`report export`는 저널(`reports/.export.journal`: 첫 seq + 묶을 파일 이름)을 먼저 쓰고 카운터를
 예약한 뒤 묶음을 쓰고 원본을 옮긴다. 어디서 죽어도 다음 실행이 저널대로 같은 seq·같은 보고를
 다시 내므로 seq가 재사용되거나 같은 보고가 다른 seq로 나가지 않는다.
 """
@@ -42,7 +42,8 @@ from pureiron_updater.state import StateError, StateStore, atomic_write, fsync_d
 IDENTITY_FILE = "site.json"
 ENROLLMENT_FILE = "enrollment.json"
 EXPORTED_DIR = "exported"
-JOURNAL_FILE = ".export.json"
+JOURNAL_FILE = ".export.journal"
+"""`.json`이 아닌 확장자 — `reports/*.json`을 보고로 읽는 다른 소비자(M4 전송)가 집지 않게."""
 
 
 class EnrollError(Exception):
