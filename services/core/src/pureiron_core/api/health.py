@@ -29,6 +29,7 @@ class SchemaProbe(Protocol):
 class Health(BaseModel):
     status: Literal["ok"]
     version: str
+    uptime_s: float = 0.0
 
 
 class Check(BaseModel):
