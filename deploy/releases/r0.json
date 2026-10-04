@@ -29,5 +29,6 @@
     "app_expected": 1,
     "app_max_compatible": 2,
     "epoch": 1
-  }
+  },
+  "version": "2026.10.0"
 }
