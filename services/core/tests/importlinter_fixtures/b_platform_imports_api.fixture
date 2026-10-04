@@ -1,0 +1,3 @@
+# target: platform/_violation.py
+# breaks: (b) api > domain > platform
+from pureiron_core.api import health

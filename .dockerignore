@@ -1,0 +1,25 @@
+# 이미지 빌드 컨텍스트는 repo 루트. 소스·잠금 파일만 들어가게 한다(재현 빌드, 비밀 유출 방지).
+**
+!pyproject.toml
+!uv.lock
+!services/core/pyproject.toml
+!services/core/src/
+!services/core/migrations/
+!services/core/tests/
+!services/collector/pyproject.toml
+!services/collector/src/
+!services/updater/pyproject.toml
+!services/updater/src/
+!services/control-api/pyproject.toml
+!services/control-api/src/
+!packages/project-tools/pyproject.toml
+!packages/project-tools/src/
+!packages/bundle-tools/pyproject.toml
+!packages/bundle-tools/src/
+!services/web/
+!deploy/simulator/
+!deploy/build/normalize_venv.py
+**/__pycache__/
+**/*.pyc
+services/web/node_modules/
+services/web/dist/

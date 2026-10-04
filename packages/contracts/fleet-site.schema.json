@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pureiron.dev/contracts/fleet-site.schema.json",
+  "title": "PureIron fleet site (DesiredState)",
+  "description": "pureiron-fleet repo의 sites/<site>.yaml(ADR-022, plan §6.2). generation은 PR마다 정확히 +1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["site", "generation", "product", "project", "window"],
+  "properties": {
+    "site": {"$ref": "#/$defs/id"},
+    "generation": {"type": "integer", "minimum": 1},
+    "product": {"$ref": "#/$defs/release"},
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo", "version"],
+      "properties": {
+        "repo": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,100}$"},
+        "version": {"type": "string", "pattern": "^v[1-9][0-9]*$"}
+      }
+    },
+    "window": {"$ref": "#/$defs/window"}
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"},
+    "release": {"type": "string", "pattern": "^[0-9]{4}\\.[0-9]{1,2}\\.[0-9]+(-[0-9A-Za-z.]+)?$"},
+    "hhmm": {"type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"},
+    "window": {
+      "description": "적용 창: 반복(요일·시각) 또는 1회(e2e·긴급).",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["recurring"],
+          "properties": {
+            "recurring": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["tz", "days", "start", "end"],
+              "properties": {
+                "tz": {"type": "string", "minLength": 1},
+                "days": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {"enum": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]}
+                },
+                "start": {"$ref": "#/$defs/hhmm"},
+                "end": {"$ref": "#/$defs/hhmm"}
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["once"],
+          "properties": {
+            "once": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["start", "end"],
+              "properties": {
+                "start": {"type": "string", "format": "date-time"},
+                "end": {"type": "string", "format": "date-time"}
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

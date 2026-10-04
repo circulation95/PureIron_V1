@@ -1,0 +1,5 @@
+# site-db 업스트림 이미지 고정(PD-19, ADR-023). 번들·compose에는 retag된 pureiron/site-db:<version>만 쓴다.
+# site-db 변경은 앱 변경과 분리된 db-step release로만 한다(ADR-021). 갱신 시 version·digest를 함께 바꾼다.
+version=2.30.2-pg16
+upstream=timescale/timescaledb:2.30.2-pg16
+digest=sha256:6f139d56042989bd35f50ba5986e492cd32e35cc6778c50be2659add298dc09f

@@ -1,0 +1,22 @@
+version: v2
+modules:
+  - path: .
+lint:
+  use:
+    - STANDARD
+  except:
+    # 파일 위치·이름은 ADR-020 정본(packages/contracts/collector.proto)을 따른다.
+    - PACKAGE_DIRECTORY_MATCH
+    # Quality.GOOD, WriteResult.Status.REJECTED 등 enum 값 이름은 plan §6.1 계약 그대로다.
+    - ENUM_VALUE_PREFIX
+    # WriteResult.Status의 0값은 의도적으로 REJECTED(fail-safe)다.
+    - ENUM_ZERO_VALUE_SUFFIX
+    # 양방향 스트림 하나가 여러 메시지를 oneof로 나르므로 Request/Response 명명 규칙을 쓰지 않는다.
+    - RPC_REQUEST_STANDARD_NAME
+    - RPC_RESPONSE_STANDARD_NAME
+    - RPC_REQUEST_RESPONSE_UNIQUE
+    # 서비스 이름 Acquisition은 plan §6.1 계약 그대로다(생성 코드 클래스명에 반영됨).
+    - SERVICE_SUFFIX
+breaking:
+  use:
+    - FILE

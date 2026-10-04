@@ -1,0 +1,196 @@
+"""site-db(TimescaleDB) 통합 테스트 픽스처.
+
+실행 모드(환경변수):
+- 기본: compose(`deploy/compose/site.compose.yml` + `site.dev.yml`, 프로젝트 `pureiron-it`)를 올리고
+  테스트마다 새 데이터베이스를 만들어 현재 카탈로그로 migrate 한다.
+- `PUREIRON_TEST_EXISTING_DSN`: 이미 migrate된 DB를 그대로 쓴다(n-minus-1: N-1 앱 테스트를
+  N 스키마에서 실행). 새 DB가 필요한 테스트(`fresh_db`)와 compose 테스트는 건너뛴다.
+- `PUREIRON_IT_KEEP=1`: 끝나도 compose를 내리지 않는다(디버깅).
+"""
+
+from __future__ import annotations
+
+import os
+import secrets
+import shutil
+import subprocess
+import time
+import urllib.error
+import urllib.request
+import uuid
+from collections.abc import AsyncGenerator, Generator, Mapping
+from dataclasses import dataclass
+from pathlib import Path
+
+import asyncpg
+import pytest
+
+from pureiron_core.platform import migrate
+
+REPO = Path(__file__).resolve().parents[4]
+COMPOSE_DIR = REPO / "deploy" / "compose"
+MIGRATIONS = REPO / "services" / "core" / "migrations"
+PROJECT = "pureiron-it"
+DB_PORT = int(os.environ.get("PUREIRON_DEV_DB_PORT", "55432"))
+CORE_PORT = int(os.environ.get("PUREIRON_DEV_CORE_PORT", "18000"))
+WEB_PORT = int(os.environ.get("PUREIRON_IT_WEB_PORT", "18080"))
+EXISTING_DSN = os.environ.get("PUREIRON_TEST_EXISTING_DSN")
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    for item in items:
+        if EXISTING_DSN and ("fresh_db" in item.keywords or "compose" in item.keywords):
+            item.add_marker(pytest.mark.skip(reason="PUREIRON_TEST_EXISTING_DSN mode"))
+
+
+@dataclass(frozen=True, slots=True)
+class Stack:
+    secrets_dir: Path
+    password: str
+    updater_token: str
+    compose_env: Mapping[str, str]
+
+    def dsn(self, database: str) -> str:
+        return f"postgresql://pureiron@127.0.0.1:{DB_PORT}/{database}"
+
+    def cli_env(self, database: str, migrations_dir: Path = MIGRATIONS) -> dict[str, str]:
+        return {
+            **os.environ,
+            "PUREIRON_DB_DSN": self.dsn(database),
+            "PUREIRON_DB_PASSWORD_FILE": str(self.secrets_dir / "db_password"),
+            "PUREIRON_MIGRATIONS_DIR": str(migrations_dir),
+            "PYTHONUTF8": "1",
+        }
+
+
+def compose(
+    env: Mapping[str, str], *args: str, check: bool = True
+) -> subprocess.CompletedProcess[str]:
+    cmd = [
+        "docker",
+        "compose",
+        "-p",
+        PROJECT,
+        "-f",
+        str(COMPOSE_DIR / "site.compose.yml"),
+        "-f",
+        str(COMPOSE_DIR / "site.dev.yml"),
+        "--profile",
+        "dev",
+        *args,
+    ]
+    return subprocess.run(
+        cmd,
+        env={**os.environ, **env},
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=check,
+    )
+
+
+def wait_http(url: str, *, status: int = 200, timeout_s: float = 120.0) -> bytes:
+    deadline = time.monotonic() + timeout_s
+    last: str = ""
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=3) as response:
+                body: bytes = response.read()
+                if response.status == status:
+                    return body
+                last = f"status {response.status}"
+        except urllib.error.HTTPError as exc:
+            last = f"status {exc.code}: {exc.read()[:300]!r}"
+        except (urllib.error.URLError, ConnectionError, TimeoutError) as exc:
+            last = str(exc)
+        time.sleep(1)
+    raise AssertionError(f"{url} did not return {status} within {timeout_s}s (last: {last})")
+
+
+@pytest.fixture(scope="session")
+def stack(tmp_path_factory: pytest.TempPathFactory) -> Generator[Stack]:
+    if shutil.which("docker") is None:
+        pytest.skip("docker not available")
+    secrets_dir = tmp_path_factory.mktemp("secrets")
+    password = secrets.token_urlsafe(24)
+    token = secrets.token_urlsafe(32)
+    (secrets_dir / "db_password").write_text(password, encoding="utf-8")
+    (secrets_dir / "updater_token").write_text(token, encoding="utf-8")
+    env = {
+        "PUREIRON_SECRETS_DIR": str(secrets_dir),
+        "PUREIRON_DB_DATA": "pureiron-db",
+        "PUREIRON_WEB_BIND": "127.0.0.1",
+        "PUREIRON_WEB_PORT": str(WEB_PORT),
+    }
+    compose(env, "down", "-v", check=False)
+    try:
+        compose(env, "up", "-d", "--wait", "site-db")
+        migrated = compose(env, "run", "--rm", "--no-deps", "core", "migrate", "up", check=False)
+        assert migrated.returncode == 0, migrated.stdout + migrated.stderr
+        compose(env, "up", "-d")
+        yield Stack(
+            secrets_dir=secrets_dir, password=password, updater_token=token, compose_env=env
+        )
+    finally:
+        if os.environ.get("PUREIRON_IT_KEEP") != "1":
+            logs = compose(env, "logs", "--no-color", "--tail", "200", check=False)
+            (REPO / "artifacts").mkdir(exist_ok=True)
+            (REPO / "artifacts" / "integration-compose.log").write_text(
+                logs.stdout + logs.stderr, encoding="utf-8"
+            )
+            compose(env, "down", "-v", check=False)
+
+
+@pytest.fixture
+def fresh_database(stack: Stack) -> Generator[str]:
+    """빈 데이터베이스 이름(테스트 끝에 삭제)."""
+    name = f"it_{uuid.uuid4().hex[:12]}"
+    _admin_execute(stack, f'CREATE DATABASE "{name}"')
+    try:
+        yield name
+    finally:
+        _admin_execute(stack, f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+
+
+def _admin_execute(stack: Stack, sql: str) -> None:
+    """이벤트 루프와 무관하게(동기·비동기 테스트 모두에서) site-db 컨테이너의 psql로 실행한다."""
+    result = compose(
+        stack.compose_env,
+        "exec",
+        "-T",
+        "site-db",
+        "psql",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-U",
+        "pureiron",
+        "-d",
+        "postgres",
+        "-c",
+        sql,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@dataclass(frozen=True, slots=True)
+class SiteDb:
+    dsn: str
+    password: str | None
+
+
+@pytest.fixture
+async def site_db(request: pytest.FixtureRequest) -> AsyncGenerator[SiteDb]:
+    """현재 카탈로그로 migrate된 DB. EXISTING 모드에서는 주어진 DB를 그대로 쓴다."""
+    if EXISTING_DSN:
+        yield SiteDb(dsn=EXISTING_DSN, password=None)
+        return
+    stack: Stack = request.getfixturevalue("stack")
+    database: str = request.getfixturevalue("fresh_database")
+    db = SiteDb(dsn=stack.dsn(database), password=stack.password)
+    conn = await asyncpg.connect(db.dsn, password=db.password)
+    try:
+        await migrate.up(conn, migrate.load_catalog(MIGRATIONS), release="it")
+    finally:
+        await conn.close()
+    yield db

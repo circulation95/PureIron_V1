@@ -1,0 +1,11 @@
+- id: temp-high
+  priority: high
+  setpoint: 80
+  tag: line1/temp
+  type: above
+- deadband: 1.5
+  id: temp-low
+  on_delay_s: 10
+  setpoint: 5
+  tag: line1/temp
+  type: below

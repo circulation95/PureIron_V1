@@ -1,0 +1,6 @@
+{
+  "include": ["tools", "tests"],
+  "extraPaths": ["tools"],
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "strict"
+}

@@ -1,0 +1,28 @@
+[project]
+name = "pureiron-core"
+version = "0.1.0"
+description = "현장 core 서비스 — 태그·알람·이력·인증·감사·실시간·프로젝트 적용의 단일 조립 지점"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.118",
+    "uvicorn>=0.37",
+    "asyncpg>=0.30",
+    "grpcio>=1.75",
+    "protobuf>=6.32",
+    "ruamel.yaml>=0.18.15",
+]
+
+[project.scripts]
+pureiron-core = "pureiron_core.cli:main"
+
+[build-system]
+requires = ["uv_build==0.10.12"]
+build-backend = "uv_build"
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+# generated ≠ authored (ADR-028, PD-20): 생성물(.py·.pyi)의 진단은 끄고, 타입은 .pyi(mypy-protobuf)를
+# 정본으로 authored 코드에서 strict 소비한다. 생성 .pyi 자체의 진단은 생성기·types-protobuf 버전 조합 문제라 제외.
+ignore = ["src/pureiron_core/_gen/**"]

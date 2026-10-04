@@ -1,0 +1,5 @@
+credentials: secret://plc-1
+host: 10.0.0.5
+id: plc-1
+port: 502
+protocol: modbus_tcp

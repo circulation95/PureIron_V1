@@ -1,0 +1,23 @@
+[project]
+name = "pureiron-control-api"
+version = "0.1.0"
+description = "중앙 control-api — M4에서 구현"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.118",
+]
+
+[build-system]
+requires = ["uv_build==0.10.12"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "pureiron_control"
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+# generated ≠ authored (ADR-028, PD-20): 생성물(.py·.pyi)의 진단은 끄고, 타입은 .pyi(mypy-protobuf)를
+# 정본으로 authored 코드에서 strict 소비한다. 생성 .pyi 자체의 진단은 생성기·types-protobuf 버전 조합 문제라 제외.
+ignore = ["src/pureiron_control/_gen/**"]

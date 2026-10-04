@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pureiron.dev/contracts/manifest.schema.json",
+  "title": "PureIron signed bundle manifest",
+  "description": ".pib 번들의 manifest.json(ADR-023, plan §6.2). release key로 서명된다. 이미지 신원은 config_digest.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "kind",
+    "site_id",
+    "generation",
+    "created_at",
+    "product_release",
+    "project",
+    "window",
+    "files",
+    "fleet_commit"
+  ],
+  "properties": {
+    "format": {"const": 1},
+    "kind": {"const": "site"},
+    "site_id": {"$ref": "fleet-site.schema.json#/$defs/id"},
+    "generation": {"type": "integer", "minimum": 1},
+    "created_at": {"type": "string", "format": "date-time"},
+    "product_release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "min_updater", "images", "schema"],
+      "properties": {
+        "version": {"$ref": "fleet-site.schema.json#/$defs/release"},
+        "min_updater": {"$ref": "#/$defs/semver"},
+        "images": {
+          "type": "object",
+          "required": ["core", "collector", "web", "site-db"],
+          "propertyNames": {"pattern": "^[a-z][a-z0-9-]{0,31}$"},
+          "additionalProperties": {"$ref": "#/$defs/image"}
+        },
+        "schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["target", "app_expected", "app_max_compatible", "compat_app_min"],
+          "properties": {
+            "target": {"type": "integer", "minimum": 1},
+            "app_expected": {"type": "integer", "minimum": 1},
+            "app_max_compatible": {"type": "integer", "minimum": 1},
+            "compat_app_min": {"$ref": "fleet-site.schema.json#/$defs/release"}
+          }
+        }
+      }
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id", "version", "content_hash"],
+      "properties": {
+        "project_id": {"$ref": "fleet-site.schema.json#/$defs/id"},
+        "version": {"type": "string", "pattern": "^v[1-9][0-9]*$"},
+        "content_hash": {"$ref": "#/$defs/sha256"},
+        "absorbs": {
+          "type": "object",
+          "propertyNames": {"$ref": "fleet-site.schema.json#/$defs/id"},
+          "additionalProperties": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
+    "window": {"$ref": "fleet-site.schema.json#/$defs/window"},
+    "files": {
+      "description": "번들 안 상대 경로 → sha256.",
+      "type": "object",
+      "propertyNames": {"pattern": "^(?!(.*/)?\\.\\.?(/|$))[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$"},
+      "additionalProperties": {"$ref": "#/$defs/sha256"}
+    },
+    "trust_update": {
+      "description": "root 서명된 min_cert_serial 상승(선택). min_cert_serial은 이것으로만 오른다.",
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["min_cert_serial"],
+          "properties": {"min_cert_serial": {"type": "integer", "minimum": 0}}
+        }
+      ]
+    },
+    "fleet_commit": {"type": "string", "pattern": "^[0-9a-f]{6,64}$"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "semver": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["config_digest", "tag"],
+      "properties": {
+        "config_digest": {"$ref": "#/$defs/sha256"},
+        "registry_digest": {"$ref": "#/$defs/sha256"},
+        "upstream": {"type": "string", "pattern": "^[^\\s]+@sha256:[0-9a-f]{64}$"},
+        "tag": {"type": "string", "pattern": "^pureiron/[a-z0-9-]+:[A-Za-z0-9_.-]+$"}
+      }
+    }
+  }
+}

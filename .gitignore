@@ -4,8 +4,9 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
-dist/
-build/
+/dist/
+services/*/dist/
+/build/
 .pytest_cache/
 .ruff_cache/
 .coverage
@@ -34,3 +35,9 @@ docs/pr-evidence/
 Thumbs.db
 .vscode/
 .idea/
+
+# 로컬 도구 바이너리(scripts/tools.sh가 버전·sha256 고정으로 설치)
+.tools/
+# 빌드·게이트 산출물
+artifacts/
+out/

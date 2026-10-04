@@ -3,12 +3,12 @@
   "docs": [
     {
       "audience": "both",
-      "bytes": 42170,
+      "bytes": 42447,
       "id": "adr-index",
       "last_verified": "2026-10-04",
       "path": "docs/wiki/adr/index.md",
       "section_count": 33,
-      "sha256": "5ffb4af494cf0e23b03376b077e0cc41a0b0dcdd94f6bdc63fa54c7c954248f7",
+      "sha256": "821a31b4d2c83c3aeb8a95faa255aa0d71019acdb319fbd1305590a2cc964cc3",
       "source_globs": [],
       "sources": [
         "docs/ADR.md",
@@ -133,12 +133,12 @@
     },
     {
       "audience": "both",
-      "bytes": 17804,
+      "bytes": 19236,
       "id": "sot-architecture",
       "last_verified": "2026-07-04",
       "path": "docs/wiki/sot/architecture.md",
-      "section_count": 18,
-      "sha256": "0c582fce74088233db40080cc288c2afd8aa09f19572fd05eba47a27212990cc",
+      "section_count": 19,
+      "sha256": "86dcecd5e041c9c53108a16fecf8428bb1652a0ff5c4bb0284624b37487854ce",
       "source_globs": [],
       "sources": [
         "docs/ARCHITECTURE.md",
@@ -150,12 +150,12 @@
     },
     {
       "audience": "both",
-      "bytes": 20339,
+      "bytes": 22864,
       "id": "sot-data-contracts",
       "last_verified": "2026-08-22",
       "path": "docs/wiki/sot/data-contracts.md",
-      "section_count": 15,
-      "sha256": "31742d4941278174715e91ad667cfab07afca4c3721dc7bf462e6b63b570b413",
+      "section_count": 16,
+      "sha256": "7123abcbb5dbd9a5ab920be8503bb053100aaee020a4879b5a4efaaa35f2495e",
       "source_globs": [
         "projects/demo-coffee/**/*.yaml",
         "projects/demo-coffee/**/*.json"
@@ -235,12 +235,12 @@
     },
     {
       "audience": "both",
-      "bytes": 8499,
+      "bytes": 10367,
       "id": "sot-runtime-config",
       "last_verified": "2026-06-26",
       "path": "docs/wiki/sot/runtime-config.md",
-      "section_count": 11,
-      "sha256": "9ae8ab12411a28653b217197f3a725fb4128c93f1289580ca4c255ed25ee354a",
+      "section_count": 12,
+      "sha256": "39f75165aca8f975de6b9f563fe5603a5c08807bf9af1a55af78eeb3291f6129",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/config.py",
@@ -251,12 +251,12 @@
     },
     {
       "audience": "both",
-      "bytes": 29481,
+      "bytes": 32918,
       "id": "sot-testing",
       "last_verified": "2026-08-22",
       "path": "docs/wiki/sot/testing.md",
-      "section_count": 17,
-      "sha256": "77877ccdd7d0b65f5859ff64f29eb246e40018d66c596e297d973010f3be4636",
+      "section_count": 18,
+      "sha256": "3d8c21819eab83fe0c2eae97ab2565bb614ac661c7774adf3583d32e3be300e3",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/pyproject.toml",

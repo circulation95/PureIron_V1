@@ -1,0 +1,4 @@
+# target: acquisition/_allowed.py
+# breaks: (none)
+# importing another domain's ports is allowed
+from pureiron_core.project import ports

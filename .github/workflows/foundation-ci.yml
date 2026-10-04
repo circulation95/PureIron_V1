@@ -1,0 +1,182 @@
+# G1 게이트(ADR-028, plan §5 M1). PoC 무료 모드(PD-23): self-hosted runner `g1`(개발 PC WSL2 Ubuntu)에서만 돈다.
+# 각 job은 scripts/g1.sh의 같은 이름 job을 호출한다 — 로컬과 CI가 같은 명령을 쓴다.
+name: foundation-ci
+
+on:
+  pull_request:
+    # labeled: `full-gate` 라벨을 붙이면 조건부 job까지 다시 돈다.
+    types: [opened, synchronize, reopened, labeled]
+    paths: &gate-paths
+      - services/**
+      - packages/**
+      - deploy/**
+      - tests/e2e/**
+      - pyproject.toml
+      - uv.lock
+      - scripts/g1.sh
+      - scripts/tools.sh
+      - .dockerignore
+      - .github/workflows/foundation-*.yml
+  push:
+    branches: [master]
+    paths: *gate-paths
+  schedule:
+    - cron: "0 17 * * *" # 02:00 KST nightly: 조건부 job(n-minus-1·repro-build) 포함 전체 실행
+  workflow_dispatch:
+
+concurrency:
+  # PR은 새 커밋이 오면 이전 실행을 취소한다. master push·nightly는 서로 취소하지 않는다.
+  group: foundation-ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUTF8: "1"
+  UV_VERSION: "0.10.12"
+  NODE_VERSION: "22"
+  # contracts-diff·migration-lint 비교 기준: PR은 base 브랜치, master push는 직전 커밋.
+  BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || (github.event_name == 'push' && github.event.before || 'origin/master') }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  plan:
+    # 라벨 이벤트는 `full-gate`일 때만 게이트를 다시 돌린다(다른 라벨로 runner를 점유하지 않게).
+    if: github.event.action != 'labeled' || github.event.label.name == 'full-gate'
+    runs-on: [self-hosted, g1]
+    outputs:
+      n_minus_1: ${{ steps.decide.outputs.n_minus_1 }}
+      repro_build: ${{ steps.decide.outputs.repro_build }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          FULL_GATE: ${{ contains(github.event.pull_request.labels.*.name, 'full-gate') }}
+        run: |
+          if [ "$EVENT" != "pull_request" ] || [ "$FULL_GATE" = "true" ]; then
+            echo "n_minus_1=true" >> "$GITHUB_OUTPUT"
+            echo "repro_build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$BASE_REF"...HEAD)"
+          printf '%s\n' "$changed"
+          if printf '%s\n' "$changed" | grep -qE '^services/core/migrations/|^services/core/src/.*db'; then
+            echo "n_minus_1=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "n_minus_1=false" >> "$GITHUB_OUTPUT"
+          fi
+          if printf '%s\n' "$changed" | grep -qE '(^|/)Dockerfile[^/]*$|^uv\.lock$|package-lock\.json$|^deploy/build/'; then
+            echo "repro_build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "repro_build=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  lint-type:
+    needs: plan
+    runs-on: [self-hosted, g1]
+    steps: &python-job
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - run: bash scripts/g1.sh "$GITHUB_JOB"
+
+  import-linter:
+    needs: plan
+    runs-on: [self-hosted, g1]
+    steps: *python-job
+
+  unit:
+    needs: plan
+    runs-on: [self-hosted, g1]
+    steps: *python-job
+
+  contracts-diff:
+    needs: plan
+    runs-on: [self-hosted, g1]
+    steps: *python-job
+
+  migration-lint:
+    needs: plan
+    runs-on: [self-hosted, g1]
+    steps: *python-job
+
+  no-customer-branching:
+    needs: plan
+    runs-on: [self-hosted, g1]
+    steps: *python-job
+
+  contracts-drift:
+    needs: plan
+    runs-on: [self-hosted, g1]
+    steps: &node-job
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: bash scripts/g1.sh "$GITHUB_JOB"
+
+  web:
+    needs: plan
+    runs-on: [self-hosted, g1]
+    steps: *node-job
+
+  integration-compose:
+    needs: plan
+    runs-on: [self-hosted, g1]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - run: bash scripts/g1.sh integration-compose
+      - if: failure()
+        run: tail -n 200 artifacts/integration-compose.log || true
+
+  n-minus-1:
+    needs: plan
+    if: needs.plan.outputs.n_minus_1 == 'true'
+    runs-on: [self-hosted, g1]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - run: bash scripts/g1.sh n-minus-1
+
+  repro-build:
+    needs: plan
+    if: needs.plan.outputs.repro_build == 'true'
+    runs-on: [self-hosted, g1]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - run: bash scripts/g1.sh repro-build

@@ -1,0 +1,5 @@
+# no-customer-branching(G1): 제품 소스(services/*/src, packages/*/src)에 나오면 안 되는 고객·현장 이름.
+# 한 줄에 하나, 대소문자 무시 부분 일치. 고객 repo를 만들 때 그 project_id·site_id를 여기에 추가한다.
+# 데모·fixture 이름도 제품 코드에 박히면 안 되므로 함께 둔다.
+demo-coffee
+acme

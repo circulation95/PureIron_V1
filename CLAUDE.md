@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-> **PureIron_V1** — Foundation 재설계의 새 코드 repo다. 지금은 위키·문서·도구만 있고 서비스 코드(`services/`·`packages/`·`deploy/`)는 M1부터 추가된다. 이 파일의 backend/frontend/docker 명령·`scripts/execute.py`(harness)는 legacy [`PureIron_ignition@legacy-final`](https://github.com/circulation95/PureIron_ignition/tree/legacy-final)에서만 동작한다.
+> **PureIron_V1** — Foundation 재설계의 새 코드 repo다. M1(2026-10-04)부터 서비스 코드 골격(`services/`·`packages/`·`deploy/`)과 G1 게이트(`scripts/g1.sh`)가 있다. `scripts/execute.py`(harness)는 legacy [`PureIron_ignition@legacy-final`](https://github.com/circulation95/PureIron_ignition/tree/legacy-final)에서만 동작한다.
 
 PureIron — 중소 산업시설용 경량 오픈소스 SCADA: FastAPI 백엔드 + React 프론트엔드 + 3D 트윈 + AI 멀티에이전트 채팅.
 
@@ -33,26 +33,22 @@ legacy [`PureIron_ignition@legacy-final`](https://github.com/circulation95/PureI
 ## Commands
 
 ```bash
-# Backend
-cd backend && uv sync
-uv run uvicorn pureiron.main:app --reload --port 8000
-uv run pytest tests/ -v
-uv run ruff check .
+# V1 G1 게이트 (로컬 = CI foundation-ci, 상세: docs/wiki/sot/testing.md 11절)
+uv sync --all-packages
+bash scripts/g1.sh all                    # lint-type·import-linter·unit·contracts-diff/drift·migration-lint·web
+bash scripts/g1.sh integration-compose    # 이미지 빌드 + compose + TimescaleDB 통합 테스트
+bash scripts/g1.sh contracts-gen          # 계약 생성물 갱신(OpenAPI·proto·schema.d.ts)
 
-# Frontend
-cd frontend && npm install && npm run dev   # http://localhost:3000
-npm run lint                                  # tsc --noEmit
-
-# Docker
-docker compose up
-docker compose -f docker-compose.dev.yml up  # OPC-UA + Modbus 시뮬레이터 포함
+# core
+uv run pureiron-core migrate status --json
+docker compose -p pureiron -f deploy/compose/site.compose.yml -f deploy/compose/site.dev.yml --profile dev up -d
 
 # 문서 SOT (load→save→build→check)
 python scripts/wiki.py build
 python scripts/wiki.py check
 ```
 
-기본 계정(dev): `admin` / `admin`. 환경변수 전체 표는 [runtime-config](docs/wiki/sot/runtime-config.md)(정본은 `backend/src/pureiron/config.py`).
+V1 환경변수 표는 [runtime-config](docs/wiki/sot/runtime-config.md)의 `V1 환경변수` 절(정본은 `services/core/src/pureiron_core/settings.py`). legacy backend/frontend/docker 명령은 `PureIron_ignition@legacy-final`에서만 동작한다.
 
 ## Wiki/SOT 작업 규율
 

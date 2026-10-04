@@ -1,0 +1,9 @@
+# 개발·CI 전용 override: 호스트 loopback에 site-db·core를 노출한다(현장 compose에는 없음).
+#   docker compose -p pureiron -f site.compose.yml -f site.dev.yml --profile dev up -d
+services:
+  site-db:
+    ports:
+      - 127.0.0.1:${PUREIRON_DEV_DB_PORT:-55432}:5432
+  core:
+    ports:
+      - 127.0.0.1:${PUREIRON_DEV_CORE_PORT:-18000}:8000
