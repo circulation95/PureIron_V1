@@ -7,9 +7,9 @@
 # 열: doc_id	path	anchor	offset	limit	bytes	level	heading
 #   offset/limit = 파일 전체 기준 1-indexed 시작 줄 / 줄 수 (Read 인자 그대로)
 #   bytes        = 해당 절을 읽는 비용 (한국어는 대략 1.5~2바이트/토큰)
-adr-index	docs/wiki/adr/index.md	architecture-decision-records	19	639	42051	h1	Architecture Decision Records
+adr-index	docs/wiki/adr/index.md	architecture-decision-records	19	658	45970	h1	Architecture Decision Records
 adr-index	docs/wiki/adr/index.md	1-adr-경계	25	15	723	h2	1. ADR 경계
-adr-index	docs/wiki/adr/index.md	2-제품사업을-기준으로-한-최상위-결정	40	12	917	h2	2. 제품·사업을 기준으로 한 최상위 결정
+adr-index	docs/wiki/adr/index.md	2-제품사업을-기준으로-한-최상위-결정	40	12	1038	h2	2. 제품·사업을 기준으로 한 최상위 결정
 adr-index	docs/wiki/adr/index.md	3-기술-adr-요약	52	35	3226	h2	3. 기술 ADR 요약
 adr-index	docs/wiki/adr/index.md	adr-001-no-orm	87	18	712	h2	ADR-001: No ORM
 adr-index	docs/wiki/adr/index.md	adr-002-no-plugin-system	105	18	1391	h2	ADR-002: No Plugin System
@@ -23,28 +23,28 @@ adr-index	docs/wiki/adr/index.md	adr-009-tagstore-lock-discipline	239	19	863	h2	
 adr-index	docs/wiki/adr/index.md	adr-010-event-driven-tag-updates	258	20	999	h2	ADR-010: Event-driven Tag Updates
 adr-index	docs/wiki/adr/index.md	adr-011-frontend-typescript-strictness	278	18	769	h2	ADR-011: Frontend TypeScript Strictness
 adr-index	docs/wiki/adr/index.md	adr-012-tag-definition-db-sot-runtime-value-volatile	296	21	1245	h2	ADR-012: Tag Definition DB SoT, Runtime Value Volatile
-adr-index	docs/wiki/adr/index.md	adr-013-v1-does-not-replace-existing-plc-control	317	20	1087	h2	ADR-013: v1 Does Not Replace Existing PLC Control
-adr-index	docs/wiki/adr/index.md	adr-014-simulator3d-twinagent-are-assistive-not-autonomous-control	337	20	1033	h2	ADR-014: Simulator·3D Twin·Agent Are Assistive, Not Autonomous Control
-adr-index	docs/wiki/adr/index.md	adr-015-start-as-field-deployed-solution-not-finished-saas	357	20	1065	h2	ADR-015: Start as Field-deployed Solution, Not Finished SaaS
-adr-index	docs/wiki/adr/index.md	adr-016-sot--projection--generated-boundary	377	18	806	h2	ADR-016: SOT / Projection / Generated Boundary
-adr-index	docs/wiki/adr/index.md	adr-017-operator-ui-over-marketing-ui	395	18	813	h2	ADR-017: Operator UI Over Marketing UI
-adr-index	docs/wiki/adr/index.md	adr-018-device-health-is-not-a-tag	413	20	1165	h2	ADR-018: Device Health Is Not a Tag
-adr-index	docs/wiki/adr/index.md	adr-019-현장-서비스-분할--collector--core--ai--web	433	21	1912	h2	ADR-019: 현장 서비스 분할 — collector / core / ai / web
-adr-index	docs/wiki/adr/index.md	adr-020-collector--core-grpc-계약--ack--replay-의미론	454	20	1875	h2	ADR-020: collector ↔ core gRPC 계약 · Ack · replay 의미론
-adr-index	docs/wiki/adr/index.md	adr-021-timescaledb-유지--기록-정책	474	19	1207	h2	ADR-021: TimescaleDB 유지 · 기록 정책
-adr-index	docs/wiki/adr/index.md	adr-022-desiredstate-gitops--generation-카운터	493	22	2097	h2	ADR-022: DesiredState GitOps · generation 카운터
-adr-index	docs/wiki/adr/index.md	adr-023-단일-서명-번들--신뢰-루트--이미지-신원config-digest	515	20	2189	h2	ADR-023: 단일 서명 번들 · 신뢰 루트 · 이미지 신원(config digest)
-adr-index	docs/wiki/adr/index.md	adr-024-확장형-마이그레이션--epoch-envelope--백업-경계	535	20	2043	h2	ADR-024: 확장형 마이그레이션 · epoch envelope · 백업 경계
-adr-index	docs/wiki/adr/index.md	adr-025-프로젝트-정본--드래프트-회수단조-site_rev	555	19	1635	h2	ADR-025: 프로젝트 정본 · 드래프트 회수(단조 site_rev)
-adr-index	docs/wiki/adr/index.md	adr-026-repo-레이아웃--고객별-repo	574	19	1532	h2	ADR-026: repo 레이아웃 · 고객별 repo
-adr-index	docs/wiki/adr/index.md	adr-027-지원-호스트-매트릭스	593	19	1281	h2	ADR-027: 지원 호스트 매트릭스
-adr-index	docs/wiki/adr/index.md	adr-028-3단-검증-게이트--generated--authored--runner-격리	612	20	2502	h2	ADR-028: 3단 검증 게이트 · generated ≠ authored · runner 격리
-adr-index	docs/wiki/adr/index.md	4-새-adr-추가-규칙	632	26	455	h2	4. 새 ADR 추가 규칙
+adr-index	docs/wiki/adr/index.md	adr-013-plc-로직은-바꾸지-않는다--기존-주소-쓰기는-가드레일-아래-현장별로-연다	317	39	4575	h2	ADR-013: PLC 로직은 바꾸지 않는다 · 기존 주소 쓰기는 가드레일 아래 현장별로 연다
+adr-index	docs/wiki/adr/index.md	adr-014-simulator3d-twinagent-are-assistive-not-autonomous-control	356	20	1159	h2	ADR-014: Simulator·3D Twin·Agent Are Assistive, Not Autonomous Control
+adr-index	docs/wiki/adr/index.md	adr-015-start-as-field-deployed-solution-not-finished-saas	376	20	1065	h2	ADR-015: Start as Field-deployed Solution, Not Finished SaaS
+adr-index	docs/wiki/adr/index.md	adr-016-sot--projection--generated-boundary	396	18	806	h2	ADR-016: SOT / Projection / Generated Boundary
+adr-index	docs/wiki/adr/index.md	adr-017-operator-ui-over-marketing-ui	414	18	813	h2	ADR-017: Operator UI Over Marketing UI
+adr-index	docs/wiki/adr/index.md	adr-018-device-health-is-not-a-tag	432	20	1165	h2	ADR-018: Device Health Is Not a Tag
+adr-index	docs/wiki/adr/index.md	adr-019-현장-서비스-분할--collector--core--ai--web	452	21	1912	h2	ADR-019: 현장 서비스 분할 — collector / core / ai / web
+adr-index	docs/wiki/adr/index.md	adr-020-collector--core-grpc-계약--ack--replay-의미론	473	20	2059	h2	ADR-020: collector ↔ core gRPC 계약 · Ack · replay 의미론
+adr-index	docs/wiki/adr/index.md	adr-021-timescaledb-유지--기록-정책	493	19	1207	h2	ADR-021: TimescaleDB 유지 · 기록 정책
+adr-index	docs/wiki/adr/index.md	adr-022-desiredstate-gitops--generation-카운터	512	22	2097	h2	ADR-022: DesiredState GitOps · generation 카운터
+adr-index	docs/wiki/adr/index.md	adr-023-단일-서명-번들--신뢰-루트--이미지-신원config-digest	534	20	2189	h2	ADR-023: 단일 서명 번들 · 신뢰 루트 · 이미지 신원(config digest)
+adr-index	docs/wiki/adr/index.md	adr-024-확장형-마이그레이션--epoch-envelope--백업-경계	554	20	2043	h2	ADR-024: 확장형 마이그레이션 · epoch envelope · 백업 경계
+adr-index	docs/wiki/adr/index.md	adr-025-프로젝트-정본--드래프트-회수단조-site_rev	574	19	1635	h2	ADR-025: 프로젝트 정본 · 드래프트 회수(단조 site_rev)
+adr-index	docs/wiki/adr/index.md	adr-026-repo-레이아웃--고객별-repo	593	19	1532	h2	ADR-026: repo 레이아웃 · 고객별 repo
+adr-index	docs/wiki/adr/index.md	adr-027-지원-호스트-매트릭스	612	19	1281	h2	ADR-027: 지원 호스트 매트릭스
+adr-index	docs/wiki/adr/index.md	adr-028-3단-검증-게이트--generated--authored--runner-격리	631	20	2502	h2	ADR-028: 3단 검증 게이트 · generated ≠ authored · runner 격리
+adr-index	docs/wiki/adr/index.md	4-새-adr-추가-규칙	651	26	455	h2	4. 새 ADR 추가 규칙
 archive-manual-legacy	docs/wiki/archive/manual-legacy.md	archive-legacy-user-manual	12	35	2432	h1	(Archive) Legacy User Manual
 archive-manual-legacy	docs/wiki/archive/manual-legacy.md	원본	16	4	150	h2	원본
 archive-manual-legacy	docs/wiki/archive/manual-legacy.md	주제--sot-추출-맵	20	24	1817	h2	주제 → SOT 추출 맵
 archive-manual-legacy	docs/wiki/archive/manual-legacy.md	상태	44	3	142	h2	상태
-gtm-first-contract	docs/wiki/gtm/first-contract.md	first-contract	14	273	24481	h1	First Contract
+gtm-first-contract	docs/wiki/gtm/first-contract.md	first-contract	14	273	24969	h1	First Contract
 gtm-first-contract	docs/wiki/gtm/first-contract.md	이-문서의-원천	22	6	292	h2	이 문서의 원천
 gtm-first-contract	docs/wiki/gtm/first-contract.md	결정-상태-표기	28	11	449	h2	결정 상태 표기
 gtm-first-contract	docs/wiki/gtm/first-contract.md	초기-타깃-고객-가설	39	10	1037	h2	초기 타깃 고객 가설
@@ -63,8 +63,8 @@ gtm-first-contract	docs/wiki/gtm/first-contract.md	현장-설치-범위--제외-
 gtm-first-contract	docs/wiki/gtm/first-contract.md	실제-현장-poc-기본-범위-확정-창업자-인터뷰	156	13	910	h3	실제 현장 PoC 기본 범위 (`확정`, 창업자 인터뷰)
 gtm-first-contract	docs/wiki/gtm/first-contract.md	첫-poc-plc--프로토콜--네트워크-원칙-확정-추가-창업자-인터뷰	169	9	924	h3	첫 PoC PLC / 프로토콜 / 네트워크 원칙 (`확정`, 추가 창업자 인터뷰)
 gtm-first-contract	docs/wiki/gtm/first-contract.md	제외-확정-창업자-인터뷰--productsotproductmdmvp-제외--제한--agent-rulessotagent-rulesmd제품-판단-원칙-정본	178	17	676	h3	제외 (`확정`, 창업자 인터뷰 + [product](../sot/product.md#mvp-제외--제한) · [agent-rules](../sot/agent-rules.md#제품-판단-원칙) 정본)
-gtm-first-contract	docs/wiki/gtm/first-contract.md	plc-제어-불간섭을-계약제안서에서-표현하는-법	195	9	1023	h2	PLC 제어 불간섭을 계약/제안서에서 표현하는 법
-gtm-first-contract	docs/wiki/gtm/first-contract.md	보안--데이터--설비-안정성-faq	204	15	1600	h2	보안 / 데이터 / 설비 안정성 FAQ
+gtm-first-contract	docs/wiki/gtm/first-contract.md	plc-제어-불간섭을-계약제안서에서-표현하는-법	195	9	1381	h2	PLC 제어 불간섭을 계약/제안서에서 표현하는 법
+gtm-first-contract	docs/wiki/gtm/first-contract.md	보안--데이터--설비-안정성-faq	204	15	1730	h2	보안 / 데이터 / 설비 안정성 FAQ
 gtm-first-contract	docs/wiki/gtm/first-contract.md	데이터-저장--배포-방식-확정-추가-창업자-인터뷰	219	15	1235	h2	데이터 저장 / 배포 방식 (`확정`, 추가 창업자 인터뷰)
 gtm-first-contract	docs/wiki/gtm/first-contract.md	중앙-관제--승인-기반-제어는-장기-방향-확정-v1첫-계약-범위-아님	226	8	836	h3	중앙 관제 / 승인 기반 제어는 장기 방향 (`확정`, v1/첫 계약 범위 아님)
 gtm-first-contract	docs/wiki/gtm/first-contract.md	poc-성공-기준과-유료-전환-조건	234	30	2155	h2	PoC 성공 기준과 유료 전환 조건
@@ -87,11 +87,11 @@ report-mvp-gap	docs/wiki/reports/mvp-gap.md	다음-구현-우선순위-issue-후
 report-mvp-gap	docs/wiki/reports/mvp-gap.md	다음-후보-backlog-잔여만	80	8	902	h2	다음 후보 backlog (잔여만)
 report-mvp-gap	docs/wiki/reports/mvp-gap.md	v1에서-유지되는-제외-backlog-낮춤	88	9	456	h2	v1에서 유지되는 제외 (backlog 낮춤)
 report-mvp-gap	docs/wiki/reports/mvp-gap.md	검증	97	8	147	h2	검증
-sot-agent-rules	docs/wiki/sot/agent-rules.md	agent-rules-sot	15	213	16958	h1	Agent Rules SOT
+sot-agent-rules	docs/wiki/sot/agent-rules.md	agent-rules-sot	15	213	17626	h1	Agent Rules SOT
 sot-agent-rules	docs/wiki/sot/agent-rules.md	이-문서의-역할	23	33	2198	h2	이 문서의 역할
 sot-agent-rules	docs/wiki/sot/agent-rules.md	작업-전-컨텍스트-로딩-순서	56	17	632	h2	작업 전 컨텍스트 로딩 순서
-sot-agent-rules	docs/wiki/sot/agent-rules.md	제품-판단-원칙	73	15	519	h2	제품 판단 원칙
-sot-agent-rules	docs/wiki/sot/agent-rules.md	불변-규칙	88	20	3066	h2	불변 규칙
+sot-agent-rules	docs/wiki/sot/agent-rules.md	제품-판단-원칙	73	15	739	h2	제품 판단 원칙
+sot-agent-rules	docs/wiki/sot/agent-rules.md	불변-규칙	88	20	3514	h2	불변 규칙
 sot-agent-rules	docs/wiki/sot/agent-rules.md	legacy-코드-참고-규칙-pureiron_ignition	108	10	933	h2	legacy 코드 참고 규칙 (PureIron_ignition)
 sot-agent-rules	docs/wiki/sot/agent-rules.md	no-config-ui-범위	118	19	1794	h2	“No config UI” 범위
 sot-agent-rules	docs/wiki/sot/agent-rules.md	구현-작업-규율	137	17	571	h2	구현 작업 규율
@@ -111,9 +111,9 @@ sot-api-events	docs/wiki/sot/api-events.md	클라이언트--서버	90	7	163	h3	�
 sot-api-events	docs/wiki/sot/api-events.md	서버--클라이언트	97	12	967	h3	서버 → 클라이언트
 sot-api-events	docs/wiki/sot/api-events.md	chat-sse-이벤트	109	19	815	h2	Chat SSE 이벤트
 sot-api-events	docs/wiki/sot/api-events.md	내부-이벤트-버스	128	18	829	h2	내부 이벤트 버스
-sot-architecture	docs/wiki/sot/architecture.md	architecture-sot	14	229	18848	h1	Architecture SOT
+sot-architecture	docs/wiki/sot/architecture.md	architecture-sot	14	229	19036	h1	Architecture SOT
 sot-architecture	docs/wiki/sot/architecture.md	이-문서의-원천	24	6	480	h2	이 문서의 원천
-sot-architecture	docs/wiki/sot/architecture.md	아키텍처-경계	30	10	568	h2	아키텍처 경계
+sot-architecture	docs/wiki/sot/architecture.md	아키텍처-경계	30	10	657	h2	아키텍처 경계
 sot-architecture	docs/wiki/sot/architecture.md	core-domain-model-boundary-sot	40	22	4209	h2	Core Domain Model Boundary (SoT)
 sot-architecture	docs/wiki/sot/architecture.md	통신-레이어	62	10	408	h2	통신 레이어
 sot-architecture	docs/wiki/sot/architecture.md	백엔드-주요-모듈-backendsrcpureiron	72	19	1205	h2	백엔드 주요 모듈 (`backend/src/pureiron/`)
@@ -125,11 +125,11 @@ sot-architecture	docs/wiki/sot/architecture.md	이벤트-버스--잠금-규율	1
 sot-architecture	docs/wiki/sot/architecture.md	데이터-흐름-태그-쓰기	166	14	293	h2	데이터 흐름: 태그 쓰기
 sot-architecture	docs/wiki/sot/architecture.md	db-마이그레이션	180	6	343	h2	DB 마이그레이션
 sot-architecture	docs/wiki/sot/architecture.md	프론트엔드-경계	186	12	351	h2	프론트엔드 경계
-sot-architecture	docs/wiki/sot/architecture.md	목표-설계미구현	198	45	4492	h2	목표 설계(미구현)
+sot-architecture	docs/wiki/sot/architecture.md	목표-설계미구현	198	45	4591	h2	목표 설계(미구현)
 sot-architecture	docs/wiki/sot/architecture.md	서비스-구성-adr-019	202	15	1340	h3	서비스 구성 (ADR-019)
 sot-architecture	docs/wiki/sot/architecture.md	통신-경계-adr-020	217	7	556	h3	통신 경계 (ADR-020)
 sot-architecture	docs/wiki/sot/architecture.md	배포중앙-adr-022-adr-023	224	7	801	h3	배포·중앙 (ADR-022, ADR-023)
-sot-architecture	docs/wiki/sot/architecture.md	v1-구현-현황-m1-skeleton-2026-10-04	231	12	1431	h3	V1 구현 현황 (M1 skeleton, 2026-10-04)
+sot-architecture	docs/wiki/sot/architecture.md	v1-구현-현황-m1-skeleton-2026-10-04	231	12	1530	h3	V1 구현 현황 (M1 skeleton, 2026-10-04)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	data-contracts-sot	20	247	23937	h1	Data Contracts SOT
 sot-data-contracts	docs/wiki/sot/data-contracts.md	이-문서의-원천	28	8	847	h2	이 문서의 원천
 sot-data-contracts	docs/wiki/sot/data-contracts.md	마이그레이션-규율	36	17	1446	h2	마이그레이션 규율
@@ -162,17 +162,17 @@ sot-frontend	docs/wiki/sot/frontend.md	11-operator-ui-규칙	215	23	839	h2	11. O
 sot-frontend	docs/wiki/sot/frontend.md	12-변경검증-원칙	238	19	926	h2	12. 변경·검증 원칙
 sot-frontend	docs/wiki/sot/frontend.md	13-design-system-primitive-계약	257	25	4785	h2	13. Design system primitive 계약
 sot-frontend	docs/wiki/sot/frontend.md	15-overlay-계약	282	10	1171	h2	15. Overlay 계약
-sot-mes-schedule	docs/wiki/sot/mes-schedule.md	messchedule-sot	15	87	8357	h1	MES/Schedule SOT
+sot-mes-schedule	docs/wiki/sot/mes-schedule.md	messchedule-sot	15	88	8875	h1	MES/Schedule SOT
 sot-mes-schedule	docs/wiki/sot/mes-schedule.md	결정-상태-표기	25	10	456	h2	결정 상태 표기
 sot-mes-schedule	docs/wiki/sot/mes-schedule.md	1-내부-모델-vs-고객-노출-라벨-분리	35	14	1084	h2	1. 내부 모델 vs 고객 노출 라벨 분리
 sot-mes-schedule	docs/wiki/sot/mes-schedule.md	2-v1-고객-노출-용어	49	18	1702	h2	2. v1 고객 노출 용어
 sot-mes-schedule	docs/wiki/sot/mes-schedule.md	3-v1-사용자-플로우-12단계	67	19	1733	h2	3. v1 사용자 플로우 (1~2단계)
 sot-mes-schedule	docs/wiki/sot/mes-schedule.md	4-에이전트-연계-시나리오에서-3계층이-필요한-지점	86	11	1373	h2	4. 에이전트 연계 시나리오에서 3계층이 필요한 지점
-sot-mes-schedule	docs/wiki/sot/mes-schedule.md	5-v1-범위-밖--주의	97	5	576	h2	5. v1 범위 밖 / 주의
-sot-product	docs/wiki/sot/product.md	product-sot	14	239	13402	h1	Product SOT
+sot-mes-schedule	docs/wiki/sot/mes-schedule.md	5-v1-범위-밖--주의	97	6	1094	h2	5. v1 범위 밖 / 주의
+sot-product	docs/wiki/sot/product.md	product-sot	14	239	13771	h1	Product SOT
 sot-product	docs/wiki/sot/product.md	이-문서의-원천	22	6	303	h2	이 문서의 원천
-sot-product	docs/wiki/sot/product.md	제품-정체성	28	16	846	h2	제품 정체성
-sot-product	docs/wiki/sot/product.md	v1-경량-web-hmiscada	32	6	383	h3	v1: 경량 Web HMI/SCADA
+sot-product	docs/wiki/sot/product.md	제품-정체성	28	16	1091	h2	제품 정체성
+sot-product	docs/wiki/sot/product.md	v1-경량-web-hmiscada	32	6	628	h3	v1: 경량 Web HMI/SCADA
 sot-product	docs/wiki/sot/product.md	장기-iiot-agent-platform	38	6	381	h3	장기: IIoT Agent Platform
 sot-product	docs/wiki/sot/product.md	대상-고객과-사용자	44	31	1430	h2	대상 고객과 사용자
 sot-product	docs/wiki/sot/product.md	초기-구매의사결정-고객	48	16	752	h3	초기 구매/의사결정 고객
@@ -182,7 +182,7 @@ sot-product	docs/wiki/sot/product.md	v1-핵심-가치	88	17	817	h2	v1 핵심 가
 sot-product	docs/wiki/sot/product.md	v1-핵심-기능	105	40	2532	h2	v1 핵심 기능
 sot-product	docs/wiki/sot/product.md	simulator--3d-digital-twin--ai-simulation-방향	145	10	812	h2	Simulator / 3D Digital Twin / AI Simulation 방향
 sot-product	docs/wiki/sot/product.md	확장-기능--장기-방향	155	32	1499	h2	확장 기능 / 장기 방향
-sot-product	docs/wiki/sot/product.md	mvp-제외--제한	187	15	805	h2	MVP 제외 / 제한
+sot-product	docs/wiki/sot/product.md	mvp-제외--제한	187	15	929	h2	MVP 제외 / 제한
 sot-product	docs/wiki/sot/product.md	디자인-방향	202	12	620	h2	디자인 방향
 sot-product	docs/wiki/sot/product.md	첫-계약-전략	214	16	1670	h2	첫 계약 전략
 sot-product	docs/wiki/sot/product.md	성공-기준	230	14	655	h2	성공 기준

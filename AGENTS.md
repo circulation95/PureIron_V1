@@ -57,7 +57,7 @@
 - 프로젝트 정본 — 고객 project repo(Git), 비밀값은 `secret://`만, 고객별 코드 분기 금지
 - Graceful degradation — `ai`·중앙 없이도 현장 동작, collector 다운 = BAD/DISCONNECTED, site-db 필수
 - Device health is not a tag — collector `DeviceHealth` → core `/api/v1/devices`
-- 쓰기 비활성 — `WriteRequest` 미송신, PLC 제어 대체 금지
+- PLC 로직 불변·쓰기 가드레일 — PLC 프로그램 수정 금지. 쓰기는 core만, 선언된 태그·현장별 승인(기본 읽기 전용)·사람 확인 또는 승인된 예약·readback·감사로만(ADR-013 개정)
 - No plugin system / No config UI / 20개 고정 expression 함수 — 현장 편집은 REST `PATCH`만
 - 엄격 게이트 — 억제 주석(`type: ignore`·`eslint-disable`·`as any`·`@ts-ignore`·`@ts-expect-error`) 0건, 생성 코드는 검사 제외 + drift 게이트
 

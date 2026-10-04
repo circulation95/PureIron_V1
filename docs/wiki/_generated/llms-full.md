@@ -37,7 +37,7 @@ PureIron v1은 기술 과시용 플랫폼이 아니다. 첫 계약 가능성과 
 
 | ADR | 결정 | 한 줄 근거 |
 |---|---|---|
-| 013 | v1은 기존 PLC 제어를 대체하지 않는다 | 고객 설비 안정성이 첫 계약의 전제다 |
+| 013 | PLC 로직은 바꾸지 않고, 기존 주소 쓰기는 고객 승인·가드레일 아래 현장별로 연다(기본 읽기 전용) | 설비 안정성을 지키면서 MES(운전 조건·명령 내려주기)로 확장한다 |
 | 014 | Simulator·3D Twin·Agent는 데모/운영 보조 계층이다 | 고객 설득력은 높이되 자동 제어 리스크는 v1에서 자른다 |
 | 015 | 현장 구축형 솔루션으로 시작한다 | 완성형 SaaS보다 첫 유료 계약 가능성이 높다 |
 | 016 | SOT/projection/generated 문서 경계를 분리한다 | 2인 팀이 문서 drift를 감당하려면 정본 위치가 명확해야 한다 |
@@ -308,25 +308,44 @@ Frontend에서 `as any`, `@ts-ignore`, `@ts-expect-error`, tsconfig strictness �
 
 **관련 SOT**: [data-contracts](../sot/data-contracts.md), [api-events](../sot/api-events.md)
 
-## ADR-013: v1 Does Not Replace Existing PLC Control
+## ADR-013: PLC 로직은 바꾸지 않는다 · 기존 주소 쓰기는 가드레일 아래 현장별로 연다
+
+**상태**: Accepted — **개정(2026-10-04)**. 원래 결정 "v1 Does Not Replace Existing PLC Control"(쓰기 전면 비활성)을 아래로 대체한다. 원문은 이 절 끝 `이전 결정`에 남긴다.
 
 **결정**
-PureIron v1은 기존 PLC 제어 로직을 대체하지 않는다. 관제, 알람, 이력, 트렌드, 작업지시, Agent 보조 계층을 얹는다.
+PureIron은 **PLC 로직(프로그램)을 수정·다운로드하지 않는다.** 제어의 주체와 인터록은 계속 PLC다. 그 위에서 MES 기능을 위해 **기존 PLC에 이미 있는 주소(태그)에 값을 쓸 수 있다.** 쓰기는 다음 가드레일을 모두 지킬 때만 허용한다.
+
+1. **쓰기 대상**: 고객 프로젝트(project repo)에 쓰기 가능으로 **선언된 태그만**. 종류는 두 가지다.
+   - 설정값·운전 조건(셋포인트, 레시피 값): 허용 범위(min/max)를 반드시 선언한다.
+   - 운전 명령(시작·정지·리셋 등 명령 비트/값): 허용 값과 **PLC 측 허가 조건 태그**(예: 원격 운전 허가·자동 모드)를 반드시 선언한다. 허가 조건이 참이 아니면 보내지 않는다.
+2. **기본은 읽기 전용**: 쓰기는 현장 단위 스위치로 켜며 기본값은 꺼짐이다. 고객이 쓰기 대상 태그·범위·허가 조건을 승인한 현장만 켠다. 승인 기록은 고객 project repo의 PR 리뷰로 남는다.
+3. **실행 주체**:
+   - 권한 있는 사람이 화면에서 대상·현재값·목표값을 확인한 뒤 실행한다. 운전 명령은 2단계 확인을 거친다.
+   - 사람이 미리 승인한 MES 예약 작업이 정해진 시각에 실행한다.
+   - AI(Agent)는 값을 **제안만** 하고, 실행하려면 사람 승인이 필요하다(ADR-014).
+4. **실행 전 검사**: 태그 품질이 GOOD인지, 장비가 연결되어 있는지, 범위 안인지, 허가 조건이 참인지 확인한다. 업데이트 중(편집 잠금·마이그레이션)에는 쓰기와 예약 실행을 멈춘다. 어느 검사든 실패하면 보내지 않고 알린다.
+5. **실행 후**:
+   - 다시 읽어 반영됐는지 확인한다(readback).
+   - **자동 재시도는 하지 않는다.** 실패는 그대로 보고한다.
+6. **감사**: 모든 쓰기 시도(누가·무엇을·이전값·목표값·결과·사유·승인자)를 감사 로그에 남기고, 지우지 않는다.
+7. **경로**: core만 `WriteRequest`를 보낸다. collector는 계약된 응답(`WriteResult`)으로 결과만 돌려준다. 응답이 없거나 상태 값이 빠진 경우는 거부(`REJECTED`)로 읽는다(fail-safe).
 
 **이유**
 
-- 첫 계약에서 고객이 가장 두려워하는 것은 설비 안정성 저하다.
-- PLC 제어를 대체하려면 안전 인증, 현장 검증, 책임 범위가 급격히 커진다.
-- 2인 팀이 v1에서 감당할 수 있는 범위를 넘는다.
+- 고객 현장에는 이미 잘 도는 PLC 로직이 있다. 로직을 건드리면 안전 인증·현장 검증·책임 범위가 급격히 커진다. 반면 기존 주소에 값을 쓰는 것은 현장 HMI가 이미 하는 일과 같은 수준의 개입이다.
+- MES의 핵심 가치(운전 조건 내려주기, 작업 시작·정지 지시, 실적과 조건 연결)는 쓰기 없이 만들 수 없다.
+- 읽기 전용으로 시작해 신뢰를 쌓은 뒤 고객 승인으로 쓰기를 여는 순서를 따른다. 그래야 첫 계약 설득("기존 제어를 건드리지 않는다")과 장기 확장을 둘 다 지킬 수 있다.
 
 **트레이드오프**
 
-- “완전 자동화 플랫폼”처럼 보이는 장기 비전 일부는 v1에서 보류된다.
-- 대신 고객 설득은 “기존 설비를 유지하면서 웹/모바일 관제를 얹는다”에 집중한다.
+- 운전 명령 쓰기는 잘못 보내면 설비 동작에 직접 영향을 준다. 허가 조건·2단계 확인·감사·readback 같은 장치를 구현하고 시험하는 비용이 든다. G2 e2e에도 쓰기 시나리오와 거부 시나리오가 들어가야 한다.
+- 현장별 승인·선언 절차가 늘어 도입 작업량이 커진다.
+- 영업 문구는 "PLC 로직은 바꾸지 않는다, 기본은 읽기 전용, 쓰기는 고객이 승인한 항목만"으로 정확히 바꿔야 한다. "읽기만 한다"는 첫 PoC 범위의 설명으로만 쓴다.
+- 쓰기 구현 시점은 Foundation 플랜의 별도 마일스톤에서 정한다. 그 전까지 collector는 `WriteRequest`를 받으면 `REJECTED`로 답한다(미구현).
 
-**유지 (Foundation 재설계(2026-10-04))**: 새 경로에서도 유지한다. `collector.proto`의 `WriteRequest`는 계약만 두고 비활성(core 미송신, collector 수신 시 REJECTED)이며, 쓰기 활성화는 이 ADR을 재검토하는 별도 ADR 이후에만 한다.
+**이전 결정 (2026-10-04 이전)**: "PureIron v1은 기존 PLC 제어 로직을 대체하지 않는다. 관제, 알람, 이력, 트렌드, 작업지시, Agent 보조 계층을 얹는다." Foundation 재설계 시점에는 `WriteRequest`를 계약만 두고 비활성으로 유지했다. 이번 개정은 "로직 불변"은 유지하고 "쓰기 전면 금지"만 가드레일 아래 허용으로 바꾼다.
 
-**관련 SOT**: [product](../sot/product.md), [architecture](../sot/architecture.md)
+**관련 SOT**: [product](../sot/product.md), [architecture](../sot/architecture.md), [mes-schedule](../sot/mes-schedule.md), [agent-rules](../sot/agent-rules.md#불변-규칙)
 
 ## ADR-014: Simulator·3D Twin·Agent Are Assistive, Not Autonomous Control
 
@@ -344,7 +363,7 @@ Simulator, 3D Digital Twin, Agent-assisted Simulation은 v1의 고객 설득과 
 - Agent가 할 수 있는 액션 범위가 제한된다.
 - 장기적으로 자동화로 확장하려면 approval, audit, simulator validation 데이터가 축적되어야 한다.
 
-**유지 (Foundation 재설계(2026-10-04))**: 새 경로에서도 유지한다. `ai` 서비스는 core read-only API만 소비한다.
+**유지 (Foundation 재설계(2026-10-04))**: 새 경로에서도 유지한다. `ai` 서비스는 core read-only API만 소비한다. ADR-013 개정(PLC 쓰기 허용) 이후에도 AI는 쓰기 값을 **제안만** 하고 실행은 사람 승인을 거친다.
 
 **관련 SOT**: [product](../sot/product.md), [frontend](../sot/frontend.md), [api-events](../sot/api-events.md)
 
@@ -450,7 +469,7 @@ Frontend는 SaaS landing page처럼 보이면 안 된다. 운영자가 매일 �
 **상태**: Accepted — target design(미구현).
 
 **결정**
-collector와 core는 `packages/contracts/collector.proto`의 양방향 스트림 `Acquisition.Session` 하나로 통신한다(core = 서버). core가 `AcquisitionPlan`(장비·태그 주소)을 내려주고 collector는 `ValueBatch{seq}`를 100ms 또는 500값마다 올린다. collector는 **무상태**이며 DB에 접근하지 않고, core `Ack` 전까지 최대 60초 메모리 링버퍼에 보관한다. core는 in-memory ingest(현재값 반영 + historian 상한 버퍼 600,000행 적재) 직후 Ack한다. 재연결 후 재전송분(`replay=true`)은 **historian에만** 원시 기록하고(deadband·알람·WS 우회), 중복은 `UNIQUE(tag_id, time)`로 흡수한다. 스트림 종료 또는 `max(3×poll, 5s)` 무신호면 해당 장비 태그는 BAD, 장비는 DISCONNECTED. 쓰기(`WriteRequest`)는 계약만 두고 비활성이다(ADR-013).
+collector와 core는 `packages/contracts/collector.proto`의 양방향 스트림 `Acquisition.Session` 하나로 통신한다(core = 서버). core가 `AcquisitionPlan`(장비·태그 주소)을 내려주고 collector는 `ValueBatch{seq}`를 100ms 또는 500값마다 올린다. collector는 **무상태**이며 DB에 접근하지 않고, core `Ack` 전까지 최대 60초 메모리 링버퍼에 보관한다. core는 in-memory ingest(현재값 반영 + historian 상한 버퍼 600,000행 적재) 직후 Ack한다. 재연결 후 재전송분(`replay=true`)은 **historian에만** 원시 기록하고(deadband·알람·WS 우회), 중복은 `UNIQUE(tag_id, time)`로 흡수한다. 스트림 종료 또는 `max(3×poll, 5s)` 무신호면 해당 장비 태그는 BAD, 장비는 DISCONNECTED. 쓰기(`WriteRequest`)는 core만 보내며 ADR-013 가드레일(선언된 태그·범위·허가 조건, 현장별 활성화, 사람 확인 또는 승인된 예약, readback, 감사)을 따른다. 구현 전까지 collector는 `REJECTED`로 답한다.
 
 **이유**
 
@@ -838,19 +857,19 @@ PoC 제안서(고객 제출용)는 다음 골격을 따른다. 내용 채움은 
 
 ## PLC 제어 불간섭을 계약/제안서에서 표현하는 법
 
-`확정` 원칙: **v1은 기존 PLC 제어를 대체하지 않는다**([product](../sot/product.md#mvp-제외--제한)). 이를 계약/제안서에서 다음과 같이 표현한다(문구는 법무 검토 전 초안, `TBD`).
+`확정` 원칙: **PLC 로직은 바꾸지 않는다. 첫 PoC는 읽기 전용이고, 기존 PLC 주소 쓰기(MES: 설정값·운전 조건·운전 명령)는 고객이 대상 태그·범위·허가 조건을 승인한 뒤 별도 단계로 연다**([product](../sot/product.md#mvp-제외--제한), [ADR-013](../adr/index.md)). 이를 계약/제안서에서 다음과 같이 표현한다(문구는 법무 검토 전 초안, `TBD`).
 
 - "PureIron은 기존 PLC 및 제어 로직을 변경하지 않으며, 설비 데이터를 **읽어** 관제·알람·이력 계층을 제공한다."
 - "쓰기/제어 명령은 PoC 범위에 포함하지 않는다."
 - "PoC 도중 설비 제어 동작에 영향을 주지 않으며, 데이터 수집은 기존 제어 네트워크와 분리하거나 접근 범위를 제한하는 것을 우선한다." (원칙 `확정`, [첫 PoC PLC / 프로토콜 / 네트워크 원칙](#첫-poc-plc--프로토콜--네트워크-원칙-확정-추가-창업자-인터뷰). 구체 분리/단방향 실측 구성은 현장별 `needs-founder-input`)
-- 제어가 필요한 향후 단계는 별도 계약/별도 안전 검토 대상으로 명시한다.
+- 쓰기(설정값·운전 조건·운전 명령)가 필요한 향후 단계는 고객 승인(대상 태그·범위·허가 조건)과 별도 계약/안전 검토 대상으로 명시한다. PLC 로직 수정은 어느 단계에서도 하지 않는다.
 
 ## 보안 / 데이터 / 설비 안정성 FAQ
 
 고객(사장/공장장)이 첫 계약 전에 가장 자주 묻는 질문에 대한 기본 답변 골격. 일부는 현장별로 확정해야 한다.
 
 - **Q. 설치하다가 설비가 불안정해지지 않나?**
-  A. v1은 제어를 건드리지 않고 데이터를 읽는 계층이다(`확정`). 수집 방식은 기존 제어와 분리/단방향을 우선한다(`needs-founder-input`, 현장 구성별 확정).
+  A. PLC 로직은 바꾸지 않고, 첫 단계는 데이터를 읽기만 한다(`확정`). 이후 쓰기는 고객이 승인한 항목만, 사람 확인·감사 기록을 거쳐 연다([ADR-013](../adr/index.md)). 수집 방식은 기존 제어와 분리/단방향을 우선한다(`needs-founder-input`, 현장 구성별 확정).
 - **Q. 우리 공장 데이터는 어디에 저장되나?**
   A. `확정` **온프레미스 우선** — 기본 데이터는 고객 현장에 남긴다. 리포트/대시보드/원격지원/외부 접근은 **고객이 동의한 범위에서만** 제한적으로 연다([데이터 저장 / 배포 방식](#데이터-저장--배포-방식-확정-추가-창업자-인터뷰)). 기본 배포는 [runtime-config](../sot/runtime-config.md) 참조.
 - **Q. 외부에서 공장이 보이면 보안은?**
@@ -1162,7 +1181,7 @@ PureIron의 v1 판단 기준은 다음이다.
 
 에이전트는 기술적으로 멋있지만 v1 고객 설득과 첫 계약에 직접 기여하지 않는 기능을 보류해야 한다.
 
-v1은 기존 PLC 제어를 대체하지 않는다. 실제 설비 자동 제어, 완전 예측 AI Simulation, 사람 승인 없는 자동 조치는 v1 범위가 아니다.
+PureIron은 PLC 로직(프로그램)을 바꾸지 않는다. 기본은 읽기 전용이고, MES를 위한 기존 PLC 주소 쓰기(설정값·운전 조건·운전 명령)는 고객이 승인한 현장에서 ADR-013 가드레일 아래에서만 한다. 무인 자동 제어, 완전 예측 AI Simulation, 사람 승인 없는 자동 조치(AI 단독 실행 포함)는 v1 범위가 아니다.
 
 ## 불변 규칙
 
@@ -1176,7 +1195,7 @@ v1은 기존 PLC 제어를 대체하지 않는다. 실제 설비 자동 제어, 
 - 프로젝트 정본 — 고객 설정 정본은 고객 project repo(Git)다. 비밀값은 `secret://<name>` 참조만, 제품 코드에 고객별 분기(`site_id == "…"`, 고객 이름) 금지. 근거 ADR-025·ADR-026
 - Graceful degradation — 선택 서비스(`ai`·중앙)가 없어도 현장 모니터링·알람·이력은 동작한다. collector 다운 = 해당 장비 BAD/DISCONNECTED, site-db는 필수(core readiness 조건). 근거 ADR-008 개정
 - Device health is not a tag — 장비 상태는 collector `DeviceHealth` → core `GET /api/v1/devices`가 단일 소스, 태그로 만들지 않는다. 근거 ADR-018
-- 쓰기 비활성 — `WriteRequest`는 계약만 두고 보내지 않는다. 기존 PLC 제어를 대체하지 않는다. 근거 ADR-013
+- PLC 로직 불변·쓰기 가드레일 — PLC 프로그램을 수정·다운로드하지 않는다. 쓰기는 core만 `WriteRequest`로 보내며, 프로젝트에 선언된 태그(설정값은 범위, 운전 명령은 허가 조건 필수)만, 현장 스위치(기본 꺼짐)가 켜진 현장에서, 사람 확인(명령은 2단계) 또는 사람이 승인한 예약으로만 한다. 실행 전 품질·연결·범위·허가 검사, 실행 후 readback, 모든 시도 감사 로그. 자동 재시도·AI 단독 실행·업데이트 중 쓰기 금지. 근거 ADR-013(개정)·ADR-014
 - No plugin system — 프로토콜은 collector `drivers/`에 직접 구현하고, 추가는 proto `TagPoint.address` oneof 확장으로만 한다. registry·동적 로딩 금지. 근거 ADR-002
 - No config UI — 인프라·env·드라이버·범용 config 빌더 UI 금지. 현장 편집은 REST `PATCH`만(아래 “No config UI” 범위 절). 근거 ADR-004·ADR-025
 - 20개 고정 expression 함수 — 확장 불가, 복잡 로직은 샌드박스 스크립트로. 근거 ADR-005
@@ -1467,7 +1486,7 @@ PureIron은 단일 FastAPI 백엔드 + 단일 React 프론트엔드 + PostgreSQL
 
 v1 아키텍처는 다음 경계를 지킨다.
 
-- 기존 PLC 제어 로직을 대체하지 않는다.
+- PLC 로직을 수정하지 않는다. 기존 PLC 주소 쓰기는 ADR-013(개정) 가드레일 아래에서만 한다(기본 읽기 전용).
 - PureIron은 관제, 알람, 이력, 트렌드, 작업지시, Agent 보조 계층을 제공한다.
 - 실제 설비 자동 제어와 사람 승인 없는 자동 조치는 v1 범위가 아니다.
 - 선택적 의존성(DB/Redis/RAG/LangGraph)은 실패해도 핵심 모니터링을 중단시키지 않는다.
@@ -1672,7 +1691,7 @@ M1에서 PureIron_V1에 **골격으로** 들어간 것. 기능 본구현은 표�
 |---|---|---|
 | core 조립 | `services/core/src/pureiron_core/runtime.py`(`SiteRuntime.build`) → `app.py`(`create_app`), `cli.py`(`serve`·`migrate`·`project`), import-linter 계약 3종 + 음성 fixture(`services/core/.importlinter`) | M3a/b에서 도메인 모듈 추가 시 계약에 등록 |
 | core 모듈 | `platform`(db·bus·migrate·migrate_lint·sqltext), `acquisition`(gRPC 세션 골격), `project`(project_state·edit-lock stub), `api`(health·project) | `tags`·`historian`(M3a), `alarms`·`auth`·`audit`·`realtime`·`devices`(M3b) |
-| collector | `Hello` 송신 → plan 수신, `WriteRequest`는 항상 `REJECTED`, 빈 batch heartbeat, 지수 backoff 재연결 | Modbus 드라이버·링버퍼·`DeviceHealth`(M3a) |
+| collector | `Hello` 송신 → plan 수신, `WriteRequest`는 아직 항상 `REJECTED`(쓰기 경로 미구현), 빈 batch heartbeat, 지수 backoff 재연결 | Modbus 드라이버·링버퍼·`DeviceHealth`(M3a), ADR-013 가드레일을 갖춘 쓰기 경로(별도 마일스톤) |
 | web | readyz 상태 화면 1개, OpenAPI 생성 타입(`src/api/schema.d.ts`), nginx `/api` 프록시 | 로그인 + 5개 화면(M3b) |
 | updater·control-api·bundle-tools | workspace 멤버 자리(버전 상수·테스트), control-api는 `GET /api/v1/healthz` 계약만 | M2(updater·bundle-tools), M4(control-api) |
 | compose | `deploy/compose/site.compose.yml`(`name: pureiron`, `pull_policy: never`, 비밀은 파일만) + dev override | M2 Updater가 `g<gen>.yml`로 렌더 |
@@ -2296,6 +2315,7 @@ Frontend 작업은 화면이 크고 회귀 위험이 높다. 다음 원칙을 �
 - 이 문서는 **용어·플로우 계약**이다. DB/API 모델명 변경, migration, 프론트 대규모 재구성은 v1 이 이슈 범위가 아니다([1](#1-내부-모델-vs-고객-노출-라벨-분리)).
 - 완전한 MES 운영(BOM, 실적 집계, 재고 연동 등)은 v1 목표가 아니다([product](product.md#mvp-제외--제한)).
 - 에이전트가 사람 승인 없이 작업을 자동 실행하지 않는다. `create_schedule`는 프로덕션에서 approval 봉투를 반환한다([agent-rules](agent-rules.md#제품-판단-원칙)).
+- 운전 조건 내려주기·작업 시작/정지는 **기존 PLC 주소 쓰기**로 한다. PLC 로직은 바꾸지 않으며, [ADR-013](../adr/index.md)(개정) 가드레일을 따른다: 프로젝트에 선언된 태그만(설정값은 범위, 명령은 PLC 허가 조건 필수), 고객이 켠 현장에서만, 사람 확인 또는 사람이 미리 승인한 예약 `작업`으로만 실행, 실행 전 검사·실행 후 readback·감사 로그, 자동 재시도 없음. 에이전트는 값을 제안만 한다.
 
 ---
 
@@ -2324,7 +2344,7 @@ PureIron의 제품 정체성은 두 단계로 정의한다.
 
 v1은 고객이 기존 설비를 유지하면서 웹과 모바일로 설비 상태, 알람, 이력, 트렌드, 작업 지시 흐름을 확인할 수 있는 경량 Web HMI/SCADA다.
 
-초기에는 실제 PLC 제어를 대체하지 않는다. 고객 현장에서 이미 PLC로 동작하는 프로세스 위에 관제와 운영 보조 계층을 얹는다.
+PLC 로직(프로그램)은 바꾸지 않는다. 고객 현장에서 이미 PLC로 동작하는 프로세스 위에 관제와 운영 보조 계층을 얹고, 기본은 읽기 전용이다. MES 기능(운전 조건 내려주기, 작업 시작·정지 지시)을 위해 기존 PLC 주소에 쓰는 것은 고객이 대상 태그·범위·허가 조건을 승인한 현장에서만 연다([ADR-013](../adr/index.md)).
 
 ### 장기: IIoT Agent Platform
 
@@ -2479,7 +2499,7 @@ v1 Simulator는 상태 머신 기반으로 실제 공정 흐름처럼 동작하�
 
 v1에서는 다음을 의도적으로 제외하거나 제한한다.
 
-- 기존 PLC 제어 로직을 대체하지 않는다.
+- PLC 로직(프로그램)을 수정하지 않는다. 기존 주소 쓰기는 고객이 승인한 현장에서 ADR-013 가드레일 아래에서만 한다(기본 읽기 전용).
 - 실제 설비를 AI가 자동 제어하지 않는다.
 - 공정을 완전히 예측한다고 주장하지 않는다.
 - 사람 승인 없는 자동 조치를 제공하지 않는다.
