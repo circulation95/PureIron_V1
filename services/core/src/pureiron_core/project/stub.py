@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import AsyncGenerator, Mapping
+from contextlib import asynccontextmanager
 from datetime import datetime
+
+import asyncpg
 
 from pureiron_core.platform.db import Connection, Database
 from pureiron_core.project.ports import EditLockConflictError, ProjectState, ProjectStateError
@@ -53,12 +56,21 @@ class PgProjectStateStore:
     def __init__(self, db: Database) -> None:
         self._db = db
 
+    @asynccontextmanager
+    async def _connection(self) -> AsyncGenerator[Connection]:
+        """DB 오류(예: migrate 전 project_state 없음)를 ProjectStateError로 바꾼다(API는 503)."""
+        try:
+            async with self._db.connection() as conn:
+                yield conn
+        except asyncpg.PostgresError as exc:
+            raise ProjectStateError(f"site-db error: {exc}") from exc
+
     async def get(self) -> ProjectState:
-        async with self._db.connection() as conn:
+        async with self._connection() as conn:
             return await _fetch(conn)
 
     async def acquire_edit_lock(self, owner: str, generation: int) -> int:
-        async with self._db.connection() as conn:
+        async with self._connection() as conn:
             site_rev = await conn.fetchval(
                 """
                 UPDATE project_state
@@ -77,7 +89,7 @@ class PgProjectStateStore:
             return site_rev
 
     async def release_edit_lock(self, owner: str) -> None:
-        async with self._db.connection() as conn:
+        async with self._connection() as conn:
             state = await conn.fetchrow(
                 """
                 UPDATE project_state
@@ -94,7 +106,7 @@ class PgProjectStateStore:
 
     async def apply(self, *, project_id: str, version: str, content_hash: str) -> ProjectState:
         """적용 기록: base_site_rev = 현재 site_rev(드래프트 게이트 기준점, ADR-025)."""
-        async with self._db.connection() as conn:
+        async with self._connection() as conn:
             await conn.execute(
                 """
                 UPDATE project_state
@@ -118,7 +130,7 @@ class PgProjectStateStore:
                 else None,
             }
         )
-        async with self._db.connection() as conn:
+        async with self._connection() as conn:
             await conn.execute(
                 """
                 UPDATE project_state

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import io
 import json
 import logging
 import os
@@ -17,6 +18,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import cast
 
+import asyncpg
 import uvicorn
 
 from pureiron_core.app import create_app
@@ -171,7 +173,15 @@ def _run_project(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def _utf8_console() -> None:
+    """Windows 콘솔(cp949 등)에서도 한국어·기호 출력으로 죽지 않게 한다."""
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    _utf8_console()
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
@@ -186,7 +196,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     except migrate.MigrationError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return exc.exit_code
-    except (DatabaseUnavailableError, ProjectStateError, SettingsError, OSError) as exc:
+    except (
+        DatabaseUnavailableError,
+        ProjectStateError,
+        SettingsError,
+        OSError,
+        asyncpg.PostgresError,
+        asyncpg.InterfaceError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return migrate.EXIT_FAILED
 

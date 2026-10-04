@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -28,7 +29,15 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _utf8_console() -> None:
+    """Windows 콘솔(cp949 등)에서도 한국어 메시지 출력으로 죽지 않게 한다."""
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    _utf8_console()
     args = _parser().parse_args(argv)
     project = load_project(args.directory)
     if not project.ok:

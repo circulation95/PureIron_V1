@@ -58,6 +58,15 @@ def _with(**changes: object) -> dict[str, object]:
             _with(properties__count={"type": "integer", "minimum": 0, "maximum": 10, "const": 3}),
             "const",
         ),
+        (_with(propertyNames={"pattern": "^[a-z]+$"}), "propertyNames constraint added"),
+        (_with(allOf=[{"required": ["id"]}]), "allOf: constraints added"),
+        (
+            _with(properties__id={"type": "string", "pattern": "^[a-z]+$", "format": "uuid"}),
+            "format",
+        ),
+        (_with(properties__count={"type": "integer", "multipleOf": 2}), "multipleOf"),
+        (_with(properties__mode={"enum": ["a", "b"], "uniqueItems": True}), "uniqueItems added"),
+        (_with(properties__mode={"enum": ["a", "b"], "anyOf": [{"const": "a"}]}), "anyOf"),
     ],
 )
 def test_breaking_changes(head: dict[str, object], fragment: str) -> None:
@@ -95,3 +104,10 @@ def test_cli_exit_codes(tmp_path: Path) -> None:
     head.write_text(json.dumps(_with(required=["id", "count"])), encoding="utf-8")
     assert main([str(base), str(head)]) == 1
     assert main([str(base)]) == 2
+
+
+def test_property_names_tightening_is_breaking() -> None:
+    base = {"type": "object", "propertyNames": {"pattern": "^[a-z./]+$"}}
+    head = {"type": "object", "propertyNames": {"pattern": "^(?!.*[.][.])[a-z./]+$"}}
+    assert any("propertyNames" in item for item in compare(base, head))
+    assert compare(base, base) == []

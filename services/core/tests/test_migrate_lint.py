@@ -65,7 +65,34 @@ def test_rejected_statements(tmp_path: Path, sql: str, fragment: str) -> None:
 @pytest.mark.parametrize(
     "sql",
     [
+        "DO $$ BEGIN EXECUTE 'DROP TABLE tags CASCADE'; END $$;",
+        "UPDATE t SET v = 'x';",
+        "DELETE FROM t;",
+        "COMMIT;",
+        "BEGIN;",
+        "CREATE OR REPLACE VIEW tv AS SELECT 1;",
+        "CREATE FUNCTION f() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$;",
+        "SELECT drop_chunks('h', INTERVAL '1 day');",
+        "SELECT add_retention_policy('h', INTERVAL '30 days');",
+        "SELECT remove_compression_policy('h');",
+        "SELECT decompress_chunk(c) FROM show_chunks('h') c;",
+        "ALTER TABLE t ALTER COLUMN v SET NOT NULL;",
+        "ALTER TABLE t ALTER COLUMN v DROP DEFAULT, ALTER COLUMN v SET DEFAULT 'x';",
+        "INSERT INTO t (id) VALUES (1);",
+    ],
+)
+def test_statements_outside_allowlist_are_rejected(tmp_path: Path, sql: str) -> None:
+    assert _lint_one(tmp_path, sql), sql
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
         "CREATE TABLE u (id int PRIMARY KEY, code text UNIQUE);",
+        "INSERT INTO t (id) VALUES (1) ON CONFLICT DO NOTHING;",
+        "SELECT create_hypertable('u', by_range('ts'));",
+        "ALTER TABLE u SET (timescaledb.compress, timescaledb.compress_segmentby = 'id');",
+        "CREATE TYPE mood AS ENUM ('ok');",
         "ALTER TABLE t ADD COLUMN w int;",
         "ALTER TABLE t ADD COLUMN IF NOT EXISTS w int NOT NULL DEFAULT 0;",
         "CREATE INDEX IF NOT EXISTS t_v ON t (v);",
@@ -83,19 +110,17 @@ def test_no_transaction_file_rules(tmp_path: Path) -> None:
     messages = _lint_one(tmp_path / "two", two)
     assert any("exactly one statement" in m for m in messages)
     assert any("re-runnable" in m for m in messages)
-    single = (
-        "-- pureiron:no-transaction\n"
-        "SELECT add_retention_policy('h', INTERVAL '30 days', if_not_exists => TRUE);"
-    )
+    single = "-- pureiron:no-transaction\nCREATE INDEX IF NOT EXISTS t_v ON t (v);"
     assert _lint_one(tmp_path / "ok", single) == []
 
 
-def test_contract_drop_needs_two_epochs(tmp_path: Path) -> None:
-    sql = "-- contract: drops t.v deprecated in epoch 1\nALTER TABLE t DROP COLUMN v;"
+def test_contract_drop_allowed_one_epoch_after_deprecation(tmp_path: Path) -> None:
+    """deprecated in D → D+1 스키마부터 제거 가능(D-1 앱 envelope 상한이 D이므로)."""
+    sql = "-- contract: drops t.v deprecated in epoch 2\nALTER TABLE t DROP COLUMN v;"
     too_early = _lint_one(tmp_path / "early", sql)
     assert any("allowed from epoch 3" in m for m in too_early)
 
-    files = {**BASELINE, "0002_mid.sql": "SELECT 1;", "0003_drop.sql": sql}
+    files = {**BASELINE, "0002_mid.sql": "CREATE TABLE mid (x int);", "0003_drop.sql": sql}
     directory = write_migrations(
         tmp_path / "late", files, {1: "0001_base.sql", 2: "0002_mid.sql", 3: "0003_drop.sql"}
     )
@@ -140,6 +165,29 @@ def test_base_ref_protects_released_files(tmp_path: Path) -> None:
     messages = [i.message for i in lint_directory(directory, base_ref="master").issues]
     assert any("released migration modified" in m for m in messages)
     assert any("released epoch 1" in m for m in messages)
+
+
+def _repo_with_baseline(tmp_path: Path) -> tuple[Path, Path]:
+    repo = tmp_path / "repo"
+    directory = write_migrations(repo / "migrations", BASELINE, {1: "0001_base.sql"})
+    _git(repo, "init", "-q", "-b", "master")
+    _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "add", ".")
+    _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "base")
+    return repo, directory
+
+
+def test_unknown_base_ref_is_an_error(tmp_path: Path) -> None:
+    _, directory = _repo_with_baseline(tmp_path)
+    messages = [i.message for i in lint_directory(directory, base_ref="origin/nope").issues]
+    assert any("not a known commit" in m for m in messages)
+
+
+def test_new_file_numbered_below_released_version_is_rejected(tmp_path: Path) -> None:
+    _, directory = _repo_with_baseline(tmp_path)
+    (directory / "0001_base.sql").rename(directory / "0002_base.sql")
+    write_migrations(directory, {"0001_sneaky.sql": "SELECT 1;"}, {1: "0002_base.sql"})
+    messages = [i.message for i in lint_directory(directory, base_ref="master").issues]
+    assert any("at or below released" in m for m in messages)
 
 
 def test_base_ref_without_directory_is_bootstrap_notice(tmp_path: Path) -> None:

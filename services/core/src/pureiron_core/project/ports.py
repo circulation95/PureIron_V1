@@ -38,7 +38,11 @@ class ProjectStatePort(Protocol):
     async def get(self) -> ProjectState: ...
 
     async def acquire_edit_lock(self, owner: str, generation: int) -> int:
-        """잠금을 잡고 그 시점 site_rev를 돌려준다. 같은 owner·generation 재요청은 멱등."""
+        """잠금을 잡고 그 시점 site_rev를 돌려준다. 같은 owner·generation 재요청은 멱등이다.
+
+        같은 owner라도 generation이 다르면 충돌(409)이다. Updater는 새 generation으로 다시
+        잡기 전에 이전 잠금을 release 해야 한다(M2 recover 경로).
+        """
         ...
 
     async def release_edit_lock(self, owner: str) -> None:

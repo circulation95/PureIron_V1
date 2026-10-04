@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
 import pytest
@@ -9,9 +11,16 @@ from fastapi.testclient import TestClient
 from pureiron_core import __version__
 from pureiron_core.api.health import build_health_router
 from pureiron_core.api.project import build_project_router
-from pureiron_core.platform.db import DatabaseUnavailableError
-from pureiron_core.platform.migrate import Envelope
+from pureiron_core.platform.db import Connection, DatabaseUnavailableError
+from pureiron_core.platform.migrate import (
+    Envelope,
+    SchemaGuard,
+    SchemaUnavailableError,
+    load_catalog,
+)
 from pureiron_core.project.ports import EditLockConflictError, ProjectState
+
+from .conftest import MIGRATIONS
 
 TOKEN = "s3cret-updater-token"
 
@@ -202,3 +211,28 @@ def test_edit_lock_validates_body() -> None:
         "/api/v1/project/edit-lock", json={"owner": "", "generation": -1}, headers=AUTH
     )
     assert response.status_code == 422
+
+
+@dataclass
+class BrokenSchema(FakeSchema):
+    async def envelope(self) -> Envelope:
+        raise SchemaUnavailableError("schema_meta epoch is not an integer: 'x'")
+
+
+def test_readyz_unreadable_schema_is_503_not_500() -> None:
+    response = _health_client(FakeDb(), BrokenSchema(), FakeCollector()).get("/api/v1/readyz")
+    assert response.status_code == 503
+    schema = response.json()["checks"]["schema_envelope"]
+    assert schema["ok"] is False
+    assert "unreadable" in schema["detail"]
+
+
+async def test_schema_guard_wraps_database_errors() -> None:
+    @asynccontextmanager
+    async def broken() -> AsyncGenerator[Connection]:
+        raise DatabaseUnavailableError("down")
+        yield
+
+    guard = SchemaGuard(load_catalog(MIGRATIONS), broken)
+    with pytest.raises(SchemaUnavailableError, match="down"):
+        await guard.envelope()

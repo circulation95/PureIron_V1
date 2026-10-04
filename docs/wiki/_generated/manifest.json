@@ -150,12 +150,12 @@
     },
     {
       "audience": "both",
-      "bytes": 21932,
+      "bytes": 22864,
       "id": "sot-data-contracts",
       "last_verified": "2026-08-22",
       "path": "docs/wiki/sot/data-contracts.md",
       "section_count": 16,
-      "sha256": "26c36078d25ccb8a0f87e1dc12f1766e6745a78637d290b3f270bca57e281d99",
+      "sha256": "7123abcbb5dbd9a5ab920be8503bb053100aaee020a4879b5a4efaaa35f2495e",
       "source_globs": [
         "projects/demo-coffee/**/*.yaml",
         "projects/demo-coffee/**/*.json"
@@ -251,12 +251,12 @@
     },
     {
       "audience": "both",
-      "bytes": 32448,
+      "bytes": 32918,
       "id": "sot-testing",
       "last_verified": "2026-08-22",
       "path": "docs/wiki/sot/testing.md",
       "section_count": 18,
-      "sha256": "18767e51a11fa7b9e9a0766b06c0f333b726ccc0fd35f0f75beb848c63c8e2fb",
+      "sha256": "3d8c21819eab83fe0c2eae97ab2565bb614ac661c7774adf3583d32e3be300e3",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/pyproject.toml",

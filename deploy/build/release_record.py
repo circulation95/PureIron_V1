@@ -1,9 +1,12 @@
 """release 기록(`deploy/releases/<name>.json`): 이미지 config digest + 스키마 epoch envelope.
 
-    python deploy/build/release_record.py r0 [--release 0.1.0-dev]
+    PUREIRON_RELEASE=r0 bash deploy/build/build_images.sh
+    python deploy/build/release_record.py r0 [--store DIR]
 
-로컬에 로드된 `pureiron/<svc>:<release>` 이미지에서 config digest를 읽는다. n-minus-1 게이트는
-이 기록으로 직전 epoch의 core-test 이미지를 찾는다. 현장 manifest(M2)의 product_release 원천이다.
+`pureiron/<svc>:<name>`(release 이름이 곧 고유 태그)에서 config digest를 읽고, 이미지를
+`<store>/<name>/<svc>.tar`로 보관한다(기본 store: `images.image_store()`). n-minus-1 게이트는
+이 기록의 core-test 이미지를 store에서 다시 load하고 digest를 대조한다. 현장 manifest(M2)의
+product_release 원천이기도 하다.
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from images import config_digest_of_image, read_lock
+from images import config_digest_from_tar, config_digest_of_image, image_store, read_lock
 
 from pureiron_core.platform.migrate import load_catalog
 
@@ -23,21 +26,27 @@ RELEASES = ROOT / "deploy" / "releases"
 RECORD_SERVICES = ("core", "collector", "web", "core-test")
 
 
-def build_record(name: str, release: str) -> dict[str, object]:
+def _git(*args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=ROOT, capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
+def build_record(name: str, store: Path) -> dict[str, object]:
+    if _git("status", "--porcelain", "--untracked-files=no"):
+        raise SystemExit("release_record: working tree has uncommitted changes")
     catalog = load_catalog(ROOT / "services" / "core" / "migrations")
     lock = read_lock(RELEASES / "site-db.lock")
-    commit = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True
-    ).stdout.strip()
+    target = store / name
+    target.mkdir(parents=True, exist_ok=True)
+    images: dict[str, dict[str, str]] = {}
+    for svc in RECORD_SERVICES:
+        tag = f"pureiron/{svc}:{name}"
+        tar = target / f"{svc}.tar"
+        subprocess.run(["docker", "save", "-o", str(tar), tag], check=True)
+        images[svc] = {"tag": tag, "config_digest": config_digest_from_tar(tar)}
+    site_db_tag = f"pureiron/site-db:{lock['version']}"
     with tempfile.TemporaryDirectory() as tmp:
-        images: dict[str, dict[str, str]] = {
-            svc: {
-                "tag": f"pureiron/{svc}:{release}",
-                "config_digest": config_digest_of_image(f"pureiron/{svc}:{release}", Path(tmp)),
-            }
-            for svc in RECORD_SERVICES
-        }
-        site_db_tag = f"pureiron/site-db:{lock['version']}"
         images["site-db"] = {
             "tag": site_db_tag,
             "config_digest": config_digest_of_image(site_db_tag, Path(tmp)),
@@ -45,8 +54,8 @@ def build_record(name: str, release: str) -> dict[str, object]:
         }
     return {
         "name": name,
-        "release": release,
-        "commit": commit,
+        "release": name,
+        "commit": _git("rev-parse", "HEAD"),
         "images": images,
         "schema": {
             "epoch": catalog.app_expected,
@@ -58,10 +67,10 @@ def build_record(name: str, release: str) -> dict[str, object]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("name")
-    parser.add_argument("--release", default="0.1.0-dev")
+    parser.add_argument("name", help="release 이름 = 이미지 태그(예: r0)")
+    parser.add_argument("--store", type=Path, default=None, help="이미지 tar 보관 위치")
     args = parser.parse_args()
-    record = build_record(args.name, args.release)
+    record = build_record(args.name, args.store or image_store())
     out = RELEASES / f"{args.name}.json"
     out.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(out)

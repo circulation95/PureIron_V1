@@ -7,6 +7,7 @@ repro_build·release_record·(M2) 번들 빌더가 같은 함수를 쓴다.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import tarfile
@@ -57,3 +58,13 @@ def read_lock(path: Path) -> dict[str, str]:
         if sep and not key.startswith("#"):
             values[key.strip()] = value.strip()
     return values
+
+
+def image_store() -> Path:
+    """release 이미지 tar 보관소(PD-23 ⑤: runner 호스트 로컬 저장).
+
+    `PUREIRON_IMAGE_STORE`가 없으면 `~/pureiron/images`. runner(WSL)는 sudo 없이 쓸 수 있는
+    홈 아래를 쓴다(plan의 `/srv/pureiron/images`는 runner 전용 사용자를 만들 때 옮긴다).
+    """
+    configured = os.environ.get("PUREIRON_IMAGE_STORE")
+    return Path(configured) if configured else Path.home() / "pureiron" / "images"

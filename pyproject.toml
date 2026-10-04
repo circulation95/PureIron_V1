@@ -9,7 +9,6 @@ members = [
     "packages/project-tools",
     "packages/bundle-tools",
 ]
-exclude = ["backend"]
 
 [dependency-groups]
 dev = [

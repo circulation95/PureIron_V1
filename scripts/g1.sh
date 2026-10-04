@@ -57,7 +57,7 @@ job_lint_type() {
 job_no_suppressions() {
   log "no-suppressions (억제 주석·app.state 0건)"
   local hits
-  hits="$(grep -rnE 'app\.state|type: ?ignore|pyright: ?ignore|# ?noqa|eslint-disable|as any|@ts-ignore|@ts-expect-error' \
+  hits="$(grep -rnE 'app\.state|type: ?ignore|pyright: ?(ignore|basic|standard|reportGeneralTypeIssues)|noqa|fmt: ?(off|skip)|pragma: ?no ?cover|eslint-disable|\bas any\b|@ts-ignore|@ts-expect-error|@ts-nocheck' \
     services packages deploy \
     --include='*.py' --include='*.pyi' --include='*.ts' --include='*.tsx' --include='*.js' --include='*.mjs' \
     --exclude-dir=_gen --exclude-dir=node_modules --exclude-dir=dist || true)"

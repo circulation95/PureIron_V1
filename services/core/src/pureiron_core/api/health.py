@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from pureiron_core import __version__
 from pureiron_core.acquisition.ports import CollectorSessionStatus
-from pureiron_core.platform.migrate import Envelope
+from pureiron_core.platform.migrate import Envelope, SchemaUnavailableError
 
 
 class DatabaseProbe(Protocol):
@@ -63,7 +63,16 @@ async def _schema_check(db_ok: bool, schema: SchemaProbe) -> SchemaEnvelopeCheck
             app_expected=schema.app_expected,
             app_max_compatible=schema.app_max_compatible,
         )
-    envelope = await schema.envelope()
+    try:
+        envelope = await schema.envelope()
+    except SchemaUnavailableError as exc:
+        return SchemaEnvelopeCheck(
+            ok=False,
+            detail=f"schema epoch unreadable: {exc}",
+            cur=None,
+            app_expected=schema.app_expected,
+            app_max_compatible=schema.app_max_compatible,
+        )
     detail = None
     if envelope.cur is None:
         detail = "schema not migrated (run `pureiron-core migrate up`)"

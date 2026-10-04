@@ -43,7 +43,26 @@ _SIMPLE_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
 )
 _DROP = re.compile(r"\bDROP\b")
-_ALTER_TYPE = re.compile(r"\bALTER\s+(COLUMN\s+)?\S+\s+(SET\s+DATA\s+)?TYPE\b")
+_ALTER_TYPE = re.compile(r"^ALTER\s+(COLUMN\s+)?\S+\s+(SET\s+DATA\s+)?TYPE\b")
+# baseline 이후 파일에서 허용하는 구문 형태(허용 목록). 목록 밖 구문은 모두 거부한다:
+# DO 블록, 함수·프로시저, EXECUTE, BEGIN/COMMIT, UPDATE/DELETE, OR REPLACE,
+# drop_chunks·remove_*·retention 정책 등.
+_ALLOWED_STATEMENTS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^CREATE\s+TABLE\b"),
+    re.compile(r"^CREATE\s+INDEX\b"),
+    re.compile(r"^CREATE\s+VIEW\b"),
+    re.compile(r"^CREATE\s+MATERIALIZED\s+VIEW\b"),
+    re.compile(r"^CREATE\s+TYPE\b"),
+    re.compile(r"^CREATE\s+EXTENSION\s+IF\s+NOT\s+EXISTS\b"),
+    re.compile(r"^ALTER\s+TYPE\s+\S+\s+ADD\s+VALUE\b"),
+    re.compile(r"^ALTER\s+TABLE\b"),
+    re.compile(r"^COMMENT\s+ON\b"),
+    re.compile(
+        r"^SELECT\s+(CREATE_HYPERTABLE|ADD_COMPRESSION_POLICY|ADD_CONTINUOUS_AGGREGATE_POLICY)\s*\("
+    ),
+    re.compile(r"^INSERT\s+INTO\b.*\bON\s+CONFLICT\s+DO\s+NOTHING$"),
+)
+_TIMESCALE_SET = re.compile(r"^SET\s*\(\s*TIMESCALEDB\.")
 _TABLE_CONSTRAINT = re.compile(
     r"^ADD\s+(CONSTRAINT|CHECK|UNIQUE|PRIMARY\s+KEY|FOREIGN\s+KEY|EXCLUDE)\b"
 )
@@ -92,7 +111,13 @@ def _top_level_actions(code: str) -> list[str]:
 
 def _check_alter_table(filename: str, code: str, report: LintReport) -> None:
     for action in _top_level_actions(code):
+        if action.startswith("DROP"):
+            continue  # contract 예외 여부는 _check_drop이 판정한다
         if not action.startswith("ADD"):
+            if _ALTER_TYPE.match(action):
+                report.add(filename, "ALTER ... TYPE rewrites the column and breaks older apps")
+            elif not _TIMESCALE_SET.match(action):
+                report.add(filename, f"ALTER TABLE action is not additive: {action}")
             continue
         if _TABLE_CONSTRAINT.match(action):
             report.add(filename, f"ADD CONSTRAINT can fail on existing rows: {action}")
@@ -132,11 +157,13 @@ def _check_drop(
         )
         return
     for obj, deprecated in covering:
-        if file_epoch < deprecated + 2:
+        # deprecated 표시 epoch D의 앱은 객체를 쓰지 않고, D-1 앱의 envelope 상한은 D다.
+        # 따라서 D+1 스키마부터 제거할 수 있다(plan §6.6: 주석 `deprecated in epoch <E-1>`).
+        if file_epoch < deprecated + 1:
             report.add(
                 filename,
                 f"contract drop of {obj} deprecated in epoch {deprecated} is allowed from epoch "
-                f"{deprecated + 2}, this file is epoch {file_epoch}",
+                f"{deprecated + 1}, this file is epoch {file_epoch}",
             )
 
 
@@ -153,9 +180,10 @@ def _check_statement(
             report.add(filename, message)
     if _DROP.search(code):
         _check_drop(filename, statement, file_epoch, contracts, report)
+    if not code.startswith("DROP") and not any(p.match(code) for p in _ALLOWED_STATEMENTS):
+        head = " ".join(code.split()[:4])
+        report.add(filename, f"statement is not in the additive allowlist: {head} ...")
     if code.startswith("ALTER TABLE"):
-        if _ALTER_TYPE.search(code):
-            report.add(filename, "ALTER ... TYPE rewrites the column and breaks older apps")
         _check_alter_table(filename, code, report)
     if "TIMESCALEDB.CONTINUOUS" in code and "WITH NO DATA" not in code:
         report.add(
@@ -223,6 +251,10 @@ def _lint_against_base(directory: Path, base_ref: str, report: LintReport) -> No
         return
     root = Path(top.stdout.decode().strip())
     rel = directory.resolve().relative_to(root.resolve()).as_posix()
+    # ref 자체가 없으면(오타·force-push 뒤 미fetch) 불변성 검사를 조용히 끄지 않고 실패한다.
+    if _git(root, "rev-parse", "--verify", "--quiet", f"{base_ref}^{{commit}}").returncode != 0:
+        report.add(rel, f"--base-ref {base_ref} is not a known commit (fetch it first)")
+        return
     if _git(root, "cat-file", "-e", f"{base_ref}:{rel}").returncode != 0:
         report.notices.append(
             f"{base_ref} has no {rel} yet — released-file immutability check skipped"
@@ -232,7 +264,21 @@ def _lint_against_base(directory: Path, base_ref: str, report: LintReport) -> No
     if listing.returncode != 0:
         report.add(rel, f"cannot list {base_ref}:{rel}: {listing.stderr.decode().strip()}")
         return
-    for name in listing.stdout.decode().split():
+    base_names = listing.stdout.decode().split()
+    base_versions = [
+        v for n in base_names if (parsed := parse_migration_name(n)) for v in (parsed[0],)
+    ]
+    if base_versions:
+        newest_released = max(base_versions)
+        for path in sorted(directory.glob("*.sql")):
+            parsed = parse_migration_name(path.name)
+            if parsed and path.name not in base_names and parsed[0] <= newest_released:
+                report.add(
+                    path.name,
+                    f"new migration numbered at or below released {newest_released:04d}; "
+                    "use a higher version",
+                )
+    for name in base_names:
         base_bytes = _git(root, "show", f"{base_ref}:{rel}/{name}").stdout
         current = directory / name
         if name == EPOCHS_FILE:

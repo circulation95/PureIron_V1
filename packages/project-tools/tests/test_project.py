@@ -129,3 +129,16 @@ def test_missing_project_file(tmp_path: Path) -> None:
 def test_strict_yaml_errors_surface_with_path(acme: Path) -> None:
     (acme / "alarms" / "line1.yaml").write_text("- &a {id: x}\n- *a\n", encoding="utf-8")
     assert any("alarms/line1.yaml" in p and "anchors" in p for p in _problems(acme))
+
+
+def test_symlinks_are_rejected(acme: Path, tmp_path: Path) -> None:
+    outside = tmp_path / "outside.yaml"
+    outside.write_text("id: plc-9\n", encoding="utf-8")
+    link = acme / "devices" / "plc-9.yaml"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pytest.skip("symlink creation not permitted on this host")
+    assert any("symbolic links are not allowed" in p for p in _problems(acme))
+    assert main(["fmt", str(acme)]) == 1
+    assert outside.read_text(encoding="utf-8") == "id: plc-9\n"

@@ -50,12 +50,24 @@ for svc in "${SERVICES[@]}"; do
     exit 1
   fi
   echo "== build pureiron/$svc:$RELEASE"
-  docker buildx build --builder "$BUILDER" "${CACHE_FLAG[@]}" \
-    --platform linux/amd64 \
-    --provenance=false --sbom=false \
-    --build-arg SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
-    --output "type=docker,name=pureiron/$svc:$RELEASE,rewrite-timestamp=true,dest=$OUT_DIR/$svc.tar" \
-    -f "$dockerfile" .
+  # 빌드 중 패키지 다운로드(PyPI·npm)의 일시적 DNS·네트워크 오류는 1회 재시도로 흡수한다.
+  # 재시도는 같은 입력을 다시 빌드할 뿐이라 결과(config digest)에 영향이 없다.
+  for attempt in 1 2; do
+    if docker buildx build --builder "$BUILDER" "${CACHE_FLAG[@]}" \
+      --platform linux/amd64 \
+      --provenance=false --sbom=false \
+      --build-arg SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
+      --output "type=docker,name=pureiron/$svc:$RELEASE,rewrite-timestamp=true,dest=$OUT_DIR/$svc.tar" \
+      -f "$dockerfile" .; then
+      break
+    fi
+    if [ "$attempt" = 2 ]; then
+      echo "build_images: pureiron/$svc failed twice" >&2
+      exit 1
+    fi
+    echo "build_images: retrying pureiron/$svc in 15s" >&2
+    sleep 15
+  done
   docker load -i "$OUT_DIR/$svc.tar"
 done
 

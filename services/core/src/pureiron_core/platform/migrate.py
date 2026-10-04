@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import re
 import time
 from collections.abc import Callable, Mapping
@@ -21,10 +22,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, cast
 
+import asyncpg
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
-from pureiron_core.platform.db import Connection
+from pureiron_core.platform.db import Connection, DatabaseUnavailableError
 from pureiron_core.platform.sqltext import split_statements
 
 MIGRATION_FILE = re.compile(r"^(\d{4})_([a-z0-9_]+)\.sql$")
@@ -41,6 +43,8 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     release    text        NOT NULL
 )
 """
+
+log = logging.getLogger(__name__)
 
 type ConnectionProvider = Callable[[], AbstractAsyncContextManager[Connection]]
 
@@ -69,6 +73,10 @@ class ChecksumMismatchError(MigrationError):
 
 class MigrationFailedError(MigrationError):
     pass
+
+
+class SchemaUnavailableError(MigrationError):
+    """스키마 epoch를 읽을 수 없다(DB 단절·손상된 schema_meta). readiness는 503으로 다룬다."""
 
 
 def checksum_of(sql: str) -> str:
@@ -395,7 +403,11 @@ async def up(
             done.append(migration.filename)
         return done
     finally:
-        await conn.fetchval(UNLOCK_SQL)
+        # unlock 실패(연결 끊김 등)가 원래 예외를 덮지 않게 한다. 세션이 끝나면 lock도 풀린다.
+        try:
+            await conn.fetchval(UNLOCK_SQL)
+        except (asyncpg.PostgresError, asyncpg.InterfaceError, OSError) as exc:
+            log.warning("could not release migrate lock explicitly: %s", exc)
 
 
 @dataclass(frozen=True, slots=True)
@@ -425,8 +437,13 @@ class SchemaGuard:
         return self._catalog.app_max_compatible
 
     async def envelope(self) -> Envelope:
-        async with self._connection() as conn:
-            cur = await read_epoch(conn)
+        try:
+            async with self._connection() as conn:
+                cur = await read_epoch(conn)
+        except SchemaUnavailableError:
+            raise
+        except (MigrationError, DatabaseUnavailableError, asyncpg.PostgresError, OSError) as exc:
+            raise SchemaUnavailableError(str(exc)) from exc
         return Envelope(
             cur=cur, app_expected=self.app_expected, app_max_compatible=self.app_max_compatible
         )

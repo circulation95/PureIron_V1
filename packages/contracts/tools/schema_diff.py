@@ -1,7 +1,8 @@
 """JSON Schema 호환성 diff: base → head가 기존 문서를 깨는지 판정한다(contracts-diff, G1-3).
 
 breaking(exit 1): 필드·$defs 제거, required 추가, type·enum 축소, const 추가·변경,
-additionalProperties 닫기, 수치·길이·개수 제약 강화, pattern 추가·변경, oneOf/anyOf 분기 감소.
+additionalProperties 닫기, 수치·길이·개수 제약 강화, pattern·format·multipleOf 추가·변경,
+uniqueItems 추가, propertyNames 추가·강화, allOf 항목 추가, oneOf/anyOf 분기 감소·추가.
 비호환이 아닌 변경(선택 필드 추가, 제약 완화, 설명 변경)은 통과(exit 0).
 
     python packages/contracts/tools/schema_diff.py <base.schema.json> <head.schema.json>
@@ -58,30 +59,39 @@ def _schema_map(node: Schema, key: str) -> dict[str, Schema]:
     return {k: s for k, v in raw.items() if (s := _as_schema(v)) is not None}
 
 
+def _compare_enum(base: Schema, head: Schema, path: str, out: list[str]) -> None:
+    if "enum" not in head:
+        return
+    base_enum = base.get("enum")
+    if not isinstance(base_enum, list):
+        out.append(f"{path}: enum added")
+        return
+    head_values = {json.dumps(v, sort_keys=True) for v in cast(list[object], head["enum"])}
+    removed = [
+        v
+        for v in (json.dumps(x, sort_keys=True) for x in cast(list[object], base_enum))
+        if v not in head_values
+    ]
+    if removed:
+        out.append(f"{path}: enum values removed {removed}")
+
+
 def _compare_scalars(base: Schema, head: Schema, path: str, out: list[str]) -> None:
     base_types, head_types = _types(base), _types(head)
     if head_types is not None and (base_types is None or not base_types <= head_types):
         out.append(f"{path}: type narrowed {sorted(base_types or ['any'])} -> {sorted(head_types)}")
 
-    if "enum" in head:
-        base_enum = base.get("enum")
-        head_values = [json.dumps(v, sort_keys=True) for v in cast(list[object], head["enum"])]
-        if not isinstance(base_enum, list):
-            out.append(f"{path}: enum added")
-        else:
-            removed = [
-                v
-                for v in (json.dumps(x, sort_keys=True) for x in cast(list[object], base_enum))
-                if v not in head_values
-            ]
-            if removed:
-                out.append(f"{path}: enum values removed {removed}")
+    _compare_enum(base, head, path, out)
 
     if "const" in head and base.get("const", object()) != head["const"]:
         out.append(f"{path}: const added or changed")
 
-    if "pattern" in head and base.get("pattern") != head["pattern"]:
-        out.append(f"{path}: pattern added or changed")
+    for key in ("pattern", "format", "multipleOf"):
+        if key in head and base.get(key) != head[key]:
+            out.append(f"{path}: {key} added or changed")
+
+    if head.get("uniqueItems") is True and base.get("uniqueItems") is not True:
+        out.append(f"{path}: uniqueItems added")
 
     for key in _LOWER_BOUNDS:
         b, h = _number(base, key), _number(head, key)
@@ -116,6 +126,23 @@ def _compare_objects(base: Schema, head: Schema, path: str, out: list[str]) -> N
     if base_add_schema is not None and head_add_schema is not None:
         compare(base_add_schema, head_add_schema, f"{path}.additionalProperties", out)
 
+    base_names, head_names = (
+        _as_schema(base.get("propertyNames")),
+        _as_schema(head.get("propertyNames")),
+    )
+    if head_names is not None:
+        if base_names is None:
+            out.append(f"{path}: propertyNames constraint added")
+        else:
+            compare(base_names, head_names, f"{path}.propertyNames", out)
+
+
+def _schema_list(node: Schema, key: str) -> list[Schema]:
+    raw = node.get(key)
+    if not isinstance(raw, list):
+        return []
+    return [s for v in cast(list[object], raw) if (s := _as_schema(v)) is not None]
+
 
 def compare(base: Schema, head: Schema, path: str = "$", out: list[str] | None = None) -> list[str]:
     """base 스키마로 유효했던 문서가 head에서 거부될 수 있는 변경 목록."""
@@ -130,14 +157,21 @@ def compare(base: Schema, head: Schema, path: str = "$", out: list[str] | None =
         found.append(f"{path}: items constraint added")
 
     for key in ("oneOf", "anyOf"):
-        base_branches, head_branches = base.get(key), head.get(key)
-        if isinstance(base_branches, list) and isinstance(head_branches, list):
-            base_list = [s for v in cast(list[object], base_branches) if (s := _as_schema(v))]
-            head_list = [s for v in cast(list[object], head_branches) if (s := _as_schema(v))]
+        base_list, head_list = _schema_list(base, key), _schema_list(head, key)
+        if key in base and key in head:
             if len(head_list) < len(base_list):
                 found.append(f"{path}.{key}: branches removed")
             for i, (b, h) in enumerate(zip(base_list, head_list, strict=False)):
                 compare(b, h, f"{path}.{key}[{i}]", found)
+        elif key in head:
+            found.append(f"{path}: {key} constraint added")
+
+    # allOf는 모든 항목을 만족해야 하므로 항목 추가 = 강화, 같은 위치 항목은 재귀 비교.
+    base_all, head_all = _schema_list(base, "allOf"), _schema_list(head, "allOf")
+    if len(head_all) > len(base_all):
+        found.append(f"{path}.allOf: constraints added")
+    for i, (b, h) in enumerate(zip(base_all, head_all, strict=False)):
+        compare(b, h, f"{path}.allOf[{i}]", found)
 
     base_defs, head_defs = _schema_map(base, "$defs"), _schema_map(head, "$defs")
     for name in sorted(base_defs.keys() - head_defs.keys()):

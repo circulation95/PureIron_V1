@@ -67,24 +67,46 @@ class Project:
         return "sha256:" + hashlib.sha256(jcs(payload)).hexdigest()
 
 
+def _is_link(path: Path, root: Path, problems: list[str]) -> bool:
+    """심볼릭 링크는 거부한다 — fmt가 링크를 따라 프로젝트 밖 파일을 덮어쓰지 않게."""
+    if path.is_symlink():
+        problems.append(
+            f"{normalize_relpath(str(path.relative_to(root)))}: symbolic links are not allowed"
+        )
+        return True
+    return False
+
+
+def _discover_dir(
+    root: Path, directory: str, kind: Kind, problems: list[str]
+) -> list[tuple[str, Kind, Path]]:
+    base = root / directory
+    if not base.exists() or _is_link(base, root, problems):
+        return []
+    found: list[tuple[str, Kind, Path]] = []
+    for path in sorted(base.iterdir()):
+        rel = normalize_relpath(str(path.relative_to(root)))
+        if _is_link(path, root, problems):
+            continue
+        if path.is_dir():
+            problems.append(f"{rel}: nested directories are not allowed")
+        elif path.suffix != ".yaml":
+            problems.append(f"{rel}: only .yaml files are allowed")
+        else:
+            found.append((rel, kind, path))
+    return found
+
+
 def _discover(root: Path, problems: list[str]) -> list[tuple[str, Kind, Path]]:
     found: list[tuple[str, Kind, Path]] = []
-    if not (root / PROJECT_FILE).is_file():
-        problems.append(f"{PROJECT_FILE}: missing")
-    else:
-        found.append((PROJECT_FILE, Kind.PROJECT, root / PROJECT_FILE))
+    project_file = root / PROJECT_FILE
+    if not _is_link(project_file, root, problems):
+        if project_file.is_file():
+            found.append((PROJECT_FILE, Kind.PROJECT, project_file))
+        else:
+            problems.append(f"{PROJECT_FILE}: missing")
     for directory, kind in CONTENT_DIRS:
-        base = root / directory
-        if not base.exists():
-            continue
-        for path in sorted(base.iterdir()):
-            rel = normalize_relpath(str(path.relative_to(root)))
-            if path.is_dir():
-                problems.append(f"{rel}: nested directories are not allowed")
-            elif path.suffix != ".yaml":
-                problems.append(f"{rel}: only .yaml files are allowed")
-            else:
-                found.append((rel, kind, path))
+        found.extend(_discover_dir(root, directory, kind, problems))
     for directory in RESERVED_DIRS:
         base = root / directory
         if base.exists():

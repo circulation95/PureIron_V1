@@ -49,21 +49,21 @@ def test_repro_compare_reports_mismatches() -> None:
 def _record(directory: Path, name: str, epoch: int) -> None:
     body = {
         "name": name,
-        "release": f"rel-{name}",
+        "release": name,
         "schema": {"epoch": epoch, "app_expected": epoch, "app_max_compatible": epoch + 1},
-        "images": {"core-test": {"tag": f"pureiron/core-test:rel-{name}", "config_digest": "x"}},
+        "images": {"core-test": {"tag": f"pureiron/core-test:{name}", "config_digest": "x"}},
     }
     (directory / f"{name}.json").write_text(json.dumps(body), encoding="utf-8")
 
 
-def test_pick_previous_epoch_release(tmp_path: Path) -> None:
+def test_pick_previous_epoch_release_in_numeric_order(tmp_path: Path) -> None:
     _record(tmp_path, "r0", 1)
-    _record(tmp_path, "r1", 2)
     _record(tmp_path, "r2", 2)
+    _record(tmp_path, "r10", 2)
     (tmp_path / "notes.json").write_text("{}", encoding="utf-8")
     records = load_records(tmp_path)
-    assert [r.name for r in records] == ["r0", "r1", "r2"]
+    assert [r.name for r in records] == ["r0", "r2", "r10"]
     previous = pick_previous(records, 3)
-    assert previous == ReleaseRecord("r2", "rel-r2", 2, "pureiron/core-test:rel-r2")
+    assert previous == ReleaseRecord("r10", "r10", 2, "pureiron/core-test:r10", "x")
     assert pick_previous(records, 2) == records[0]
     assert pick_previous(records, 1) is None
