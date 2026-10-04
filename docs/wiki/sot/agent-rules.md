@@ -83,7 +83,7 @@ PureIron의 v1 판단 기준은 다음이다.
 
 에이전트는 기술적으로 멋있지만 v1 고객 설득과 첫 계약에 직접 기여하지 않는 기능을 보류해야 한다.
 
-v1은 기존 PLC 제어를 대체하지 않는다. 실제 설비 자동 제어, 완전 예측 AI Simulation, 사람 승인 없는 자동 조치는 v1 범위가 아니다.
+PureIron은 PLC 로직(프로그램)을 바꾸지 않는다. 기본은 읽기 전용이고, MES를 위한 기존 PLC 주소 쓰기(설정값·운전 조건·운전 명령)는 고객이 승인한 현장에서 ADR-013 가드레일 아래에서만 한다. 무인 자동 제어, 완전 예측 AI Simulation, 사람 승인 없는 자동 조치(AI 단독 실행 포함)는 v1 범위가 아니다.
 
 ## 불변 규칙
 
@@ -97,7 +97,7 @@ v1은 기존 PLC 제어를 대체하지 않는다. 실제 설비 자동 제어, 
 - 프로젝트 정본 — 고객 설정 정본은 고객 project repo(Git)다. 비밀값은 `secret://<name>` 참조만, 제품 코드에 고객별 분기(`site_id == "…"`, 고객 이름) 금지. 근거 ADR-025·ADR-026
 - Graceful degradation — 선택 서비스(`ai`·중앙)가 없어도 현장 모니터링·알람·이력은 동작한다. collector 다운 = 해당 장비 BAD/DISCONNECTED, site-db는 필수(core readiness 조건). 근거 ADR-008 개정
 - Device health is not a tag — 장비 상태는 collector `DeviceHealth` → core `GET /api/v1/devices`가 단일 소스, 태그로 만들지 않는다. 근거 ADR-018
-- 쓰기 비활성 — `WriteRequest`는 계약만 두고 보내지 않는다. 기존 PLC 제어를 대체하지 않는다. 근거 ADR-013
+- PLC 로직 불변·쓰기 가드레일 — PLC 프로그램을 수정·다운로드하지 않는다. 쓰기는 core만 `WriteRequest`로 보내며, 프로젝트에 선언된 태그(설정값은 범위, 운전 명령은 허가 조건 필수)만, 현장 스위치(기본 꺼짐)가 켜진 현장에서, 사람 확인(명령은 2단계) 또는 사람이 승인한 예약으로만 한다. 실행 전 품질·연결·범위·허가 검사, 실행 후 readback, 모든 시도 감사 로그. 자동 재시도·AI 단독 실행·업데이트 중 쓰기 금지. 근거 ADR-013(개정)·ADR-014
 - No plugin system — 프로토콜은 collector `drivers/`에 직접 구현하고, 추가는 proto `TagPoint.address` oneof 확장으로만 한다. registry·동적 로딩 금지. 근거 ADR-002
 - No config UI — 인프라·env·드라이버·범용 config 빌더 UI 금지. 현장 편집은 REST `PATCH`만(아래 “No config UI” 범위 절). 근거 ADR-004·ADR-025
 - 20개 고정 expression 함수 — 확장 불가, 복잡 로직은 샌드박스 스크립트로. 근거 ADR-005

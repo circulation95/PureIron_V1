@@ -1,7 +1,7 @@
 """core와의 `Acquisition.Session` 스트림(ADR-020). M1 골격: Hello → plan 수신 → 빈 batch heartbeat.
 
-장비 polling·링버퍼(60s, Ack 전 미해제)는 M3a에서 이 세션 위에 붙는다. 쓰기는 비활성이라
-`WriteRequest`를 받으면 항상 `REJECTED`로 답한다(ADR-013).
+장비 polling·링버퍼(60s, Ack 전 미해제)는 M3a에서 이 세션 위에 붙는다. PLC 쓰기 경로는
+ADR-013(개정) 가드레일과 함께 별도 마일스톤에서 구현한다 — 그 전까지 `WriteRequest`는 `REJECTED`.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from pureiron_collector.settings import CollectorSettings
 
 log = logging.getLogger(__name__)
 
-WRITE_DISABLED = "writes are disabled (ADR-013)"
+WRITE_DISABLED = "write path not implemented yet (ADR-013 guardrails pending)"
 
 
 @dataclass(slots=True)

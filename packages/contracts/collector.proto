@@ -115,7 +115,8 @@ message Ack {
   uint64 seq = 1;
 }
 
-// 쓰기는 계약만 두고 비활성(ADR-013): core는 보내지 않고, collector는 받으면 REJECTED.
+// 쓰기는 core만 보낸다(ADR-013 개정: 선언된 태그·현장별 활성화·사람 확인 또는 승인된 예약·readback·감사).
+// PLC 로직은 바꾸지 않는다. 쓰기 경로 구현 전까지 collector는 받으면 REJECTED로 답한다.
 message WriteRequest {
   string request_id = 1;
   uint32 tag_id = 2;
