@@ -60,6 +60,11 @@ m = json.load(open(sys.argv[1], encoding="utf-8"))
 assert m["kind"] == "install"
 version = m["updater"]["version"]
 assert re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version)
+assert m["updater"]["file"] == f"updater/updater-{version}.tar.gz"
+assert m["updater"]["file"] in m["files"]
+for name, value in m["docker"]["packages"].items():
+    assert re.fullmatch(r"[a-z0-9][a-z0-9.+-]{1,63}", name), name
+    assert re.fullmatch(r"[0-9A-Za-z.+~:-]{1,128}", value), value
 for key, value in (
     ("RELEASE", m["release"]),
     ("UPDATER_VERSION", version),
@@ -191,7 +196,10 @@ if [ "$PREVIOUS_CURRENT" != "$UPDATER_VERSION" ]; then
   # 서명된 tarball의 최상위는 <ver>/ 하나여야 한다(목록을 끝까지 받은 뒤 검사 — 파이프 조기
   # 종료(SIGPIPE)가 pipefail로 검사를 통과시키지 않게).
   entries="$(tar --force-local -tzf "$HERE/$UPDATER_TAR")"
-  outside="$(printf '%s\n' "$entries" | grep -v "^$UPDATER_VERSION/" || true)"
+  outside=""
+  while IFS= read -r entry; do
+    case "$entry" in "$UPDATER_VERSION"/*) ;; *) outside+="$entry " ;; esac
+  done <<<"$entries"
   if [ -n "$outside" ]; then
     echo "install: $UPDATER_TAR has entries outside $UPDATER_VERSION/: $outside" >&2
     false

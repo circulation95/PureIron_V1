@@ -537,3 +537,19 @@ def test_updater_only_replaces_venv_and_unit_or_restores(
         assert os.readlink(current) == "9.9.9"
         assert unit.read_bytes() == (ROOT / "deploy/systemd/pureiron-updater.service").read_bytes()
     assert "dpkg -r" not in host.log.read_text(encoding="utf-8")
+
+
+@LINUX_ONLY
+def test_bootstrap_refuses_a_writable_metadata_directory(built: Built, tmp_path: Path) -> None:
+    """보안 재검토 M-1: 남이 쓸 수 있는 디렉터리는 검증과 사용 사이에 바꿔치기될 수 있다."""
+    work = tmp_path / "w"
+    operator_extract(built.pib, work)
+    (work / "manifest.json").chmod(0o666)
+    run = bash(
+        work / "bootstrap" / "bootstrap-verify.sh",
+        *("--root-fpr", built.fingerprint, "--bundle", built.pib.as_posix()),
+        *("--dest", (work.parent / "dest").as_posix()),
+        cwd=work,
+    )
+    assert run.returncode == 1
+    assert "not group/world-writable" in run.stderr

@@ -59,12 +59,22 @@ def set_secret(
     # 고유한 임시 파일(mkstemp: O_EXCL·0600) — 동시 실행끼리 서로의 tmp를 지우지 않는다.
     fd, tmp_name = tempfile.mkstemp(dir=secrets_dir, prefix=f".{name}.", suffix=".tmp")
     tmp = Path(tmp_name)
-    with os.fdopen(fd, "wb") as handle:
-        handle.write(value)
-        handle.flush()
-        os.fsync(handle.fileno())
-    if sys.platform != "win32" and uid is not None and os.geteuid() == 0:
-        os.chown(tmp, uid, uid)
-    tmp.replace(path)
-    fsync_dir(secrets_dir)
-    return True
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(value)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if sys.platform != "win32" and uid is not None and os.geteuid() == 0:
+            os.chown(tmp, uid, uid)
+        if if_missing:
+            # 없을 때만 원자적으로 생성(link는 대상이 있으면 실패) — 동시 실행이 덮어쓰지 않게.
+            try:
+                os.link(tmp, path)
+            except FileExistsError:
+                return False
+        else:
+            tmp.replace(path)
+        fsync_dir(secrets_dir)
+        return True
+    finally:
+        tmp.unlink(missing_ok=True)

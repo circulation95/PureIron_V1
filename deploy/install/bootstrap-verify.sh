@@ -45,7 +45,8 @@ ROOT_FPR="$(printf '%s' "$ROOT_FPR" | tr 'A-F' 'a-f' | tr -d ' :')"
 for tool in openssl sha256sum tar od "$PY"; do
   command -v "$tool" >/dev/null 2>&1 || die "required tool missing: $tool"
 done
-# ⓪ 검증 전 추출물: 정해진 파일만, symlink 없음(심어진 모듈·링크로 검증을 우회하지 못하게)
+# ⓪ 검증 전 추출물: 정해진 파일만, symlink·개행 이름 없음, 이 사용자 소유·남이 못 씀
+#    (심어진 모듈·링크·바꿔치기로 검증을 우회하지 못하게). 이후에는 $WORK 사본만 쓴다.
 EXPECTED="bootstrap
 bootstrap/bootstrap-verify.sh
 keys
@@ -56,15 +57,29 @@ manifest.sig
 release-cert.json
 release-cert.sig"
 [ -z "$(find . -type l -print -quit)" ] || die "symbolic links in $(pwd) — extract into an empty directory"
+NL=$'\n'
+[ -z "$(find . -name "*${NL}*" -print -quit)" ] || die "file names with newlines in $(pwd)"
 found="$(find . -mindepth 1 | sed 's|^\./||' | LC_ALL=C sort)"
 [ "$found" = "$EXPECTED" ] \
   || die "$(pwd) must contain only the extracted metadata (use an empty directory), found: $(echo "$found" | tr '\n' ' ')"
 for f in manifest.json manifest.sig release-cert.json release-cert.sig keys/root.pub keys/root.pem; do
   [ -f "$f" ] || die "$f is not a regular file"
 done
+[ "$(stat -c '%u' .)" = "$(id -u)" ] && [ -z "$(find . -perm /022 -print -quit)" ] \
+  || die "$(pwd) and its files must be owned by you and not group/world-writable (install -d -m 700)"
 
+if [ -e "$DEST" ] && [ -n "$(ls -A "$DEST")" ]; then
+  die "--dest $DEST must be empty or absent"
+fi
+mkdir -p "$DEST"
+DEST="$(cd "$DEST" && pwd)"
+BUNDLE="$(cd "$(dirname "$BUNDLE")" && pwd)/$(basename "$BUNDLE")"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+mkdir "$WORK/meta" "$WORK/meta/keys"
+cp -- manifest.json manifest.sig release-cert.json release-cert.sig "$WORK/meta/"
+cp -- keys/root.pub keys/root.pem "$WORK/meta/keys/"
+cd "$WORK/meta"
 
 # ① root 공개키: 지문 + PEM 안의 raw 키
 [ "$(wc -c < keys/root.pub | tr -d ' ')" = 32 ] || die "keys/root.pub is not 32 bytes"
@@ -85,21 +100,28 @@ openssl pkeyutl -verify -pubin -inkey keys/root.pem -rawin \
   || die "release-cert.sig is not a root signature of release-cert.json"
 echo "release cert OK"
 
-# ③ cert → manifest(+ 형식 확인). release 공개키 PEM과 files 목록은 python3(표준 라이브러리)로 만든다.
-"$PY" -I - "$WORK" <<'PYEOF' || die "release-cert.json / manifest.json are malformed"
-import base64, json, re, sys
-from datetime import datetime
-work = sys.argv[1]
+# ③ cert → manifest. 서명 확인 전에는 manifest를 해석하지 않는다: cert(이미 root 서명 확인)에서
+#    release 공개키 PEM만 만들고 → manifest 서명 확인 → 그다음 형식·files 목록을 읽는다.
+#    python은 표준 라이브러리만, 격리 모드(-I).
+"$PY" -I - <<'PYEOF' || die "release-cert.json is malformed"
+import base64, json, sys
 cert = json.load(open("release-cert.json", encoding="utf-8"))
 if cert.get("format") != 1 or cert.get("purpose") != "release-cert":
     sys.exit("release-cert.json: not a format 1 release-cert")
 raw = bytes.fromhex(cert["release_pubkey"])
 if len(raw) != 32:
     sys.exit("release_pubkey is not 32 bytes")
-der = bytes.fromhex("302a300506032b6570032100") + raw
-body = base64.b64encode(der).decode()
-with open(f"{work}/release.pem", "w", encoding="ascii") as out:
+body = base64.b64encode(bytes.fromhex("302a300506032b6570032100") + raw).decode()
+with open("release.pem", "w", encoding="ascii") as out:
     out.write("-----BEGIN PUBLIC KEY-----\n" + body + "\n-----END PUBLIC KEY-----\n")
+PYEOF
+openssl pkeyutl -verify -pubin -inkey release.pem -rawin \
+  -in manifest.json -sigfile manifest.sig >/dev/null 2>&1 \
+  || die "manifest.sig is not a release-key signature of manifest.json"
+"$PY" -I - <<'PYEOF' || die "manifest.json is malformed"
+import json, re, sys
+from datetime import datetime
+cert = json.load(open("release-cert.json", encoding="utf-8"))
 manifest = json.load(open("manifest.json", encoding="utf-8"))
 if manifest.get("format") != 1 or manifest.get("kind") != "install":
     sys.exit("manifest.json: not an install bundle")
@@ -108,30 +130,23 @@ if not stamp(cert["not_before"]) <= stamp(manifest["created_at"]) <= stamp(cert[
     sys.exit("manifest created_at is outside the cert validity")
 pattern = re.compile(r"(?!(.*/)?\.\.?(/|$))[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*")
 digest = re.compile(r"sha256:[0-9a-f]{64}")
-with open(f"{work}/files.sha256", "w", encoding="ascii", newline="\n") as out:
+with open("files.sha256", "w", encoding="ascii", newline="\n") as out:
     for name, value in sorted(manifest["files"].items()):
         if not pattern.fullmatch(name) or not digest.fullmatch(value):
             sys.exit(f"bad files entry {name!r}")
         out.write(f"{value[7:]}  {name}\n")
 PYEOF
-openssl pkeyutl -verify -pubin -inkey "$WORK/release.pem" -rawin \
-  -in manifest.json -sigfile manifest.sig >/dev/null 2>&1 \
-  || die "manifest.sig is not a release-key signature of manifest.json"
-echo "manifest     OK  $(wc -l < "$WORK/files.sha256" | tr -d ' ') files"
+echo "manifest     OK  $(wc -l < files.sha256 | tr -d ' ') files"
 
 # ④ 서명된 목록의 경로만 풀고 sha256 대조
-if [ -e "$DEST" ] && [ -n "$(ls -A "$DEST")" ]; then
-  die "--dest $DEST must be empty or absent"
-fi
-mkdir -p "$DEST"
-mapfile -t NAMES < <(cut -d' ' -f3- "$WORK/files.sha256")
+mapfile -t NAMES < <(cut -d' ' -f3- files.sha256)
 tar --force-local -xf "$BUNDLE" -C "$DEST" --no-same-owner --no-same-permissions -- "${NAMES[@]}" \
   || die "cannot extract the signed files from $BUNDLE"
 [ -z "$(find "$DEST" -type l -print -quit)" ] || die "bundle contains symbolic links"
 for name in "${NAMES[@]}"; do
   [ -f "$DEST/$name" ] || die "$name is not a regular file"
 done
-(cd "$DEST" && sha256sum --quiet --strict -c "$WORK/files.sha256") || die "payload sha256 mismatch"
-cp manifest.json manifest.sig release-cert.json release-cert.sig "$DEST/"
+(cd "$DEST" && sha256sum --quiet --strict -c "$WORK/meta/files.sha256") || die "payload sha256 mismatch"
+cp -- manifest.json manifest.sig release-cert.json release-cert.sig "$DEST/"
 echo "payload      OK  → $DEST"
 echo "bootstrap-verify: OK — next: sudo bash $DEST/install/install.sh --bundle $BUNDLE"
