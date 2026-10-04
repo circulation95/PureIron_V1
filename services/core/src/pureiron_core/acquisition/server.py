@@ -1,6 +1,7 @@
 """`Acquisition.Session` gRPC 서버(core = 서버). M1 골격: Hello에 빈 plan, batch마다 Ack.
 
-ingest(현재값·historian 버퍼)는 M3a에서 이 서비스 뒤에 붙는다. 쓰기(`WriteRequest`)는 보내지 않는다.
+ingest(현재값·historian 버퍼)는 M3a에서 붙는다. 쓰기(`WriteRequest`)는 ADR-013 가드레일
+구현 전까지 보내지 않는다.
 """
 
 from __future__ import annotations
