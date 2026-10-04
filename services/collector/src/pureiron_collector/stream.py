@@ -26,7 +26,6 @@ WRITE_DISABLED = "writes are disabled (ADR-013)"
 @dataclass(slots=True)
 class SessionState:
     plan_rev: int = 0
-    plan: pb.AcquisitionPlan | None = None
     next_seq: int = 1
     acked_seq: int = 0
     unacked: list[int] = field(default_factory=list[int])
@@ -49,7 +48,6 @@ class SessionState:
     def handle(self, message: pb.CoreMsg) -> pb.CollectorMsg | None:
         kind = message.WhichOneof("msg")
         if kind == "plan":
-            self.plan = message.plan
             self.plan_rev = message.plan.plan_rev
             log.info("plan rev %d received (%d tags)", self.plan_rev, len(message.plan.tags))
             return None

@@ -49,7 +49,7 @@ def test_baseline_epoch_is_exempt(tmp_path: Path) -> None:
         ("CREATE UNIQUE INDEX t_v ON t (v);", "CREATE UNIQUE INDEX"),
         ("CREATE TRIGGER trg BEFORE INSERT ON t FOR EACH ROW EXECUTE FUNCTION f();", "TRIGGER"),
         ("CREATE OR REPLACE TRIGGER trg AFTER UPDATE ON t EXECUTE FUNCTION f();", "TRIGGER"),
-        ("CALL refresh_continuous_aggregate('t_1m', NULL, NULL);", "refresh_continuous_aggregate"),
+        ("CALL refresh_continuous_aggregate('t_1m', NULL, NULL);", "REFRESH_CONTINUOUS_AGGREGATE"),
         (
             "CREATE MATERIALIZED VIEW t_1h WITH (timescaledb.continuous) AS "
             "SELECT time_bucket('1 hour', ts) b, count(*) FROM h GROUP BY b;",

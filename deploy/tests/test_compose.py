@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Protocol, cast
 
+from images import read_lock
 from ruamel.yaml import YAML
 
 DEPLOY = Path(__file__).resolve().parents[1]
@@ -27,12 +28,7 @@ def _services() -> dict[str, dict[str, object]]:
 
 
 def _lock() -> dict[str, str]:
-    values: dict[str, str] = {}
-    for line in LOCK.read_text(encoding="utf-8").splitlines():
-        key, sep, value = line.partition("=")
-        if sep and not key.startswith("#"):
-            values[key] = value
-    return values
+    return read_lock(LOCK)
 
 
 def test_project_name_is_fixed() -> None:

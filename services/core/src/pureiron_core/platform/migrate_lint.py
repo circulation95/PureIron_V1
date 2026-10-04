@@ -29,19 +29,6 @@ BASELINE_EPOCH = 1
 _CONTRACT = re.compile(
     r"--\s*contract:\s*drops\s+(\S+)\s+deprecated\s+in\s+epoch\s+(\d+)", re.IGNORECASE
 )
-_SIMPLE_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"\bRENAME\b"), "RENAME is not additive"),
-    (re.compile(r"\bTRUNCATE\b"), "TRUNCATE is not additive"),
-    (re.compile(r"\bCREATE\s+UNIQUE\s+INDEX\b"), "CREATE UNIQUE INDEX can fail on existing data"),
-    (
-        re.compile(r"\bCREATE\s+(OR\s+REPLACE\s+)?(CONSTRAINT\s+)?TRIGGER\b"),
-        "CREATE TRIGGER changes write behaviour for older apps",
-    ),
-    (
-        re.compile(r"\bREFRESH_CONTINUOUS_AGGREGATE\b"),
-        "refresh_continuous_aggregate in a migration blocks on data size; use a refresh policy",
-    ),
-)
 _DROP = re.compile(r"\bDROP\b")
 _ALTER_TYPE = re.compile(r"^ALTER\s+(COLUMN\s+)?\S+\s+(SET\s+DATA\s+)?TYPE\b")
 # baseline 이후 파일에서 허용하는 구문 형태(허용 목록). 목록 밖 구문은 모두 거부한다:
@@ -182,9 +169,6 @@ def _check_statement(
     report: LintReport,
 ) -> None:
     code = statement.code
-    for pattern, message in _SIMPLE_RULES:
-        if pattern.search(code):
-            report.add(filename, message)
     if _DROP.search(code):
         _check_drop(filename, statement, file_epoch, contracts, report)
     if not code.startswith("DROP") and not any(p.match(code) for p in _ALLOWED_STATEMENTS):
