@@ -14,6 +14,9 @@
   core·collector·web·site-db를 결정적 gzip(mtime 0, 파일명 없음)으로 `images/<svc>.tar.gz`에
   넣고, 압축본에서 다시 읽은 config digest가 기록과 같은지 확인한다.
 - 프로젝트 디렉터리(project-tools로 검증): 정규형 파일을 결정적 tar `project/project.tar`로.
+- 현장 compose 정의 `deploy/compose/site.compose.yml` → `compose/site.compose.yml`(서명 대상).
+  Updater는 이 파일과 manifest 이미지 태그로 `.env`를 만들고, `docker compose config`가 해석한
+  이미지가 manifest 태그와 정확히 같을 때만 적용한다.
 - release key(raw 32B seed)와 root가 발급한 `release-cert.json`·`.sig`.
 
 쓴 뒤 `--root-pub`으로 `verify_bundle`(현장과 같은 코드, 추출 없음)을 돌려 통과해야 성공이다.
@@ -65,6 +68,8 @@ from pureiron_project.project import PROJECT_FILE, Project, load_project
 
 ROOT = Path(__file__).resolve().parents[2]
 RELEASES = ROOT / "deploy" / "releases"
+SITE_COMPOSE = ROOT / "deploy" / "compose" / "site.compose.yml"
+COMPOSE_PAYLOAD = "compose/site.compose.yml"
 UPDATER_PYPROJECT = ROOT / "services" / "updater" / "pyproject.toml"
 GIB = 1024**3
 SIZE_LIMIT = int(1.5 * GIB)
@@ -265,6 +270,7 @@ def build(args: argparse.Namespace) -> int:
         project_tar = staging / "project" / "project.tar"
         write_project_tar(project, project_tar)
         payload["project/project.tar"] = project_tar
+        payload[COMPOSE_PAYLOAD] = SITE_COMPOSE
 
         project_ref: dict[str, Json] = {
             "project_id": project_doc["project_id"],

@@ -151,6 +151,7 @@ def test_build_then_verify_end_to_end(setup: Setup, capsys: pytest.CaptureFixtur
     assert manifest.project.absorbs == {"site-a": 3}
     assert manifest.fleet_commit == "abc1234"
     assert sorted(manifest.files) == [
+        "compose/site.compose.yml",
         *(f"images/{svc}.tar.gz" for svc in sorted(SERVICES)),
         "project/project.tar",
     ]

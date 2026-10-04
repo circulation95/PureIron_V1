@@ -1,9 +1,19 @@
 [project]
 name = "pureiron-updater"
 version = "0.1.0"
-description = "현장 Updater(호스트 systemd) — M2에서 구현"
+description = "현장 Updater(호스트 systemd) — 서명 번들 적용 상태기계·recover·pureiron-site CLI"
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = [
+    "pureiron-bundle-tools",
+    # Windows 개발 환경에는 IANA 시간대 DB가 없다(현장 Ubuntu는 시스템 tzdata 사용).
+    "tzdata; sys_platform == 'win32'",
+]
+
+[project.scripts]
+pureiron-site = "pureiron_updater.cli:main"
+
+[tool.uv.sources]
+pureiron-bundle-tools = { workspace = true }
 
 [build-system]
 requires = ["uv_build==0.10.12"]
@@ -11,6 +21,7 @@ build-backend = "uv_build"
 
 [tool.pyright]
 include = ["src", "tests"]
+extraPaths = ["tests"]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
 # generated ≠ authored (ADR-028, PD-20): 생성물(.py·.pyi)의 진단은 끄고, 타입은 .pyi(mypy-protobuf)를
