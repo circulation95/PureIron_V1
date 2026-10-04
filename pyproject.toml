@@ -47,6 +47,8 @@ extend-ignore-names = ["Session"]
 
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**" = ["PLR0915"]
+# 거부 예외 이름은 plan·ADR-023 용어(BundleRejected)를 그대로 쓴다(Error 접미사 규칙 예외).
+"packages/bundle-tools/src/pureiron_bundle/errors.py" = ["N818"]
 
 [tool.ruff.lint.isort]
 known-first-party = [

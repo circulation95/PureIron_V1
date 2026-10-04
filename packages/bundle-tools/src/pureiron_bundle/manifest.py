@@ -1,0 +1,204 @@
+"""manifest.json 해석·계약 검증(plan §6.2, `packages/contracts/manifest.schema.json`).
+
+스키마 정본은 `packages/contracts/`이고, 패키지 안 `schema/*.schema.json`은
+`scripts/g1.sh contracts-gen`이 복사한 생성물이다(contracts-drift가 동기 여부를 검사).
+manifest의 `$ref: fleet-site.schema.json#…`는 패키지 안 사본으로 오프라인 해석한다.
+
+빌더는 manifest를 JCS(RFC 8785) 바이트로 쓰고 그 바이트에 서명한다. 검증은 서명된 바이트를
+그대로 확인한 뒤에만 해석한다(재직렬화하지 않는다).
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass
+from datetime import datetime
+from enum import StrEnum
+from functools import cache
+from importlib import resources
+from typing import Any, Protocol, cast
+
+import rfc8785
+from jsonschema import Draft202012Validator
+from referencing import Registry, Resource
+
+from pureiron_bundle.errors import BundleRejected, RejectCode
+from pureiron_bundle.trust import parse_timestamp
+
+type Json = bool | int | float | str | list[Json] | dict[str, Json] | None
+
+MANIFEST_FILE = "manifest.json"
+SITE_IMAGES = ("core", "collector", "web", "site-db")
+
+
+class SchemaName(StrEnum):
+    MANIFEST = "manifest.schema.json"
+    FLEET_SITE = "fleet-site.schema.json"
+
+
+class _Validator(Protocol):
+    def iter_errors(self, instance: object) -> Iterator[_ValidationError]: ...
+
+
+class _ValidationError(Protocol):
+    @property
+    def message(self) -> str: ...
+
+    @property
+    def json_path(self) -> str: ...
+
+
+@cache
+def contract_schema(name: SchemaName) -> Mapping[str, object]:
+    text = resources.files("pureiron_bundle").joinpath(f"schema/{name.value}").read_text("utf-8")
+    return cast(Mapping[str, object], json.loads(text))
+
+
+@cache
+def _validator(name: SchemaName) -> _Validator:
+    registry = Registry[Any]()
+    for each in SchemaName:
+        schema = contract_schema(each)
+        registry = registry.with_resource(str(schema["$id"]), Resource.from_contents(schema))
+    return cast(_Validator, Draft202012Validator(contract_schema(name), registry=registry))
+
+
+def validate(name: SchemaName, document: object) -> list[str]:
+    """스키마 위반 메시지(`<json path>: <message>`), 정렬."""
+    return sorted(f"{e.json_path}: {e.message}" for e in _validator(name).iter_errors(document))
+
+
+@cache
+def file_path_pattern() -> re.Pattern[str]:
+    """manifest `files` 키(번들 안 payload 경로) 패턴 — 계약 스키마에서 읽어 동기화를 유지한다."""
+    schema = contract_schema(SchemaName.MANIFEST)
+    properties = cast(Mapping[str, Mapping[str, Mapping[str, str]]], schema["properties"])
+    return re.compile(properties["files"]["propertyNames"]["pattern"])
+
+
+@cache
+def release_version_pattern() -> re.Pattern[str]:
+    """제품 달력 버전(`YYYY.M.N`) 패턴 — fleet-site 계약 `$defs/release`."""
+    schema = contract_schema(SchemaName.FLEET_SITE)
+    defs = cast(Mapping[str, Mapping[str, str]], schema["$defs"])
+    return re.compile(defs["release"]["pattern"])
+
+
+@dataclass(frozen=True, slots=True)
+class ImageRef:
+    config_digest: str
+    tag: str
+    registry_digest: str | None = None
+    upstream: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SchemaEnvelope:
+    target: int
+    app_expected: int
+    app_max_compatible: int
+    compat_app_min: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProductRelease:
+    version: str
+    min_updater: str
+    images: Mapping[str, ImageRef]
+    schema: SchemaEnvelope
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectRef:
+    project_id: str
+    version: str
+    content_hash: str
+    absorbs: Mapping[str, int]
+
+
+@dataclass(frozen=True, slots=True)
+class Manifest:
+    site_id: str
+    generation: int
+    created_at: datetime
+    product_release: ProductRelease
+    project: ProjectRef
+    window: Json
+    files: Mapping[str, str]
+    trust_update: int | None
+    fleet_commit: str
+    document: Mapping[str, Json]
+    """계약 검증을 통과한 원본 문서(보고·저장용)."""
+
+
+def manifest_bytes(document: Mapping[str, Json]) -> bytes:
+    """서명 대상 바이트 = JCS(RFC 8785)."""
+    return rfc8785.dumps(dict(document))
+
+
+def _no_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    out: dict[str, object] = {}
+    for key, value in pairs:
+        if key in out:
+            raise ValueError(f"duplicate key {key!r}")
+        out[key] = value
+    return out
+
+
+def _image(data: Mapping[str, str]) -> ImageRef:
+    return ImageRef(
+        config_digest=data["config_digest"],
+        tag=data["tag"],
+        registry_digest=data.get("registry_digest"),
+        upstream=data.get("upstream"),
+    )
+
+
+def parse_manifest(data: bytes) -> Manifest:
+    """서명 확인이 끝난 manifest 바이트 → 계약 검증 → 타입 접근자. 위반은 `E_FORMAT`."""
+    try:
+        document: object = json.loads(data, object_pairs_hook=_no_duplicates)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise BundleRejected(RejectCode.E_FORMAT, f"{MANIFEST_FILE}: invalid JSON ({exc})") from exc
+    problems = validate(SchemaName.MANIFEST, document)
+    if problems:
+        raise BundleRejected(RejectCode.E_FORMAT, f"{MANIFEST_FILE}: " + "; ".join(problems))
+    doc = cast(dict[str, Json], document)
+    try:
+        created_at = parse_timestamp(cast(str, doc["created_at"]))
+    except ValueError as exc:
+        raise BundleRejected(RejectCode.E_FORMAT, f"{MANIFEST_FILE}: created_at {exc}") from exc
+    release = cast(dict[str, Json], doc["product_release"])
+    project = cast(dict[str, Json], doc["project"])
+    schema = cast(dict[str, Json], release["schema"])
+    images = cast(dict[str, dict[str, str]], release["images"])
+    trust_update = cast(dict[str, int] | None, doc.get("trust_update"))
+    return Manifest(
+        site_id=cast(str, doc["site_id"]),
+        generation=cast(int, doc["generation"]),
+        created_at=created_at,
+        product_release=ProductRelease(
+            version=cast(str, release["version"]),
+            min_updater=cast(str, release["min_updater"]),
+            images={name: _image(image) for name, image in images.items()},
+            schema=SchemaEnvelope(
+                target=cast(int, schema["target"]),
+                app_expected=cast(int, schema["app_expected"]),
+                app_max_compatible=cast(int, schema["app_max_compatible"]),
+                compat_app_min=cast(str, schema["compat_app_min"]),
+            ),
+        ),
+        project=ProjectRef(
+            project_id=cast(str, project["project_id"]),
+            version=cast(str, project["version"]),
+            content_hash=cast(str, project["content_hash"]),
+            absorbs=cast(dict[str, int], project.get("absorbs", {})),
+        ),
+        window=doc["window"],
+        files=cast(dict[str, str], doc["files"]),
+        trust_update=None if trust_update is None else trust_update["min_cert_serial"],
+        fleet_commit=cast(str, doc["fleet_commit"]),
+        document=doc,
+    )
