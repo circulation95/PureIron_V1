@@ -69,7 +69,7 @@ message ModbusAddress {
 // replay=true(재연결 후 재전송분)는 core가 historian에만 기록한다.
 message ValueBatch {
   uint64 plan_rev = 1;
-  uint64 seq = 2;
+  uint32 seq = 2;
   bool replay = 3;
   repeated Sample samples = 4;
 }
