@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
-# G1 외부 도구(buf, oasdiff)를 버전·sha256 고정으로 .tools/bin 에 설치한다.
+# G1 외부 도구(buf, oasdiff)를 버전·sha256 고정으로 설치한다.
+# 위치: CI runner는 $RUNNER_TOOL_CACHE/pureiron(체크아웃 정리와 무관하게 재사용), 로컬은 .tools/bin.
 # Linux(g1 runner, WSL2 Ubuntu)와 Windows(Git Bash 개발 PC) 모두 같은 버전을 쓴다.
 # 버전을 올릴 때는 아래 표의 버전과 sha256을 함께 바꾼다(릴리스의 checksum 파일 값).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN="$ROOT/.tools/bin"
+if [ -n "${RUNNER_TOOL_CACHE:-}" ]; then
+  BIN="$RUNNER_TOOL_CACHE/pureiron/bin"
+else
+  BIN="$ROOT/.tools/bin"
+fi
 mkdir -p "$BIN"
 
 BUF_VERSION=1.73.0
