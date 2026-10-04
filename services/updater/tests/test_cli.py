@@ -98,3 +98,13 @@ def test_service_tick_enforces_window_after_killed_apply(site: Site) -> None:
     assert state.attempt.phase is Phase.VERIFIED
     assert site.world.lock is None
     assert site.world.running == release_ids("r0")
+
+
+def test_superseding_apply_exits_0(site: Site) -> None:
+    """리뷰 N-2: 대체된 이전 시도의 실패는 이번 apply의 종료 코드가 아니다."""
+    assert cli.main(["apply", str(site.kit.bundle(1, "r0"))]) == cli.EXIT_OK
+    site.world.core_http_down = True  # 커밋 후 잠금 불가 → pending 대기
+    assert cli.main(["apply", str(site.kit.bundle(2, "r1"))]) == cli.EXIT_OK
+    site.world.core_http_down = False
+    assert cli.main(["apply", str(site.kit.bundle(3, "r1", version="v3"))]) == cli.EXIT_OK
+    assert site.world.project["version"] == "v3"

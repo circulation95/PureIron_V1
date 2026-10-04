@@ -20,7 +20,7 @@
 | 종료 | 편집 잠금 해제(HTTP 실패 시 site-db `psql`로 updater 잠금만 해제 — core 이미지 무관) → 보고 → 확정 | 해제 실패 → 종료 phase로 남아 다음 tick에 재시도 |
 
 - docker 데몬이 응답하지 않으면(재부팅 직후 등) `advance`·`recover`는 아무것도 바꾸지 않고 다음 tick을 기다린다 — 일시 장애를 영구 실패로 분류하지 않는다.
-- 커밋된(pending) 대기 시도를 새 번들이 대체하면 `failed(E_SUPERSEDED)`로 보고하고 잠금을 푼 뒤에만 대체한다(못 풀면 거부). 커밋 후 번들 사본이 사라지면 `failed(E_BUNDLE)`.
+- 커밋된(pending) 대기 시도는 새 번들을 먼저 부작용 없이 검증해 **더 높은 generation일 때만** `failed(E_SUPERSEDED)`로 보고하고 잠금을 푼 뒤 대체한다(못 풀면 거부). 거부될 번들·같은 gen 재빌드는 대기 시도를 건드리지 않는다. 커밋 후 번들 사본이 사라지면 `failed(E_BUNDLE)`.
 - 서비스 loop는 매 tick 복구 규칙을 적용한다 — `apply`가 서비스 영향 전 단계에서 죽고 창이 닫히면 `verified`로 되돌린다.
 - 최초 설치(적용 이력 없음)는 창·잠금·백업이 없고, 실패해도 되돌릴 대상이 없어 띄운 스택을 진단용으로 남긴다.
 - 스키마는 전진만 한다. 롤백은 앱 이미지·프로젝트만 직전으로 되돌린다. site-db digest·태그가 바뀌는 번들은 `E_DIGEST`로 거부한다(db-step release는 아직 미지원).

@@ -377,13 +377,12 @@ def strand_lock(site: Site) -> None:
 def test_superseding_committed_attempt_reports_it_and_releases_lock(site: Site) -> None:
     installed(site)
     strand_lock(site)
-    state = site.apply(site.kit.bundle(3, "r1", site="site-b"))  # 대체 후 거부되는 번들
-    assert state.attempt is None
+    state = site.apply(site.kit.bundle(3, "r1", version="v3"))
+    assert (state.applied_gen, state.last_result) == (3, AttemptResult.SUCCEEDED)
     assert site.world.lock is None
     g2, g3 = reports(site)[-2:]
     assert (g2["generation"], g2["result"], g2["code"]) == (2, "failed", "E_SUPERSEDED")
-    assert (g3["result"], g3["code"]) == ("rejected", "E_SITE")
-    assert (state.last_attempted_gen, state.last_result) == (2, AttemptResult.FAILED)
+    assert (g3["generation"], g3["result"]) == (3, "succeeded")
 
 
 def test_supersede_refused_while_lock_cannot_be_released(site: Site) -> None:
@@ -425,3 +424,24 @@ def test_docker_down_makes_no_progress(site: Site) -> None:
     assert updater.advance() == before
     site.world.docker_down = False
     assert updater.advance().applied_gen == 2
+
+
+@pytest.mark.parametrize("case", ["other_site", "older", "same_gen_rebuild"])
+def test_bundle_that_would_not_supersede_leaves_pending_attempt(site: Site, case: str) -> None:
+    """리뷰 N-1: 거부될 번들·같은 gen 재빌드가 커밋된 대기 gen을 소진시키지 않는다."""
+    installed(site)
+    strand_lock(site)
+    kit = site.kit
+    pib, code = {
+        "other_site": lambda: (kit.bundle(3, "r1", site="site-b"), "E_SITE"),
+        "older": lambda: (kit.bundle(1, "r0"), "E_GEN"),
+        "same_gen_rebuild": lambda: (kit.bundle(2, "r1", version="v22"), None),
+    }[case]()
+    state = site.apply(pib)
+    # 새 번들만 거부(또는 무시)되고, 대기하던 g2가 잠금이 풀리자 이어서 적용된다.
+    assert (state.applied_gen, state.last_result) == (2, AttemptResult.SUCCEEDED)
+    assert site.world.lock is None
+    found = reports(site)
+    assert not any(r["code"] == "E_SUPERSEDED" for r in found)
+    rejected = [r["code"] for r in found if r["result"] == "rejected"]
+    assert rejected == ([] if code is None else [code])

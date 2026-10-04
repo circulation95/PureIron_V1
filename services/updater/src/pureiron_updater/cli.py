@@ -124,15 +124,21 @@ def _summary(state: UpdaterState) -> str:
     return "\n".join(lines)
 
 
-def _outcome(updater: Updater) -> int:
-    """이번 실행에서 끝난 시도·남은 시도로 판정한다(0 성공·대기·no-op, 1 실패·거부)."""
+def _outcome(updater: Updater, sha256: str | None = None) -> int:
+    """판정(0 성공·대기·no-op, 1 실패·거부). `sha256`을 주면 그 번들의 시도만 본다 — 대체된
+    이전 시도(`E_SUPERSEDED`)나 마무리만 한 이전 시도는 이번 apply의 결과가 아니다."""
     state = updater.state
     print(_summary(state))
     attempt = state.attempt
-    if attempt is not None and attempt.phase in TERMINAL:
+    if (
+        attempt is not None
+        and attempt.phase in TERMINAL
+        and sha256 in (None, attempt.bundle_sha256)
+    ):
         # 결과는 났지만 잠금을 아직 못 풀었다 — 서비스 loop가 마무리한다.
         return EXIT_OK if attempt.phase is Phase.SUCCEEDED else EXIT_FAILED
-    failed = [a for a in updater.finished if result_of(a) is not AttemptResult.SUCCEEDED]
+    mine = [a for a in updater.finished if sha256 in (None, a.bundle_sha256)]
+    failed = [a for a in mine if result_of(a) is not AttemptResult.SUCCEEDED]
     return EXIT_FAILED if failed else EXIT_OK
 
 
@@ -140,11 +146,10 @@ def _apply(settings: Settings, pib: Path) -> int:
     with process_lock(settings.state_dir):
         updater = Updater(settings, real_deps(settings))
         recover(updater)
-        updater.finished.clear()  # 이전 시도의 마무리는 이번 apply 결과가 아니다
         bundle, sha = _copy_in(pib, settings.bundles_dir)
         updater.submit(bundle, sha)
         updater.advance()
-        return _outcome(updater)
+        return _outcome(updater, sha)
 
 
 def _verify_only(settings: Settings, pib: Path) -> int:

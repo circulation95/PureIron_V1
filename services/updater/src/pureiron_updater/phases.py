@@ -177,7 +177,10 @@ class Updater:
                 log.info("bundle %s is already waiting", sha256)
                 return
             if Phase.COMMITTED.value in current.timeline:
-                # 커밋된(pending) 시도는 결과를 남기고 잠금을 푼 뒤에만 대체한다.
+                # 커밋된(pending) 시도는 새 번들이 검증상 더 높은 generation일 때만, 결과를 남기고
+                # 잠금을 푼 뒤 대체한다. 아니면 새 번들만 거부하고 대기 시도는 그대로 둔다.
+                if not self._supersedes(current, bundle, sha256):
+                    return
                 self._end(current, Phase.FAILED, E_SUPERSEDED, f"superseded by {sha256}")
             else:
                 log.info("superseding waiting attempt (generation %s)", current.generation)
@@ -195,6 +198,46 @@ class Updater:
             timeline={Phase.FETCHED.value: self.deps.clock.now()},
         )
         self._save(replace(self.state, attempt=attempt))
+
+    def _supersedes(self, current: Attempt, bundle: Path, sha256: str) -> bool:
+        """새 번들을 부작용 없이(추출 없음) 검증해 `current`보다 높은 generation인지 판정한다."""
+        try:
+            result = verify_bundle(bundle, self._verify_context(current.first_install))
+        except BundleRejectedError as exc:
+            self._reject_unsubmitted(bundle, sha256, exc.code.value, exc.detail)
+            return False
+        generation = result.manifest.generation
+        if generation > self._gen(current):
+            return True
+        # 같은 generation 재빌드(RESUME)는 대기 시도를 그대로 이어 간다.
+        log.info(
+            "bundle %s (generation %s) does not supersede g%s",
+            sha256,
+            generation,
+            current.generation,
+        )
+        bundle.unlink(missing_ok=True)
+        return False
+
+    def _reject_unsubmitted(self, bundle: Path, sha256: str, code: str, detail: str) -> None:
+        """시도 슬롯을 건드리지 않고 새 번들만 거부·보고한다."""
+        now = self.deps.clock.now()
+        rejected = Attempt(
+            phase=Phase.REJECTED,
+            bundle=str(bundle),
+            bundle_sha256=sha256,
+            extract_dir="",
+            started_at=now,
+            failed_phase=Phase.VERIFIED,
+            code=code,
+            detail=detail,
+            timeline={Phase.FETCHED.value: now, Phase.REJECTED.value: now},
+        )
+        log.error("bundle %s rejected (%s): %s", sha256, code, detail)
+        metrics.write_report(self.settings.state_dir, rejected, now)
+        bundle.unlink(missing_ok=True)
+        self._save(skip_bundle(self.state, sha256))
+        self.finished.append(rejected)
 
     def advance(self) -> UpdaterState:
         """시도를 진행할 수 있는 데까지 진행한다(창 대기·일시 장애·종료에서 멈춘다)."""
@@ -253,6 +296,8 @@ class Updater:
 
     def drop(self, attempt: Attempt) -> None:
         """끝낼 것이 없는 시도(번들 없음·이미 적용됨)를 지운다."""
+        if attempt.lock_held:
+            raise RuntimeError("an attempt holding the edit lock must finish, not be dropped")
         self._cleanup(attempt)
         self._save(replace(self.state, attempt=None))
 
@@ -426,9 +471,9 @@ class Updater:
     def _migrate(self, attempt: Attempt) -> bool:
         target = self._target(self._gen(attempt))
         try:
-            # 재부팅 직후 DB가 아직 준비 안 됐을 수 있다 — health까지 기다린다(digest·태그 불변이라
-            # 재생성 없음). 최초 설치는 여기서 site-db가 처음 뜬다.
-            self.deps.compose.up(target, ["site-db"])
+            # 재부팅 직후 DB가 아직 준비 안 됐을 수 있다 — health까지 기다린다. 적용 중인 정의로
+            # 띄워 site-db 재생성을 피한다(최초 설치는 새 정의로 여기서 처음 뜬다).
+            self.deps.compose.up(self._applied_target() or target, ["site-db"])
             if attempt.migrate_to is not None:
                 self.deps.compose.run_core(
                     target, ["migrate", "up", "--to", str(attempt.migrate_to)]
@@ -535,7 +580,8 @@ class Updater:
         return True
 
     def _cleanup(self, attempt: Attempt, *, keep_bundle: bool = False) -> None:
-        shutil.rmtree(attempt.extract_dir, ignore_errors=True)
+        if attempt.extract_dir:
+            shutil.rmtree(attempt.extract_dir, ignore_errors=True)
         if not keep_bundle:
             Path(attempt.bundle).unlink(missing_ok=True)
         committed = Phase.COMMITTED.value in attempt.timeline
