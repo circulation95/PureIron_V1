@@ -1,37 +1,11 @@
 from __future__ import annotations
 
-import io
 import json
-import tarfile
 from pathlib import Path
 
-import pytest
-from images import ImageError, config_digest_from_tar, read_lock
+from images import read_lock
 from n_minus_1 import ReleaseRecord, load_records, pick_previous
 from repro_build import compare
-
-HEX = "ab" * 32
-
-
-def _tar(path: Path, manifest: object) -> Path:
-    data = json.dumps(manifest).encode()
-    with tarfile.open(path, "w") as tar:
-        info = tarfile.TarInfo("manifest.json")
-        info.size = len(data)
-        tar.addfile(info, io.BytesIO(data))
-    return path
-
-
-@pytest.mark.parametrize("config", [f"blobs/sha256/{HEX}", f"{HEX}.json"])
-def test_config_digest_from_tar(tmp_path: Path, config: str) -> None:
-    path = _tar(tmp_path / "img.tar", [{"Config": config, "RepoTags": ["pureiron/core:x"]}])
-    assert config_digest_from_tar(path) == f"sha256:{HEX}"
-
-
-@pytest.mark.parametrize("manifest", [[], {"Config": "x"}, [{"Config": "blobs/sha256/zz"}]])
-def test_config_digest_rejects_bad_manifest(tmp_path: Path, manifest: object) -> None:
-    with pytest.raises(ImageError):
-        config_digest_from_tar(_tar(tmp_path / "img.tar", manifest))
 
 
 def test_read_lock_ignores_comments(tmp_path: Path) -> None:

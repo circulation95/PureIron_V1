@@ -1,9 +1,16 @@
 [project]
 name = "pureiron-bundle-tools"
 version = "0.1.0"
-description = "서명 번들(.pib) 생성·검증 공용 라이브러리 — M2에서 구현"
+description = "서명 번들(.pib) 생성·검증 공용 라이브러리(ADR-023)"
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = [
+    "cryptography>=45",
+    "jsonschema>=4.25",
+    "rfc8785>=0.1.4",
+]
+
+[project.scripts]
+pureiron-bundle = "pureiron_bundle.cli:main"
 
 [build-system]
 requires = ["uv_build==0.10.12"]
