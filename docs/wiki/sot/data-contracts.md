@@ -245,3 +245,11 @@ window: { recurring: { tz: Asia/Seoul, days: [sat, sun], start: "02:00", end: "0
 
 - `.pib` manifest 주요 필드: `site_id`, `generation`, `created_at`, `product_release{version, min_updater, images{<svc>{config_digest, tag}}, schema{target, app_expected, app_max_compatible, compat_app_min}}`, `project{project_id, version, content_hash, absorbs}`, `files{경로: sha256}`, `trust_update`, `fleet_commit`.
 - 거부 코드: `E_SIG`, `E_CERT`, `E_SITE`, `E_GEN`, `E_DIGEST`, `E_SCHEMA`, `E_UPDATER`, `E_DRAFT`(+ PoC 서명 단계 `E_APPROVAL`).
+
+### V1 구현 현황 (M1, 2026-10-04)
+
+- **계약 파일**(정본): `packages/contracts/collector.proto`, `openapi/{core,control-api}.json`(코드에서 export), `project.schema.json`, `manifest.schema.json`, `fleet-site.schema.json`(JSON Schema 2020-12). 호환성은 `contracts-diff`(buf breaking FILE·oasdiff·`tools/schema_diff.py`), 생성물 동기는 `contracts-drift`.
+- **마이그레이션**: `services/core/migrations/0001_schema_meta`~`0005_project_state` + `epochs.yaml`(epoch 1 = baseline, lint 면제). 이력 `schema_migrations`는 runner가 만들고, 현재 epoch는 `schema_meta('epoch')`에 기록한다 — 구 앱이 자기 카탈로그 없이 envelope를 판정하기 위해서다. 새 마이그레이션 파일은 같은 PR에서 `epochs.yaml`에 epoch를 추가해야 한다(lint). checksum은 줄바꿈을 LF로 정규화한 sha256. 종료 코드 0/2 lock/3 checksum/4 실패/5 lint.
+- `-- pureiron:no-transaction` 파일은 구문별 autocommit, 이후 파일(epoch ≥ 2)은 구문 1개·재실행 안전(`IF NOT EXISTS`/`if_not_exists`)이어야 한다.
+- **site-db**: `timescale/timescaledb:2.30.2-pg16`(digest 고정, `deploy/releases/site-db.lock`) → `pureiron/site-db:2.30.2-pg16`. 압축·CAGG 정책이 필요해 `-oss` 변형은 쓰지 않는다.
+- **project-tools**(`packages/project-tools`): 위 정규화 규칙 구현. `content_hash = "sha256:" + sha256(JCS([[posix_relpath, 정규 데이터], …]))`(경로 UTF-8 바이트 순, 정규 데이터 = NFC + 기본값 생략). `pureiron-project validate|fmt [--check]|hash`. 변환기·`absorb`는 M5.

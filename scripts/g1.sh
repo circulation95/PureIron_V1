@@ -109,8 +109,9 @@ job_contracts_diff() {
   git rev-parse --verify --quiet "$BASE_REF" >/dev/null || fail "base ref $BASE_REF not found (git fetch origin master)"
   local base_sha tmp
   base_sha="$(git rev-parse "$BASE_REF")"
-  tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' RETURN
+  # base 쪽 계약 사본은 artifacts/ 아래(gitignore)에 둔다 — 실패 시 내용을 확인할 수 있게.
+  tmp="$ROOT/artifacts/contracts-base"
+  mkdir -p "$tmp"
 
   if base_has packages/contracts/collector.proto; then
     "$bin/buf" breaking packages/contracts --against ".git#ref=$base_sha,subdir=packages/contracts"

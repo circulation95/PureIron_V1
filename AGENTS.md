@@ -1,6 +1,6 @@
 # AGENTS.md — PureIron Agent Entrypoint
 
-> **PureIron_V1** — Foundation 재설계의 새 코드 repo다. 지금은 위키·문서·도구만 있고 서비스 코드(`services/`·`packages/`·`deploy/`)는 M1부터 추가된다. 이 파일의 backend/frontend/docker 명령·`scripts/execute.py`(harness)는 legacy [`PureIron_ignition@legacy-final`](https://github.com/circulation95/PureIron_ignition/tree/legacy-final)에서만 동작한다.
+> **PureIron_V1** — Foundation 재설계의 새 코드 repo다. M1(2026-10-04)부터 서비스 코드 골격(`services/`·`packages/`·`deploy/`)과 G1 게이트(`scripts/g1.sh`, `.github/workflows/foundation-ci.yml`)가 있다. 이 파일의 backend/frontend/docker 명령·`scripts/execute.py`(harness)는 legacy [`PureIron_ignition@legacy-final`](https://github.com/circulation95/PureIron_ignition/tree/legacy-final)에서만 동작한다.
 
 이 파일은 PureIron에서 LLM Agent가 처음 읽는 **짧은 projection**이다. 정본은 `docs/wiki/**`와 `USER.md`에 있다.
 
@@ -95,11 +95,12 @@ python scripts/wiki.py inventory
 python scripts/wiki.py build
 python scripts/wiki.py check
 
-# Backend
-cd backend && uv run pytest tests/ -v
-cd backend && uv run pytest ../tests/e2e/ -v
-
-# Frontend
-cd frontend && npm run lint
-cd frontend && npm run build
+# V1 G1 게이트 (로컬 = CI, 상세: docs/wiki/sot/testing.md 11절)
+uv sync --all-packages
+bash scripts/g1.sh all                    # lint-type·import-linter·unit·contracts·migration-lint·web
+bash scripts/g1.sh integration-compose    # 이미지 빌드 + compose + TimescaleDB 통합
+bash scripts/g1.sh contracts-gen          # 계약 생성물 갱신(OpenAPI·proto·schema.d.ts)
+uv run pureiron-core migrate status --json
 ```
+
+legacy backend/frontend 명령은 `PureIron_ignition@legacy-final`에서만 동작한다.

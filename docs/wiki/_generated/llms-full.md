@@ -608,7 +608,7 @@ PoC 무료 모드(첫 유료 계약 전): GitHub Free private repo라 branch pro
 **상태**: Accepted — target design(미구현).
 
 **결정**
-검증은 3단이다. **G1**(PR마다): ruff, pyright strict, tsc/eslint strict-type-checked, import-linter(+음성 fixture), 계약 호환성 diff(`buf breaking`, `oasdiff`, schema diff)와 생성물 drift, migration lint, 단위·통합, 재현 빌드, N-1 스키마 호환, 고객 분기 금지 검사 — **부채 예외 없음**(`type: ignore`·`eslint-disable`·`as any`·`@ts-ignore` 0건). **G2**(nightly): VM 3대(site-a·site-b·central) e2e로 설치·예약 업데이트·격리·롤백·거부·장애 주입·폐쇄망·드래프트 회수·fleet 표시. **G3**(release candidate): 중앙 차단 24h, 백업·복원, 2,000태그 성능 측정. 계약(proto·OpenAPI·JSON Schema)이 정본이고 코드 생성물(`src/<pkg>/_gen/`, `schema.d.ts`)은 커밋하되 **generated ≠ authored**: 생성 `.py`는 pyright·ruff 대상에서 빼고 `.pyi`(mypy-protobuf)를 타입 정본으로 strict 소비하며, 재생성 diff로 drift를 막는다(설정 원문: `[tool.pyright] ignore = ["src/<pkg>/_gen/**/*.py"]`, ruff `extend-exclude = ["src/*/_gen"]`, 검사 job `contracts-drift`). runner는 PoC 동안 개발 PC의 self-hosted 3개(`g1`, `e2e`, `publish`)를 repo 단위로 등록하고, nightly·runner는 별도 repo `pureiron-fleet-e2e`에 둔다. V1에는 legacy workflow가 없어 legacy job이 새 runner를 점유하지 않는다.
+검증은 3단이다. **G1**(PR마다): ruff, pyright strict, tsc/eslint strict-type-checked, import-linter(+음성 fixture), 계약 호환성 diff(`buf breaking`, `oasdiff`, schema diff)와 생성물 drift, migration lint, 단위·통합, 재현 빌드, N-1 스키마 호환, 고객 분기 금지 검사 — **부채 예외 없음**(`type: ignore`·`eslint-disable`·`as any`·`@ts-ignore` 0건). **G2**(nightly): VM 3대(site-a·site-b·central) e2e로 설치·예약 업데이트·격리·롤백·거부·장애 주입·폐쇄망·드래프트 회수·fleet 표시. **G3**(release candidate): 중앙 차단 24h, 백업·복원, 2,000태그 성능 측정. 계약(proto·OpenAPI·JSON Schema)이 정본이고 코드 생성물(`src/<pkg>/_gen/`, `schema.d.ts`)은 커밋하되 **generated ≠ authored**: 생성물(`.py`·`.pyi`)의 진단은 pyright·ruff에서 빼고 `.pyi`(mypy-protobuf)를 타입 정본으로 authored 코드에서 strict 소비하며, 재생성 diff로 drift를 막는다(설정 원문: `[tool.pyright] ignore = ["src/<pkg>/_gen/**"]`, ruff `extend-exclude = ["services/*/src/*/_gen", "packages/*/src/*/_gen"]`, 검사 job `contracts-drift`). M1 구현 시 생성 `.pyi` 자체가 생성기·`types-protobuf` 버전 조합에 따라 strict 진단을 내는 것이 확인되어 `.py`만이 아니라 `_gen/**` 전체를 진단에서 뺐다(2026-10-04). runner는 PoC 동안 개발 PC의 self-hosted 3개(`g1`, `e2e`, `publish`)를 repo 단위로 등록하고, nightly·runner는 별도 repo `pureiron-fleet-e2e`에 둔다. V1에는 legacy workflow가 없어 legacy job이 새 runner를 점유하지 않는다.
 
 **이유**
 
@@ -1664,6 +1664,19 @@ Frontend setTag()
 - 현장 Updater 적용 단계: `fetched` → `verified` → `committed` → `locked` → `backed_up` → `migrating` → `switching` → `checking` → `succeeded`, 실패 시 `rolling_back`/`failed`. 상태 파일은 fsync 후 rename, systemd 재시작 시 `recover()`가 끝까지 수렴시킨다.
 - 폐쇄망 현장도 같은 `.pib`를 USB 등으로 반입해 같은 검증을 거친다.
 
+### V1 구현 현황 (M1 skeleton, 2026-10-04)
+
+M1에서 PureIron_V1에 **골격으로** 들어간 것. 기능 본구현은 표의 다음 단계에서 채운다.
+
+| 구성 | M1에 있는 것 | 다음 단계 |
+|---|---|---|
+| core 조립 | `services/core/src/pureiron_core/runtime.py`(`SiteRuntime.build`) → `app.py`(`create_app`), `cli.py`(`serve`·`migrate`·`project`), import-linter 계약 3종 + 음성 fixture(`services/core/.importlinter`) | M3a/b에서 도메인 모듈 추가 시 계약에 등록 |
+| core 모듈 | `platform`(db·bus·migrate·migrate_lint·sqltext), `acquisition`(gRPC 세션 골격), `project`(project_state·edit-lock stub), `api`(health·project) | `tags`·`historian`(M3a), `alarms`·`auth`·`audit`·`realtime`·`devices`(M3b) |
+| collector | `Hello` 송신 → plan 수신, `WriteRequest`는 항상 `REJECTED`, 빈 batch heartbeat, 지수 backoff 재연결 | Modbus 드라이버·링버퍼·`DeviceHealth`(M3a) |
+| web | readyz 상태 화면 1개, OpenAPI 생성 타입(`src/api/schema.d.ts`), nginx `/api` 프록시 | 로그인 + 5개 화면(M3b) |
+| updater·control-api·bundle-tools | workspace 멤버 자리(버전 상수·테스트), control-api는 `GET /api/v1/healthz` 계약만 | M2(updater·bundle-tools), M4(control-api) |
+| compose | `deploy/compose/site.compose.yml`(`name: pureiron`, `pull_policy: never`, 비밀은 파일만) + dev override | M2 Updater가 `g<gen>.yml`로 렌더 |
+
 ---
 
 <!-- source: docs/wiki/sot/data-contracts.md -->
@@ -1897,6 +1910,14 @@ window: { recurring: { tz: Asia/Seoul, days: [sat, sun], start: "02:00", end: "0
 
 - `.pib` manifest 주요 필드: `site_id`, `generation`, `created_at`, `product_release{version, min_updater, images{<svc>{config_digest, tag}}, schema{target, app_expected, app_max_compatible, compat_app_min}}`, `project{project_id, version, content_hash, absorbs}`, `files{경로: sha256}`, `trust_update`, `fleet_commit`.
 - 거부 코드: `E_SIG`, `E_CERT`, `E_SITE`, `E_GEN`, `E_DIGEST`, `E_SCHEMA`, `E_UPDATER`, `E_DRAFT`(+ PoC 서명 단계 `E_APPROVAL`).
+
+### V1 구현 현황 (M1, 2026-10-04)
+
+- **계약 파일**(정본): `packages/contracts/collector.proto`, `openapi/{core,control-api}.json`(코드에서 export), `project.schema.json`, `manifest.schema.json`, `fleet-site.schema.json`(JSON Schema 2020-12). 호환성은 `contracts-diff`(buf breaking FILE·oasdiff·`tools/schema_diff.py`), 생성물 동기는 `contracts-drift`.
+- **마이그레이션**: `services/core/migrations/0001_schema_meta`~`0005_project_state` + `epochs.yaml`(epoch 1 = baseline, lint 면제). 이력 `schema_migrations`는 runner가 만들고, 현재 epoch는 `schema_meta('epoch')`에 기록한다 — 구 앱이 자기 카탈로그 없이 envelope를 판정하기 위해서다. 새 마이그레이션 파일은 같은 PR에서 `epochs.yaml`에 epoch를 추가해야 한다(lint). checksum은 줄바꿈을 LF로 정규화한 sha256. 종료 코드 0/2 lock/3 checksum/4 실패/5 lint.
+- `-- pureiron:no-transaction` 파일은 구문별 autocommit, 이후 파일(epoch ≥ 2)은 구문 1개·재실행 안전(`IF NOT EXISTS`/`if_not_exists`)이어야 한다.
+- **site-db**: `timescale/timescaledb:2.30.2-pg16`(digest 고정, `deploy/releases/site-db.lock`) → `pureiron/site-db:2.30.2-pg16`. 압축·CAGG 정책이 필요해 `-oss` 변형은 쓰지 않는다.
+- **project-tools**(`packages/project-tools`): 위 정규화 규칙 구현. `content_hash = "sha256:" + sha256(JCS([[posix_relpath, 정규 데이터], …]))`(경로 UTF-8 바이트 순, 정규 데이터 = NFC + 기본값 생략). `pureiron-project validate|fmt [--check]|hash`. 변환기·`absorb`는 M5.
 
 ---
 
@@ -2626,6 +2647,27 @@ PureIron 런타임 설정의 정본은 `backend/src/pureiron/config.py`의 `Sett
 - Redis 없음(ADR-008 개정). core `/readyz` = DB 연결 + 스키마 호환 범위 + collector 세션.
 - 관측: core·collector `/metrics`, Updater가 60초마다 `state/metrics/<svc>.prom`·일별 jsonl로 기록, `/var/lib/pureiron` 사용률 경고 ≥ 0.80·위험 ≥ 0.90.
 
+### V1 환경변수 (M1 구현)
+
+정본은 `services/core/src/pureiron_core/settings.py`, `services/collector/src/pureiron_collector/settings.py`, `deploy/compose/site.compose.yml`. 비밀값은 값이 아니라 **파일 경로**로만 받는다.
+
+| 변수 | 서비스 | 기본값 | 의미 |
+|---|---|---|---|
+| `PUREIRON_DB_DSN` | core | `postgresql://pureiron@localhost:5432/pureiron` | site-db 접속(비밀번호 제외) |
+| `PUREIRON_DB_PASSWORD_FILE` | core | 없음 | DB 비밀번호 파일(compose: `/run/secrets/db_password`) |
+| `PUREIRON_HTTP_HOST` / `PUREIRON_HTTP_PORT` | core | `127.0.0.1` / `8000` | REST(이미지에서는 `0.0.0.0`) |
+| `PUREIRON_GRPC_HOST` / `PUREIRON_GRPC_PORT` | core | `127.0.0.1` / `50051` | collector gRPC 서버 |
+| `PUREIRON_RELEASE` | core·compose | `0.1.0-dev` | release 이름(`schema_migrations.release`, 이미지 태그) |
+| `PUREIRON_MIGRATIONS_DIR` | core | 소스 트리 `services/core/migrations` | 이미지에서는 `/opt/pureiron/migrations` |
+| `PUREIRON_UPDATER_TOKEN_FILE` | core | 없음 | 편집 잠금 API용 Updater 토큰 파일. 없으면 잠금 API는 503(기본 거부) |
+| `PUREIRON_CORE_GRPC` | collector | `127.0.0.1:50051` | core gRPC 주소(compose: `core:50051`) |
+| `PUREIRON_COLLECTOR_HEARTBEAT_S` | collector | `1.0` | 빈 batch heartbeat 주기 |
+| `PUREIRON_COLLECTOR_RECONNECT_INITIAL_S` / `_MAX_S` | collector | `0.5` / `30` | 재연결 backoff |
+| `PUREIRON_SECRETS_DIR` | compose | `/var/lib/pureiron/state/secrets` | `db_password`·`updater_token` 파일 위치 |
+| `PUREIRON_DB_DATA` | compose | `/var/lib/pureiron/db` | site-db 데이터(개발·CI는 named volume `pureiron-db`) |
+| `PUREIRON_WEB_BIND` / `PUREIRON_WEB_PORT` | compose | `0.0.0.0` / `80` | web 노출 |
+| `PUREIRON_SITE_DB_VERSION` | compose | `deploy/releases/site-db.lock`의 version | site-db 이미지 태그 |
+
 ---
 
 <!-- source: docs/wiki/sot/testing.md -->
@@ -2949,5 +2991,29 @@ E2E/NF:
 - cd backend && uv run pytest tests/test_devices.py -v → pass
 - cd frontend && npm run lint → not run, frontend 미변경
 ```
+
+## 11. V1 G1 게이트 (PureIron_V1, M1 구현)
+
+> 이 절은 **PureIron_V1 현행**이다(위 1~10절은 legacy 기준). 결정 근거는 [ADR-028](../adr/index.md#adr-028-3단-검증-게이트--generated--authored--runner-격리).
+
+로컬과 CI가 같은 러너를 쓴다: `bash scripts/g1.sh <job> [<job> ...]`(`all` = 통합·조건부 제외 전부). CI는 `.github/workflows/foundation-ci.yml`이 self-hosted runner `g1`(개발 PC WSL2 Ubuntu 24.04, 사용자 systemd 서비스 `pureiron-g1-runner`)에서 job마다 같은 이름으로 호출한다(PD-23: hosted runner 미사용).
+
+| job | 내용 | 실행 조건 |
+|---|---|---|
+| `lint-type` | `uv sync --locked`, ruff check·format, pyright strict(패키지 6 + `packages/contracts` + `deploy`), 억제 주석·`app.state` grep 0건 | 항상 |
+| `import-linter` | core 계약 3종 + 음성 fixture(`services/core/tests/test_importlinter_negative.py`) | 항상 |
+| `unit` | `pytest services packages deploy`(통합 제외) | 항상 |
+| `contracts-diff` | `buf lint`·`buf breaking`(FILE), `oasdiff breaking --fail-on ERR`, `schema_diff.py` — base에 파일이 없으면 notice 후 통과 | 항상 |
+| `contracts-drift` | OpenAPI export·proto 생성·`schema.d.ts`·project-tools 스키마 복사 후 `git status` 변경 0 | 항상 |
+| `migration-lint` | `pureiron-core migrate lint services/core/migrations --base-ref $BASE_REF` | 항상 |
+| `no-customer-branching` | `(project_id\|site_id) == "…"` 리터럴, `deploy/lint/customer-names.txt` 이름 0건(제품 `src/`만) | 항상 |
+| `web` | `npm ci`, `tsc --noEmit`, `eslint --max-warnings 0`, `vite build` | 항상 |
+| `integration-compose` | 이미지 빌드 → compose(`pureiron-it`) site-db → `migrate up` → 전체 기동 → `pytest -m integration`(readyz 200, migrate 종료코드, Timescale 객체, edit-lock 경쟁) | 항상 |
+| `n-minus-1` | 직전 epoch release의 core-test 이미지를 현재 스키마에서 실행. epoch 1(현재)은 직전 release가 없어 notice 후 통과 | 마이그레이션·`db` 경로 변경 PR, master push, nightly, `full-gate` 라벨 |
+| `repro-build` | 캐시 없이 2회 빌드해 core·collector·web·simulator·core-test config digest 동일 확인(site-db 제외) | Dockerfile·`uv.lock`·`package-lock.json`·`deploy/build/` 변경 PR, master push, nightly, `full-gate` 라벨 |
+
+- 도구 버전 고정: buf·oasdiff는 `scripts/tools.sh`(버전·sha256), uv 0.10.12, Node 22, 베이스 이미지·BuildKit은 digest 고정.
+- 이미지 빌드(`deploy/build/build_images.sh`)는 전용 docker-container builder + `SOURCE_DATE_EPOCH`·`rewrite-timestamp`로 tar를 만든 뒤 `docker load` 한다(현장 번들과 같은 save/load 경로). uv가 남기는 설치 시각 메타데이터(`uv_cache.json`)는 `deploy/build/normalize_venv.py`가 지운다.
+- 통합 테스트는 `PUREIRON_TEST_EXISTING_DSN`을 주면 새 DB를 만들지 않고 주어진 DB에서 돈다(n-minus-1이 쓰는 모드).
 
 ---

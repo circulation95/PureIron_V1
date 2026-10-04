@@ -227,3 +227,16 @@ Frontend setTag()
 - 중앙 = 벤더 내부 도구: 작은 `control-api`(등록·자격증명·heartbeat·desired·reports·drafts·fleet) + 읽기 전용 `control-web`(basic auth, HTTPS 뒤). 현장 → 중앙 polling만 있다.
 - 현장 Updater 적용 단계: `fetched` → `verified` → `committed` → `locked` → `backed_up` → `migrating` → `switching` → `checking` → `succeeded`, 실패 시 `rolling_back`/`failed`. 상태 파일은 fsync 후 rename, systemd 재시작 시 `recover()`가 끝까지 수렴시킨다.
 - 폐쇄망 현장도 같은 `.pib`를 USB 등으로 반입해 같은 검증을 거친다.
+
+### V1 구현 현황 (M1 skeleton, 2026-10-04)
+
+M1에서 PureIron_V1에 **골격으로** 들어간 것. 기능 본구현은 표의 다음 단계에서 채운다.
+
+| 구성 | M1에 있는 것 | 다음 단계 |
+|---|---|---|
+| core 조립 | `services/core/src/pureiron_core/runtime.py`(`SiteRuntime.build`) → `app.py`(`create_app`), `cli.py`(`serve`·`migrate`·`project`), import-linter 계약 3종 + 음성 fixture(`services/core/.importlinter`) | M3a/b에서 도메인 모듈 추가 시 계약에 등록 |
+| core 모듈 | `platform`(db·bus·migrate·migrate_lint·sqltext), `acquisition`(gRPC 세션 골격), `project`(project_state·edit-lock stub), `api`(health·project) | `tags`·`historian`(M3a), `alarms`·`auth`·`audit`·`realtime`·`devices`(M3b) |
+| collector | `Hello` 송신 → plan 수신, `WriteRequest`는 항상 `REJECTED`, 빈 batch heartbeat, 지수 backoff 재연결 | Modbus 드라이버·링버퍼·`DeviceHealth`(M3a) |
+| web | readyz 상태 화면 1개, OpenAPI 생성 타입(`src/api/schema.d.ts`), nginx `/api` 프록시 | 로그인 + 5개 화면(M3b) |
+| updater·control-api·bundle-tools | workspace 멤버 자리(버전 상수·테스트), control-api는 `GET /api/v1/healthz` 계약만 | M2(updater·bundle-tools), M4(control-api) |
+| compose | `deploy/compose/site.compose.yml`(`name: pureiron`, `pull_policy: never`, 비밀은 파일만) + dev override | M2 Updater가 `g<gen>.yml`로 렌더 |

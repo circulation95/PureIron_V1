@@ -4,8 +4,9 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
-dist/
-build/
+/dist/
+services/*/dist/
+/build/
 .pytest_cache/
 .ruff_cache/
 .coverage
@@ -40,4 +41,3 @@ Thumbs.db
 # 빌드·게이트 산출물
 artifacts/
 out/
-dist/
