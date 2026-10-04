@@ -26,7 +26,7 @@ PY_PACKAGES=(
   packages/contracts
   deploy
 )
-SCHEMAS=(project manifest fleet-site)
+SCHEMAS=(project manifest install-manifest fleet-site)
 OPENAPI_SERVICES=(core control-api)
 GENERATED_PATHS=(
   packages/contracts/openapi
@@ -35,6 +35,7 @@ GENERATED_PATHS=(
   services/web/src/api/schema.d.ts
   packages/project-tools/src/pureiron_project/schema/project.schema.json
   packages/bundle-tools/src/pureiron_bundle/schema/manifest.schema.json
+  packages/bundle-tools/src/pureiron_bundle/schema/install-manifest.schema.json
   packages/bundle-tools/src/pureiron_bundle/schema/fleet-site.schema.json
 )
 
@@ -83,7 +84,8 @@ job_contracts_gen() {
   uv run python packages/contracts/tools/export_openapi.py
   uv run python packages/contracts/tools/gen_proto.py
   cp packages/contracts/project.schema.json packages/project-tools/src/pureiron_project/schema/project.schema.json
-  cp packages/contracts/manifest.schema.json packages/contracts/fleet-site.schema.json \
+  cp packages/contracts/manifest.schema.json packages/contracts/install-manifest.schema.json \
+    packages/contracts/fleet-site.schema.json \
     packages/bundle-tools/src/pureiron_bundle/schema/
   if [ -d services/web ]; then
     (cd services/web && { [ -d node_modules ] || npm ci --no-audit --no-fund; } \

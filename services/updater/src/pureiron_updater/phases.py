@@ -39,7 +39,7 @@ from pureiron_bundle.verify import (
     check_draft_gate,
     verify_bundle,
 )
-from pureiron_updater import metrics
+from pureiron_updater import gc, metrics
 from pureiron_updater.backup import BackupError, make_backup, restore_project
 from pureiron_updater.compose import (
     COMPOSE_PAYLOAD,
@@ -166,7 +166,12 @@ class Updater:
     # ── 공개 진입점 ────────────────────────────────────────────────────────
 
     def submit(self, bundle: Path, sha256: str) -> None:
-        """`bundles/` 아래 놓인 번들을 새 시도로 등록한다. 대기 중(커밋 전) 시도는 대체한다."""
+        """`bundles/` 아래 놓인 번들을 새 시도로 등록한다.
+
+        대기 중(종료 전) 시도는 새 번들이 검증상 **더 높은 generation**일 때만 대체한다 — poll과
+        같은 규칙이다. 더 낮거나 같은 generation(재빌드)이면 새 번들만 `E_GEN`으로 거부·보고한다.
+        generation을 아직 모르는(검증 전) 시도는 그냥 대체한다.
+        """
         current = self.state.attempt
         if current is not None and current.phase not in PRE_COMMIT | TERMINAL:
             raise AttemptInProgressError(
@@ -176,11 +181,10 @@ class Updater:
             if current.bundle_sha256 == sha256:
                 log.info("bundle %s is already waiting", sha256)
                 return
+            if current.generation is not None and not self._supersedes(current, bundle, sha256):
+                return
             if Phase.COMMITTED.value in current.timeline:
-                # 커밋된(pending) 시도는 새 번들이 검증상 더 높은 generation일 때만, 결과를 남기고
-                # 잠금을 푼 뒤 대체한다. 아니면 새 번들만 거부하고 대기 시도는 그대로 둔다.
-                if not self._supersedes(current, bundle, sha256):
-                    return
+                # 커밋된(pending) 시도는 결과를 남기고 잠금을 푼 뒤 대체한다.
                 self._end(current, Phase.FAILED, E_SUPERSEDED, f"superseded by {sha256}")
             else:
                 log.info("superseding waiting attempt (generation %s)", current.generation)
@@ -209,14 +213,13 @@ class Updater:
         generation = result.manifest.generation
         if generation > self._gen(current):
             return True
-        # 같은 generation 재빌드(RESUME)는 대기 시도를 그대로 이어 간다.
-        log.info(
-            "bundle %s (generation %s) does not supersede g%s",
+        # 더 낮은 generation·같은 generation 재빌드는 대기 시도를 그대로 두고 새 번들만 거부한다.
+        self._reject_unsubmitted(
+            bundle,
             sha256,
-            generation,
-            current.generation,
+            RejectCode.E_GEN.value,
+            f"generation {generation} does not supersede waiting generation {current.generation}",
         )
-        bundle.unlink(missing_ok=True)
         return False
 
     def _reject_unsubmitted(self, bundle: Path, sha256: str, code: str, detail: str) -> None:
@@ -612,4 +615,11 @@ class Updater:
         self._save(state)
         self.finished.append(attempt)
         metrics.write_prom(self.settings.state_dir, state, attempt, ended)
+        if attempt.phase is Phase.SUCCEEDED:
+            gc.collect(
+                self.deps.docker,
+                self.settings.compose_dir,
+                self.settings.backups_dir,
+                keep=(attempt.generation, attempt.from_generation),
+            )
         return False

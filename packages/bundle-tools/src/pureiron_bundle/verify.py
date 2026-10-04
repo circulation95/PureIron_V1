@@ -9,21 +9,38 @@
 sha256이 맞은 추출본에서만 해석한다(hash first, parse later). gen 판정이 NO_OP(이미 적용)이면
 ④~⑥은 하지 않는다 — 적용할 것이 없으므로 payload·스키마·드래프트는 판단 대상이 아니다.
 판정 규칙(gen·스키마·드래프트·Updater 버전)은 Updater가 재검사에 쓰도록 순수 함수로 둔다.
+
+설치 번들(`kind: install`)은 `verify_install_bundle`이 같은 ①(서명·cert)·④(payload) 코드로
+검증한다. site·generation·스키마·드래프트는 해당이 없고, 대신 설치 배치(필수 payload)와
+번들 안 `keys/root.pub`·`keys/root.pem`이 검증에 쓴 root 공개키와 같은지 확인한다.
 """
 
 from __future__ import annotations
 
+import io
 import re
 import shutil
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from typing import IO
 
+from pureiron_bundle import keys
 from pureiron_bundle.errors import BundleRejectedError, RejectCode
 from pureiron_bundle.images import ImageFormatError, config_digest_from_tar
-from pureiron_bundle.manifest import MANIFEST_FILE, Manifest, SchemaEnvelope, parse_manifest
+from pureiron_bundle.manifest import (
+    DOCKER_PACKAGES,
+    MANIFEST_FILE,
+    BundleKind,
+    InstallManifest,
+    Manifest,
+    SchemaEnvelope,
+    bundle_kind,
+    parse_install_manifest,
+    parse_manifest,
+)
 from pureiron_bundle.pib import (
     CERT_FILE,
     CERT_SIG,
@@ -47,6 +64,20 @@ from pureiron_bundle.trust import (
 _IMAGE_PAYLOAD = re.compile(r"images/([a-z][a-z0-9-]{0,31})\.tar(\.gz)?")
 _SEMVER = re.compile(r"([0-9]+)\.([0-9]+)\.([0-9]+)")
 PART_SUFFIX = ".part"
+ROOT_PUB_PAYLOAD = "keys/root.pub"
+ROOT_PEM_PAYLOAD = "keys/root.pem"
+INSTALL_LAYOUT = (
+    "bootstrap/bootstrap-verify.sh",
+    "install/daemon.json",
+    "install/install.sh",
+    "install/preflight.sh",
+    "install/updater.env",
+    "systemd/pureiron-updater.service",
+    ROOT_PUB_PAYLOAD,
+    ROOT_PEM_PAYLOAD,
+)
+"""설치 번들 필수 payload(+ `updater.file`, `debs/<패키지>.deb`)."""
+_CAPTURE_LIMIT = 4096
 
 
 class AttemptResult(StrEnum):
@@ -119,6 +150,15 @@ class VerifiedBundle:
     trust: TrustDecision
     files: Mapping[str, str]
     """확인된 payload 경로 → sha256(NO_OP이면 비어 있음)."""
+    verify_s: float
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedInstall:
+    manifest: InstallManifest
+    cert: ReleaseCert
+    trust: TrustDecision
+    files: Mapping[str, str]
     verify_s: float
 
 
@@ -219,7 +259,7 @@ def _image_payloads(manifest: Manifest) -> dict[str, str]:
     return found
 
 
-def _extract_member(extract_to: Path, member: PayloadMember) -> str:
+def _extract_member(extract_to: Path, member: PayloadMember, source: IO[bytes]) -> str:
     """`<name>.part`에 쓰며 해시하고, 호출자가 sha256을 확인한 뒤 이름을 바꾼다."""
     try:
         part = safe_target(extract_to, member.name + PART_SUFFIX)
@@ -229,23 +269,38 @@ def _extract_member(extract_to: Path, member: PayloadMember) -> str:
             RejectCode.E_FORMAT, f"{member.name}: cannot extract ({exc})"
         ) from exc
     with sink:
-        return hash_stream(member.stream, sink)
+        return hash_stream(source, sink)
 
 
 def _check_payload(
-    reader: PibReader, manifest: Manifest, extract_to: Path | None
-) -> dict[str, str]:
-    """payload sha256·누락·초과. 여기서는 해시만 하고 내용(이미지 tar)은 해석하지 않는다."""
-    expected = dict(manifest.files)
+    reader: PibReader,
+    files: Mapping[str, str],
+    extract_to: Path | None,
+    capture: frozenset[str] = frozenset(),
+) -> tuple[dict[str, str], dict[str, bytes]]:
+    """payload sha256·누락·초과. 여기서는 해시만 하고 내용(이미지 tar)은 해석하지 않는다.
+
+    `capture`의 작은 멤버(≤ 4 KiB)는 바이트도 돌려준다 — 호출자는 sha256이 맞은 뒤에만 해석한다.
+    """
+    expected = dict(files)
     verified: dict[str, str] = {}
+    captured: dict[str, bytes] = {}
     for member in reader.iter_payload():
         want = expected.pop(member.name, None)
         if want is None:
             raise BundleRejectedError(RejectCode.E_DIGEST, f"{member.name}: not listed in manifest")
+        source: IO[bytes] = member.stream
+        if member.name in capture:
+            if member.size > _CAPTURE_LIMIT:
+                raise BundleRejectedError(
+                    RejectCode.E_FORMAT, f"{member.name}: larger than {_CAPTURE_LIMIT} bytes"
+                )
+            captured[member.name] = member.stream.read()
+            source = io.BytesIO(captured[member.name])
         if extract_to is None:
-            actual = hash_stream(member.stream)
+            actual = hash_stream(source)
         else:
-            actual = _extract_member(extract_to, member)
+            actual = _extract_member(extract_to, member, source)
         if actual != want:
             raise BundleRejectedError(
                 RejectCode.E_DIGEST, f"{member.name}: sha256 {actual} != {want}"
@@ -261,7 +316,7 @@ def _check_payload(
         verified[member.name] = actual
     if expected:
         raise BundleRejectedError(RejectCode.E_DIGEST, f"missing payload files {sorted(expected)}")
-    return verified
+    return verified, captured
 
 
 def _check_image_digests(manifest: Manifest, images: Mapping[str, str], extract_to: Path) -> None:
@@ -295,13 +350,25 @@ def _clear_dir(directory: Path) -> None:
             child.unlink()
 
 
+def _signed_metadata(
+    reader: PibReader, root_pubkey: bytes, kind: BundleKind
+) -> tuple[dict[str, bytes], ReleaseCert]:
+    """① root → cert → manifest 서명(서명 확인 전에는 아무것도 해석하지 않는다) → 종류 확인."""
+    meta = reader.read_metadata()
+    cert = verify_cert(root_pubkey, meta[CERT_FILE], meta[CERT_SIG])
+    verify_manifest_signature(cert, meta[MANIFEST_FILE], meta[MANIFEST_SIG])
+    found = bundle_kind(meta[MANIFEST_FILE])
+    if found is not kind:
+        raise BundleRejectedError(
+            RejectCode.E_FORMAT, f"{MANIFEST_FILE}: expected a {kind} bundle, got kind {found}"
+        )
+    return meta, cert
+
+
 def _verify(path: Path, ctx: VerifyContext, extract_to: Path | None) -> VerifiedBundle:
     started = time.monotonic()
     with open_pib(path) as reader:
-        meta = reader.read_metadata()
-        # ① root → cert → manifest(서명 확인 전에는 아무것도 해석하지 않는다)
-        cert = verify_cert(ctx.root_pubkey, meta[CERT_FILE], meta[CERT_SIG])
-        verify_manifest_signature(cert, meta[MANIFEST_FILE], meta[MANIFEST_SIG])
+        meta, cert = _signed_metadata(reader, ctx.root_pubkey, BundleKind.SITE)
         manifest = parse_manifest(meta[MANIFEST_FILE])
         decision = check_validity(
             root_pubkey=ctx.root_pubkey,
@@ -324,7 +391,7 @@ def _verify(path: Path, ctx: VerifyContext, extract_to: Path | None) -> Verified
             )
         # ④ payload sha256(해시 먼저) → 추출본의 이미지 config digest(해석은 나중)
         images = _image_payloads(manifest)
-        files = _check_payload(reader, manifest, extract_to)
+        files, _ = _check_payload(reader, manifest.files, extract_to)
     if extract_to is not None:
         _check_image_digests(manifest, images, extract_to)
     # ⑤ 스키마 envelope + Updater 버전
@@ -336,6 +403,93 @@ def _verify(path: Path, ctx: VerifyContext, extract_to: Path | None) -> Verified
     return VerifiedBundle(
         manifest, cert, generation, schema, decision, files, time.monotonic() - started
     )
+
+
+def _deb_package(name: str) -> str | None:
+    if name.startswith("debs/") and name.endswith(".deb"):
+        return name[len("debs/") : -len(".deb")]
+    return None
+
+
+def _check_install_layout(manifest: InstallManifest) -> None:
+    """설치 배치: 필수 payload·Updater tarball·Docker deb가 서명된 `files`에 있는지(`E_FORMAT`)."""
+    required = (*INSTALL_LAYOUT, manifest.updater_file, *(f"debs/{p}.deb" for p in DOCKER_PACKAGES))
+    missing = [name for name in required if name not in manifest.files]
+    if missing:
+        raise BundleRejectedError(
+            RejectCode.E_FORMAT, f"{MANIFEST_FILE}: install bundle lacks payload {missing}"
+        )
+    packages = {_deb_package(name) for name in manifest.files} - {None}
+    if packages != set(manifest.docker_packages):
+        raise BundleRejectedError(
+            RejectCode.E_FORMAT,
+            f"{MANIFEST_FILE}: debs/*.deb {sorted(p for p in packages if p)} != "
+            f"docker.packages {sorted(manifest.docker_packages)}",
+        )
+
+
+def _check_install_keys(root_pubkey: bytes, captured: Mapping[str, bytes]) -> None:
+    """번들이 심을 root 공개키(raw·PEM)가 이 번들을 검증한 root와 같아야 한다(`E_SIG`)."""
+    try:
+        pem = keys.import_pem(captured[ROOT_PEM_PAYLOAD].decode("ascii"))
+    except (UnicodeDecodeError, keys.KeyFormatError) as exc:
+        raise BundleRejectedError(RejectCode.E_FORMAT, f"{ROOT_PEM_PAYLOAD}: {exc}") from exc
+    for name, value in ((ROOT_PUB_PAYLOAD, captured[ROOT_PUB_PAYLOAD]), (ROOT_PEM_PAYLOAD, pem)):
+        if value != root_pubkey:
+            raise BundleRejectedError(
+                RejectCode.E_SIG, f"{name} is not the root key that verified this bundle"
+            )
+
+
+def _verify_install(
+    path: Path, root_pubkey: bytes, trust: TrustState, extract_to: Path | None
+) -> VerifiedInstall:
+    started = time.monotonic()
+    with open_pib(path) as reader:
+        meta, cert = _signed_metadata(reader, root_pubkey, BundleKind.INSTALL)
+        manifest = parse_install_manifest(meta[MANIFEST_FILE])
+        decision = check_validity(
+            root_pubkey=root_pubkey,
+            cert=cert,
+            created_at=manifest.created_at,
+            state=trust,
+            trust_update=manifest.trust_update,
+            trust_update_sig=meta.get(TRUST_UPDATE_SIG),
+        )
+        _check_install_layout(manifest)
+        files, captured = _check_payload(
+            reader, manifest.files, extract_to, frozenset({ROOT_PUB_PAYLOAD, ROOT_PEM_PAYLOAD})
+        )
+    _check_install_keys(root_pubkey, captured)
+    return VerifiedInstall(manifest, cert, decision, files, time.monotonic() - started)
+
+
+def _with_extract_dir[T](extract_to: Path | None, run: Callable[[Path | None], T]) -> T:
+    """`extract_to`를 준비(비어 있음·링크 아님)하고, 거부·예외 시 내용을 지운다."""
+    if extract_to is None:
+        return run(None)
+    _prepare_extract_dir(extract_to)
+    try:
+        return run(extract_to)
+    except BaseException:
+        _clear_dir(extract_to)
+        raise
+
+
+def verify_install_bundle(
+    path: Path,
+    root_pubkey: bytes,
+    trust: TrustState | None = None,
+    *,
+    extract_to: Path | None = None,
+) -> VerifiedInstall:
+    """설치 번들(`kind: install`) 검증: ① 서명·cert(`trust` 기준, 기본 = 새 호스트) → 설치 배치
+    → ④ payload sha256 → 번들 root 키(raw·PEM) == 검증 root. 실패는 `BundleRejectedError`.
+
+    `extract_to`의 의미·정리 규칙은 `verify_bundle`과 같다.
+    """
+    state = trust or TrustState()
+    return _with_extract_dir(extract_to, lambda d: _verify_install(path, root_pubkey, state, d))
 
 
 def verify_bundle(
@@ -353,11 +507,4 @@ def verify_bundle(
     """
     if ctx.updater_version is not None:
         parse_semver(ctx.updater_version)
-    if extract_to is None:
-        return _verify(path, ctx, None)
-    _prepare_extract_dir(extract_to)
-    try:
-        return _verify(path, ctx, extract_to)
-    except BaseException:
-        _clear_dir(extract_to)
-        raise
+    return _with_extract_dir(extract_to, lambda d: _verify(path, ctx, d))

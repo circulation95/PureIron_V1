@@ -435,13 +435,51 @@ def test_bundle_that_would_not_supersede_leaves_pending_attempt(site: Site, case
     pib, code = {
         "other_site": lambda: (kit.bundle(3, "r1", site="site-b"), "E_SITE"),
         "older": lambda: (kit.bundle(1, "r0"), "E_GEN"),
-        "same_gen_rebuild": lambda: (kit.bundle(2, "r1", version="v22"), None),
+        "same_gen_rebuild": lambda: (kit.bundle(2, "r1", version="v22"), "E_GEN"),
     }[case]()
     state = site.apply(pib)
-    # 새 번들만 거부(또는 무시)되고, 대기하던 g2가 잠금이 풀리자 이어서 적용된다.
+    # 새 번들만 거부·보고되고(같은 gen 재빌드도 조용히 버리지 않는다), 대기하던 g2가 잠금이
+    # 풀리자 이어서 적용된다.
     assert (state.applied_gen, state.last_result) == (2, AttemptResult.SUCCEEDED)
     assert site.world.lock is None
     found = reports(site)
     assert not any(r["code"] == "E_SUPERSEDED" for r in found)
     rejected = [r["code"] for r in found if r["result"] == "rejected"]
-    assert rejected == ([] if code is None else [code])
+    assert rejected == [code]
+
+
+def test_lower_generation_cannot_replace_waiting_attempt(site: Site) -> None:
+    """M2b 이월: CLI로 넣은 더 낮은 gen이 창을 기다리는(커밋 전) 더 높은 gen을 대체하지 않는다."""
+    installed(site)
+    waiting = site.apply(site.kit.bundle(3, "r1", window=closed_window()))
+    assert waiting.attempt is not None
+    assert (waiting.attempt.generation, waiting.attempt.phase) == (3, Phase.VERIFIED)
+    state = site.apply(site.kit.bundle(2, "r1", window=closed_window()))
+    assert state.attempt is not None
+    assert (state.attempt.generation, state.attempt.phase) == (3, Phase.VERIFIED)
+    assert [r["code"] for r in reports(site) if r["result"] == "rejected"] == ["E_GEN"]
+    state = site.apply(site.kit.bundle(4, "r1", window=closed_window()))
+    assert state.attempt is not None
+    assert state.attempt.generation == 4
+
+
+def test_rejections_at_the_same_instant_keep_separate_reports(site: Site) -> None:
+    installed(site)
+    site.apply(site.kit.bundle(5, "r1", site="site-b"))
+    site.apply(site.kit.bundle(6, "r1", site="site-c"))
+    assert [r["code"] for r in reports(site) if r["result"] == "rejected"] == ["E_SITE", "E_SITE"]
+
+
+def test_success_collects_generations_older_than_previous(site: Site) -> None:
+    """M2b 이월 GC: 방금 적용한 gen과 직전 gen의 compose·백업·이미지만 남는다."""
+    installed(site)
+    site.apply(site.kit.bundle(2, "r1"))
+    state = site.apply(site.kit.bundle(3, "r2"))
+    assert state.applied_gen == 3
+    settings = site.settings
+    assert sorted(p.name for p in settings.compose_dir.iterdir()) == ["g2", "g3"]
+    assert sorted(p.name for p in settings.backups_dir.iterdir()) == ["g2", "g3"]
+    tags = set(site.world.tags)
+    assert {"pureiron/core:r1", "pureiron/core:r2", "pureiron/site-db:2.30.2-pg16"} <= tags
+    assert "pureiron/core:r0" not in tags
+    assert release_ids("r0")["core"] not in site.world.ids

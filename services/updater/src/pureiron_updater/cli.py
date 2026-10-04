@@ -1,13 +1,18 @@
 """`pureiron-site` — 현장 운영 명령(updater venv 엔트리포인트, plan M2).
 
     pureiron-site apply <pib>            # bundles/에 사본을 두고 적용(창 밖이면 verified 대기)
-    pureiron-site bundle verify <pib>    # 현재 상태 기준 검증만(부작용 없음)
+    pureiron-site bundle verify <pib> [--kind install]   # 현재 상태 기준 검증만(부작용 없음)
     pureiron-site status [--json]
-    pureiron-site recover                # 끊긴 시도 수렴(systemd ExecStartPre와 같은 동작)
+    pureiron-site recover                # 끊긴 시도 수렴(서비스 첫 tick과 같은 동작)
     pureiron-site run                    # 서비스 loop: recover → (poll →) advance, 주기 반복
+    pureiron-site enroll --site <id> [--re-enroll [--next-seq N]] [--out FILE]
+    pureiron-site secret set <name> [--generate] [--if-missing]   # 값은 stdin(한 줄)
+    pureiron-site report export --out DIR                          # 폐쇄망 보고 묶음(USB)
 
 종료 코드: 0 성공·대기·변경 없음, 1 거부·실패, 2 다른 Updater 실행 중·진행 중 시도, 3 설정 오류.
-enroll·secret·report export·project export는 M2c 이후 범위다.
+`enroll`·`secret set`·`report export`·`bundle verify --kind install`은 `PUREIRON_SITE_ID` 없이
+쓴다(등록 전이거나, 현장 id를 `state/site.json`에서 읽는다).
+설정은 프로세스 환경 + `/etc/pureiron/updater.env`(`settings.py`). project export는 M3 이후 범위다.
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ import io
 import json
 import logging
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -27,16 +33,25 @@ from pathlib import Path
 
 from pureiron_bundle import keys
 from pureiron_bundle.errors import BundleRejectedError
-from pureiron_bundle.verify import AttemptResult, GenState, VerifyContext, verify_bundle
+from pureiron_bundle.manifest import BundleKind
+from pureiron_bundle.verify import (
+    AttemptResult,
+    GenState,
+    VerifyContext,
+    verify_bundle,
+    verify_install_bundle,
+)
 from pureiron_updater import __version__
 from pureiron_updater.compose import ComposeCli
 from pureiron_updater.core import CoreHttp
+from pureiron_updater.enroll import EnrollError, enroll, export_reports, load_identity
 from pureiron_updater.images import DockerCli
 from pureiron_updater.metrics import result_of
 from pureiron_updater.phases import AttemptInProgressError, Deps, Updater
 from pureiron_updater.poll import TOKEN_FILE, ControlApi, PollError, poll_once
 from pureiron_updater.recover import recover
-from pureiron_updater.settings import Settings, SettingsError
+from pureiron_updater.secret_store import generate_secret, set_secret, value_from_input
+from pureiron_updater.settings import Settings, SettingsError, merged_env
 from pureiron_updater.state import (
     TERMINAL,
     BusyError,
@@ -84,10 +99,26 @@ def _parser() -> argparse.ArgumentParser:
     bundle_sub = bundle.add_subparsers(dest="bundle_command", required=True)
     verify = bundle_sub.add_parser("verify", help="현재 상태 기준 검증(부작용 없음)")
     verify.add_argument("pib", type=Path)
+    verify.add_argument("--kind", choices=[k.value for k in BundleKind], default="site")
     status = sub.add_parser("status")
     status.add_argument("--json", action="store_true")
     sub.add_parser("recover")
     sub.add_parser("run")
+    enroll_cmd = sub.add_parser("enroll", help="site 키 생성·enrollment 파일 출력")
+    enroll_cmd.add_argument("--site", required=True)
+    enroll_cmd.add_argument("--re-enroll", action="store_true", help="새 키쌍(키 분실·유출)")
+    enroll_cmd.add_argument("--next-seq", type=int, default=None, help="벤더 rekey 응답 next_seq")
+    enroll_cmd.add_argument("--out", type=Path, default=None, help="enrollment 사본(USB 반출)")
+    secret = sub.add_parser("secret", help="secret 파일")
+    secret_sub = secret.add_subparsers(dest="secret_command", required=True)
+    secret_set = secret_sub.add_parser("set", help="state/secrets/<name>(0600), 값은 stdin")
+    secret_set.add_argument("name")
+    secret_set.add_argument("--generate", action="store_true", help="난수 값 생성")
+    secret_set.add_argument("--if-missing", action="store_true", help="이미 있으면 두기")
+    report = sub.add_parser("report", help="보고")
+    report_sub = report.add_subparsers(dest="report_command", required=True)
+    export = report_sub.add_parser("export", help="대기 보고를 서명 묶음으로(report_seq)")
+    export.add_argument("--out", type=Path, required=True)
     return parser
 
 
@@ -178,6 +209,71 @@ def _verify_only(settings: Settings, pib: Path) -> int:
     return EXIT_OK
 
 
+def _verify_install(settings: Settings, pib: Path) -> int:
+    """설치 번들 재검증(부트스트랩 5a). 기존 호스트(Updater 교체)는 저장된 trust 상태 기준."""
+    state = StateStore(settings.state_dir).load()
+    root = keys.read_public_key(settings.root_pubkey_file)
+    try:
+        result = verify_install_bundle(pib, root, state.trust)
+    except BundleRejectedError as exc:
+        print(f"{exc.code.value}: {exc.detail}", file=sys.stderr)
+        return EXIT_FAILED
+    out = {
+        "kind": BundleKind.INSTALL.value,
+        "release": result.manifest.release,
+        "updater": result.manifest.updater_version,
+        "files": len(result.files),
+        "verify_s": round(result.verify_s, 3),
+    }
+    print(json.dumps(out, sort_keys=True))
+    return EXIT_OK
+
+
+def _enroll(settings: Settings, args: argparse.Namespace) -> int:
+    with process_lock(settings.state_dir):
+        path = enroll(
+            settings,
+            args.site,
+            now=datetime.now(UTC),
+            re_enroll=args.re_enroll,
+            next_seq=args.next_seq,
+        )
+        identity = load_identity(settings.state_dir)
+    out: Path | None = args.out
+    if out is not None:
+        shutil.copyfile(path, out)
+    if identity is not None:
+        print(f"site:        {identity.site_id}")
+        print(f"fingerprint: {identity.fingerprint}")
+        print(f"next seq:    {identity.next_report_seq}")
+    print(f"enrollment:  {out or path}")
+    return EXIT_OK
+
+
+def _secret_set(settings: Settings, args: argparse.Namespace) -> int:
+    value = generate_secret() if args.generate else value_from_input(sys.stdin.buffer.read())
+    written = set_secret(
+        settings.secrets_dir,
+        args.name,
+        value,
+        uid=settings.secret_uid,
+        if_missing=args.if_missing,
+    )
+    print(f"{args.name}: {'written' if written else 'kept (already set)'}")
+    return EXIT_OK
+
+
+def _report_export(settings: Settings, out: Path) -> int:
+    with process_lock(settings.state_dir):
+        result = export_reports(settings, out, now=datetime.now(UTC))
+    if result is None:
+        print("no pending reports")
+        return EXIT_OK
+    path, count = result
+    print(f"{count} report(s) → {path}")
+    return EXIT_OK
+
+
 def _status(settings: Settings, *, as_json: bool) -> int:
     state = StateStore(settings.state_dir).load()
     text = json.dumps(to_json(state), indent=2, sort_keys=True, ensure_ascii=False)
@@ -235,21 +331,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
     args = _parser().parse_args(argv)
+    command: str = args.command
+    install_verify = command == "bundle" and args.kind == BundleKind.INSTALL
     try:
-        settings = Settings.from_env(os.environ)
-        command: str = args.command
+        settings = Settings.from_env(
+            merged_env(os.environ),
+            require_site=not (install_verify or command in ("enroll", "secret", "report")),
+        )
         commands: dict[str, Callable[[], int]] = {
             "apply": lambda: _apply(settings, args.pib),
-            "bundle": lambda: _verify_only(settings, args.pib),
+            "bundle": lambda: (_verify_install if install_verify else _verify_only)(
+                settings, args.pib
+            ),
             "status": lambda: _status(settings, as_json=args.json),
             "recover": lambda: _recover(settings),
             "run": lambda: _run(settings),
+            "enroll": lambda: _enroll(settings, args),
+            "secret": lambda: _secret_set(settings, args),
+            "report": lambda: _report_export(settings, args.out),
         }
         return commands[command]()
     except (BusyError, AttemptInProgressError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_BUSY
-    except (SettingsError, StateError, ValueError, OSError) as exc:
+    except (SettingsError, StateError, EnrollError, ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_CONFIG
 

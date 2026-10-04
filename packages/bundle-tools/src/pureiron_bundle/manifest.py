@@ -1,4 +1,7 @@
-"""manifest.json 해석·계약 검증(plan §6.2, `packages/contracts/manifest.schema.json`).
+"""manifest.json 해석·계약 검증(plan §6.2, `packages/contracts/*manifest.schema.json`).
+
+`.pib`는 두 종류다: 현장 번들(`kind: site`)과 설치 번들(`kind: install`, M2c). 같은 형식·서명
+체인이고 manifest 계약만 다르다. 서명 확인 뒤 `bundle_kind`로 종류를 보고 맞는 계약으로 해석한다.
 
 스키마 정본은 `packages/contracts/`이고, 패키지 안 `schema/*.schema.json`은
 `scripts/g1.sh contracts-gen`이 복사한 생성물이다(contracts-drift가 동기 여부를 검사).
@@ -31,10 +34,17 @@ type Json = bool | int | float | str | list[Json] | dict[str, Json] | None
 
 MANIFEST_FILE = "manifest.json"
 SITE_IMAGES = ("core", "collector", "web", "site-db")
+DOCKER_PACKAGES = ("containerd.io", "docker-ce", "docker-ce-cli", "docker-compose-plugin")
+
+
+class BundleKind(StrEnum):
+    SITE = "site"
+    INSTALL = "install"
 
 
 class SchemaName(StrEnum):
     MANIFEST = "manifest.schema.json"
+    INSTALL_MANIFEST = "install-manifest.schema.json"
     FLEET_SITE = "fleet-site.schema.json"
 
 
@@ -171,6 +181,21 @@ class Manifest:
     """계약 검증을 통과한 원본 문서(보고·저장용)."""
 
 
+@dataclass(frozen=True, slots=True)
+class InstallManifest:
+    """설치 번들 manifest(`kind: install`)."""
+
+    release: str
+    created_at: datetime
+    updater_version: str
+    updater_file: str
+    docker_packages: Mapping[str, str]
+    compose_min: str
+    files: Mapping[str, str]
+    trust_update: int | None
+    document: Mapping[str, Json]
+
+
 def manifest_bytes(document: Mapping[str, Json]) -> bytes:
     """서명 대상 바이트 = JCS(RFC 8785)."""
     return rfc8785.dumps(dict(document))
@@ -185,32 +210,74 @@ def _image(data: Mapping[str, str]) -> ImageRef:
     )
 
 
-def parse_manifest(data: bytes) -> Manifest:
-    """서명 확인이 끝난 manifest 바이트 → 계약 검증 → 타입 접근자. 위반은 `E_FORMAT`."""
+def _format_error(detail: str) -> BundleRejectedError:
+    return BundleRejectedError(RejectCode.E_FORMAT, f"{MANIFEST_FILE}: {detail}")
+
+
+def _load_json(data: bytes) -> object:
     try:
-        document = loads_strict(data)
+        return loads_strict(data)
     except (UnicodeDecodeError, ValueError) as exc:
-        raise BundleRejectedError(
-            RejectCode.E_FORMAT, f"{MANIFEST_FILE}: invalid JSON ({exc})"
-        ) from exc
-    problems = validate(SchemaName.MANIFEST, document)
+        raise _format_error(f"invalid JSON ({exc})") from exc
+
+
+def bundle_kind(data: bytes) -> BundleKind:
+    """서명 확인이 끝난 manifest 바이트의 `kind`(계약 검증 전 분기용). 모르는 값은 `E_FORMAT`."""
+    document = _load_json(data)
+    kind = cast(dict[str, object], document).get("kind") if isinstance(document, dict) else None
+    try:
+        return BundleKind(str(kind))
+    except ValueError as exc:
+        raise _format_error(f"unknown bundle kind {kind!r}") from exc
+
+
+def _checked_document(data: bytes, schema: SchemaName) -> tuple[dict[str, Json], datetime]:
+    """계약 검증 + payload 경로 충돌 + created_at 해석."""
+    document = _load_json(data)
+    problems = validate(schema, document)
     if problems:
-        raise BundleRejectedError(RejectCode.E_FORMAT, f"{MANIFEST_FILE}: " + "; ".join(problems))
+        raise _format_error("; ".join(problems))
     doc = cast(dict[str, Json], document)
     collision = path_collision(cast(dict[str, str], doc["files"]))
     if collision:
-        raise BundleRejectedError(RejectCode.E_FORMAT, f"{MANIFEST_FILE}: {collision}")
+        raise _format_error(collision)
     try:
         created_at = parse_timestamp(cast(str, doc["created_at"]))
     except ValueError as exc:
-        raise BundleRejectedError(
-            RejectCode.E_FORMAT, f"{MANIFEST_FILE}: created_at {exc}"
-        ) from exc
+        raise _format_error(f"created_at {exc}") from exc
+    return doc, created_at
+
+
+def _trust_update(doc: Mapping[str, Json]) -> int | None:
+    trust_update = cast(dict[str, int] | None, doc.get("trust_update"))
+    return None if trust_update is None else trust_update["min_cert_serial"]
+
+
+def parse_install_manifest(data: bytes) -> InstallManifest:
+    """서명 확인이 끝난 설치 번들 manifest 바이트 → 계약 검증 → 타입 접근자. 위반은 `E_FORMAT`."""
+    doc, created_at = _checked_document(data, SchemaName.INSTALL_MANIFEST)
+    updater = cast(dict[str, str], doc["updater"])
+    docker = cast(dict[str, Json], doc["docker"])
+    return InstallManifest(
+        release=cast(str, doc["release"]),
+        created_at=created_at,
+        updater_version=updater["version"],
+        updater_file=updater["file"],
+        docker_packages=cast(dict[str, str], docker["packages"]),
+        compose_min=cast(str, docker["compose_min"]),
+        files=cast(dict[str, str], doc["files"]),
+        trust_update=_trust_update(doc),
+        document=doc,
+    )
+
+
+def parse_manifest(data: bytes) -> Manifest:
+    """서명 확인이 끝난 manifest 바이트 → 계약 검증 → 타입 접근자. 위반은 `E_FORMAT`."""
+    doc, created_at = _checked_document(data, SchemaName.MANIFEST)
     release = cast(dict[str, Json], doc["product_release"])
     project = cast(dict[str, Json], doc["project"])
     schema = cast(dict[str, Json], release["schema"])
     images = cast(dict[str, dict[str, str]], release["images"])
-    trust_update = cast(dict[str, int] | None, doc.get("trust_update"))
     return Manifest(
         site_id=cast(str, doc["site_id"]),
         generation=cast(int, doc["generation"]),
@@ -234,7 +301,7 @@ def parse_manifest(data: bytes) -> Manifest:
         ),
         window=doc["window"],
         files=cast(dict[str, str], doc["files"]),
-        trust_update=None if trust_update is None else trust_update["min_cert_serial"],
+        trust_update=_trust_update(doc),
         fleet_commit=cast(str, doc["fleet_commit"]),
         document=doc,
     )

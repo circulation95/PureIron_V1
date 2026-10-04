@@ -70,6 +70,14 @@ class Docker(Protocol):
         """docker 데몬이 응답하는지(재부팅 직후 등 일시 장애 구분)."""
         ...
 
+    def tags(self, prefix: str) -> list[str]:
+        """`<repository>:<tag>`가 `prefix`로 시작하는 로컬 이미지 태그(GC 대상 후보)."""
+        ...
+
+    def remove(self, ref: str) -> None:
+        """`docker image rm <ref>` — 태그를 떼고, 남은 참조가 없으면 이미지도 지운다."""
+        ...
+
 
 class Compose(Protocol):
     """`docker compose -p pureiron -f <target>/compose.yml --env-file <target>/.env …`."""

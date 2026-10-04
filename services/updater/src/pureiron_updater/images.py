@@ -52,6 +52,15 @@ class DockerCli:
         except CommandError:
             return False
 
+    def tags(self, prefix: str) -> list[str]:
+        argv = [self._docker, "image", "ls", "--format", "{{.Repository}}:{{.Tag}}"]
+        out = check(self._run(argv, timeout=60), argv)
+        return sorted({line for line in out.split() if line.startswith(prefix)})
+
+    def remove(self, ref: str) -> None:
+        argv = [self._docker, "image", "rm", ref]
+        check(self._run(argv, timeout=120), argv)
+
 
 def ensure_image(docker: Docker, service: str, ref: ImageRef, archive: Path | None) -> bool:
     """`ref.tag`가 `ref.config_digest`를 가리키게 한다. load 했으면 True."""
