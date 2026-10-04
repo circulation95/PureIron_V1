@@ -263,7 +263,7 @@ window: { recurring: { tz: Asia/Seoul, days: [sat, sun], start: "02:00", end: "0
 - **`.pib`**: 정규형 tar — 멤버 순서·헤더 바이트·블록/레코드(10240B) 0 패딩까지 고정이라 서명된 내용이 같으면 파일 바이트도 같다. 서명 확인 전에는 내용을 해석하지 않고, payload는 해시가 맞은 뒤에만 해석한다. 거부 코드에 형식 위반 `E_FORMAT`을 더했다.
 - **release 기록**: `deploy/releases/r<N>.json`에 계약 패턴(`YYYY.M.N`)의 `version` 필드 추가(`release_record.py --version`, r0 = `2026.10.0`) — manifest·fleet의 `product`는 이 버전을 쓰고 이미지 태그는 `pureiron/<svc>:r<N>` 유지. site-db tar도 image store에 보관한다.
 - **번들 빌더**: `deploy/bundle/build_bundle.py`(fleet 파일 + release 기록 + image store + 프로젝트 → 서명 `.pib` + `<pib 이름>.bundle-metrics.json`), 쓴 뒤 `--root-pub`로 자체 검증, 1.5 GiB 초과 시 실패(1.2 GiB 경보). r0 실측: 738 MB(site-db 599 MB), 빌드 약 18 s, 검증 약 3 s(WSL2).
-- 설치 번들(`kind: install`)은 별도 계약 `install-manifest.schema.json`으로 M2c에서 추가한다(`kind` const 변경은 비호환 변경).
+- 설치 번들(`kind: install`)은 별도 계약 `install-manifest.schema.json`으로 M2c에서 추가했다(`kind` const 변경은 비호환 변경 — 아래 M2c 절).
 
 ### V1 구현 현황 (M2b Updater 상태기계·recover, 2026-10-05)
 
@@ -276,4 +276,14 @@ window: { recurring: { tz: Asia/Seoul, days: [sat, sun], start: "02:00", end: "0
 - **일시 장애**: docker 데몬이 없으면 진행·복구하지 않고 기다린다. `migrating`은 `up --wait site-db` 뒤에 실행한다(재부팅 직후 DB 복구 대기).
 - **Updater 실패 코드**(ApplyAttempt `code`, 번들 거부 코드와 별개): `E_LOAD`(이미지 적재), `E_BACKUP`, `E_MIGRATE`, `E_SWITCH`, `E_HEALTH`, `E_SUPERSEDED`(커밋된 대기 시도를 새 번들이 대체), `E_BUNDLE`(커밋 후 번들 사본 소실).
 - **결과 기록**: `state/reports/*.json`(ApplyAttempt 필드 — 서명·전송은 M2c/M4), `state/metrics/updater.prom`.
-- **아직 없음**: GOOD 비율·첫 batch 신호(core 태그 품질 지표 = M3a, 그 전엔 ready + collector 세션만), 서비스 메트릭 60 s 스크랩(M3a), enroll·report export·systemd unit·설치 번들(M2c), 실제 docker·VM crash 실측(M2d).
+- **아직 없음**: GOOD 비율·첫 batch 신호(core 태그 품질 지표 = M3a, 그 전엔 ready + collector 세션만), 서비스 메트릭 60 s 스크랩(M3a), enroll·report export·systemd unit·설치 번들(→ 아래 M2c 절), 실제 docker·VM crash 실측(M2d).
+
+### V1 구현 현황 (M2c 설치 번들·부트스트랩·systemd·enroll, 2026-10-05)
+
+- **설치 번들 계약** `packages/contracts/install-manifest.schema.json`(`kind: install`): `release`, `updater{version,file}`, `docker{packages,compose_min}`, `files`, `trust_update`. `files` 경로 패턴은 현장 manifest와 같아야 한다(계약 테스트). 검증은 bundle-tools `verify_install_bundle` — 현장 번들과 서명(①)·payload(④) 코드를 공유하고, 설치 배치(필수 payload)와 번들 안 `keys/root.{pub,pem}` == 검증 root를 추가로 본다. 종류가 다른 번들은 서로의 검증기에서 `E_FORMAT`.
+- **부트스트랩 경로**: `bootstrap-verify.sh`(openssl 1회용: 지문 → PEM raw == root.pub → cert → manifest → 서명된 경로만 추출·sha256) → `preflight.sh` → `install.sh`(daemon.json을 **deb보다 먼저** — postinst의 첫 dockerd 기동부터 classic store, storage driver `overlay2`·compose ≥ 2.17.0 확인 → venv·`current` symlink·root.pub·unit enable → **5a 설치된 Updater로 재검증** → secret 생성, 실패 시 이번 실행분 되돌림). 절차·runbook 값(root 지문·`bootstrap-verify.sh` sha256)의 정본은 [`deploy/install/README.md`](../../../deploy/install/README.md).
+- **Updater venv tarball**(PD-5): `deploy/build/build_updater.sh` — ubuntu:24.04에서 `/opt/pureiron/updater/<ver>`, uv.lock export(`--require-hashes`) + 저장소 wheel, 결정적 tar. 서비스 `deploy/systemd/pureiron-updater.service`(`ExecStart=…/current/bin/pureiron-site run`, `EnvironmentFile=/etc/pureiron/updater.env`, `Restart=always`).
+- **현장 등록·secret·보고**(PD-3·PD-4): `pureiron-site enroll`(site Ed25519 키 `state/site.key` 0600, `state/site.json` = `report_seq` 카운터 정본, `enrollment.json` = `site-enrollment` 자기 서명 봉투), `--re-enroll`(새 키, seq 유지 — 상태를 잃었으면 벤더 rekey 응답 `--next-seq` 필수), `secret set`(0600, 컨테이너 서비스 uid 10001 소유 — compose 파일 secret은 bind mount), `report export`(`report_seq` 부여 + `site-reports` 서명 봉투). 봉투 = `{format, purpose, payload, signature}`, 서명 대상 JCS(`{format, payload, purpose}`) — control-api(M4)는 `pureiron_bundle.sitesign`으로 검증한다(P3).
+- **설정**: Updater·운영자 CLI 모두 프로세스 환경 + `/etc/pureiron/updater.env`(프로세스 환경 우선). `PUREIRON_SITE_ID`는 `enroll`이 기록한다.
+- **M2b 이월 처리**: 대기 시도는 검증상 더 높은 generation만 대체(CLI `apply`도 poll과 같은 규칙, 같은·낮은 gen은 새 번들만 `E_GEN` 보고), 보고 파일명에 번들 sha256 12자(같은 순간 거부 충돌 제거), 성공 뒤 GC(적용 gen·직전 gen의 compose·백업·이미지만 보존), compose 최소 버전 2.17.0(`up --wait-timeout`). 최초 설치 실패 뒤 재시도도 최초 설치로 진행(보호할 직전 상태 없음 — 의도된 동작).
+- **아직 없음**: 실제 호스트 설치·네트워크 차단·재부팅·`systemctl kill` crash 실측(M2d, Hyper-V VM), control-api 등록·rekey·보고 수신(M4), 운영 root key(D10, test key만).
