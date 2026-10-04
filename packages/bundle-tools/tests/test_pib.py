@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import tarfile
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -195,9 +196,10 @@ def test_chained_extended_headers_are_rejected_without_recursion(tmp_path: Path)
     with pytest.raises(RecursionError), tarfile.open(path) as plain:
         plain.getmembers()
     assert "chained" in format_error(path)
+    # 확장 헤더 1개는 파싱되지만, writer가 만들지 않는 키(comment)라 정규형 검사에서 거부된다.
     single = tmp_path / "single.pib"
     single.write_bytes(_archive(_meta_blocks(), _pax_header(), payload))
-    assert read_all(single) == ["a"]
+    assert "not canonical" in format_error(single)
 
 
 def test_oversized_extended_header_is_rejected(tmp_path: Path) -> None:
@@ -222,6 +224,94 @@ def test_global_header_long_name_and_sparse_are_rejected(tmp_path: Path) -> None
     sparse = tarfile.TarInfo("a")
     sparse.type = tarfile.GNUTYPE_SPARSE
     assert "not allowed" in format_error(raw_tar(tmp_path / "s.pib", [*META, sparse]))
+
+
+def pax_records(records: dict[str, str]) -> bytes:
+    """pax 확장 헤더 본문(`<len> key=value\n` — len은 자기 자신 포함)."""
+    body = b""
+    for key, value in records.items():
+        record = f" {key}={value}\n".encode()
+        length = len(record) + 1
+        while len(str(length)) + len(record) != length:
+            length = len(str(length)) + len(record)
+        body += str(length).encode() + record
+    return body
+
+
+SPARSE_CASES = {
+    "realsize-not-int": {"GNU.sparse.realsize": "abc"},
+    "size-not-int": {"GNU.sparse.size": "abc"},
+    "map-garbage": {"GNU.sparse.map": "1,x"},
+    "sparse-1.0": {"GNU.sparse.major": "1", "GNU.sparse.minor": "0"},
+}
+
+
+@pytest.mark.parametrize("case", sorted(SPARSE_CASES))
+def test_pax_gnu_sparse_keys_are_rejected_at_the_header(tmp_path: Path, case: str) -> None:
+    # sparse 1.0은 맵을 데이터에서 숫자로 끝까지 읽는다 — 4 MiB 본문을 붙여도 헤더에서 끝나야 한다.
+    body = b"999999999999\n" + b"1\n" * (2 * 1024 * 1024)
+    member = tarfile.TarInfo("manifest.json")
+    member.size = len(body)
+    data = member.tobuf(tarfile.USTAR_FORMAT) + body + b"\0" * (-len(body) % tarfile.BLOCKSIZE)
+    path = tmp_path / "x.pib"
+    path.write_bytes(_archive(_pax_header(pax_records(SPARSE_CASES[case])), data))
+    started = time.monotonic()
+    assert "sparse" in format_error(path)
+    assert time.monotonic() - started < 2.0
+
+
+def test_pax_value_errors_are_e_format(tmp_path: Path) -> None:
+    path = tmp_path / "x.pib"
+    payload = _block(tarfile.TarInfo("a"), b"x")
+    path.write_bytes(_archive(_meta_blocks(), _pax_header(pax_records({"size": "1x"})), payload))
+    format_error(path)
+
+
+def test_long_names_written_by_the_writer_are_canonical(tmp_path: Path) -> None:
+    long_name = "images/" + "n" * 150 + ".tar"
+    source = tmp_path / "f"
+    source.write_bytes(b"x" * 700)
+    write_pib(tmp_path / "ok.pib", dict(META), {long_name: source, "a/b": source})
+    assert read_all(tmp_path / "ok.pib") == ["a/b", long_name]
+
+
+@pytest.mark.parametrize("field", ["mtime", "mode", "uid", "uname", "padding"])
+def test_non_canonical_member_headers_are_rejected(tmp_path: Path, field: str) -> None:
+    info = tarfile.TarInfo("a")
+    info.mtime, info.mode, info.uid, info.uname = 0, 0o644, 0, ""
+    if field == "mtime":
+        info.mtime = 1
+    elif field == "mode":
+        info.mode = 0o600
+    elif field == "uid":
+        info.uid = 1000
+    elif field == "uname":
+        info.uname = "root"
+    block = _block(info, b"x")
+    if field == "padding":
+        block = block[:-1] + b"\x01"
+    path = tmp_path / "x.pib"
+    path.write_bytes(_archive(_meta_blocks(), block))
+    detail = format_error(path)
+    assert ("padding" in detail) if field == "padding" else ("not canonical" in detail)
+
+
+def test_missing_record_padding_is_distinguished_from_truncation(tmp_path: Path) -> None:
+    body = _meta_blocks() + _block(tarfile.TarInfo("a"), b"x")
+    unpadded = tmp_path / "unpadded.pib"
+    unpadded.write_bytes(body + b"\0" * (2 * tarfile.BLOCKSIZE))
+    assert "missing record padding" in format_error(unpadded)
+    truncated = tmp_path / "truncated.pib"
+    truncated.write_bytes(body + b"\0" * tarfile.BLOCKSIZE)
+    assert "truncated" in format_error(truncated)
+
+
+def test_writer_rejects_colliding_payload_paths(tmp_path: Path) -> None:
+    source = tmp_path / "f"
+    source.write_bytes(b"x")
+    for names in (["zz/a", "zz/a/b"], ["zz/A", "zz/a"]):
+        with pytest.raises(ValueError, match=r"collide|prefix"):
+            write_pib(tmp_path / "o.pib", dict(META), dict.fromkeys(names, source))
 
 
 def test_parser_exhaustion_is_e_format(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

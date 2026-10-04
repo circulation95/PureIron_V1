@@ -130,6 +130,16 @@ def test_config_digest_rejects_chained_headers_and_duplicate_manifest(tmp_path: 
         config_digest_from_tar(duplicate)
 
 
+def test_config_digest_rejects_gnu_sparse_pax_values(tmp_path: Path) -> None:
+    record = b" GNU.sparse.realsize=abc\n"
+    record = str(len(record) + 2).encode() + record
+    pax = _raw_member("././@PaxHeader", record, tarfile.XHDTYPE)
+    path = tmp_path / "sparse.tar"
+    path.write_bytes(pax + _raw_member("manifest.json", b"[]") + b"\0" * 10240)
+    with pytest.raises(ImageFormatError, match="sparse"):
+        config_digest_from_tar(path)
+
+
 def test_config_digest_parser_exhaustion_is_image_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

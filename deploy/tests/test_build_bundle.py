@@ -236,6 +236,7 @@ def test_size_budget_failure_removes_bundle(
     assert main(setup.args()) == 1
     assert "::error::" in capsys.readouterr().out
     assert not setup.pib.exists()
+    assert not list(setup.out.glob("*.bundle-metrics.json"))
 
 
 def test_malformed_release_record_is_a_build_error(
@@ -275,6 +276,11 @@ def test_compat_app_min_is_oldest_compatible_final_release() -> None:
     assert compat_app_min(records, future) == "2026.12.0"
     first_rc = rec("2026.8.0-rc.1", 9)
     assert compat_app_min([first_rc], first_rc) == "2026.8.0-rc.1"
+    # 같은 epoch의 정식이 이미 기록된 뒤 다시 빌드한 rc: 자기보다 새 버전을 고르지 않는다.
+    rebuilt_rc = rec("2026.11.0-rc.2", 2)
+    assert compat_app_min([*records, rebuilt_rc], rebuilt_rc) == "2026.10.0"
+    late_rc = rec("2026.13.0-rc.1", 3)
+    assert compat_app_min([r12, late_rc], late_rc) == "2026.12.0"
     assert version_key("2026.10.0") > version_key("2026.9.5")
     assert version_key("2026.10.0") > version_key("2026.10.0-rc.1")
 

@@ -9,14 +9,14 @@
 | `trust.py` | `release-cert.json`(JCS, `purpose: release-cert`) 발급·검증, 서명된 `created_at` 기준 유효기간, `TrustState`(min_cert_serial·max_seen_created_at), root 서명 `trust-update.sig`(JCS `{purpose: trust-update, min_cert_serial}`), 중복 키·실수 거부 JSON |
 | `manifest.py` | 계약 스키마(`schema/` = `packages/contracts` 사본, contracts-drift 검사) 검증, 타입 접근자, JCS 바이트 |
 | `pib.py` | 결정적 writer, 스트리밍·적대적 입력 안전 reader(끝 표시·패딩 검사 포함) |
-| `tarsafe.py` | 모든 tar 읽기에 쓰는 `BoundedTarInfo`: pax 확장 헤더 ≤ 64 KiB·멤버당 1개, 전역 헤더·GNU long name/link·sparse 거부 |
+| `tarsafe.py` | 모든 tar 읽기에 쓰는 `BoundedTarInfo`: pax 확장 헤더 ≤ 64 KiB·멤버당 1개, 전역 헤더·GNU long name/link·sparse(헤더 타입·`GNU.sparse.*` pax 키) 거부, pax 값 해석 오류도 거부 |
 | `images.py` | docker save tar(.tar/.tar.gz)의 config digest(`manifest.json` 정확히 1개), load 후 `.Id` 대조 helper |
 | `sign.py` | payload sha256 → manifest 서명 → `.pib` 쓰기(빌더용) |
 | `verify.py` | 고정 순서 ①~⑥ 검증과 순수 판정 규칙(gen·스키마 envelope·Updater 버전·드래프트 게이트) |
 
 ## `.pib` 형식
 
-압축하지 않은 POSIX tar(pax). 멤버 순서 고정: `manifest.json`, `manifest.sig`(release key), `release-cert.json`, `release-cert.sig`(root), 선택 `trust-update.sig`(root), 그다음 payload(경로 UTF-8 바이트 순), 끝은 0 블록 2개 + 10240바이트 레코드 경계까지 0 패딩. mtime 0·uid/gid 0·빈 uname/gname·0644·일반 파일만. reader는 절대 경로·`..`·역슬래시·계약 패턴 밖 경로·링크·디렉터리·장치·sparse·중복·순서 위반·1 MiB 초과 메타데이터·헤더 제한 위반·끝 표시 뒤 0이 아닌 바이트나 군더더기를 `E_FORMAT`으로 거부하고, 메타데이터 서명을 확인한 뒤에만 payload를 해시한다.
+압축하지 않은 POSIX tar(pax). 멤버 순서 고정: `manifest.json`, `manifest.sig`(release key), `release-cert.json`, `release-cert.sig`(root), 선택 `trust-update.sig`(root), 그다음 payload(경로 UTF-8 바이트 순), 끝은 0 블록 2개 + **10240바이트(`RECORDSIZE`) 레코드 경계까지 0 패딩(형식의 일부 — 이 패딩이 없는 tar는 거부)**. 각 멤버 헤더는 writer의 결정적 헤더(긴 경로면 pax `path` 확장 헤더 1개)와 바이트 단위로 같아야 하고 블록 패딩은 0이어야 한다 — 서명된 내용이 같으면 `.pib` 바이트도 하나다. mtime 0·uid/gid 0·빈 uname/gname·0644·일반 파일만. reader는 절대 경로·`..`·역슬래시·계약 패턴 밖 경로·링크·디렉터리·장치·sparse·중복·순서 위반·1 MiB 초과 메타데이터·헤더 제한 위반·끝 표시 뒤 0이 아닌 바이트나 군더더기를 `E_FORMAT`으로 거부하고, 메타데이터 서명을 확인한 뒤에만 payload를 해시한다.
 
 ## 검증 규칙 요약
 

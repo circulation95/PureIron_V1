@@ -24,7 +24,7 @@ from pureiron_bundle.pib import (
     CHUNK,
     MANIFEST_SIG,
     TRUST_UPDATE_SIG,
-    check_payload_name,
+    check_payload_names,
     write_pib,
 )
 from pureiron_bundle.trust import parse_cert
@@ -56,8 +56,7 @@ def write_signed_bundle(
     cert = parse_cert(cert_json)
     if keys.public_key(release_seed) != cert.release_pubkey:
         raise ValueError("release key does not match release-cert.json release_pubkey")
-    for name in payload:
-        check_payload_name(name)
+    check_payload_names(payload)
     files: dict[str, Json] = {name: file_sha256(path) for name, path in payload.items()}
     full: dict[str, Json] = {**document, "files": files}
     problems = validate(SchemaName.MANIFEST, full)

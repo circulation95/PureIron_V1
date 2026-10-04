@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -93,6 +93,27 @@ def file_path_pattern() -> re.Pattern[str]:
     schema = contract_schema(SchemaName.MANIFEST)
     properties = cast(Mapping[str, Mapping[str, Mapping[str, str]]], schema["properties"])
     return re.compile(properties["files"]["propertyNames"]["pattern"])
+
+
+def path_collision(names: Iterable[str]) -> str | None:
+    """추출 시 충돌하는 경로 쌍 설명(없으면 None).
+
+    한 경로가 다른 경로의 디렉터리 접두(`a`와 `a/b`)이거나, 대소문자를 무시하면 같은
+    경로(`A`와 `a`)면 대소문자 무시 파일시스템·디렉터리 생성에서 서로 덮어쓴다.
+    """
+    folded: dict[str, str] = {}
+    for name in names:
+        key = name.casefold()
+        if key in folded:
+            return f"payload paths {folded[key]!r} and {name!r} collide (case-insensitive)"
+        folded[key] = name
+    for key, name in folded.items():
+        parts = key.split("/")
+        for i in range(1, len(parts)):
+            prefix = "/".join(parts[:i])
+            if prefix in folded:
+                return f"payload path {folded[prefix]!r} is a directory prefix of {name!r}"
+    return None
 
 
 @cache
@@ -176,6 +197,9 @@ def parse_manifest(data: bytes) -> Manifest:
     if problems:
         raise BundleRejectedError(RejectCode.E_FORMAT, f"{MANIFEST_FILE}: " + "; ".join(problems))
     doc = cast(dict[str, Json], document)
+    collision = path_collision(cast(dict[str, str], doc["files"]))
+    if collision:
+        raise BundleRejectedError(RejectCode.E_FORMAT, f"{MANIFEST_FILE}: {collision}")
     try:
         created_at = parse_timestamp(cast(str, doc["created_at"]))
     except ValueError as exc:

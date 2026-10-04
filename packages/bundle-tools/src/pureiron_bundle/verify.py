@@ -221,12 +221,12 @@ def _image_payloads(manifest: Manifest) -> dict[str, str]:
 
 def _extract_member(extract_to: Path, member: PayloadMember) -> str:
     """`<name>.part`에 쓰며 해시하고, 호출자가 sha256을 확인한 뒤 이름을 바꾼다."""
-    part = safe_target(extract_to, member.name + PART_SUFFIX)
     try:
+        part = safe_target(extract_to, member.name + PART_SUFFIX)
         sink = part.open("xb")
-    except FileExistsError as exc:
+    except OSError as exc:
         raise BundleRejectedError(
-            RejectCode.E_FORMAT, f"{member.name}: path collides on extraction"
+            RejectCode.E_FORMAT, f"{member.name}: cannot extract ({exc})"
         ) from exc
     with sink:
         return hash_stream(member.stream, sink)
@@ -251,8 +251,13 @@ def _check_payload(
                 RejectCode.E_DIGEST, f"{member.name}: sha256 {actual} != {want}"
             )
         if extract_to is not None:
-            part = extract_to.joinpath(*member.name.split("/"))
-            part.with_name(part.name + PART_SUFFIX).rename(part)
+            final = extract_to.joinpath(*member.name.split("/"))
+            try:
+                final.with_name(final.name + PART_SUFFIX).rename(final)
+            except OSError as exc:
+                raise BundleRejectedError(
+                    RejectCode.E_FORMAT, f"{member.name}: cannot extract ({exc})"
+                ) from exc
         verified[member.name] = actual
     if expected:
         raise BundleRejectedError(RejectCode.E_DIGEST, f"missing payload files {sorted(expected)}")

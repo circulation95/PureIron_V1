@@ -494,6 +494,16 @@ def test_signed_manifest_non_integer_duplicate_or_control_chars_is_e_format(
     assert reject(_resigned(kit, data.replace(old, new))) is RejectCode.E_FORMAT
 
 
+@pytest.mark.parametrize(
+    "extra", [("zz/a", "zz/a/b"), ("zz/A", "zz/a")], ids=["dir-prefix", "casefold"]
+)
+def test_signed_manifest_with_colliding_paths_is_e_format(kit: Kit, extra: tuple[str, str]) -> None:
+    document = json.loads(dict(members(kit.build()))["manifest.json"])
+    for name in extra:
+        document["files"][name] = "sha256:" + "0" * 64
+    assert reject(_resigned(kit, manifest_bytes(document))) is RejectCode.E_FORMAT
+
+
 def test_invalid_updater_version_fails_before_reading(kit: Kit) -> None:
     with pytest.raises(ValueError, match="MAJOR"):
         verify_bundle(kit.tmp / "does-not-exist.pib", ctx(updater_version="1.0"))

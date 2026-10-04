@@ -137,14 +137,16 @@ def find_release(records: Sequence[ReleaseRecord], version: str) -> ReleaseRecor
 def compat_app_min(records: Sequence[ReleaseRecord], release: ReleaseRecord) -> str:
     """이 release 스키마(epoch)에서 동작하는 가장 오래된 **정식** 앱 release 버전.
 
-    후보 = envelope `[app_expected, app_max_compatible]`가 이 epoch를 포함하는 정식 버전(접미사
-    `-rc` 등 제외). 정식 후보가 없으면(예: 첫 rc) 이 release 자신이다.
+    후보 = envelope `[app_expected, app_max_compatible]`가 이 epoch를 포함하고 이 release보다
+    새롭지 않은 정식 버전(접미사 `-rc` 등 제외). 정식 후보가 없으면(예: 첫 rc) 이 release 자신이다.
     """
-    epoch = release.epoch
+    epoch, own = release.epoch, version_key(release.version)
     compatible = [
         r
         for r in records
-        if r.app_expected <= epoch <= r.app_max_compatible and "-" not in r.version
+        if r.app_expected <= epoch <= r.app_max_compatible
+        and "-" not in r.version
+        and version_key(r.version) <= own
     ]
     if not compatible:
         return release.version
@@ -324,11 +326,13 @@ def build(args: argparse.Namespace) -> int:
         "zlib": zlib.ZLIB_RUNTIME_VERSION,
         "python": platform.python_version(),
     }
-    pib.with_name(pib.stem + METRICS_SUFFIX).write_text(
+    metrics_file = pib.with_name(pib.stem + METRICS_SUFFIX)
+    metrics_file.write_text(
         json.dumps(metrics, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
     )
     if size_gate(size):
         pib.unlink()
+        metrics_file.unlink()
         return 1
     print(pib)
     return 0

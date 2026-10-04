@@ -10,6 +10,9 @@
   항목이 없다), 중복, 메타데이터 순서 위반, payload 정렬 위반, 크기 초과 메타데이터를
   `E_FORMAT`으로 거부한다. 메타데이터를 먼저 돌려주고, 호출자가 서명을 확인한 뒤에만
   payload를 읽게 한다(`read_metadata` → `iter_payload`).
+- payload를 끝까지 읽으면 **정규형**인지 확인한다: 각 멤버 헤더(필요 시 pax `path` 확장 헤더 포함)가
+  writer가 같은 이름·크기로 만드는 바이트와 같고, 데이터 블록 패딩이 0이며, 끝은 0 블록 2개 +
+  `RECORDSIZE`(10240) 경계까지 0 패딩. 그래서 서명된 내용이 같으면 `.pib` 바이트도 하나뿐이다.
 """
 
 from __future__ import annotations
@@ -18,14 +21,14 @@ import hashlib
 import io
 import os
 import tarfile
-from collections.abc import Generator, Iterator, Mapping
+from collections.abc import Generator, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
 from pureiron_bundle.errors import BundleRejectedError, RejectCode
-from pureiron_bundle.manifest import MANIFEST_FILE, file_path_pattern
+from pureiron_bundle.manifest import MANIFEST_FILE, file_path_pattern, path_collision
 from pureiron_bundle.tarsafe import PARSER_EXHAUSTION, open_tar_stream
 
 MANIFEST_SIG = "manifest.sig"
@@ -37,6 +40,7 @@ REQUIRED_METADATA = METADATA_ORDER[:4]
 METADATA_LIMIT = 1024 * 1024
 CHUNK = 1024 * 1024
 _REGULAR = (tarfile.REGTYPE, tarfile.AREGTYPE)
+_HEADER_FAILURES = (tarfile.TarError, ValueError, UnicodeError, *PARSER_EXHAUSTION)
 
 
 def tar_info(name: str, size: int) -> tarfile.TarInfo:
@@ -58,14 +62,23 @@ def check_payload_name(name: str) -> None:
         raise ValueError(f"invalid payload path: {name!r}")
 
 
+def check_payload_names(names: Iterable[str]) -> None:
+    """개별 경로 검사 + 경로끼리의 충돌(디렉터리 접두·대소문자 무시 동일) 검사."""
+    names = list(names)
+    for name in names:
+        check_payload_name(name)
+    collision = path_collision(names)
+    if collision:
+        raise ValueError(collision)
+
+
 def write_pib(out: Path, metadata: Mapping[str, bytes], payload: Mapping[str, Path]) -> None:
     """메타데이터(이름 → 바이트)와 payload(번들 경로 → 디스크 파일)로 `.pib`를 쓴다(원자적 교체)."""
     missing = [name for name in REQUIRED_METADATA if name not in metadata]
     unknown = [name for name in metadata if name not in METADATA_ORDER]
     if missing or unknown:
         raise ValueError(f"bundle metadata missing {missing} / unknown {unknown}")
-    for name in payload:
-        check_payload_name(name)
+    check_payload_names(payload)
     tmp = out.with_name(out.name + ".tmp")
     try:
         with (
@@ -118,13 +131,18 @@ def hash_stream(source: IO[bytes], sink: IO[bytes] | None = None) -> str:
 def open_pib(path: Path) -> Generator[PibReader]:
     """`with open_pib(path) as reader:` — 파일과 tar 스트림을 함께 닫는다.
 
-    읽는 도중의 tar 손상(잘림·헤더 오류·헤더 제한 위반·파서 고갈)은 `E_FORMAT`으로 바꾼다.
+    헤더 해석 실패(헤더 제한 위반·pax 값 오류·파서 고갈)는 헤더를 읽는 지점(열 때의 첫 멤버,
+    `PibReader._next`)에서만 `E_FORMAT`으로 바꾸고, 데이터 읽기 중 tar 손상(잘림)도 `E_FORMAT`이다.
     """
     with path.open("rb") as raw:
         try:
-            with open_tar_stream(raw, "r|") as tar:
+            tar = open_tar_stream(raw, "r|")
+        except _HEADER_FAILURES as exc:
+            raise _reject(f"{path.name}: corrupt tar header ({exc!r})") from exc
+        try:
+            with tar:
                 yield PibReader(tar, raw)
-        except (tarfile.TarError, *PARSER_EXHAUSTION) as exc:
+        except tarfile.TarError as exc:
             raise _reject(f"{path.name}: corrupt tar archive ({exc!r})") from exc
 
 
@@ -141,10 +159,16 @@ class PibReader:
         self._pending: tarfile.TarInfo | None = None
         self._seen: set[str] = set()
         self._metadata_done = False
+        self._layout: list[tuple[int, int, str, int]] = []
 
     def _next(self) -> tarfile.TarInfo | None:
-        member = self._tar.next()
+        try:
+            member = self._tar.next()
+        except _HEADER_FAILURES as exc:
+            # 헤더 해석 실패·파서 고갈은 이 지점에서만 형식 오류로 본다(서명 뒤 단계와 구분).
+            raise _reject(f"corrupt tar header ({exc!r})") from exc
         if member is not None:
+            self._layout.append((member.offset, member.offset_data, member.name, member.size))
             _check_member(member)
             if member.name in self._seen:
                 raise _reject(f"duplicate member {member.name!r}")
@@ -201,21 +225,52 @@ class PibReader:
                 raise _reject(f"payload member {name!r} unreadable")
             yield PayloadMember(name, member.size, handle)
             member = self._next()
+        self._check_canonical_layout()
         self._check_trailer()
 
-    def _check_trailer(self) -> None:
-        """마지막 멤버 뒤 = 0 블록 2개 + RECORDSIZE 경계까지 0 패딩, 그 뒤 EOF."""
-        end = self._tar.offset
-        expected = -(-(end + 2 * tarfile.BLOCKSIZE) // tarfile.RECORDSIZE) * tarfile.RECORDSIZE
-        self._raw.seek(end)
-        remaining = expected - end
-        while remaining > 0:
-            chunk = self._raw.read(min(remaining, CHUNK))
+    def _zeros(self, start: int, length: int, what: str) -> int:
+        """`start`부터 `length` 바이트가 모두 0인지. 실제로 읽은 바이트 수를 돌려준다."""
+        self._raw.seek(start)
+        done = 0
+        while done < length:
+            chunk = self._raw.read(min(length - done, CHUNK))
             if not chunk:
-                raise _reject("archive ends before the end-of-archive marker")
+                break
             if chunk.count(0) != len(chunk):
-                raise _reject("non-zero bytes after the last member")
-            remaining -= len(chunk)
+                raise _reject(f"non-zero bytes in {what}")
+            done += len(chunk)
+        return done
+
+    def _check_canonical_layout(self) -> None:
+        """멤버 헤더가 writer의 결정적 헤더와 바이트 단위로 같고 블록 패딩이 0인지."""
+        position = 0
+        for offset, offset_data, name, size in self._layout:
+            if offset != position:
+                raise _reject(f"{name}: unexpected gap before member header")
+            expected = tar_info(name, size).tobuf(tarfile.PAX_FORMAT, "utf-8", "surrogateescape")
+            self._raw.seek(offset)
+            if offset_data - offset != len(expected) or self._raw.read(len(expected)) != expected:
+                raise _reject(f"{name}: member header is not canonical")
+            padding = -size % tarfile.BLOCKSIZE
+            if self._zeros(offset_data + size, padding, f"{name} block padding") != padding:
+                raise _reject(f"{name}: archive ends inside block padding")
+            position = offset_data + size + padding
+        if position != self._tar.offset:
+            raise _reject("unexpected data between the last member and the end-of-archive marker")
+
+    def _check_trailer(self) -> None:
+        """마지막 멤버 뒤 = 0 블록 2개 + RECORDSIZE(10240) 경계까지 0 패딩, 그 뒤 EOF."""
+        end = self._tar.offset
+        marker = 2 * tarfile.BLOCKSIZE
+        expected = -(-(end + marker) // tarfile.RECORDSIZE) * tarfile.RECORDSIZE
+        present = self._zeros(end, expected - end, "end-of-archive marker or record padding")
+        if present < marker:
+            raise _reject("truncated: archive ends before the end-of-archive marker")
+        if present < expected - end:
+            raise _reject(
+                f"missing record padding: .pib must be padded with zeros to a multiple of "
+                f"{tarfile.RECORDSIZE} bytes"
+            )
         if self._raw.read(1):
             raise _reject("trailing data after the tar record padding")
 

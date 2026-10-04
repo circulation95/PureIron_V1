@@ -67,7 +67,9 @@ def config_digest_from_stream(stream: Readable, source: str = "<image>") -> str:
                 if handle is None:
                     raise ImageFormatError(f"{source}: manifest.json unreadable")
                 found = _parse_manifest(handle.read(), source)
-    except (tarfile.TarError, EOFError, OSError, *PARSER_EXHAUSTION) as exc:
+    except ImageFormatError:
+        raise
+    except (tarfile.TarError, EOFError, OSError, ValueError, *PARSER_EXHAUSTION) as exc:
         raise ImageFormatError(f"{source}: not a readable image tar ({exc!r})") from exc
     if found is None:
         raise ImageFormatError(f"{source}: manifest.json missing")

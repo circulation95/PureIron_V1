@@ -59,4 +59,5 @@ uv run pureiron-bundle cert issue --root-key ~/pureiron/keys/test/test-root.key 
 ```
 
 - 번들 빌드: `deploy/bundle/build_bundle.py --release-key ~/pureiron/keys/test/release.key --cert-dir ~/pureiron/keys/test --root-pub ~/pureiron/keys/test/test-root.pub …`(쓴 뒤 같은 검증 코드로 자체 검증).
+- `purpose` 필드가 생기기 전(M2a 초기)에 발급한 test cert는 검증에서 `E_FORMAT`으로 거부되므로 `cert issue`로 다시 발급한다.
 - 단위 테스트는 실행할 때마다 임시 키를 만들므로 이 키가 필요 없다.
