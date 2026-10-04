@@ -1,0 +1,3 @@
+# target: acquisition/_violation.py
+# breaks: (c) domain modules depend on each other only through <module>.ports
+from pureiron_core.project import stub

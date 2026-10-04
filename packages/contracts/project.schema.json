@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pureiron.dev/contracts/project.schema.json",
+  "title": "PureIron project (customer repo)",
+  "description": "project.yaml 최상위 문서(ADR-025, plan §6.3). devices/·tags/·alarms/ 파일은 $defs의 device·tagList·alarmList로 검증한다. 스키마 기본값과 같은 필드는 canonical export에서 생략된다.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "project_id", "name"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "project_id": {"$ref": "#/$defs/id"},
+    "name": {"type": "string", "minLength": 1, "maxLength": 200},
+    "absorbs": {
+      "description": "현장 드래프트 회수 기록: site_id → 흡수한 site_rev.",
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/id"},
+      "additionalProperties": {"type": "integer", "minimum": 0}
+    },
+    "historian": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "retention_days": {"type": "integer", "minimum": 1, "default": 365},
+        "default_deadband": {"type": "number", "minimum": 0, "default": 0},
+        "default_max_interval_s": {"type": "integer", "minimum": 1, "default": 60}
+      }
+    }
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"},
+    "secretRef": {"type": "string", "pattern": "^secret://[a-z0-9][a-z0-9_.-]{0,127}$"},
+    "tagPath": {"type": "string", "pattern": "^[A-Za-z0-9_][A-Za-z0-9_./-]{0,254}$"},
+    "device": {
+      "description": "devices/<id>.yaml",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "protocol", "host", "port"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "protocol": {"enum": ["modbus_tcp"]},
+        "host": {"type": "string", "minLength": 1, "maxLength": 253},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "unit_id": {"type": "integer", "minimum": 0, "maximum": 255, "default": 1},
+        "poll_ms": {"type": "integer", "minimum": 50, "default": 1000},
+        "timeout_ms": {"type": "integer", "minimum": 50, "default": 1000},
+        "credentials": {"$ref": "#/$defs/secretRef"}
+      }
+    },
+    "modbusAddress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["register_type", "address", "data_type"],
+      "properties": {
+        "register_type": {"enum": ["holding", "input", "coil", "discrete"]},
+        "address": {"type": "integer", "minimum": 0, "maximum": 65535},
+        "data_type": {"enum": ["bool", "int16", "uint16", "int32", "uint32", "float32", "float64"]},
+        "byte_order": {"enum": ["big", "little"], "default": "big"},
+        "word_order": {"enum": ["big", "little"], "default": "big"}
+      }
+    },
+    "tag": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "device", "modbus"],
+      "properties": {
+        "path": {"$ref": "#/$defs/tagPath"},
+        "device": {"$ref": "#/$defs/id"},
+        "modbus": {"$ref": "#/$defs/modbusAddress"},
+        "eu": {"type": "string", "maxLength": 32},
+        "description": {"type": "string", "maxLength": 500},
+        "record": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "deadband": {"type": "number", "minimum": 0},
+            "max_interval_s": {"type": "integer", "minimum": 1}
+          }
+        }
+      }
+    },
+    "tagList": {"description": "tags/<device>.yaml", "type": "array", "items": {"$ref": "#/$defs/tag"}},
+    "alarm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "tag", "type", "setpoint"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "tag": {"$ref": "#/$defs/tagPath"},
+        "type": {"enum": ["above", "below"]},
+        "setpoint": {"type": "number"},
+        "deadband": {"type": "number", "minimum": 0, "default": 0},
+        "on_delay_s": {"type": "number", "minimum": 0, "default": 0},
+        "priority": {"enum": ["low", "medium", "high", "critical"], "default": "medium"},
+        "description": {"type": "string", "maxLength": 500}
+      }
+    },
+    "alarmList": {"description": "alarms/*.yaml", "type": "array", "items": {"$ref": "#/$defs/alarm"}}
+  }
+}

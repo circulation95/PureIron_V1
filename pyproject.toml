@@ -1,0 +1,68 @@
+# PureIron_V1 uv workspace 루트(가상 프로젝트 — 자체 패키지 없음).
+# 패키지별 의존성·pyright 설정은 각 멤버 pyproject.toml, 공통 lint 설정은 여기.
+[tool.uv.workspace]
+members = [
+    "services/core",
+    "services/collector",
+    "services/updater",
+    "services/control-api",
+    "packages/project-tools",
+    "packages/bundle-tools",
+]
+exclude = ["backend"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.13",
+    "pyright>=1.1.405",
+    "pytest>=8.4",
+    "pytest-asyncio>=1.2",
+    "hypothesis>=6.140",
+    "import-linter>=2.5",
+    "grpcio-tools>=1.75",
+    "mypy-protobuf>=3.6",
+    "httpx2>=0.1",
+    "jsonschema>=4.25",
+    "types-protobuf>=6.30",
+    "types-grpcio>=1.0.0.20250914",
+    "types-jsonschema>=4.25",
+    "asyncpg-stubs>=0.30",
+]
+
+[tool.uv]
+default-groups = ["dev"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# generated ≠ authored (ADR-028, PD-20): 생성 코드는 lint 대상이 아니고 drift 게이트로만 지킨다.
+extend-exclude = ["services/*/src/*/_gen", "packages/*/src/*/_gen"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "N", "ASYNC", "PT", "C4", "PIE", "RET", "PL"]
+ignore = ["PLR0913", "PLR2004"]
+
+[tool.ruff.lint.pep8-naming]
+# gRPC servicer 메서드는 proto rpc 이름(PascalCase)을 그대로 구현해야 한다.
+extend-ignore-names = ["Session"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["PLR0915"]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "pureiron_core",
+    "pureiron_collector",
+    "pureiron_updater",
+    "pureiron_control",
+    "pureiron_project",
+    "pureiron_bundle",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = ["--import-mode=importlib", "-m", "not integration"]
+markers = [
+    "integration: site-db(TimescaleDB)·compose가 필요한 테스트 — `scripts/g1.sh integration-compose`에서 실행",
+]

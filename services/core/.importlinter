@@ -1,0 +1,37 @@
+# core boundary contracts (ADR-019, PD-8). Run from services/core: `uv run lint-imports`.
+# Keep this file ASCII: import-linter reads it with the locale encoding (cp949 on Korean Windows).
+# A new domain module must be added to (a), (b) and (c); tests/test_importlinter_negative.py fails
+# when a pureiron_core subpackage is not classified.
+[importlinter]
+root_package = pureiron_core
+include_external_packages = False
+
+[importlinter:contract:entrypoints]
+name = (a) runtime/app are imported only by entry points
+type = forbidden
+source_modules =
+    pureiron_core.api
+    pureiron_core.acquisition
+    pureiron_core.project
+    pureiron_core.platform
+forbidden_modules =
+    pureiron_core.runtime
+    pureiron_core.app
+
+[importlinter:contract:layers]
+name = (b) api > domain > platform
+type = layers
+layers =
+    pureiron_core.api
+    pureiron_core.acquisition : pureiron_core.project
+    pureiron_core.platform
+
+[importlinter:contract:domain-ports]
+name = (c) domain modules depend on each other only through <module>.ports
+type = independence
+modules =
+    pureiron_core.acquisition
+    pureiron_core.project
+ignore_imports =
+    pureiron_core.** -> pureiron_core.*.ports
+unmatched_ignore_imports_alerting = none

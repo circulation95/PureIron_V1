@@ -1,0 +1,135 @@
+// collector ↔ core 계약(ADR-020). 정본이며 호환성은 `buf breaking`(contracts-diff)으로 지킨다.
+// 생성물: services/{core,collector}/src/<pkg>/_gen/ (packages/contracts/tools/gen_proto.py).
+syntax = "proto3";
+
+package pureiron.collector.v1;
+
+// core = 서버(:50051), collector = 클라이언트. 양방향 스트림 하나로 plan·값·Ack가 오간다.
+service Acquisition {
+  rpc Session(stream CollectorMsg) returns (stream CoreMsg);
+}
+
+message CoreMsg {
+  oneof msg {
+    AcquisitionPlan plan = 1;
+    WriteRequest write = 2;
+    Ack ack = 3;
+  }
+}
+
+message CollectorMsg {
+  oneof msg {
+    Hello hello = 1;
+    ValueBatch batch = 2;
+    DeviceHealth health = 3;
+    WriteResult write_result = 4;
+  }
+}
+
+message Hello {
+  string collector_version = 1;
+  uint64 last_plan_rev = 2;
+  uint64 oldest_unacked_seq = 3;
+}
+
+message AcquisitionPlan {
+  uint64 plan_rev = 1;
+  repeated Device devices = 2;
+  repeated TagPoint tags = 3;
+  uint32 default_poll_ms = 4;
+}
+
+message Device {
+  string device_id = 1;
+  string protocol = 2;
+  string host = 3;
+  uint32 port = 4;
+  uint32 unit_id = 5;
+  uint32 poll_ms = 6;
+  uint32 timeout_ms = 7;
+}
+
+// 프로토콜 추가 = address oneof 확장(호환).
+message TagPoint {
+  uint32 tag_id = 1;
+  string device_id = 2;
+  oneof address {
+    ModbusAddress modbus = 3;
+  }
+}
+
+message ModbusAddress {
+  string register_type = 1;
+  uint32 address = 2;
+  string data_type = 3;
+  string byte_order = 4;
+  string word_order = 5;
+}
+
+// replay=true(재연결 후 재전송분)는 core가 historian에만 기록한다.
+message ValueBatch {
+  uint64 plan_rev = 1;
+  uint64 seq = 2;
+  bool replay = 3;
+  repeated Sample samples = 4;
+}
+
+message Sample {
+  uint32 tag_id = 1;
+  int64 ts_unix_ns = 2;
+  oneof v {
+    double num = 3;
+    bool flag = 4;
+  }
+  Quality quality = 5;
+}
+
+enum Quality {
+  QUALITY_UNSPECIFIED = 0;
+  GOOD = 1;
+  BAD = 2;
+  UNCERTAIN = 3;
+}
+
+// legacy drivers/health.py:113-135 매핑. optional 필드 미설정 = 데이터 없음.
+message DeviceHealth {
+  string device_name = 1;
+  string protocol = 2;
+  string status = 3;
+  bool connected = 4;
+  optional int64 last_success_unix_ns = 5;
+  optional string last_error = 6;
+  optional int64 last_error_at_unix_ns = 7;
+  uint32 consecutive_failures = 8;
+  optional double poll_latency_ms = 9;
+  uint32 tag_count = 10;
+  optional double read_success_rate = 11;
+  uint64 poll_total = 12;
+  uint64 timeout_count = 13;
+  uint32 bad_quality_tag_count = 14;
+  uint64 reconnect_count = 15;
+}
+
+// core in-memory ingest 직후 송신. collector 링버퍼 해제 기준.
+message Ack {
+  uint64 seq = 1;
+}
+
+// 쓰기는 계약만 두고 비활성(ADR-013): core는 보내지 않고, collector는 받으면 REJECTED.
+message WriteRequest {
+  string request_id = 1;
+  uint32 tag_id = 2;
+  double value = 3;
+}
+
+message WriteResult {
+  string request_id = 1;
+  // 0(기본값)이 REJECTED — 값이 빠진 응답은 거부로 읽힌다(fail-safe).
+  enum Status {
+    REJECTED = 0;
+    OK = 1;
+    FAILED = 2;
+  }
+  Status status = 2;
+  string error = 3;
+}

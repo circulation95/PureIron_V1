@@ -4,3 +4,13 @@ docs/wiki/**            text eol=lf
 docs/LLM_WIKI.md        text eol=lf
 .githooks/pre-commit    text eol=lf
 scripts/wiki.py         text eol=lf
+
+# V1 새 코드: 현장 호스트(Ubuntu)·CI(WSL2)와 Windows 개발 PC가 같은 바이트를 보도록 LF 고정.
+# 마이그레이션 checksum·생성물 drift·재현 빌드가 줄바꿈 차이로 흔들리지 않게 한다.
+services/**             text=auto eol=lf
+packages/**             text=auto eol=lf
+deploy/**               text=auto eol=lf
+.github/**              text=auto eol=lf
+scripts/*.sh            text eol=lf
+pyproject.toml          text eol=lf
+uv.lock                 text eol=lf
