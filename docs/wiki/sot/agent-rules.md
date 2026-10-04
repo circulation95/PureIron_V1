@@ -97,6 +97,7 @@ v1은 기존 PLC 제어를 대체하지 않는다. 실제 설비 자동 제어, 
 - Event-driven — 태그 변경은 `tag.changed.*` pub/sub으로 전파
 - Device health is not a tag — `DriverHealth.snapshot()`(`/api/devices`)이 단일 소스, `[health]` 시스템 태그 생성 금지
 - Frontend — No `as any` / `@ts-ignore` / `@ts-expect-error`, `tsc --noEmit` 통과 필수
+- 새 경로(PureIron_V1 `services/`·`packages/`, 목표 설계) — core는 `SiteRuntime.build(settings)` 단일 조립 지점 + 생성자 주입(전역 조회·`app.state` 금지), 스키마 변경은 `pureiron-core migrate`의 ADD-only 마이그레이션만(부팅 시 자동 실행 금지), 현장 변경은 서명 번들 `.pib`로만, 생성 코드(`_gen/`)는 억제 주석 대신 검사 제외 + drift 게이트(근거 [adr](../adr/index.md) ADR-019·023·024·028)
 
 > 위 bullet은 `scripts/wiki.py build`가 파싱해 `docs/LLM_WIKI.md`·`docs/wiki/_generated/agent-context.md`로 투영한다. 한 줄을 고치면 build 후 양쪽에 반영된다. 결정 근거·트레이드오프는 [adr](../adr/index.md) 참조.
 

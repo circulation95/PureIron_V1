@@ -6,14 +6,14 @@
 아래 `세부 탐색` 절차대로 **섹션 단위**로 찾는다.
 
 ## SOT 요약
-- **sot-agent-rules** (14KB/13절) — LLM 에이전트가 PureIron에서 작업할 때 따르는 규칙의 **정본**이다. ([docs/wiki/sot/agent-rules.md](wiki/sot/agent-rules.md))
+- **sot-agent-rules** (15KB/13절) — LLM 에이전트가 PureIron에서 작업할 때 따르는 규칙의 **정본**이다. ([docs/wiki/sot/agent-rules.md](wiki/sot/agent-rules.md))
 - **sot-api-events** (11KB/10절) — PureIron의 REST prefix, WebSocket wire protocol, Chat SSE event, 내부 event bus topic 계약이다. ([docs/wiki/sot/api-events.md](wiki/sot/api-events.md))
-- **sot-architecture** (14KB/14절) — PureIron은 단일 FastAPI 백엔드 + 단일 React 프론트엔드 + PostgreSQL(TimescaleDB + pgvector) + Redis로 구성된 모놀리식 Web HMI/SCADA 서버다. ([docs/wiki/sot/architecture.md](wiki/sot/architecture.md))
-- **sot-data-contracts** (16KB/10절) — PureIron의 DB 스키마와 YAML/JSON 설정 파일 계약이다. ([docs/wiki/sot/data-contracts.md](wiki/sot/data-contracts.md))
+- **sot-architecture** (17KB/18절) — PureIron은 단일 FastAPI 백엔드 + 단일 React 프론트엔드 + PostgreSQL(TimescaleDB + pgvector) + Redis로 구성된 모놀리식 Web HMI/SCADA 서버다. ([docs/wiki/sot/architecture.md](wiki/sot/architecture.md))
+- **sot-data-contracts** (20KB/15절) — PureIron의 DB 스키마와 YAML/JSON 설정 파일 계약이다. ([docs/wiki/sot/data-contracts.md](wiki/sot/data-contracts.md))
 - **sot-frontend** (18KB/15절) — 이 문서는 PureIron frontend의 **구조·상태·실시간·UI 작업 규칙**에 대한 정본이다. 상세 구현은 `frontend/src/**`가 정본이고, `frontend/AGENTS.md`와 `frontend/CLAUDE.md`는 도구별 operational cheat sheet다. ([docs/wiki/sot/frontend.md](wiki/sot/frontend.md))
 - **sot-mes-schedule** (9KB/7절) — 이 문서는 PureIron의 **MES-lite / Schedule 기능의 v1 고객 노출 용어와 사용자 플로우 계약의 정본**이다. ([docs/wiki/sot/mes-schedule.md](wiki/sot/mes-schedule.md))
 - **sot-product** (13KB/18절) — PureIron은 중소 제조업과 산업시설을 위한 경량 Web HMI/SCADA 플랫폼이다. ([docs/wiki/sot/product.md](wiki/sot/product.md))
-- **sot-runtime-config** (6KB/7절) — PureIron 런타임 설정의 정본은 `backend/src/pureiron/config.py`의 `Settings(BaseSettings)` 클래스다. ([docs/wiki/sot/runtime-config.md](wiki/sot/runtime-config.md))
+- **sot-runtime-config** (8KB/11절) — PureIron 런타임 설정의 정본은 `backend/src/pureiron/config.py`의 `Settings(BaseSettings)` 클래스다. ([docs/wiki/sot/runtime-config.md](wiki/sot/runtime-config.md))
 - **sot-testing** (29KB/17절) — 이 문서는 PureIron의 **검증 계층, 실행 명령, 변경 유형별 최소 게이트**에 대한 정본이다. 개별 테스트의 상세 assertion은 `backend/tests/**`, `backend/tests/e2e/**`, `tests/e2e/**`가 정본이다. ([docs/wiki/sot/testing.md](wiki/sot/testing.md))
 
 ## SOT 외 구획 (필요할 때만 열기)
@@ -32,6 +32,7 @@
 - Event-driven — 태그 변경은 `tag.changed.*` pub/sub으로 전파
 - Device health is not a tag — `DriverHealth.snapshot()`(`/api/devices`)이 단일 소스, `[health]` 시스템 태그 생성 금지
 - Frontend — No `as any` / `@ts-ignore` / `@ts-expect-error`, `tsc --noEmit` 통과 필수
+- 새 경로(PureIron_V1 `services/`·`packages/`, 목표 설계) — core는 `SiteRuntime.build(settings)` 단일 조립 지점 + 생성자 주입(전역 조회·`app.state` 금지), 스키마 변경은 `pureiron-core migrate`의 ADD-only 마이그레이션만(부팅 시 자동 실행 금지), 현장 변경은 서명 번들 `.pib`로만, 생성 코드(`_gen/`)는 억제 주석 대신 검사 제외 + drift 게이트(근거 [adr](wiki/adr/index.md) ADR-019·023·024·028)
 
 ## 세부 탐색 (섹션 단위 — 문서를 통째로 읽지 않는다)
 위 SOT 는 대부분 10KB 이상이라 전문 Read 는 컨텍스트 낭비다. 순서를 지킨다.

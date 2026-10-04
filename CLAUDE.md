@@ -20,6 +20,7 @@ PureIron — 중소 산업시설용 경량 오픈소스 SCADA: FastAPI 백엔드
 - **Event-driven** — 태그 변경은 `tag.changed.*` pub/sub으로 전파
 - **Device health is not a tag** — `DriverHealth.snapshot()`(`/api/devices`)이 단일 소스. 디바이스 추가 시 사용자는 일반 태그만 추가하고 `[health]` 시스템 태그는 생성하지 않는다(상세 [backend/CLAUDE.md](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/CLAUDE.md))
 - **Frontend** — No `as any` / `@ts-ignore`, `tsc --noEmit` 통과 필수
+- **새 경로(V1 `services/`·`packages/`, 목표 설계)** — `SiteRuntime.build()` 단일 조립 지점 + 생성자 주입, 마이그레이션은 `pureiron-core migrate` ADD-only(부팅 자동 실행 금지), 현장 변경은 서명 번들 `.pib`로만(ADR-019·023·024·028)
 
 결정 근거는 [ADR](docs/wiki/adr/index.md). 도메인 세부는 위키 SOT([architecture](docs/wiki/sot/architecture.md) · [data-contracts](docs/wiki/sot/data-contracts.md) · [runtime-config](docs/wiki/sot/runtime-config.md) · [api-events](docs/wiki/sot/api-events.md) · [frontend](docs/wiki/sot/frontend.md)) 참조.
 

@@ -57,6 +57,7 @@
 - Event-driven — 태그 변경은 `tag.changed.*` pub/sub으로 전파
 - Device health is not a tag — `DriverHealth.snapshot()`이 단일 소스
 - Frontend — No `as any` / `@ts-ignore` / `@ts-expect-error`, `tsc --noEmit` 통과 필수
+- 새 경로(V1 `services/`·`packages/`, 목표 설계) — `SiteRuntime.build()` 단일 조립 지점 + 생성자 주입, 마이그레이션은 `pureiron-core migrate` ADD-only, 현장 변경은 서명 번들 `.pib`로만(ADR-019·023·024·028)
 
 ## 4. 작업 방식
 
