@@ -1,0 +1,7 @@
+absorbs:
+  site-a: 3
+historian:
+  retention_days: 400
+name: ACME Line 1
+project_id: acme
+schema_version: 1

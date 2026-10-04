@@ -24,6 +24,7 @@ PY_PACKAGES=(
   packages/project-tools
   packages/bundle-tools
   packages/contracts
+  deploy
 )
 SCHEMAS=(project manifest fleet-site)
 OPENAPI_SERVICES=(core control-api)
@@ -32,6 +33,7 @@ GENERATED_PATHS=(
   services/core/src/pureiron_core/_gen
   services/collector/src/pureiron_collector/_gen
   services/web/src/api/schema.d.ts
+  packages/project-tools/src/pureiron_project/schema/project.schema.json
 )
 
 log() { printf '\n== %s\n' "$*"; }
@@ -71,13 +73,14 @@ job_import_linter() {
 
 job_unit() {
   log "unit"
-  uv run pytest services packages -q
+  uv run pytest services packages deploy -q
 }
 
 job_contracts_gen() {
   log "contracts-gen"
   uv run python packages/contracts/tools/export_openapi.py
   uv run python packages/contracts/tools/gen_proto.py
+  cp packages/contracts/project.schema.json packages/project-tools/src/pureiron_project/schema/project.schema.json
   if [ -d services/web ]; then
     (cd services/web && { [ -d node_modules ] || npm ci --no-audit --no-fund; } \
       && npx openapi-typescript ../../packages/contracts/openapi/core.json -o src/api/schema.d.ts)

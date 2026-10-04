@@ -1,0 +1,11 @@
+{
+  "include": [
+    "build",
+    "tests"
+  ],
+  "extraPaths": [
+    "build"
+  ],
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "strict"
+}
