@@ -45,19 +45,23 @@
 
 ## 3. 불변 규칙 요약
 
-상세와 근거는 `docs/wiki/sot/agent-rules.md`와 `docs/wiki/adr/index.md`를 따른다.
+상세와 근거는 `docs/wiki/sot/agent-rules.md`와 `docs/wiki/adr/index.md`를 따른다. V1 새 코드(`services/`·`packages/`·`deploy/`)에 적용하며 ADR-019~028 목표 설계 기준이다.
 
-- No `app.state` — 모든 상태는 `gateway.*` 경유
-- No ORM — asyncpg raw SQL만 사용
-- No plugin system — v1 지원 프로토콜(OPC-UA·Modbus·S7·LS·AB·MELSEC)은 `drivers/`에 직접 구현, registry/plugin화 금지. 새 프로토콜도 `drivers/`에 직접 추가
-- No config UI — 인프라/env·플러그인 레지스트리·범용 no-code config 빌더 UI 금지. v1 운영(Tag/Device/Alarm/User/Dashboard) 설정은 REST API와 제한된 화면 허용, seed는 YAML/JSON
-- 20개 고정 expression 함수 — 임의 확장 금지
-- Lock discipline — DB I/O·`tag.changed.*` 발행은 TagStore 락 밖에서
-- Graceful degradation — 선택적 서비스 실패로 전체 크래시 금지
-- Event-driven — 태그 변경은 `tag.changed.*` pub/sub으로 전파
-- Device health is not a tag — `DriverHealth.snapshot()`이 단일 소스
-- Frontend — No `as any` / `@ts-ignore` / `@ts-expect-error`, `tsc --noEmit` 통과 필수
-- 새 경로(V1 `services/`·`packages/`, 목표 설계) — `SiteRuntime.build()` 단일 조립 지점 + 생성자 주입, 마이그레이션은 `pureiron-core migrate` ADD-only, 현장 변경은 서명 번들 `.pib`로만(ADR-019·023·024·028)
+- No ORM — asyncpg raw SQL만
+- 단일 조립 지점 — core는 `SiteRuntime.build()` + 생성자 주입, 전역 조회·`app.state` 금지, import-linter로 경계 강제
+- 서비스 경계 — collector 무상태·DB 무접근, collector↔core는 `collector.proto` gRPC만
+- Lock discipline — TagStore 락 안에서 DB I/O·이벤트 발행 금지
+- 계약 우선 — proto·OpenAPI·JSON Schema가 정본, 호환성 diff 통과, 생성물 drift 0
+- 마이그레이션 — `pureiron-core migrate` ADD-only만, 부팅 자동 실행 금지
+- 서명 번들 — 현장 변경은 서명된 `.pib`로만, 검증 실패는 중단 전 거부
+- 프로젝트 정본 — 고객 project repo(Git), 비밀값은 `secret://`만, 고객별 코드 분기 금지
+- Graceful degradation — `ai`·중앙 없이도 현장 동작, collector 다운 = BAD/DISCONNECTED, site-db 필수
+- Device health is not a tag — collector `DeviceHealth` → core `/api/v1/devices`
+- 쓰기 비활성 — `WriteRequest` 미송신, PLC 제어 대체 금지
+- No plugin system / No config UI / 20개 고정 expression 함수 — 현장 편집은 REST `PATCH`만
+- 엄격 게이트 — 억제 주석(`type: ignore`·`eslint-disable`·`as any`·`@ts-ignore`·`@ts-expect-error`) 0건, 생성 코드는 검사 제외 + drift 게이트
+
+legacy 코드(`gateway.*`, Redis 등) 규칙은 agent-rules의 `legacy 코드 참고 규칙` 절에만 있고 새 코드에 적용하지 않는다.
 
 ## 4. 작업 방식
 

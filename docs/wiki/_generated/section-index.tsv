@@ -87,19 +87,20 @@ report-mvp-gap	docs/wiki/reports/mvp-gap.md	다음-구현-우선순위-issue-후
 report-mvp-gap	docs/wiki/reports/mvp-gap.md	다음-후보-backlog-잔여만	80	8	902	h2	다음 후보 backlog (잔여만)
 report-mvp-gap	docs/wiki/reports/mvp-gap.md	v1에서-유지되는-제외-backlog-낮춤	88	9	456	h2	v1에서 유지되는 제외 (backlog 낮춤)
 report-mvp-gap	docs/wiki/reports/mvp-gap.md	검증	97	8	147	h2	검증
-sot-agent-rules	docs/wiki/sot/agent-rules.md	agent-rules-sot	15	197	14826	h1	Agent Rules SOT
+sot-agent-rules	docs/wiki/sot/agent-rules.md	agent-rules-sot	15	213	16958	h1	Agent Rules SOT
 sot-agent-rules	docs/wiki/sot/agent-rules.md	이-문서의-역할	23	33	2198	h2	이 문서의 역할
-sot-agent-rules	docs/wiki/sot/agent-rules.md	작업-전-컨텍스트-로딩-순서	56	17	675	h2	작업 전 컨텍스트 로딩 순서
+sot-agent-rules	docs/wiki/sot/agent-rules.md	작업-전-컨텍스트-로딩-순서	56	17	632	h2	작업 전 컨텍스트 로딩 순서
 sot-agent-rules	docs/wiki/sot/agent-rules.md	제품-판단-원칙	73	15	519	h2	제품 판단 원칙
-sot-agent-rules	docs/wiki/sot/agent-rules.md	불변-규칙	88	16	2269	h2	불변 규칙
-sot-agent-rules	docs/wiki/sot/agent-rules.md	no-config-ui-범위	104	17	1439	h2	“No config UI” 범위
-sot-agent-rules	docs/wiki/sot/agent-rules.md	구현-작업-규율	121	17	571	h2	구현 작업 규율
-sot-agent-rules	docs/wiki/sot/agent-rules.md	작업-증거-규율	138	9	1050	h2	작업 증거 규율
-sot-agent-rules	docs/wiki/sot/agent-rules.md	위키-규율	147	10	779	h2	위키 규율
-sot-agent-rules	docs/wiki/sot/agent-rules.md	문서-읽기-규율-섹션-단위-검색	157	15	1464	h2	문서 읽기 규율 (섹션 단위 검색)
-sot-agent-rules	docs/wiki/sot/agent-rules.md	중복-방지-원칙	172	17	795	h2	중복 방지 원칙
-sot-agent-rules	docs/wiki/sot/agent-rules.md	자동-생성-vs-수기-관리-범위	189	8	773	h2	자동 생성 vs 수기 관리 범위
-sot-agent-rules	docs/wiki/sot/agent-rules.md	기여-흐름-raw--wiki--pr--review	197	15	1614	h2	기여 흐름 (raw → wiki → PR → review)
+sot-agent-rules	docs/wiki/sot/agent-rules.md	불변-규칙	88	20	3066	h2	불변 규칙
+sot-agent-rules	docs/wiki/sot/agent-rules.md	legacy-코드-참고-규칙-pureiron_ignition	108	10	933	h2	legacy 코드 참고 규칙 (PureIron_ignition)
+sot-agent-rules	docs/wiki/sot/agent-rules.md	no-config-ui-범위	118	19	1794	h2	“No config UI” 범위
+sot-agent-rules	docs/wiki/sot/agent-rules.md	구현-작업-규율	137	17	571	h2	구현 작업 규율
+sot-agent-rules	docs/wiki/sot/agent-rules.md	작업-증거-규율	154	9	1050	h2	작업 증거 규율
+sot-agent-rules	docs/wiki/sot/agent-rules.md	위키-규율	163	10	779	h2	위키 규율
+sot-agent-rules	docs/wiki/sot/agent-rules.md	문서-읽기-규율-섹션-단위-검색	173	15	1464	h2	문서 읽기 규율 (섹션 단위 검색)
+sot-agent-rules	docs/wiki/sot/agent-rules.md	중복-방지-원칙	188	17	795	h2	중복 방지 원칙
+sot-agent-rules	docs/wiki/sot/agent-rules.md	자동-생성-vs-수기-관리-범위	205	8	773	h2	자동 생성 vs 수기 관리 범위
+sot-agent-rules	docs/wiki/sot/agent-rules.md	기여-흐름-raw--wiki--pr--review	213	15	1614	h2	기여 흐름 (raw → wiki → PR → review)
 sot-api-events	docs/wiki/sot/api-events.md	api--events-sot	15	131	10503	h1	API & Events SOT
 sot-api-events	docs/wiki/sot/api-events.md	이-문서의-원천	23	8	868	h2	이 문서의 원천
 sot-api-events	docs/wiki/sot/api-events.md	라우터-프리픽스	31	31	2580	h2	라우터 프리픽스

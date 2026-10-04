@@ -66,11 +66,11 @@ GEN_OUTPUT_PATHS = sorted(
 
 # agent-rules.md 의 `## 불변 규칙` 파싱 실패 시 사용하는 fallback (절대 빈 섹션 방출 금지).
 HARDCODED_INVARIANTS = [
-    "- No `app.state` — 상태는 `gateway.*` 경유",
-    "- No ORM — asyncpg raw SQL, 멱등 마이그레이션만으로 스키마 변경",
-    "- Lock discipline — DB I/O 는 TagStore 락 밖에서",
-    "- Graceful degradation — 선택적 서비스는 안전하게 실패",
-    "- Frontend: No `as any` / `@ts-ignore`",
+    "- No ORM — asyncpg raw SQL",
+    "- 단일 조립 지점 — core는 `SiteRuntime.build()` + 생성자 주입, 전역 조회·`app.state` 금지",
+    "- 마이그레이션 — `pureiron-core migrate` ADD-only, 부팅 시 자동 실행 금지",
+    "- 서명 번들 — 현장 변경은 서명된 `.pib`로만",
+    "- 엄격 게이트 — 억제 주석 0건, 생성 코드는 검사 제외 + drift 게이트",
 ]
 
 # inventory 스캔 제외 (캐시/로그/출력물)

@@ -77,7 +77,7 @@ def test_build_llm_wiki_reflects_agent_rules_edit():
 def test_build_llm_wiki_uses_fallback_without_agent_rules():
     out = wiki.build_llm_wiki([])
     # 하드코딩 fallback 의 한 항목이 그대로 노출
-    assert "No `app.state`" in out
+    assert all(item in out for item in wiki.HARDCODED_INVARIANTS)
 
 
 # --------------------------------------------------------------------------- #

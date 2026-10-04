@@ -97,12 +97,12 @@
     },
     {
       "audience": "agent",
-      "bytes": 15133,
+      "bytes": 17265,
       "id": "sot-agent-rules",
       "last_verified": "2026-08-17",
       "path": "docs/wiki/sot/agent-rules.md",
-      "section_count": 13,
-      "sha256": "3321832dd398eea0d6e52101f9084bca4d1078775829047ceb51f731c02802b1",
+      "section_count": 14,
+      "sha256": "f5385e84ad12cb4dde77359e648fa536926e383a791f4236ef7358e7d5061152",
       "source_globs": [],
       "sources": [
         "AGENTS.md",
