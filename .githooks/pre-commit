@@ -1,0 +1,30 @@
+#!/bin/sh
+# PureIron Wiki pre-commit hook (POSIX shim — git-for-windows가 실제 실행하는 파일).
+#
+# 정책: generated 파일을 갱신하되 자동 stage 하지 않는다.
+#       변경이 생기면 커밋을 중단하고 사용자가 직접 `git add` 후 재커밋한다.
+#
+# 활성화: git config core.hooksPath .githooks
+
+# python 실행기 탐색 (python -> python3 -> py)
+if command -v python >/dev/null 2>&1; then
+  PY=python
+elif command -v python3 >/dev/null 2>&1; then
+  PY=python3
+elif command -v py >/dev/null 2>&1; then
+  PY=py
+else
+  echo "pre-commit: python 을 찾을 수 없습니다 (PATH 확인)." >&2
+  exit 1
+fi
+
+"$PY" scripts/wiki.py build || exit 1
+"$PY" scripts/wiki.py check || exit 1
+
+if ! git diff --quiet -- docs/wiki/_generated docs/LLM_WIKI.md; then
+  echo "pre-commit: 생성물이 갱신되었습니다. 아래를 stage 한 뒤 다시 커밋하세요:" >&2
+  echo "  git add docs/wiki/_generated docs/LLM_WIKI.md" >&2
+  exit 1
+fi
+
+exit 0

@@ -1,0 +1,721 @@
+[
+  {
+    "path": "[Simulator]InboundOutbound/dock_weight",
+    "data_type": "Float64",
+    "provider": "Simulator",
+    "scan_group": "default",
+    "description": "Receiving dock scale — raw material gross weight",
+    "engineering_units": "kg",
+    "engineering_low": 0.0,
+    "engineering_high": 5000.0,
+    "metadata": {
+      "history_enabled": true
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": 1250.0
+    },
+    "process_type": "INBOUND_OUTBOUND"
+  },
+  {
+    "path": "[Simulator]InboundOutbound/staging_pallet_count",
+    "data_type": "Int32",
+    "provider": "Simulator",
+    "scan_group": "default",
+    "description": "Number of pallets in inbound staging area",
+    "engineering_units": "ea",
+    "engineering_low": 0.0,
+    "engineering_high": 200.0,
+    "metadata": {
+      "history_enabled": false
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": 8
+    },
+    "process_type": "INBOUND_OUTBOUND"
+  },
+  {
+    "path": "[Simulator]InboundOutbound/outbound_truck_load",
+    "data_type": "Float64",
+    "provider": "Simulator",
+    "scan_group": "default",
+    "description": "Outbound truck load — finished goods net weight",
+    "engineering_units": "kg",
+    "engineering_low": 0.0,
+    "engineering_high": 24000.0,
+    "metadata": {
+      "history_enabled": true
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": 2340.0
+    },
+    "process_type": "INBOUND_OUTBOUND"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Tank1/level",
+    "data_type": "Float64",
+    "provider": "Simulator",
+    "scan_group": "default",
+    "description": "Extraction Tank 1 (ROAST-01) level",
+    "engineering_units": "%",
+    "engineering_low": 0.0,
+    "engineering_high": 100.0,
+    "metadata": {
+      "history_enabled": true,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": 35.0
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Tank1/temperature",
+    "data_type": "Float64",
+    "provider": "Simulator",
+    "scan_group": "default",
+    "description": "Extraction Tank 1 (ROAST-01) temperature",
+    "engineering_units": "°C",
+    "engineering_low": 0.0,
+    "engineering_high": 120.0,
+    "metadata": {
+      "history_enabled": true,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": 82.5
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Tank1/pressure",
+    "data_type": "Float64",
+    "provider": "Simulator",
+    "scan_group": "default",
+    "description": "Extraction Tank 1 (ROAST-01) pressure",
+    "engineering_units": "bar",
+    "engineering_low": 0.0,
+    "engineering_high": 10.0,
+    "metadata": {
+      "history_enabled": true,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": 2.1
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Tank2/level",
+    "data_type": "Float64",
+    "provider": "Simulator",
+    "scan_group": "default",
+    "description": "Extraction Tank 2 (EXTRACT-A) level",
+    "engineering_units": "%",
+    "engineering_low": 0.0,
+    "engineering_high": 100.0,
+    "metadata": {
+      "history_enabled": true,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": 30.0
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Tank2/temperature",
+    "data_type": "Float64",
+    "provider": "Simulator",
+    "scan_group": "default",
+    "description": "Extraction Tank 2 (EXTRACT-A) temperature",
+    "engineering_units": "°C",
+    "engineering_low": 0.0,
+    "engineering_high": 120.0,
+    "metadata": {
+      "history_enabled": true,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": 76.0
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Tank2/pressure",
+    "data_type": "Float64",
+    "provider": "Simulator",
+    "scan_group": "default",
+    "description": "Extraction Tank 2 (EXTRACT-A) pressure",
+    "engineering_units": "bar",
+    "engineering_low": 0.0,
+    "engineering_high": 10.0,
+    "metadata": {
+      "history_enabled": true,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": 1.8
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Tank3/level",
+    "data_type": "Float64",
+    "provider": "Simulator",
+    "scan_group": "default",
+    "description": "Extraction Tank 3 (EXTRACT-B) level",
+    "engineering_units": "%",
+    "engineering_low": 0.0,
+    "engineering_high": 100.0,
+    "metadata": {
+      "history_enabled": true,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": 40.0
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Tank3/temperature",
+    "data_type": "Float64",
+    "provider": "Simulator",
+    "scan_group": "default",
+    "description": "Extraction Tank 3 (EXTRACT-B) temperature",
+    "engineering_units": "°C",
+    "engineering_low": 0.0,
+    "engineering_high": 120.0,
+    "metadata": {
+      "history_enabled": true,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": 72.5
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Tank3/pressure",
+    "data_type": "Float64",
+    "provider": "Simulator",
+    "scan_group": "default",
+    "description": "Extraction Tank 3 (EXTRACT-B) pressure",
+    "engineering_units": "bar",
+    "engineering_low": 0.0,
+    "engineering_high": 10.0,
+    "metadata": {
+      "history_enabled": true,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": 1.5
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Tank4/level",
+    "data_type": "Float64",
+    "provider": "Simulator",
+    "scan_group": "default",
+    "description": "Extraction Tank 4 (STORAGE-01) level",
+    "engineering_units": "%",
+    "engineering_low": 0.0,
+    "engineering_high": 100.0,
+    "metadata": {
+      "history_enabled": true,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": 55.0
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Tank4/temperature",
+    "data_type": "Float64",
+    "provider": "Simulator",
+    "scan_group": "default",
+    "description": "Extraction Tank 4 (STORAGE-01) temperature",
+    "engineering_units": "°C",
+    "engineering_low": 0.0,
+    "engineering_high": 120.0,
+    "metadata": {
+      "history_enabled": true,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": 65.0
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Tank4/pressure",
+    "data_type": "Float64",
+    "provider": "Simulator",
+    "scan_group": "default",
+    "description": "Extraction Tank 4 (STORAGE-01) pressure",
+    "engineering_units": "bar",
+    "engineering_low": 0.0,
+    "engineering_high": 10.0,
+    "metadata": {
+      "history_enabled": true,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": 1.2
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Valves/VLV101/Auto_Manual",
+    "data_type": "Boolean",
+    "provider": "modbus_test",
+    "scan_group": "coffee-poc-fast",
+    "description": "Coffee extraction Feed Inlet Valve Auto Manual",
+    "engineering_units": "",
+    "engineering_low": null,
+    "engineering_high": null,
+    "metadata": {
+      "history_enabled": false,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": false
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Valves/VLV101/A_Status",
+    "data_type": "Boolean",
+    "provider": "modbus_test",
+    "scan_group": "coffee-poc-fast",
+    "description": "Coffee extraction Feed Inlet Valve A Status",
+    "engineering_units": "",
+    "engineering_low": null,
+    "engineering_high": null,
+    "metadata": {
+      "history_enabled": true,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": false
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Valves/VLV101/Manual_Command",
+    "data_type": "Boolean",
+    "provider": "modbus_test",
+    "scan_group": "coffee-poc-fast",
+    "description": "Coffee extraction Feed Inlet Valve Manual Command",
+    "engineering_units": "",
+    "engineering_low": null,
+    "engineering_high": null,
+    "metadata": {
+      "history_enabled": false,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": false
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Valves/VLV101/Auto_Command",
+    "data_type": "Boolean",
+    "provider": "modbus_test",
+    "scan_group": "coffee-poc-fast",
+    "description": "Coffee extraction Feed Inlet Valve Auto Command",
+    "engineering_units": "",
+    "engineering_low": null,
+    "engineering_high": null,
+    "metadata": {
+      "history_enabled": false,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": false
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Valves/VLV101/Trip",
+    "data_type": "Boolean",
+    "provider": "modbus_test",
+    "scan_group": "coffee-poc-fast",
+    "description": "Coffee extraction Feed Inlet Valve Trip",
+    "engineering_units": "",
+    "engineering_low": null,
+    "engineering_high": null,
+    "metadata": {
+      "history_enabled": true,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": false
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Valves/VLV101/B_Status",
+    "data_type": "Boolean",
+    "provider": "modbus_test",
+    "scan_group": "coffee-poc-fast",
+    "description": "Coffee extraction Feed Inlet Valve B Status",
+    "engineering_units": "",
+    "engineering_low": null,
+    "engineering_high": null,
+    "metadata": {
+      "history_enabled": true,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": true
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Valves/VLV102/Auto_Manual",
+    "data_type": "Boolean",
+    "provider": "modbus_test",
+    "scan_group": "coffee-poc-fast",
+    "description": "Coffee extraction Storage Outlet Valve Auto Manual",
+    "engineering_units": "",
+    "engineering_low": null,
+    "engineering_high": null,
+    "metadata": {
+      "history_enabled": false,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": false
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Valves/VLV102/A_Status",
+    "data_type": "Boolean",
+    "provider": "modbus_test",
+    "scan_group": "coffee-poc-fast",
+    "description": "Coffee extraction Storage Outlet Valve A Status",
+    "engineering_units": "",
+    "engineering_low": null,
+    "engineering_high": null,
+    "metadata": {
+      "history_enabled": true,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": false
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Valves/VLV102/Manual_Command",
+    "data_type": "Boolean",
+    "provider": "modbus_test",
+    "scan_group": "coffee-poc-fast",
+    "description": "Coffee extraction Storage Outlet Valve Manual Command",
+    "engineering_units": "",
+    "engineering_low": null,
+    "engineering_high": null,
+    "metadata": {
+      "history_enabled": false,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": false
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Valves/VLV102/Auto_Command",
+    "data_type": "Boolean",
+    "provider": "modbus_test",
+    "scan_group": "coffee-poc-fast",
+    "description": "Coffee extraction Storage Outlet Valve Auto Command",
+    "engineering_units": "",
+    "engineering_low": null,
+    "engineering_high": null,
+    "metadata": {
+      "history_enabled": false,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": false
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Valves/VLV102/Trip",
+    "data_type": "Boolean",
+    "provider": "modbus_test",
+    "scan_group": "coffee-poc-fast",
+    "description": "Coffee extraction Storage Outlet Valve Trip",
+    "engineering_units": "",
+    "engineering_low": null,
+    "engineering_high": null,
+    "metadata": {
+      "history_enabled": true,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": false
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Valves/VLV102/B_Status",
+    "data_type": "Boolean",
+    "provider": "modbus_test",
+    "scan_group": "coffee-poc-fast",
+    "description": "Coffee extraction Storage Outlet Valve B Status",
+    "engineering_units": "",
+    "engineering_low": null,
+    "engineering_high": null,
+    "metadata": {
+      "history_enabled": true,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": true
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Pumps/PMP101/Run_Command",
+    "data_type": "Boolean",
+    "provider": "modbus_test",
+    "scan_group": "coffee-poc-fast",
+    "description": "Coffee extraction Transfer Pump run command",
+    "engineering_units": "",
+    "engineering_low": null,
+    "engineering_high": null,
+    "metadata": {
+      "history_enabled": false,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": false
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Pumps/PMP101/Running_FB",
+    "data_type": "Boolean",
+    "provider": "modbus_test",
+    "scan_group": "coffee-poc-fast",
+    "description": "Coffee extraction Transfer Pump running feedback",
+    "engineering_units": "",
+    "engineering_low": null,
+    "engineering_high": null,
+    "metadata": {
+      "history_enabled": true,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": false
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Pumps/PMP101/Fault",
+    "data_type": "Boolean",
+    "provider": "modbus_test",
+    "scan_group": "coffee-poc-fast",
+    "description": "Coffee extraction Transfer Pump fault",
+    "engineering_units": "",
+    "engineering_low": null,
+    "engineering_high": null,
+    "metadata": {
+      "history_enabled": true,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": false
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Pumps/PMP101/Flow",
+    "data_type": "Float64",
+    "provider": "modbus_test",
+    "scan_group": "coffee-poc-fast",
+    "description": "Coffee extraction Transfer Pump flow",
+    "engineering_units": "L/min",
+    "engineering_low": 0.0,
+    "engineering_high": 200.0,
+    "metadata": {
+      "history_enabled": true,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": 0.0
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Pumps/PMP101/Pressure",
+    "data_type": "Float64",
+    "provider": "modbus_test",
+    "scan_group": "coffee-poc-fast",
+    "description": "Coffee extraction Transfer Pump discharge pressure",
+    "engineering_units": "bar",
+    "engineering_low": 0.0,
+    "engineering_high": 8.0,
+    "metadata": {
+      "history_enabled": true,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": 0.0
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Pumps/PMP102/Run_Command",
+    "data_type": "Boolean",
+    "provider": "modbus_test",
+    "scan_group": "coffee-poc-fast",
+    "description": "Coffee extraction CIP Circulation Pump run command",
+    "engineering_units": "",
+    "engineering_low": null,
+    "engineering_high": null,
+    "metadata": {
+      "history_enabled": false,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": false
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Pumps/PMP102/Running_FB",
+    "data_type": "Boolean",
+    "provider": "modbus_test",
+    "scan_group": "coffee-poc-fast",
+    "description": "Coffee extraction CIP Circulation Pump running feedback",
+    "engineering_units": "",
+    "engineering_low": null,
+    "engineering_high": null,
+    "metadata": {
+      "history_enabled": true,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": false
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Pumps/PMP102/Fault",
+    "data_type": "Boolean",
+    "provider": "modbus_test",
+    "scan_group": "coffee-poc-fast",
+    "description": "Coffee extraction CIP Circulation Pump fault",
+    "engineering_units": "",
+    "engineering_low": null,
+    "engineering_high": null,
+    "metadata": {
+      "history_enabled": true,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": false
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Pumps/PMP102/Flow",
+    "data_type": "Float64",
+    "provider": "modbus_test",
+    "scan_group": "coffee-poc-fast",
+    "description": "Coffee extraction CIP Circulation Pump flow",
+    "engineering_units": "L/min",
+    "engineering_low": 0.0,
+    "engineering_high": 200.0,
+    "metadata": {
+      "history_enabled": true,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": 0.0
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]CoffeeTank/Pumps/PMP102/Pressure",
+    "data_type": "Float64",
+    "provider": "modbus_test",
+    "scan_group": "coffee-poc-fast",
+    "description": "Coffee extraction CIP Circulation Pump discharge pressure",
+    "engineering_units": "bar",
+    "engineering_low": 0.0,
+    "engineering_high": 8.0,
+    "metadata": {
+      "history_enabled": true,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": 0.0
+    },
+    "process_type": "EXTRACTION"
+  },
+  {
+    "path": "[modbus_test]TANK1_IN_VALVE",
+    "data_type": "Boolean",
+    "provider": "modbus_test",
+    "scan_group": "coffee-poc-fast",
+    "description": "Coffee extraction Tank 1 inlet valve legacy indicator",
+    "engineering_units": "",
+    "engineering_low": null,
+    "engineering_high": null,
+    "metadata": {
+      "history_enabled": true,
+      "demo_process": "coffee_extraction"
+    },
+    "tag_config": {
+      "tag_type": "Memory",
+      "initial_value": false
+    },
+    "process_type": "EXTRACTION"
+  }
+]

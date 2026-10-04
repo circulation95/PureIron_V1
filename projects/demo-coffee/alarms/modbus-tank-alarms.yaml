@@ -1,0 +1,148 @@
+alarms:
+  # ─── Tank1 ────────────────────────────────────────────────────────────────
+  - name: "Tank1-Level-High"
+    tag_path: "[modbus_test]CoffeeTank/Tank1/level"
+    alarm_type: AboveSetpoint
+    setpoint: 85
+    deadband: 2
+    on_delay_s: 1
+    priority: High
+    description: "Tank1 level high"
+
+  - name: "Tank1-Level-Low"
+    tag_path: "[modbus_test]CoffeeTank/Tank1/level"
+    alarm_type: BelowSetpoint
+    setpoint: 15
+    deadband: 2
+    on_delay_s: 1
+    priority: Medium
+    description: "Tank1 level low"
+
+  - name: "Tank1-Pressure-High"
+    tag_path: "[modbus_test]CoffeeTank/Tank1/pressure"
+    alarm_type: AboveSetpoint
+    setpoint: 4.0
+    deadband: 0.2
+    on_delay_s: 1
+    priority: High
+    description: "Tank1 pressure high"
+
+  - name: "Tank1-Pressure-Low"
+    tag_path: "[modbus_test]CoffeeTank/Tank1/pressure"
+    alarm_type: BelowSetpoint
+    setpoint: 1.5
+    deadband: 0.2
+    on_delay_s: 1
+    priority: Medium
+    description: "Tank1 pressure low"
+
+  # ─── Tank2 ────────────────────────────────────────────────────────────────
+  - name: "Tank2-Level-High"
+    tag_path: "[modbus_test]CoffeeTank/Tank2/level"
+    alarm_type: AboveSetpoint
+    setpoint: 85
+    deadband: 2
+    on_delay_s: 1
+    priority: High
+    description: "Tank2 level high"
+
+  - name: "Tank2-Level-Low"
+    tag_path: "[modbus_test]CoffeeTank/Tank2/level"
+    alarm_type: BelowSetpoint
+    setpoint: 15
+    deadband: 2
+    on_delay_s: 1
+    priority: Medium
+    description: "Tank2 level low"
+
+  - name: "Tank2-Pressure-High"
+    tag_path: "[modbus_test]CoffeeTank/Tank2/pressure"
+    alarm_type: AboveSetpoint
+    setpoint: 4.0
+    deadband: 0.2
+    on_delay_s: 1
+    priority: High
+    description: "Tank2 pressure high"
+
+  - name: "Tank2-Pressure-Low"
+    tag_path: "[modbus_test]CoffeeTank/Tank2/pressure"
+    alarm_type: BelowSetpoint
+    setpoint: 1.5
+    deadband: 0.2
+    on_delay_s: 1
+    priority: Medium
+    description: "Tank2 pressure low"
+
+  # ─── Tank3 ────────────────────────────────────────────────────────────────
+  - name: "Tank3-Level-High"
+    tag_path: "[modbus_test]CoffeeTank/Tank3/level"
+    alarm_type: AboveSetpoint
+    setpoint: 85
+    deadband: 2
+    on_delay_s: 1
+    priority: High
+    description: "Tank3 level high"
+
+  - name: "Tank3-Level-Low"
+    tag_path: "[modbus_test]CoffeeTank/Tank3/level"
+    alarm_type: BelowSetpoint
+    setpoint: 15
+    deadband: 2
+    on_delay_s: 1
+    priority: Medium
+    description: "Tank3 level low"
+
+  - name: "Tank3-Pressure-High"
+    tag_path: "[modbus_test]CoffeeTank/Tank3/pressure"
+    alarm_type: AboveSetpoint
+    setpoint: 4.0
+    deadband: 0.2
+    on_delay_s: 1
+    priority: High
+    description: "Tank3 pressure high"
+
+  - name: "Tank3-Pressure-Low"
+    tag_path: "[modbus_test]CoffeeTank/Tank3/pressure"
+    alarm_type: BelowSetpoint
+    setpoint: 1.5
+    deadband: 0.2
+    on_delay_s: 1
+    priority: Medium
+    description: "Tank3 pressure low"
+
+  # ─── Tank4 ────────────────────────────────────────────────────────────────
+  - name: "Tank4-Level-High"
+    tag_path: "[modbus_test]CoffeeTank/Tank4/level"
+    alarm_type: AboveSetpoint
+    setpoint: 85
+    deadband: 2
+    on_delay_s: 1
+    priority: High
+    description: "Tank4 level high"
+
+  - name: "Tank4-Level-Low"
+    tag_path: "[modbus_test]CoffeeTank/Tank4/level"
+    alarm_type: BelowSetpoint
+    setpoint: 15
+    deadband: 2
+    on_delay_s: 1
+    priority: Medium
+    description: "Tank4 level low"
+
+  - name: "Tank4-Pressure-High"
+    tag_path: "[modbus_test]CoffeeTank/Tank4/pressure"
+    alarm_type: AboveSetpoint
+    setpoint: 4.0
+    deadband: 0.2
+    on_delay_s: 1
+    priority: High
+    description: "Tank4 pressure high"
+
+  - name: "Tank4-Pressure-Low"
+    tag_path: "[modbus_test]CoffeeTank/Tank4/pressure"
+    alarm_type: BelowSetpoint
+    setpoint: 1.5
+    deadband: 0.2
+    on_delay_s: 1
+    priority: Medium
+    description: "Tank4 pressure low"

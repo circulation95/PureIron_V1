@@ -1,0 +1,697 @@
+[
+  {
+    "type_id": "RoasterStepData",
+    "path": "[RFB350_RS16]Roaster/StepData/RS16",
+    "description": "Roaster PLC RS16 DB0250 Step Data",
+    "parameter_values": {
+      "Device": "RFB350_RS16"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "RoasterStepData",
+    "path": "[RFB350_RS16M]Roaster/StepData/RS16M",
+    "description": "Roaster PLC RS16M DB0250 Step Data",
+    "parameter_values": {
+      "Device": "RFB350_RS16M"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "RoasterRecipeAG6",
+    "path": "[RFB350_RS16]Roaster/RecipeAG6/RS16",
+    "description": "Roaster RS16 AG6 Recipe",
+    "parameter_values": {
+      "Device": "RFB350_RS16"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "PidLoop",
+    "path": "[SCR_SCR]Loops/SCR",
+    "description": "PID loop SCR",
+    "parameter_values": {
+      "Device": "SCR_SCR"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "PidLoop",
+    "path": "[SCR_SCR]Loops/CV103",
+    "description": "PID loop CV103",
+    "parameter_values": {
+      "Device": "SCR_SCR"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "PidLoop",
+    "path": "[SCR_SCR]Loops/CD103",
+    "description": "PID loop CD103",
+    "parameter_values": {
+      "Device": "SCR_SCR"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "PidLoop",
+    "path": "[SCR_SCR]Loops/CV102",
+    "description": "PID loop CV102",
+    "parameter_values": {
+      "Device": "SCR_SCR"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "PidLoop",
+    "path": "[SCR_SCR]Loops/CD102",
+    "description": "PID loop CD102",
+    "parameter_values": {
+      "Device": "SCR_SCR"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "PidLoop",
+    "path": "[SCR_SCR]Loops/CV101",
+    "description": "PID loop CV101",
+    "parameter_values": {
+      "Device": "SCR_SCR"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "PidLoop",
+    "path": "[SCR_SCR]Loops/CD101",
+    "description": "PID loop CD101",
+    "parameter_values": {
+      "Device": "SCR_SCR"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "PidLoop",
+    "path": "[SCR_SCR]Loops/TCD102",
+    "description": "PID loop TCD102",
+    "parameter_values": {
+      "Device": "SCR_SCR"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "PidLoop",
+    "path": "[SCR_SCR]Loops/TCD101",
+    "description": "PID loop TCD101",
+    "parameter_values": {
+      "Device": "SCR_SCR"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "PidLoop",
+    "path": "[SCR_SCR]Loops/PCD103",
+    "description": "PID loop PCD103",
+    "parameter_values": {
+      "Device": "SCR_SCR"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "PidLoop",
+    "path": "[SCR_SCR]Loops/PCD102",
+    "description": "PID loop PCD102",
+    "parameter_values": {
+      "Device": "SCR_SCR"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "PidLoop",
+    "path": "[SCR_SCR]Loops/PCD101",
+    "description": "PID loop PCD101",
+    "parameter_values": {
+      "Device": "SCR_SCR"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "PidLoop",
+    "path": "[SCR_SCR]Loops/PCD104",
+    "description": "PID loop PCD104",
+    "parameter_values": {
+      "Device": "SCR_SCR"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "PidLoop",
+    "path": "[SCR_SCR]Loops/PP102F",
+    "description": "PID loop PP102F",
+    "parameter_values": {
+      "Device": "SCR_SCR"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "PidLoop",
+    "path": "[SCR_SCR]Loops/PP102E",
+    "description": "PID loop PP102E",
+    "parameter_values": {
+      "Device": "SCR_SCR"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "PidLoop",
+    "path": "[SCR_SCR]Loops/PP102D",
+    "description": "PID loop PP102D",
+    "parameter_values": {
+      "Device": "SCR_SCR"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "PidLoop",
+    "path": "[SCR_SCR]Loops/PP102C",
+    "description": "PID loop PP102C",
+    "parameter_values": {
+      "Device": "SCR_SCR"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "PidLoop",
+    "path": "[SCR_SCR]Loops/PP102B",
+    "description": "PID loop PP102B",
+    "parameter_values": {
+      "Device": "SCR_SCR"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "PidLoop",
+    "path": "[SCR_SCR]Loops/PP102A",
+    "description": "PID loop PP102A",
+    "parameter_values": {
+      "Device": "SCR_SCR"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "PidLoop",
+    "path": "[SCR_SCR]Loops/BL101",
+    "description": "PID loop BL101",
+    "parameter_values": {
+      "Device": "SCR_SCR"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "PidLoop",
+    "path": "[UNKNOWN]Loops/BL103",
+    "description": "PID loop BL103",
+    "parameter_values": {
+      "Device": "UNKNOWN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "PidLoop",
+    "path": "[UNKNOWN]Loops/BL102",
+    "description": "PID loop BL102",
+    "parameter_values": {
+      "Device": "UNKNOWN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "MotorOrDrive",
+    "path": "[S3000_OUT]Motors/S3O_M511",
+    "description": "Motor/drive S3O_M511",
+    "parameter_values": {
+      "Device": "S3000_OUT"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "MotorOrDrive",
+    "path": "[S3000_OUT]Motors/S3O_M512",
+    "description": "Motor/drive S3O_M512",
+    "parameter_values": {
+      "Device": "S3000_OUT"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "MotorOrDrive",
+    "path": "[S3000_OUT]Motors/S3O_M407",
+    "description": "Motor/drive S3O_M407",
+    "parameter_values": {
+      "Device": "S3000_OUT"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "MotorOrDrive",
+    "path": "[S3000_OUT]Motors/S3O_M406",
+    "description": "Motor/drive S3O_M406",
+    "parameter_values": {
+      "Device": "S3000_OUT"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "MotorOrDrive",
+    "path": "[S3000_OUT]Motors/S3O_M405",
+    "description": "Motor/drive S3O_M405",
+    "parameter_values": {
+      "Device": "S3000_OUT"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "MotorOrDrive",
+    "path": "[S3000_OUT]Motors/S3O_M404",
+    "description": "Motor/drive S3O_M404",
+    "parameter_values": {
+      "Device": "S3000_OUT"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "MotorOrDrive",
+    "path": "[S3000_OUT]Motors/S3O_M403",
+    "description": "Motor/drive S3O_M403",
+    "parameter_values": {
+      "Device": "S3000_OUT"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "MotorOrDrive",
+    "path": "[S3000_OUT]Motors/S3O_M402",
+    "description": "Motor/drive S3O_M402",
+    "parameter_values": {
+      "Device": "S3000_OUT"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "MotorOrDrive",
+    "path": "[S3000_OUT]Motors/S3O_M401",
+    "description": "Motor/drive S3O_M401",
+    "parameter_values": {
+      "Device": "S3000_OUT"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "BeanRecipeSlot",
+    "path": "[GB_GB]Recipes/Bean/RecipeSlot",
+    "description": "Bean recipe slot RecipeSlot",
+    "parameter_values": {
+      "Device": "GB_GB"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "ScolariRoaster",
+    "path": "[SCR_SCR]Roaster/Scolari/Roaster2",
+    "description": "Scolari Roaster 2",
+    "parameter_values": {
+      "Device": "SCR_SCR",
+      "opc_pending": true
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "ScolariRoaster",
+    "path": "[SCR_SCR]Roaster/Scolari/Roaster3",
+    "description": "Scolari Roaster 3",
+    "parameter_values": {
+      "Device": "SCR_SCR",
+      "opc_pending": true
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[S3000_IN]Silos/S3Silo01",
+    "description": "Silo S3Silo01",
+    "parameter_values": {
+      "Device": "S3000_IN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[S3000_IN]Silos/S3Silo02",
+    "description": "Silo S3Silo02",
+    "parameter_values": {
+      "Device": "S3000_IN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[S3000_IN]Silos/S3Silo03",
+    "description": "Silo S3Silo03",
+    "parameter_values": {
+      "Device": "S3000_IN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[S3000_IN]Silos/S3Silo04",
+    "description": "Silo S3Silo04",
+    "parameter_values": {
+      "Device": "S3000_IN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[S3000_IN]Silos/S3Silo05",
+    "description": "Silo S3Silo05",
+    "parameter_values": {
+      "Device": "S3000_IN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[S3000_IN]Silos/S3Silo06",
+    "description": "Silo S3Silo06",
+    "parameter_values": {
+      "Device": "S3000_IN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[S3000_IN]Silos/S3Silo07",
+    "description": "Silo S3Silo07",
+    "parameter_values": {
+      "Device": "S3000_IN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[S3000_IN]Silos/S3Silo08",
+    "description": "Silo S3Silo08",
+    "parameter_values": {
+      "Device": "S3000_IN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[S3000_IN]Silos/S3Silo09",
+    "description": "Silo S3Silo09",
+    "parameter_values": {
+      "Device": "S3000_IN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[S3000_IN]Silos/S3Silo10",
+    "description": "Silo S3Silo10",
+    "parameter_values": {
+      "Device": "S3000_IN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[S3000_IN]Silos/S3Silo11",
+    "description": "Silo S3Silo11",
+    "parameter_values": {
+      "Device": "S3000_IN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[S3000_IN]Silos/S3Silo12",
+    "description": "Silo S3Silo12",
+    "parameter_values": {
+      "Device": "S3000_IN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[S3000_IN]Silos/S3Silo13",
+    "description": "Silo S3Silo13",
+    "parameter_values": {
+      "Device": "S3000_IN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[S3000_IN]Silos/S3Silo14",
+    "description": "Silo S3Silo14",
+    "parameter_values": {
+      "Device": "S3000_IN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[S3000_IN]Silos/S3Silo15",
+    "description": "Silo S3Silo15",
+    "parameter_values": {
+      "Device": "S3000_IN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[S3000_IN]Silos/S3Silo16",
+    "description": "Silo S3Silo16",
+    "parameter_values": {
+      "Device": "S3000_IN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[S3000_IN]Silos/S3Silo17",
+    "description": "Silo S3Silo17",
+    "parameter_values": {
+      "Device": "S3000_IN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[S3000_IN]Silos/S3Silo18",
+    "description": "Silo S3Silo18",
+    "parameter_values": {
+      "Device": "S3000_IN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[S3000_IN]Silos/S3Silo19",
+    "description": "Silo S3Silo19",
+    "parameter_values": {
+      "Device": "S3000_IN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[S3000_IN]Silos/S3Silo20",
+    "description": "Silo S3Silo20",
+    "parameter_values": {
+      "Device": "S3000_IN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[UNKNOWN]Silos/T3Silo10",
+    "description": "Silo T3Silo10",
+    "parameter_values": {
+      "Device": "UNKNOWN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[UNKNOWN]Silos/T3Silo17",
+    "description": "Silo T3Silo17",
+    "parameter_values": {
+      "Device": "UNKNOWN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[UNKNOWN]Silos/T3Silo11",
+    "description": "Silo T3Silo11",
+    "parameter_values": {
+      "Device": "UNKNOWN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[UNKNOWN]Silos/T3Silo19",
+    "description": "Silo T3Silo19",
+    "parameter_values": {
+      "Device": "UNKNOWN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[UNKNOWN]Silos/T3Silo18",
+    "description": "Silo T3Silo18",
+    "parameter_values": {
+      "Device": "UNKNOWN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[UNKNOWN]Silos/T3Silo04",
+    "description": "Silo T3Silo04",
+    "parameter_values": {
+      "Device": "UNKNOWN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[UNKNOWN]Silos/T3Silo13",
+    "description": "Silo T3Silo13",
+    "parameter_values": {
+      "Device": "UNKNOWN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[UNKNOWN]Silos/T3Silo16",
+    "description": "Silo T3Silo16",
+    "parameter_values": {
+      "Device": "UNKNOWN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[UNKNOWN]Silos/T3Silo20",
+    "description": "Silo T3Silo20",
+    "parameter_values": {
+      "Device": "UNKNOWN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[UNKNOWN]Silos/T3Silo05",
+    "description": "Silo T3Silo05",
+    "parameter_values": {
+      "Device": "UNKNOWN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[UNKNOWN]Silos/T3Silo12",
+    "description": "Silo T3Silo12",
+    "parameter_values": {
+      "Device": "UNKNOWN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[UNKNOWN]Silos/T3Silo14",
+    "description": "Silo T3Silo14",
+    "parameter_values": {
+      "Device": "UNKNOWN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[UNKNOWN]Silos/T3Silo08",
+    "description": "Silo T3Silo08",
+    "parameter_values": {
+      "Device": "UNKNOWN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[UNKNOWN]Silos/T3Silo07",
+    "description": "Silo T3Silo07",
+    "parameter_values": {
+      "Device": "UNKNOWN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[UNKNOWN]Silos/T3Silo15",
+    "description": "Silo T3Silo15",
+    "parameter_values": {
+      "Device": "UNKNOWN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[UNKNOWN]Silos/T3Silo09",
+    "description": "Silo T3Silo09",
+    "parameter_values": {
+      "Device": "UNKNOWN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[UNKNOWN]Silos/T3Silo06",
+    "description": "Silo T3Silo06",
+    "parameter_values": {
+      "Device": "UNKNOWN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[UNKNOWN]Silos/T3Silo03",
+    "description": "Silo T3Silo03",
+    "parameter_values": {
+      "Device": "UNKNOWN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[UNKNOWN]Silos/T3Silo01",
+    "description": "Silo T3Silo01",
+    "parameter_values": {
+      "Device": "UNKNOWN"
+    },
+    "tag_overrides": {}
+  },
+  {
+    "type_id": "Silo",
+    "path": "[UNKNOWN]Silos/T3Silo02",
+    "description": "Silo T3Silo02",
+    "parameter_values": {
+      "Device": "UNKNOWN"
+    },
+    "tag_overrides": {}
+  }
+]

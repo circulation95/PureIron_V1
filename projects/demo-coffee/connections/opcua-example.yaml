@@ -1,0 +1,23 @@
+name: "Simulation-PLC"
+endpoint_url: "opc.tcp://opcua-sim:4840"
+security_policy: "None"
+security_mode: "None"
+reconnect_delay_s: 5.0
+max_reconnect_delay_s: 60.0
+tags:
+  - tag_path: "[OPC-UA]Simulation/Temperature"
+    node_id: "ns=2;s=Simulation.Temperature"
+    data_type: Float64
+    description: "Simulated temperature"
+    engineering_units: "degC"
+    engineering_low: 0.0
+    engineering_high: 100.0
+  - tag_path: "[OPC-UA]Simulation/Pressure"
+    node_id: "ns=2;s=Simulation.Pressure"
+    data_type: Float64
+    description: "Simulated pressure"
+    engineering_units: "bar"
+  - tag_path: "[OPC-UA]Simulation/ValveOpen"
+    node_id: "ns=2;s=Simulation.ValveOpen"
+    data_type: Boolean
+    description: "Valve open status"

@@ -1,0 +1,63 @@
+{
+  "name": "MOTOR",
+  "description": "표준 모터 제어 (기동/정지, 피드백, 인버터 속도)",
+  "parameters": {
+    "Device": {"dataType": "String", "default_value": ""},
+    "Run_Command_Addr": {"dataType": "Integer", "default_value": 0},
+    "Running_FB_Addr": {"dataType": "Integer", "default_value": 1},
+    "Fault_Addr": {"dataType": "Integer", "default_value": 2},
+    "Ready_Addr": {"dataType": "Integer", "default_value": 3},
+    "Speed_Ref_Addr": {"dataType": "Integer", "default_value": 10},
+    "Speed_Actual_Addr": {"dataType": "Integer", "default_value": 12}
+  },
+  "tags": [
+    {
+      "name": "Run_Command",
+      "description": "기동 명령 출력",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcItemPath": "[{Device}]C{Run_Command_Addr}"
+    },
+    {
+      "name": "Running_FB",
+      "description": "운전 중 피드백",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcItemPath": "[{Device}]DI{Running_FB_Addr}"
+    },
+    {
+      "name": "Fault",
+      "description": "고장/트립 상태",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcItemPath": "[{Device}]DI{Fault_Addr}"
+    },
+    {
+      "name": "Ready",
+      "description": "준비 완료 상태",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcItemPath": "[{Device}]DI{Ready_Addr}"
+    },
+    {
+      "name": "Speed_Ref",
+      "description": "속도 지령값 (%)",
+      "dataType": "Float4",
+      "valueSource": "opc",
+      "opcItemPath": "[{Device}]HR{Speed_Ref_Addr}",
+      "engineeringUnits": "%",
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "Speed_Actual",
+      "description": "실제 속도 피드백 (%)",
+      "dataType": "Float4",
+      "valueSource": "opc",
+      "opcItemPath": "[{Device}]IR{Speed_Actual_Addr}",
+      "engineeringUnits": "%",
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    }
+  ]
+}

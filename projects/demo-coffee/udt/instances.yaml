@@ -1,0 +1,27 @@
+udt_instances:
+  # ── 예제: Line1 밸브 ────────────────────────────────────────────────────
+  # base_address 100부터 시작, 각 VALVE 인스턴스는 10 주소 간격
+  - udt_type: VALVE
+    path: "[Modbus]Line1/Valves/FCV001"
+    description: "라인1 공급 제어 밸브 001"
+    connection: Line1-PLC
+    base_address: 100
+
+  - udt_type: VALVE
+    path: "[Modbus]Line1/Valves/FCV002"
+    description: "라인1 배출 제어 밸브 002"
+    connection: Line1-PLC
+    base_address: 110
+
+  # ── 예제: Line1 모터 ────────────────────────────────────────────────────
+  - udt_type: MOTOR
+    path: "[Modbus]Line1/Motors/P001"
+    description: "라인1 공급 펌프 모터"
+    connection: Line1-PLC
+    base_address: 200
+
+  - udt_type: MOTOR
+    path: "[Modbus]Line1/Motors/AGT001"
+    description: "라인1 교반기 모터"
+    connection: Line1-PLC
+    base_address: 220

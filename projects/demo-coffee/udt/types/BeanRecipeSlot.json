@@ -1,0 +1,2868 @@
+{
+  "name": "BeanRecipeSlot",
+  "description": "원두 레시피 슬롯 (Scolari/RFB/Bean)",
+  "parameters": {
+    "Device": {
+      "dataType": "String",
+      "default_value": ""
+    }
+  },
+  "tags": [
+    {
+      "name": "RTYPE_PV",
+      "description": "SCOLARI RECIPE RTYPE PV",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 4,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO1_PV",
+      "description": "SCOLARI RECIPE GBNO1 PV",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 6,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO2_PV",
+      "description": "SCOLARI RECIPE GBNO2 PV",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 8,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO1_PV",
+      "description": "SCOLARI RECIPE NEXT GBNO1 PV",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 10,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO2_PV",
+      "description": "SCOLARI RECIPE NEXT GBNO2 PV",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 12,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "BATCH_SV_PV",
+      "description": "SCOLARI RECIPE BATCH SV PV",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 14,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "BATCH_PV",
+      "description": "SCOLARI RECIPE BATCH PV",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 16,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "EXT_NO_PV",
+      "description": "SCOLARI RECIPE EXT NO PV",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 18,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "SILO_NO_PV",
+      "description": "SCOLARI RECIPE SILO NO PV",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 20,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "LEVEL_PV",
+      "description": "SCOLARI RECIPE LEVEL PV",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 22,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "GBNO3_PV",
+      "description": "SCOLARI RECIPE GBNO3 PV",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 34,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO4_PV",
+      "description": "SCOLARI RECIPE GBNO4 PV",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 36,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO3_PV",
+      "description": "SCOLARI RECIPE NEXT GBNO3 PV",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 38,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO4_PV",
+      "description": "SCOLARI RECIPE NEXT GBNO4 PV",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 40,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "RTYPE_01",
+      "description": "SCOLARI RECIPE RTYPE 01",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 54,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO1_01",
+      "description": "SCOLARI RECIPE GBNO1 01",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 56,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO2_01",
+      "description": "SCOLARI RECIPE GBNO2 01",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 58,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO1_01",
+      "description": "SCOLARI RECIPE NEXT GBNO1 01",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 60,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO2_01",
+      "description": "SCOLARI RECIPE NEXT GBNO2 01",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 62,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "BATCH_SV_01",
+      "description": "SCOLARI RECIPE BATCH SV 01",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 64,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "EXT_NO_01",
+      "description": "SCOLARI RECIPE EXT NO 01",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 68,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "SILO_NO_01",
+      "description": "SCOLARI RECIPE SILO NO 01",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 70,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO3_01",
+      "description": "SCOLARI RECIPE GBNO3 01",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 84,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO4_01",
+      "description": "SCOLARI RECIPE GBNO4 01",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 86,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO3_01",
+      "description": "SCOLARI RECIPE NEXT GBNO3 01",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 88,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO4_01",
+      "description": "SCOLARI RECIPE NEXT GBNO4 01",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 90,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "RTYPE_02",
+      "description": "SCOLARI RECIPE RTYPE 02",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 104,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO1_02",
+      "description": "SCOLARI RECIPE GBNO1 02",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 106,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO2_02",
+      "description": "SCOLARI RECIPE GBNO2 02",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 108,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO1_02",
+      "description": "SCOLARI RECIPE NEXT GBNO1 02",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 110,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO2_02",
+      "description": "SCOLARI RECIPE NEXT GBNO2 02",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 112,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "BATCH_SV_02",
+      "description": "SCOLARI RECIPE BATCH SV 02",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 114,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "EXT_NO_02",
+      "description": "SCOLARI RECIPE EXT NO 02",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 118,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "SILO_NO_02",
+      "description": "SCOLARI RECIPE SILO NO 02",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 120,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO3_02",
+      "description": "SCOLARI RECIPE GBNO3 02",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 134,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO4_02",
+      "description": "SCOLARI RECIPE GBNO4 02",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 136,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO3_02",
+      "description": "SCOLARI RECIPE NEXT GBNO3 02",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 138,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO4_02",
+      "description": "SCOLARI RECIPE NEXT GBNO4 02",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 140,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "RTYPE_03",
+      "description": "SCOLARI RECIPE RTYPE 03",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 154,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO1_03",
+      "description": "SCOLARI RECIPE GBNO1 03",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 156,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO2_03",
+      "description": "SCOLARI RECIPE GBNO2 03",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 158,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO1_03",
+      "description": "SCOLARI RECIPE NEXT GBNO1 03",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 160,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO2_03",
+      "description": "SCOLARI RECIPE NEXT GBNO2 03",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 162,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "BATCH_SV_03",
+      "description": "SCOLARI RECIPE BATCH SV 03",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 164,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "EXT_NO_03",
+      "description": "SCOLARI RECIPE EXT NO 03",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 168,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "SILO_NO_03",
+      "description": "SCOLARI RECIPE SILO NO 03",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 170,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO3_03",
+      "description": "SCOLARI RECIPE GBNO3 03",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 184,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO4_03",
+      "description": "SCOLARI RECIPE GBNO4 03",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 186,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO3_03",
+      "description": "SCOLARI RECIPE NEXT GBNO3 03",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 188,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO4_03",
+      "description": "SCOLARI RECIPE NEXT GBNO4 03",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 190,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "RTYPE_04",
+      "description": "SCOLARI RECIPE RTYPE 04",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 204,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO1_04",
+      "description": "SCOLARI RECIPE GBNO1 04",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 206,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO2_04",
+      "description": "SCOLARI RECIPE GBNO2 04",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 208,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO1_04",
+      "description": "SCOLARI RECIPE NEXT GBNO1 04",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 210,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO2_04",
+      "description": "SCOLARI RECIPE NEXT GBNO2 04",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 212,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "BATCH_SV_04",
+      "description": "SCOLARI RECIPE BATCH SV 04",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 214,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "EXT_NO_04",
+      "description": "SCOLARI RECIPE EXT NO 04",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 218,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "SILO_NO_04",
+      "description": "SCOLARI RECIPE SILO NO 04",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 220,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO3_04",
+      "description": "SCOLARI RECIPE GBNO3 04",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 234,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO4_04",
+      "description": "SCOLARI RECIPE GBNO4 04",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 236,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO3_04",
+      "description": "SCOLARI RECIPE NEXT GBNO3 04",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 238,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO4_04",
+      "description": "SCOLARI RECIPE NEXT GBNO4 04",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 240,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "RTYPE_05",
+      "description": "SCOLARI RECIPE RTYPE 05",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 254,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO1_05",
+      "description": "SCOLARI RECIPE GBNO1 05",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 256,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO2_05",
+      "description": "SCOLARI RECIPE GBNO2 05",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 258,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO1_05",
+      "description": "SCOLARI RECIPE NEXT GBNO1 05",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 260,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO2_05",
+      "description": "SCOLARI RECIPE NEXT GBNO2 05",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 262,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "BATCH_SV_05",
+      "description": "SCOLARI RECIPE BATCH SV 05",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 264,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "EXT_NO_05",
+      "description": "SCOLARI RECIPE EXT NO 05",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 268,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "SILO_NO_05",
+      "description": "SCOLARI RECIPE SILO NO 05",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 270,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO3_05",
+      "description": "SCOLARI RECIPE GBNO3 05",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 284,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO4_05",
+      "description": "SCOLARI RECIPE GBNO4 05",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 286,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO3_05",
+      "description": "SCOLARI RECIPE NEXT GBNO3 05",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 288,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO4_05",
+      "description": "SCOLARI RECIPE NEXT GBNO4 05",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 290,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "RTYPE_06",
+      "description": "SCOLARI RECIPE RTYPE 06",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 304,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO1_06",
+      "description": "SCOLARI RECIPE GBNO1 06",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 306,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO2_06",
+      "description": "SCOLARI RECIPE GBNO2 06",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 308,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO1_06",
+      "description": "SCOLARI RECIPE NEXT GBNO1 06",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 310,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO2_06",
+      "description": "SCOLARI RECIPE NEXT GBNO2 06",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 312,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "BATCH_SV_06",
+      "description": "SCOLARI RECIPE BATCH SV 06",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 314,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "EXT_NO_06",
+      "description": "SCOLARI RECIPE EXT NO 06",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 318,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "SILO_NO_06",
+      "description": "SCOLARI RECIPE SILO NO 06",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 320,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO3_06",
+      "description": "SCOLARI RECIPE GBNO3 06",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 334,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO4_06",
+      "description": "SCOLARI RECIPE GBNO4 06",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 336,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO3_06",
+      "description": "SCOLARI RECIPE NEXT GBNO3 06",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 338,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO4_06",
+      "description": "SCOLARI RECIPE NEXT GBNO4 06",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 340,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "RTYPE_07",
+      "description": "SCOLARI RECIPE RTYPE 07",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 354,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO1_07",
+      "description": "SCOLARI RECIPE GBNO1 07",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 356,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO2_07",
+      "description": "SCOLARI RECIPE GBNO2 07",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 358,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO1_07",
+      "description": "SCOLARI RECIPE NEXT GBNO1 07",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 360,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO2_07",
+      "description": "SCOLARI RECIPE NEXT GBNO2 07",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 362,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "BATCH_SV_07",
+      "description": "SCOLARI RECIPE BATCH SV 07",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 364,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "EXT_NO_07",
+      "description": "SCOLARI RECIPE EXT NO 07",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 368,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "SILO_NO_07",
+      "description": "SCOLARI RECIPE SILO NO 07",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 370,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO3_07",
+      "description": "SCOLARI RECIPE GBNO3 07",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 384,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO4_07",
+      "description": "SCOLARI RECIPE GBNO4 07",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 386,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO3_07",
+      "description": "SCOLARI RECIPE NEXT GBNO3 07",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 388,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO4_07",
+      "description": "SCOLARI RECIPE NEXT GBNO4 07",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 390,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "RTYPE_08",
+      "description": "SCOLARI RECIPE RTYPE 08",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 404,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO1_08",
+      "description": "SCOLARI RECIPE GBNO1 08",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 406,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO2_08",
+      "description": "SCOLARI RECIPE GBNO2 08",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 408,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO1_08",
+      "description": "SCOLARI RECIPE NEXT GBNO1 08",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 410,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO2_08",
+      "description": "SCOLARI RECIPE NEXT GBNO2 08",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 412,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "BATCH_SV_08",
+      "description": "SCOLARI RECIPE BATCH SV 08",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 414,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "EXT_NO_08",
+      "description": "SCOLARI RECIPE EXT NO 08",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 418,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "SILO_NO_08",
+      "description": "SCOLARI RECIPE SILO NO 08",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 420,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO3_08",
+      "description": "SCOLARI RECIPE GBNO3 08",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 434,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "GBNO4_08",
+      "description": "SCOLARI RECIPE GBNO4 08",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 436,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO3_08",
+      "description": "SCOLARI RECIPE NEXT GBNO3 08",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 438,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "NEXT_GBNO4_08",
+      "description": "SCOLARI RECIPE NEXT GBNO4 08",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 600,
+        "offset": 440,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 99.0
+    },
+    {
+      "name": "4TH_40",
+      "description": "BEAN RECIPE 4TH 40",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 898,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "1ST_31",
+      "description": "BEAN RECIPE 1ST 31",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 622,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "3RD_40",
+      "description": "BEAN RECIPE 3RD 40",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 896,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "2ND_40",
+      "description": "BEAN RECIPE 2ND 40",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 894,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "1ST_40",
+      "description": "BEAN RECIPE 1ST 40",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 892,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "4TH_39",
+      "description": "BEAN RECIPE 4TH 39",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 868,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "3RD_39",
+      "description": "BEAN RECIPE 3RD 39",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 866,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "2ND_39",
+      "description": "BEAN RECIPE 2ND 39",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 864,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "1ST_39",
+      "description": "BEAN RECIPE 1ST 39",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 862,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "4TH_38",
+      "description": "BEAN RECIPE 4TH 38",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 838,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "3RD_38",
+      "description": "BEAN RECIPE 3RD 38",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 836,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "2ND_38",
+      "description": "BEAN RECIPE 2ND 38",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 834,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "1ST_38",
+      "description": "BEAN RECIPE 1ST 38",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 832,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "4TH_37",
+      "description": "BEAN RECIPE 4TH 37",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 808,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "3RD_37",
+      "description": "BEAN RECIPE 3RD 37",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 806,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "2ND_37",
+      "description": "BEAN RECIPE 2ND 37",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 804,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "1ST_37",
+      "description": "BEAN RECIPE 1ST 37",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 802,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "4TH_36",
+      "description": "BEAN RECIPE 4TH 36",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 778,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "3RD_36",
+      "description": "BEAN RECIPE 3RD 36",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 776,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "2ND_36",
+      "description": "BEAN RECIPE 2ND 36",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 774,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "1ST_36",
+      "description": "BEAN RECIPE 1ST 36",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 772,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "4TH_35",
+      "description": "BEAN RECIPE 4TH 35",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 748,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "3RD_35",
+      "description": "BEAN RECIPE 3RD 35",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 746,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "2ND_35",
+      "description": "BEAN RECIPE 2ND 35",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 744,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "1ST_35",
+      "description": "BEAN RECIPE 1ST 35",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 742,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "4TH_34",
+      "description": "BEAN RECIPE 4TH 34",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 718,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "3RD_34",
+      "description": "BEAN RECIPE 3RD 34",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 716,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "2ND_34",
+      "description": "BEAN RECIPE 2ND 34",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 714,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "1ST_34",
+      "description": "BEAN RECIPE 1ST 34",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 712,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "4TH_33",
+      "description": "BEAN RECIPE 4TH 33",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 688,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "3RD_33",
+      "description": "BEAN RECIPE 3RD 33",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 686,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "2ND_33",
+      "description": "BEAN RECIPE 2ND 33",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 684,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "1ST_33",
+      "description": "BEAN RECIPE 1ST 33",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 682,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "4TH_32",
+      "description": "BEAN RECIPE 4TH 32",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 658,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "3RD_32",
+      "description": "BEAN RECIPE 3RD 32",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 656,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "2ND_32",
+      "description": "BEAN RECIPE 2ND 32",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 654,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "1ST_32",
+      "description": "BEAN RECIPE 1ST 32",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 652,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "4TH_31",
+      "description": "BEAN RECIPE 4TH 31",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 628,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "3RD_31",
+      "description": "BEAN RECIPE 3RD 31",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 626,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "2ND_31",
+      "description": "BEAN RECIPE 2ND 31",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 21,
+        "offset": 624,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 9999.0
+    },
+    {
+      "name": "BBR_08",
+      "description": "",
+      "dataType": "String",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 605,
+        "offset": 442,
+        "bit": 2,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "BBR_07",
+      "description": "",
+      "dataType": "String",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 605,
+        "offset": 392,
+        "bit": 2,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "BBR_06",
+      "description": "",
+      "dataType": "String",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 605,
+        "offset": 342,
+        "bit": 2,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "BBR_05",
+      "description": "",
+      "dataType": "String",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 605,
+        "offset": 292,
+        "bit": 2,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "BBR_04",
+      "description": "",
+      "dataType": "String",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 605,
+        "offset": 242,
+        "bit": 2,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "BBR_03",
+      "description": "",
+      "dataType": "String",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 605,
+        "offset": 192,
+        "bit": 2,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "BBR_02",
+      "description": "",
+      "dataType": "String",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 605,
+        "offset": 142,
+        "bit": 2,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "BBR_01",
+      "description": "",
+      "dataType": "String",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 605,
+        "offset": 92,
+        "bit": 2,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "BBR_PV",
+      "description": "",
+      "dataType": "String",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 605,
+        "offset": 42,
+        "bit": 2,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "AB08",
+      "description": "",
+      "dataType": "String",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 602,
+        "offset": 430,
+        "bit": 2,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "AB07",
+      "description": "",
+      "dataType": "String",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 602,
+        "offset": 420,
+        "bit": 2,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "AB06",
+      "description": "",
+      "dataType": "String",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 602,
+        "offset": 410,
+        "bit": 2,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "AB05",
+      "description": "",
+      "dataType": "String",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 602,
+        "offset": 400,
+        "bit": 2,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "AB04",
+      "description": "",
+      "dataType": "String",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 602,
+        "offset": 390,
+        "bit": 2,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "AB03",
+      "description": "",
+      "dataType": "String",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 602,
+        "offset": 380,
+        "bit": 2,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "AB02",
+      "description": "",
+      "dataType": "String",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 602,
+        "offset": 370,
+        "bit": 2,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "AB01",
+      "description": "",
+      "dataType": "String",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 602,
+        "offset": 360,
+        "bit": 2,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "AB_PV",
+      "description": "",
+      "dataType": "String",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 602,
+        "offset": 350,
+        "bit": 2,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    }
+  ]
+}

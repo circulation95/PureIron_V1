@@ -1,0 +1,386 @@
+{
+  "EXTRACTION": {
+    "version": 1,
+    "widgets": [
+      {
+        "id": "coffee-tank1-level",
+        "type": "tag-gauge",
+        "title": "Tank1 Level",
+        "config": {
+          "tagPath": "[modbus_test]CoffeeTank/Tank1/level",
+          "min": 0,
+          "max": 100,
+          "unit": "%"
+        }
+      },
+      {
+        "id": "coffee-tank1-temperature",
+        "type": "tag-value",
+        "title": "Tank1 Temperature",
+        "config": {
+          "tagPath": "[modbus_test]CoffeeTank/Tank1/temperature",
+          "unit": "°C",
+          "precision": 1
+        }
+      },
+      {
+        "id": "coffee-pmp101-flow",
+        "type": "tag-value",
+        "title": "PMP101 Flow",
+        "config": {
+          "tagPath": "[modbus_test]CoffeeTank/Pumps/PMP101/Flow",
+          "unit": "L/min",
+          "precision": 1
+        }
+      },
+      {
+        "id": "coffee-pmp101-pressure",
+        "type": "tag-gauge",
+        "title": "PMP101 Pressure",
+        "config": {
+          "tagPath": "[modbus_test]CoffeeTank/Pumps/PMP101/Pressure",
+          "min": 0,
+          "max": 6,
+          "unit": "bar"
+        }
+      },
+      {
+        "id": "coffee-extraction-trend",
+        "type": "trend",
+        "title": "Extraction Trend",
+        "config": {
+          "tagPaths": [
+            "[modbus_test]CoffeeTank/Tank1/level",
+            "[modbus_test]CoffeeTank/Tank1/temperature",
+            "[modbus_test]CoffeeTank/Pumps/PMP101/Flow",
+            "[modbus_test]CoffeeTank/Pumps/PMP101/Pressure",
+            "[Memory]API/AuthoredBoundary_5949c331",
+            "[Memory]API/AuthoredBoundary_63ca2262",
+            "[Memory]API/AuthoredBoundary_b03bc6dd",
+            "[Memory]API/AuthoredBoundary_77f59270",
+            "[Memory]API/AuthoredBoundary_8b81033c"
+          ],
+          "rangeMinutes": 60
+        }
+      },
+      {
+        "id": "coffee-alarm-summary",
+        "type": "alarm-summary",
+        "title": "Alarm Summary",
+        "config": {}
+      }
+    ],
+    "layouts": {
+      "lg": [
+        {
+          "i": "coffee-tank1-level",
+          "x": 0,
+          "y": 0,
+          "w": 3,
+          "h": 3,
+          "minW": 2,
+          "minH": 3,
+          "static": null
+        },
+        {
+          "i": "coffee-tank1-temperature",
+          "x": 3,
+          "y": 0,
+          "w": 3,
+          "h": 2,
+          "minW": 2,
+          "minH": 2,
+          "static": null
+        },
+        {
+          "i": "coffee-pmp101-flow",
+          "x": 6,
+          "y": 0,
+          "w": 3,
+          "h": 2,
+          "minW": 2,
+          "minH": 2,
+          "static": null
+        },
+        {
+          "i": "coffee-pmp101-pressure",
+          "x": 9,
+          "y": 0,
+          "w": 3,
+          "h": 3,
+          "minW": 2,
+          "minH": 3,
+          "static": null
+        },
+        {
+          "i": "coffee-extraction-trend",
+          "x": 0,
+          "y": 3,
+          "w": 8,
+          "h": 4,
+          "minW": 4,
+          "minH": 3,
+          "static": null
+        },
+        {
+          "i": "coffee-alarm-summary",
+          "x": 8,
+          "y": 3,
+          "w": 4,
+          "h": 4,
+          "minW": 3,
+          "minH": 2,
+          "static": null
+        }
+      ],
+      "md": [
+        {
+          "i": "coffee-tank1-level",
+          "x": 0,
+          "y": 0,
+          "w": 3,
+          "h": 3,
+          "minW": 2,
+          "minH": 3,
+          "static": null
+        },
+        {
+          "i": "coffee-tank1-temperature",
+          "x": 3,
+          "y": 0,
+          "w": 3,
+          "h": 2,
+          "minW": 2,
+          "minH": 2,
+          "static": null
+        },
+        {
+          "i": "coffee-pmp101-flow",
+          "x": 6,
+          "y": 0,
+          "w": 4,
+          "h": 2,
+          "minW": 2,
+          "minH": 2,
+          "static": null
+        },
+        {
+          "i": "coffee-pmp101-pressure",
+          "x": 0,
+          "y": 3,
+          "w": 3,
+          "h": 3,
+          "minW": 2,
+          "minH": 3,
+          "static": null
+        },
+        {
+          "i": "coffee-extraction-trend",
+          "x": 3,
+          "y": 2,
+          "w": 7,
+          "h": 4,
+          "minW": 4,
+          "minH": 3,
+          "static": null
+        },
+        {
+          "i": "coffee-alarm-summary",
+          "x": 0,
+          "y": 6,
+          "w": 10,
+          "h": 3,
+          "minW": 3,
+          "minH": 2,
+          "static": null
+        }
+      ],
+      "sm": [
+        {
+          "i": "coffee-tank1-level",
+          "x": 0,
+          "y": 0,
+          "w": 3,
+          "h": 3,
+          "minW": 2,
+          "minH": 3,
+          "static": null
+        },
+        {
+          "i": "coffee-tank1-temperature",
+          "x": 3,
+          "y": 0,
+          "w": 3,
+          "h": 2,
+          "minW": 2,
+          "minH": 2,
+          "static": null
+        },
+        {
+          "i": "coffee-pmp101-flow",
+          "x": 0,
+          "y": 3,
+          "w": 3,
+          "h": 2,
+          "minW": 2,
+          "minH": 2,
+          "static": null
+        },
+        {
+          "i": "coffee-pmp101-pressure",
+          "x": 3,
+          "y": 2,
+          "w": 3,
+          "h": 3,
+          "minW": 2,
+          "minH": 3,
+          "static": null
+        },
+        {
+          "i": "coffee-extraction-trend",
+          "x": 0,
+          "y": 5,
+          "w": 6,
+          "h": 4,
+          "minW": 4,
+          "minH": 3,
+          "static": null
+        },
+        {
+          "i": "coffee-alarm-summary",
+          "x": 0,
+          "y": 9,
+          "w": 6,
+          "h": 3,
+          "minW": 3,
+          "minH": 2,
+          "static": null
+        }
+      ],
+      "xs": [
+        {
+          "i": "coffee-tank1-level",
+          "x": 0,
+          "y": 0,
+          "w": 4,
+          "h": 3,
+          "minW": 2,
+          "minH": 3,
+          "static": null
+        },
+        {
+          "i": "coffee-tank1-temperature",
+          "x": 0,
+          "y": 3,
+          "w": 4,
+          "h": 2,
+          "minW": 2,
+          "minH": 2,
+          "static": null
+        },
+        {
+          "i": "coffee-pmp101-flow",
+          "x": 0,
+          "y": 5,
+          "w": 4,
+          "h": 2,
+          "minW": 2,
+          "minH": 2,
+          "static": null
+        },
+        {
+          "i": "coffee-pmp101-pressure",
+          "x": 0,
+          "y": 7,
+          "w": 4,
+          "h": 3,
+          "minW": 2,
+          "minH": 3,
+          "static": null
+        },
+        {
+          "i": "coffee-extraction-trend",
+          "x": 0,
+          "y": 10,
+          "w": 4,
+          "h": 4,
+          "minW": 3,
+          "minH": 3,
+          "static": null
+        },
+        {
+          "i": "coffee-alarm-summary",
+          "x": 0,
+          "y": 14,
+          "w": 4,
+          "h": 3,
+          "minW": 3,
+          "minH": 2,
+          "static": null
+        }
+      ],
+      "xxs": [
+        {
+          "i": "coffee-tank1-level",
+          "x": 0,
+          "y": 0,
+          "w": 2,
+          "h": 3,
+          "minW": 2,
+          "minH": 3,
+          "static": null
+        },
+        {
+          "i": "coffee-tank1-temperature",
+          "x": 0,
+          "y": 3,
+          "w": 2,
+          "h": 2,
+          "minW": 2,
+          "minH": 2,
+          "static": null
+        },
+        {
+          "i": "coffee-pmp101-flow",
+          "x": 0,
+          "y": 5,
+          "w": 2,
+          "h": 2,
+          "minW": 2,
+          "minH": 2,
+          "static": null
+        },
+        {
+          "i": "coffee-pmp101-pressure",
+          "x": 0,
+          "y": 7,
+          "w": 2,
+          "h": 3,
+          "minW": 2,
+          "minH": 3,
+          "static": null
+        },
+        {
+          "i": "coffee-extraction-trend",
+          "x": 0,
+          "y": 10,
+          "w": 2,
+          "h": 4,
+          "minW": 2,
+          "minH": 3,
+          "static": null
+        },
+        {
+          "i": "coffee-alarm-summary",
+          "x": 0,
+          "y": 14,
+          "w": 2,
+          "h": 3,
+          "minW": 2,
+          "minH": 2,
+          "static": null
+        }
+      ]
+    }
+  }
+}

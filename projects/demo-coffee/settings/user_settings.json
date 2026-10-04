@@ -1,0 +1,16 @@
+{
+  "admin": {
+    "language": "ko-KR",
+    "notifications": {
+      "email_enabled": true,
+      "email_address": "",
+      "sms_enabled": true,
+      "phone_number": "",
+      "webhook_enabled": false,
+      "webhook_url": "",
+      "quiet_hours_enabled": false,
+      "quiet_hours_start": "22:00",
+      "quiet_hours_end": "07:00"
+    }
+  }
+}

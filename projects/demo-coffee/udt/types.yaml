@@ -1,0 +1,154 @@
+udt_types:
+  # ── VALVE ─────────────────────────────────────────────────────────────────
+  - name: VALVE
+    description: "표준 공압/모터 구동 밸브 (Modbus 이산 I/O)"
+    members:
+      - name: Auto_Manual
+        description: "자동/수동 전환 (1=자동, 0=수동)"
+        data_type: Boolean
+        register_type: coil
+        address_offset: 0
+
+      - name: A_Status
+        description: "A 솔레노이드 피드백 (개방 상태)"
+        data_type: Boolean
+        register_type: discrete_input
+        address_offset: 1
+
+      - name: Manual_Command
+        description: "수동 개방 명령"
+        data_type: Boolean
+        register_type: coil
+        address_offset: 2
+
+      - name: Auto_Command
+        description: "자동 개방 명령"
+        data_type: Boolean
+        register_type: coil
+        address_offset: 3
+
+      - name: Trip
+        description: "트립/고장 신호"
+        data_type: Boolean
+        register_type: discrete_input
+        address_offset: 4
+
+      - name: B_Status
+        description: "B 솔레노이드 피드백 (폐쇄 상태)"
+        data_type: Boolean
+        register_type: discrete_input
+        address_offset: 5
+
+  # ── MOTOR ─────────────────────────────────────────────────────────────────
+  - name: MOTOR
+    description: "표준 모터 제어 (기동/정지, 피드백, 인버터 속도)"
+    members:
+      - name: Run_Command
+        description: "기동 명령 출력"
+        data_type: Boolean
+        register_type: coil
+        address_offset: 0
+
+      - name: Running_FB
+        description: "운전 중 피드백"
+        data_type: Boolean
+        register_type: discrete_input
+        address_offset: 1
+
+      - name: Fault
+        description: "고장/트립 상태"
+        data_type: Boolean
+        register_type: discrete_input
+        address_offset: 2
+
+      - name: Ready
+        description: "준비 완료 상태"
+        data_type: Boolean
+        register_type: discrete_input
+        address_offset: 3
+
+      - name: Speed_Ref
+        description: "속도 지령값 (%)"
+        data_type: Float32
+        register_type: holding
+        address_offset: 10
+        engineering_units: "%"
+        engineering_low: 0.0
+        engineering_high: 100.0
+
+      - name: Speed_Actual
+        description: "실제 속도 피드백 (%)"
+        data_type: Float32
+        register_type: input
+        address_offset: 12
+        engineering_units: "%"
+        engineering_low: 0.0
+        engineering_high: 100.0
+
+  # ── PUMP ──────────────────────────────────────────────────────────────────
+  - name: PUMP
+    description: "표준 펌프 제어 (기동/정지, 압력/유량 피드백)"
+    members:
+      - name: Run_Command
+        description: "기동 명령"
+        data_type: Boolean
+        register_type: coil
+        address_offset: 0
+
+      - name: Running_FB
+        description: "운전 중 피드백"
+        data_type: Boolean
+        register_type: discrete_input
+        address_offset: 1
+
+      - name: Fault
+        description: "고장 상태"
+        data_type: Boolean
+        register_type: discrete_input
+        address_offset: 2
+
+      - name: Pressure
+        description: "출구 압력"
+        data_type: Float32
+        register_type: input
+        address_offset: 10
+        engineering_units: "kPa"
+        engineering_low: 0.0
+        engineering_high: 1000.0
+
+      - name: Flow
+        description: "유량"
+        data_type: Float32
+        register_type: input
+        address_offset: 12
+        engineering_units: "L/min"
+        engineering_low: 0.0
+        engineering_high: 500.0
+
+  # ── ANALOG_INPUT ──────────────────────────────────────────────────────────
+  - name: ANALOG_INPUT
+    description: "표준 아날로그 입력 채널 (4-20mA / 0-10V)"
+    members:
+      - name: Raw
+        description: "원시 ADC 값"
+        data_type: Int32
+        register_type: input
+        address_offset: 0
+
+      - name: Scaled
+        description: "스케일 변환된 공학 값"
+        data_type: Float32
+        register_type: input
+        address_offset: 2
+
+      - name: Hi_Alarm
+        description: "상한 알람 상태"
+        data_type: Boolean
+        register_type: discrete_input
+        address_offset: 4
+
+      - name: Lo_Alarm
+        description: "하한 알람 상태"
+        data_type: Boolean
+        register_type: discrete_input
+        address_offset: 5

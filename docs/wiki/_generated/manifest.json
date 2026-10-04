@@ -1,0 +1,298 @@
+{
+  "doc_count": 14,
+  "docs": [
+    {
+      "audience": "both",
+      "bytes": 19047,
+      "id": "adr-index",
+      "last_verified": "2026-06-28",
+      "path": "docs/wiki/adr/index.md",
+      "section_count": 23,
+      "sha256": "4f9589d99a0cc494b4a80f353c8a9d7f73039b0b994a8cb462b0a61d2ae50b4d",
+      "source_globs": [],
+      "sources": [
+        "docs/ADR.md",
+        "docs/wiki/sot/product.md",
+        "docs/wiki/sot/agent-rules.md",
+        "docs/wiki/sot/architecture.md",
+        "docs/wiki/sot/data-contracts.md",
+        "docs/wiki/sot/api-events.md",
+        "docs/wiki/sot/frontend.md",
+        "docs/wiki/sot/testing.md"
+      ],
+      "status": "canonical",
+      "title": "ADR — 아키텍처 결정 기록"
+    },
+    {
+      "audience": "human",
+      "bytes": 2687,
+      "id": "archive-manual-legacy",
+      "last_verified": "2026-06-07",
+      "path": "docs/wiki/archive/manual-legacy.md",
+      "section_count": 4,
+      "sha256": "27d67b61bf599b5d2e7467b1df77ad0d1bba9a555a4a28a70e764e2b7bb95a62",
+      "source_globs": [],
+      "sources": [
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/MANUAL.md"
+      ],
+      "status": "archive",
+      "title": "(Archive) Legacy User Manual 포인터"
+    },
+    {
+      "audience": "both",
+      "bytes": 24724,
+      "id": "gtm-first-contract",
+      "last_verified": "2026-06-30",
+      "path": "docs/wiki/gtm/first-contract.md",
+      "section_count": 29,
+      "sha256": "86aa36b447747d1f76fb6f82ade40e74c4b8a56e6fb4db78c72b21fffc52ee8c",
+      "source_globs": [],
+      "sources": [
+        "docs/wiki/sot/product.md",
+        "docs/PRD.md",
+        "USER.md"
+      ],
+      "status": "canonical",
+      "title": "First Contract — 첫 계약 GTM/PoC 결정 프레임"
+    },
+    {
+      "audience": "both",
+      "bytes": 3942,
+      "id": "wiki-index",
+      "last_verified": "2026-06-30",
+      "path": "docs/wiki/index.md",
+      "section_count": 6,
+      "sha256": "e2555e65ff6f12d5256c79e39a07c21407498aa7bf826f04806c86ea707da93e",
+      "source_globs": [],
+      "sources": [
+        "README.md"
+      ],
+      "status": "canonical",
+      "title": "PureIron Wiki — 문서 허브"
+    },
+    {
+      "audience": "both",
+      "bytes": 18974,
+      "id": "report-mvp-gap",
+      "last_verified": "2026-07-07",
+      "path": "docs/wiki/reports/mvp-gap.md",
+      "section_count": 8,
+      "sha256": "4898b5847a45015ada1b4d577c4686a578ddb0892196f5325b74dafe0cd5c231",
+      "source_globs": [],
+      "sources": [
+        "docs/sales/read-only-poc-proposal.md",
+        "docs/wiki/sot/product.md",
+        "docs/wiki/sot/testing.md",
+        "docs/wiki/gtm/first-contract.md",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/gateway.py",
+        "https://github.com/circulation95/PureIron_ignition/tree/legacy-final/backend/src/pureiron/drivers",
+        "https://github.com/circulation95/PureIron_ignition/tree/legacy-final/backend/src/pureiron/historian",
+        "https://github.com/circulation95/PureIron_ignition/tree/legacy-final/backend/src/pureiron/alarms",
+        "https://github.com/circulation95/PureIron_ignition/tree/legacy-final/backend/src/pureiron/agents",
+        "https://github.com/circulation95/PureIron_ignition/tree/legacy-final/backend/src/pureiron/mes",
+        "docs/wiki/sot/architecture.md"
+      ],
+      "status": "canonical",
+      "title": "MVP Gap Audit — 첫 read-only PoC 기준 구현 격차"
+    },
+    {
+      "audience": "agent",
+      "bytes": 14659,
+      "id": "sot-agent-rules",
+      "last_verified": "2026-08-17",
+      "path": "docs/wiki/sot/agent-rules.md",
+      "section_count": 13,
+      "sha256": "f8b959f19a1972480b80857389764eeec9ac26e50dd92ed444e7bcb2cb4ea6c2",
+      "source_globs": [],
+      "sources": [
+        "AGENTS.md",
+        "CLAUDE.md",
+        "USER.md",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/CLAUDE.md"
+      ],
+      "status": "canonical",
+      "title": "Agent Rules SOT — 에이전트 작업 규칙"
+    },
+    {
+      "audience": "both",
+      "bytes": 11082,
+      "id": "sot-api-events",
+      "last_verified": "2026-06-26",
+      "path": "docs/wiki/sot/api-events.md",
+      "section_count": 10,
+      "sha256": "ccbfc992b163bdced5d55fa421fe4c382b7ce85cb605b794c52d201374336d1e",
+      "source_globs": [],
+      "sources": [
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/main.py",
+        "https://github.com/circulation95/PureIron_ignition/tree/legacy-final/backend/src/pureiron/events",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/chat/sse.py",
+        "https://github.com/circulation95/PureIron_ignition/tree/legacy-final/backend/src/pureiron"
+      ],
+      "status": "canonical",
+      "title": "API & Events SOT — 라우터·이벤트 계약"
+    },
+    {
+      "audience": "both",
+      "bytes": 14743,
+      "id": "sot-architecture",
+      "last_verified": "2026-07-04",
+      "path": "docs/wiki/sot/architecture.md",
+      "section_count": 14,
+      "sha256": "67a7ae33f001be295219e6e9027dd77adc6444969a25fc6e5c054fd73b3d3bc6",
+      "source_globs": [],
+      "sources": [
+        "docs/ARCHITECTURE.md",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/gateway.py",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/CLAUDE.md"
+      ],
+      "status": "canonical",
+      "title": "Architecture SOT — 시스템 구조"
+    },
+    {
+      "audience": "both",
+      "bytes": 16531,
+      "id": "sot-data-contracts",
+      "last_verified": "2026-08-22",
+      "path": "docs/wiki/sot/data-contracts.md",
+      "section_count": 10,
+      "sha256": "54f7ac9ba23b7f9ed3fca7baf058f58b85c8b6fed2b89e61ef9ddb0a45939106",
+      "source_globs": [
+        "projects/demo-coffee/**/*.yaml",
+        "projects/demo-coffee/**/*.json"
+      ],
+      "sources": [
+        "https://github.com/circulation95/PureIron_ignition/tree/legacy-final/backend/src/pureiron/db/migrations",
+        "https://github.com/circulation95/PureIron_ignition/tree/legacy-final/configs",
+        "projects/demo-coffee",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/tags/models.py",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/gateway.py",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/project_package.py"
+      ],
+      "status": "canonical",
+      "title": "Data Contracts SOT — DB·설정 스키마"
+    },
+    {
+      "audience": "both",
+      "bytes": 18393,
+      "id": "sot-frontend",
+      "last_verified": "2026-07-23",
+      "path": "docs/wiki/sot/frontend.md",
+      "section_count": 15,
+      "sha256": "2cb7a2c028337a700f1b5b1f378dc54269594ee1d1d3e1b0fdcc1d52af1aeebd",
+      "source_globs": [],
+      "sources": [
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/package.json",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/AGENTS.md",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/CLAUDE.md",
+        "docs/UI_GUIDE.md",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/src/atoms/tags.ts",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/src/ws/client.ts",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/src/types/processes.ts",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/src/components/ui/index.ts",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/src/components/ui/Tabs.tsx",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/src/components/ui/SegmentedControl.tsx",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/src/components/ui/SideNav.tsx",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/src/components/ui/StatusBadge.tsx",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/src/styles/ds/primitives.css"
+      ],
+      "status": "canonical",
+      "title": "Frontend SOT — React·Jotai·SCADA UI·3D Twin"
+    },
+    {
+      "audience": "both",
+      "bytes": 9001,
+      "id": "sot-mes-schedule",
+      "last_verified": "2026-07-12",
+      "path": "docs/wiki/sot/mes-schedule.md",
+      "section_count": 7,
+      "sha256": "84182d922e62f548ff23485aa041ede65ba9e3a87974245a284eda612cc25344",
+      "source_globs": [],
+      "sources": [
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/mes/models.py",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/mes/router.py",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/agents/tools/schedule_tools.py",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/src/components/ScheduleScreen.tsx"
+      ],
+      "status": "canonical",
+      "title": "MES/Schedule SOT — v1 용어와 작업 플로우 계약"
+    },
+    {
+      "audience": "both",
+      "bytes": 13598,
+      "id": "sot-product",
+      "last_verified": "2026-06-30",
+      "path": "docs/wiki/sot/product.md",
+      "section_count": 18,
+      "sha256": "676a2326abf03cdfb635c2ceb53e7bc9e64b3d13396aa98a39778f9a39c03a0f",
+      "source_globs": [],
+      "sources": [
+        "docs/PRD.md",
+        "README.md",
+        "USER.md"
+      ],
+      "status": "canonical",
+      "title": "Product SOT — 제품 의도"
+    },
+    {
+      "audience": "both",
+      "bytes": 6288,
+      "id": "sot-runtime-config",
+      "last_verified": "2026-06-26",
+      "path": "docs/wiki/sot/runtime-config.md",
+      "section_count": 7,
+      "sha256": "34e7473c14ebebd9debffab940515fd622e93db809086a51c4a2b928138c1be1",
+      "source_globs": [],
+      "sources": [
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/config.py",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/.env.example"
+      ],
+      "status": "canonical",
+      "title": "Runtime Config SOT — 환경변수·설정"
+    },
+    {
+      "audience": "both",
+      "bytes": 29481,
+      "id": "sot-testing",
+      "last_verified": "2026-08-22",
+      "path": "docs/wiki/sot/testing.md",
+      "section_count": 17,
+      "sha256": "77877ccdd7d0b65f5859ff64f29eb246e40018d66c596e297d973010f3be4636",
+      "source_globs": [],
+      "sources": [
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/pyproject.toml",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/pytest.ini",
+        "https://github.com/circulation95/PureIron_ignition/tree/legacy-final/backend/tests",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/tests/e2e/test_phase2_acceptance.py",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/tests/e2e/test_demo_acceptance.py",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/tests/e2e/test_acceptance.py",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/tests/e2e/test_nonfunctional.py",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/package.json",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/AGENTS.md",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/CLAUDE.md",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/.github/workflows/ci.yml",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/.github/workflows/wiki.yml",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/tests/test_core_domain_boundary_contract.py",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/tests/test_alarm_ack_note_history_contract.py",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/tests/test_alarm_summary_ui_contract.py",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/tests/test_error_logging_quality_gate.py",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/tests/test_operational_events.py",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/tests/test_project_package.py",
+        "https://github.com/circulation95/PureIron_ignition/tree/legacy-final/backend/src/pureiron/operational",
+        "docs/runbooks/poc-browser-smoke.md",
+        "docs/runbooks/agent-troubleshooting-answer-quality.md"
+      ],
+      "status": "canonical",
+      "title": "Testing SOT — 검증 계층·명령·게이트"
+    }
+  ],
+  "generated_by": "scripts/wiki.py build",
+  "outputs": [
+    "docs/LLM_WIKI.md",
+    "docs/wiki/_generated/agent-context.md",
+    "docs/wiki/_generated/llms-full.md",
+    "docs/wiki/_generated/llms.txt",
+    "docs/wiki/_generated/section-index.tsv",
+    "docs/wiki/_generated/sot-drift-report.md"
+  ],
+  "section_index": "docs/wiki/_generated/section-index.tsv"
+}

@@ -1,0 +1,88 @@
+[
+  {
+    "id": 3,
+    "type_id": "PUMP",
+    "path": "[modbus_test]CoffeeTank/Pumps/PMP101",
+    "description": "Extraction transfer pump",
+    "parameter_values": {
+      "Device": "modbus_test",
+      "Run_Command_Addr": 300,
+      "Running_FB_Addr": 301,
+      "Fault_Addr": 302,
+      "Pressure_Addr": 310,
+      "Flow_Addr": 312
+    },
+    "tag_overrides": {},
+    "tags": []
+  },
+  {
+    "id": 4,
+    "type_id": "PUMP",
+    "path": "[modbus_test]CoffeeTank/Pumps/PMP102",
+    "description": "Extraction CIP circulation pump",
+    "parameter_values": {
+      "Device": "modbus_test",
+      "Run_Command_Addr": 320,
+      "Running_FB_Addr": 321,
+      "Fault_Addr": 322,
+      "Pressure_Addr": 330,
+      "Flow_Addr": 332
+    },
+    "tag_overrides": {
+      "Fault": {
+        "dataType": "Int32"
+      }
+    }
+  },
+  {
+    "id": 1,
+    "type_id": "VALVE",
+    "path": "[modbus_test]CoffeeTank/Valves/VLV101",
+    "description": "Extraction feed inlet valve",
+    "parameter_values": {
+      "Device": "modbus_test",
+      "Auto_Manual_Addr": 200,
+      "A_Status_Addr": 201,
+      "Manual_Command_Addr": 202,
+      "Auto_Command_Addr": 203,
+      "Trip_Addr": 204,
+      "B_Status_Addr": 205
+    },
+    "tag_overrides": {}
+  },
+  {
+    "id": 2,
+    "type_id": "VALVE",
+    "path": "[modbus_test]CoffeeTank/Valves/VLV102",
+    "description": "Extraction storage outlet valve",
+    "parameter_values": {
+      "Device": "modbus_test",
+      "Auto_Manual_Addr": 210,
+      "A_Status_Addr": 211,
+      "Manual_Command_Addr": 212,
+      "Auto_Command_Addr": 213,
+      "Trip_Addr": 214,
+      "B_Status_Addr": 215
+    },
+    "tag_overrides": {
+      "test": {
+        "value": "1"
+      }
+    }
+  },
+  {
+    "id": 5,
+    "type_id": "PUMP",
+    "path": "[modbus_test]test",
+    "description": "",
+    "parameter_values": {
+      "Device": "",
+      "Run_Command_Addr": 0,
+      "Running_FB_Addr": 1,
+      "Fault_Addr": 2,
+      "Pressure_Addr": 10,
+      "Flow_Addr": 12
+    },
+    "tag_overrides": {}
+  }
+]

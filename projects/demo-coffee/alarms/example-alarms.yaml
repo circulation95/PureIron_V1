@@ -1,0 +1,25 @@
+alarms:
+  - name: "Tank1-Level-High"
+    tag_path: "[Memory]Plant/Tank1/Level"
+    alarm_type: AboveSetpoint
+    setpoint: 8.0
+    deadband: 0.5
+    on_delay_s: 2.0
+    priority: High
+    description: "Tank 1 level high alarm"
+
+  - name: "Tank1-Level-HiHi"
+    tag_path: "[Memory]Plant/Tank1/Level"
+    alarm_type: AboveSetpoint
+    setpoint: 9.5
+    deadband: 0.3
+    priority: Critical
+    description: "Tank 1 level high-high alarm"
+
+  - name: "Tank1-Level-Low"
+    tag_path: "[Memory]Plant/Tank1/Level"
+    alarm_type: BelowSetpoint
+    setpoint: 1.0
+    deadband: 0.2
+    priority: Medium
+    description: "Tank 1 level low alarm"

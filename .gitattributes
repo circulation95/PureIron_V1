@@ -1,0 +1,6 @@
+# LLM Wiki SOT 시스템: 생성물 byte-freshness 검사가 OS 간에 안정적이도록 LF 고정.
+# (autocrlf=true 환경에서 CRLF 체크아웃 시 wiki.py check 의 byte 비교가 깨지는 것을 방지)
+docs/wiki/**            text eol=lf
+docs/LLM_WIKI.md        text eol=lf
+.githooks/pre-commit    text eol=lf
+scripts/wiki.py         text eol=lf

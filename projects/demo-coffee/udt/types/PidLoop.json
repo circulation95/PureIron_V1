@@ -1,0 +1,2387 @@
+{
+  "name": "PidLoop",
+  "description": "PID 루프 (CD/CV/PCD/PP/TCD/BL/SCR)",
+  "parameters": {
+    "Device": {
+      "dataType": "String",
+      "default_value": ""
+    }
+  },
+  "tags": [
+    {
+      "name": "PIW_452",
+      "description": "NH3 FEEDBACK",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 1320,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PLC_MIN",
+      "description": "SCR_PLC_HOUR",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 45,
+        "offset": 42,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PLC_HOUR",
+      "description": "SCR_PLC_HOUR",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 45,
+        "offset": 40,
+        "bit": 0,
+        "data_type": "WORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_448",
+      "description": "DUCT PRESSURE TRANSMITTER",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 1280,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "LL_SET",
+      "description": "C/D  #3 Stack LL Set",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 1264,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": -999999.0,
+      "engineeringHighLimit": 999999.0
+    },
+    {
+      "name": "LO_SET",
+      "description": "C/D  #3 Stack L Set",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 1260,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": -999999.0,
+      "engineeringHighLimit": 999999.0
+    },
+    {
+      "name": "HI_SET",
+      "description": "C/D  #3 Stack H Set",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 1256,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": -999999.0,
+      "engineeringHighLimit": 999999.0
+    },
+    {
+      "name": "HH_SET",
+      "description": "C/D  #3 Stack HH Set",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 1252,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": -999999.0,
+      "engineeringHighLimit": 999999.0
+    },
+    {
+      "name": "SCALE_LO",
+      "description": "C/D  #3 Stack Scale L Limit",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 1248,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": -999999.0,
+      "engineeringHighLimit": 999999.0
+    },
+    {
+      "name": "SCALE_HI",
+      "description": "C/D  #3 Stack Scale H Limit",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 1244,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": -999999.0,
+      "engineeringHighLimit": 999999.0
+    },
+    {
+      "name": "PIW_446",
+      "description": "CNT. DAMPER PV (STACK #3)",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 1240,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_460",
+      "description": "SPARE",
+      "dataType": "Float64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_462",
+      "description": "SPARE",
+      "dataType": "Float64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_456",
+      "description": "SPARE",
+      "dataType": "Float64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_458",
+      "description": "SPARE",
+      "dataType": "Float64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_454",
+      "description": "SPARE",
+      "dataType": "Float64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_426",
+      "description": "SPARE",
+      "dataType": "Float64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_402",
+      "description": "SPARE",
+      "dataType": "Float64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PV",
+      "description": "C/D  #3 Stack PV",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 1240,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_444",
+      "description": "CNT. DAMPER PV (STACK #2)",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 1200,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_442",
+      "description": "CNT. DAMPER PV (STACK #1)",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 1160,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_440",
+      "description": "CNT. DAMPER PV (COOL AIR FAN #2 OUTLET)",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 1120,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_438",
+      "description": "CNT. DAMPER PV (COOL AIR FAN #1 OUTLET)",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 1080,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_436",
+      "description": "CNT. DAMPER PV (STACK #3 DUCT)",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 1040,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_434",
+      "description": "CNT. DAMPER PV (STACK #2 DUCT)",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 1000,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_432",
+      "description": "CNT. DAMPER PV (E/H OUTLET)",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 960,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_430",
+      "description": "AMMONIA DAILY TANK LEVEL TRANSMITTER",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 920,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_428",
+      "description": "NOx ANALYZER",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 880,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_450",
+      "description": "CNT. DAMPER FEEDBACK  MAIN FAN INLET",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 840,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_424",
+      "description": "AMMONIA DOSING FLOW TRANSMITTER",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 800,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_422",
+      "description": "SCR REACTOR DIFF.PRESSURE TRANSMITTER",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 760,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_420",
+      "description": "STACK #3 DUCT PRESSURE TRANSMITTER",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 720,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_418",
+      "description": "STACK #2 DUCT PRESSURE TRANSMITTER",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 680,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_416",
+      "description": "STACK #1 DUCT PRESSURE TRANSMITTER",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 640,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_414",
+      "description": "AMMONIA DOSING PUMP #F SPEED FEEDBACK",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 560,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_412",
+      "description": "AMMONIA DOSING PUMP #E SPEED FEEDBACK",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 520,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_410",
+      "description": "AMMONIA DOSING PUMP #D SPEED FEEDBACK",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 480,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_408",
+      "description": "AMMONIA DOSING PUMP #C SPEED FEEDBACK",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 440,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_406",
+      "description": "AMMONIA DOSING PUMP #B SPEED FEEDBACK",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 400,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_404",
+      "description": "AMMONIA DOSING PUMP #A SPEED FEEDBACK",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 360,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_400",
+      "description": "MAIN FAN SPEED FEEDBACK",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 320,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_398",
+      "description": "MAIN FAN OUTLET TEMP.",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 280,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_396",
+      "description": "MAIN FAN BEARING TEMP.",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 240,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_394",
+      "description": "#3 H/E OUTLET TEMP",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 200,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_392",
+      "description": "ROASTER #3 STACK DUCT TEMP.",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 160,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_390",
+      "description": "#2 H/E OUTLET TEMP",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 120,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_388",
+      "description": "ROASTER #2 STACK DUCT TEMP.",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 80,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_386",
+      "description": "ROASTER #1 STACK DUCT TEMP.",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 40,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PIW_384",
+      "description": "AMMONIA SEAL TANK TEMP.",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 0,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PID_TD",
+      "description": "PCD103  #3 Stack Duct Outlet DI : 미분제",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 628,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PID_TI",
+      "description": "PCD103  #3 Stack Duct Outlet I : 적분제",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 624,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 999.0
+    },
+    {
+      "name": "PID_GAIN",
+      "description": "PCD103  #3 Stack Duct Outlet GAIN(P : 비",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 620,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PID_CYC",
+      "description": "PCD103  #3 Stack Duct Outlet CYCLE TIME",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 616,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PID_LMN",
+      "description": "PCD103  #3 Stack Duct Outlet OUT",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 612,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PID_MAN",
+      "description": "PCD103  #3 Stack Duct Outlet 수동 출력",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 608,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PID_SP",
+      "description": "PCD103  #3 Stack Duct Outlet SP",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 604,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": -200.0,
+      "engineeringHighLimit": 200.0
+    },
+    {
+      "name": "PQW_502",
+      "description": "CTR. DAMPER CMD (STACK#3 DUCT)",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 600,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PID_PV",
+      "description": "PCD103  #3 Stack Duct Outlet PV",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 600,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": -200.0,
+      "engineeringHighLimit": 200.0
+    },
+    {
+      "name": "PQW_500",
+      "description": "CTR. DAMPER CMD (STACK#2 DUCT)",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 560,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PQW_498",
+      "description": "CTR. DAMPER CMD (STACK#1 DUCT)",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 520,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PQW_496",
+      "description": "CTR. DAMPER CMD (STACK #3)",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 480,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PQW_486",
+      "description": "CTR. DAMPER CMD (STACK #2)",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 440,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PQW_484",
+      "description": "CTR. DAMPER CMD (STACK #1)",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 400,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PQW_482",
+      "description": "CTR. DAMPER CMD (COOL AIR FAN #2 OUTLET)",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 360,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PQW_480",
+      "description": "CTR. DAMPER CMD (COOL AIR FAN #1 OUTLET)",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 320,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PQW_470",
+      "description": "MAIN FAN BY-PASS DAMPER OPN/CLS COMMEND",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 280,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PQW_468",
+      "description": "AMMONIA DOSING PUMP #F SPEED CMD",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 240,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PQW_466",
+      "description": "AMMONIA DOSING PUMP #E SPEED CMD",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 200,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PQW_464",
+      "description": "AMMONIA DOSING PUMP #D SPEED CMD",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 160,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PQW_454",
+      "description": "AMMONIA DOSING PUMP #C SPEED CMD",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 120,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PQW_452",
+      "description": "AMMONIA DOSING PUMP #B SPEED CMD",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 80,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PQW_450",
+      "description": "AMMONIA DOSING PUMP #A SPEED CMD",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 40,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PQW_448",
+      "description": "MAIN FAN SPEED CMD",
+      "dataType": "Int64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 0,
+        "bit": 0,
+        "data_type": "DWORD"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "HH_ALM_ENABLE",
+      "description": "Ammonia Dosing Pump(F) Speed. HH ALARM E",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 588,
+        "bit": 4,
+        "data_type": "BOOL"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "LOW",
+      "description": "Ammonia Dosing Pump(F) Speed. LOW LEVEL",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 588,
+        "bit": 2,
+        "data_type": "BOOL"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "HIGH",
+      "description": "Ammonia Dosing Pump(F) Speed. HIGH LEVEL",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 588,
+        "bit": 1,
+        "data_type": "BOOL"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "LL_ALM_ENABLE",
+      "description": "Ammonia Dosing Pump(E) Speed. LL ALARM E",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 3,
+        "offset": 548,
+        "bit": 5,
+        "data_type": "BOOL"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q137",
+      "description": "SPARE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "PID_PS",
+      "description": "MAIN FAN Speed 비례제어",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 32,
+        "bit": 1,
+        "data_type": "BOOL"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "PID_IS",
+      "description": "MAIN FAN Speed 적분제어",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 32,
+        "bit": 2,
+        "data_type": "BOOL"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "PID_DS",
+      "description": "MAIN FAN Speed 미분제어",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 32,
+        "bit": 3,
+        "data_type": "BOOL"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "PID_ALARM",
+      "description": "PCD104 CONTROL VALVE ALARM",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 312,
+        "bit": 4,
+        "data_type": "BOOL"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I00",
+      "description": "F.D FAN INV RUN",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I01",
+      "description": "COOLING AIR FAN #A RUN",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I02",
+      "description": "COOLING AIR FAN #B RUN",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I03",
+      "description": "AMMONIA DOSING PUMP(A) RUN",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I04",
+      "description": "AMMONIA DOSING PUMP(B) RUN",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I05",
+      "description": "AMMONIA DOSING PUMP(C) RUN",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I06",
+      "description": "AMMONIA DOSING PUMP(D) RUN",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I07",
+      "description": "AMMONIA DOSING PUMP(E) RUN",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I10",
+      "description": "AMMONIA DOSING PUMP(F) RUN",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I11",
+      "description": "HEATER(A) RUN",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I12",
+      "description": "AMMONIA TRANSFER PUMP(A) RUN",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I13",
+      "description": "AMMONIA TRANSFER PUMP(B) RUN",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I14",
+      "description": "SPARE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I15",
+      "description": "SPARE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I16",
+      "description": "SPARE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I17",
+      "description": "SPARE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I20",
+      "description": "F.D FAN INV FAULT",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I21",
+      "description": "COOLING AIR FAN #A FAULT",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I22",
+      "description": "COOLING AIR FAN #B FAULT",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I23",
+      "description": "AMMONIA DOSING PUMP(A) FAULT",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I24",
+      "description": "AMMONIA DOSING PUMP(B) FAULT",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I25",
+      "description": "AMMONIA DOSING PUMP(C) FAULT",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I26",
+      "description": "AMMONIA DOSING PUMP(D) FAULT",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I27",
+      "description": "AMMONIA DOSING PUMP(E) FAULT",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I30",
+      "description": "AMMONIA DOSING PUMP(F) FAULT",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I31",
+      "description": "SPARE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I32",
+      "description": "AMMONIA TRANSFER PUMP(A) FAULT",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I33",
+      "description": "AMMONIA TRANSFER PUMP(B) FAULT",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I34",
+      "description": "SPARE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I35",
+      "description": "SPARE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I36",
+      "description": "SPARE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I37",
+      "description": "SPARE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I40",
+      "description": "F.D FAN REMOTE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I41",
+      "description": "COOLING AIR FAN #A REMOTE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I42",
+      "description": "COOLING AIR FAN #B REMOTE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I43",
+      "description": "AMMONIA DOSING PUMP(A) REMOTE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I44",
+      "description": "AMMONIA DOSING PUMP(B) REMOTE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I45",
+      "description": "AMMONIA DOSING PUMP(C) REMOTE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I46",
+      "description": "AMMONIA DOSING PUMP(D) REMOTE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I47",
+      "description": "AMMONIA DOSING PUMP(E) REMOTE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I50",
+      "description": "AMMONIA DOSING PUMP(F) REMOTE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I51",
+      "description": "HEATER(A) REMOTE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I52",
+      "description": "AMMONIA TRANSFER PUMP(A) REMOTE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I53",
+      "description": "AMMONIA TRANSFER PUMP(B) REMOTE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I54",
+      "description": "AMMONIA DAILY T/K LEVEL SWITCH H,HIGH",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I55",
+      "description": "AMMONIA STORAGE T/K LEVEL LOW",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I56",
+      "description": "SPARE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I57",
+      "description": "SPARE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I60",
+      "description": "ON/OFF 3WAY VALVE OPEN LIMIT",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I61",
+      "description": "ON/OFF 3WAY VALVE CLOSE LIMIT",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I62",
+      "description": "COMPRESSURE AIR PRESSURE SWITCH LOW",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I63",
+      "description": "AMMONIA FLOW PULSE SIGNAL",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I64",
+      "description": "NOx ANALYZER MAL FAULT",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I65",
+      "description": "NOx ANALYZER FAULT",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I66",
+      "description": "NOx ANALYZER CALIBRATION",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I67",
+      "description": "NOx ANALYZER LOW PRESSURE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I70",
+      "description": "AUTO START PB",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I71",
+      "description": "AUTO START PB",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I72",
+      "description": "EMERGENCY STOP P.B",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I73",
+      "description": "FAULT RESET / BUZZER STOP",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I74",
+      "description": "MANUAL SELECT",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I75",
+      "description": "AUTO SELECT",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I76",
+      "description": "SPARE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "I77",
+      "description": "SPARE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "PLC_TIME_BIT",
+      "description": "",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q100",
+      "description": "F.D FAN RUN COMMAND",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q101",
+      "description": "COOLING AIR FAN #1 RUN COMMAND",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q102",
+      "description": "COOLING AIR FAN #1 RUN COMMAND",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q103",
+      "description": "AMMONIA DOSING PUMP(A) RUN COMMAND",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q104",
+      "description": "AMMONIA DOSING PUMP(B) RUN COMMAND",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q105",
+      "description": "AMMONIA DOSING PUMP(C) RUN COMMAND",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q106",
+      "description": "AMMONIA DOSING PUMP(D) RUN COMMAND",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q107",
+      "description": "AMMONIA DOSING PUMP(E) RUN COMMAND",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q110",
+      "description": "AMMONIA DOSING PUMP(F) RUN COMMAND",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q111",
+      "description": "HEATER(A) RUN COMMEND",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q112",
+      "description": "COMP. AIR SUP SOL V/V OPEN COMMAND",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q113",
+      "description": "AMMONIA SUP 3WAY V/V OPEN COMMAND",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q114",
+      "description": "AMMONIA TRANS. PUMP(A) RUN COMMAND",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q115",
+      "description": "AMMONIA TRANS. PUMP(B) RUN COMMAND",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q116",
+      "description": "SPARE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q117",
+      "description": "COMP. AIR SUPPLY SOL V/V OPEN COMMAND",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q120",
+      "description": "SYSTEM AUTO START PL",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q121",
+      "description": "SYSTEM AUTO STOP PL",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q122",
+      "description": "BUZZER",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q123",
+      "description": "FAULT LAMP",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q124",
+      "description": "CNT. DAMPER PCD101",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q125",
+      "description": "CNT. DAMPER PCD102",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q126",
+      "description": "CNT. DAMPER PCD103",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q127",
+      "description": "CNT. DAMPER PCD104",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q130",
+      "description": "SPARE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q131",
+      "description": "SPARE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q132",
+      "description": "SPARE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q133",
+      "description": "SPARE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q134",
+      "description": "SPARE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q135",
+      "description": "SPARE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "Q136",
+      "description": "SPARE",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "PID_AM",
+      "description": "MAIN FAN Speed A/M",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 4,
+        "offset": 32,
+        "bit": 0,
+        "data_type": "BOOL"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "HH_ALM",
+      "description": "C/D  #2 Stack HH ALARM",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "TRIP",
+      "description": "AMMONIA DOSING PUMP(E) FAULT",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "LL_ALM",
+      "description": "MAIN FAN Speed. LL ALARM",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "PID_PV_ETR",
+      "description": "C/D For #3 Stack PV",
+      "dataType": "Float64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PID_SP_ETR",
+      "description": "C/D For #1 Stack SP",
+      "dataType": "Float64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    },
+    {
+      "name": "PID_LMN_ETR",
+      "description": "C/D For #1 Stack OUT",
+      "dataType": "Float64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": null,
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 100.0
+    }
+  ]
+}

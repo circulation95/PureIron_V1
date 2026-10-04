@@ -1,0 +1,12 @@
+[
+  {
+    "name": "simulation1",
+    "type": "Simulator",
+    "hostname": "127.0.0.1",
+    "port": 0,
+    "config": {
+      "demo_role": "GBRB process tag simulator",
+      "demo_note": "Intentional built-in simulator device; expected to be online in the default demo."
+    }
+  }
+]

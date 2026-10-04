@@ -1,0 +1,4449 @@
+{
+  "name": "RoasterRecipeAG6",
+  "description": "Roaster AG6 레시피 데이터",
+  "parameters": {
+    "Device": {
+      "dataType": "String",
+      "default_value": ""
+    }
+  },
+  "tags": [
+    {
+      "name": "TEMPROESTKAMMERREAL",
+      "description": "",
+      "dataType": "Float64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 832,
+        "bit": 0,
+        "data_type": "REAL"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 2500000000.0
+    },
+    {
+      "name": "TEMPKUEHLKAMMERREAL",
+      "description": "",
+      "dataType": "Float64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 828,
+        "bit": 0,
+        "data_type": "REAL"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 2500000000.0
+    },
+    {
+      "name": "SOLLWERT79_REAL",
+      "description": "",
+      "dataType": "Float64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 824,
+        "bit": 0,
+        "data_type": "REAL"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 2500000000.0
+    },
+    {
+      "name": "SOLLWERT78_REAL",
+      "description": "",
+      "dataType": "Float64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 820,
+        "bit": 0,
+        "data_type": "REAL"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 2500000000.0
+    },
+    {
+      "name": "SOLLWERT77_REAL",
+      "description": "",
+      "dataType": "Float64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 816,
+        "bit": 0,
+        "data_type": "REAL"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 2500000000.0
+    },
+    {
+      "name": "SOLLWERT76_REAL",
+      "description": "",
+      "dataType": "Float64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 812,
+        "bit": 0,
+        "data_type": "REAL"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 2500000000.0
+    },
+    {
+      "name": "SOLLWERT75_REAL",
+      "description": "",
+      "dataType": "Float64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 808,
+        "bit": 0,
+        "data_type": "REAL"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 2500000000.0
+    },
+    {
+      "name": "ROASTGRADREAL",
+      "description": "RS16_AG6_R?tgradReal",
+      "dataType": "Float64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 804,
+        "bit": 0,
+        "data_type": "REAL"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 2500000000.0
+    },
+    {
+      "name": "MINWERT22_REAL",
+      "description": "",
+      "dataType": "Float64",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 800,
+        "bit": 0,
+        "data_type": "REAL"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 2500000000.0
+    },
+    {
+      "name": "SOLLWERT79",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 580,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT78",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 578,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT77",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 576,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT76",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 574,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT75",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 572,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT74",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 570,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT73",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 568,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT72",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 566,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT71",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 564,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT70",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 562,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT69",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 560,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT68",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 558,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT67",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 556,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT66",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 554,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT65",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 552,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT64",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 550,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT63",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 548,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT62",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 546,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT61",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 544,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT60",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 542,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT59",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 540,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT58",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 538,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT57",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 536,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT56",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 534,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT55",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 532,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT54",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 530,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT53",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 528,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT52",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 526,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT51",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 524,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT50",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 522,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT49",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 520,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT48",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 518,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT47",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 516,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT46",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 514,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT45",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 512,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT44",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 510,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT43",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 508,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT42",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 506,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT41",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 504,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT40",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 502,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT39",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 500,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT38",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 498,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT37",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 496,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT36",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 494,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT35",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 492,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT34",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 490,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT33",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 488,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT32",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 486,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT31",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 484,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT30",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 482,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT29",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 480,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT28",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 478,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT27",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 476,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT26",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 474,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT25",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 472,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT24",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 470,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT23",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 468,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT22",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 466,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT21",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 464,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT20",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 462,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT19",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 460,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT18",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 458,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT17",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 456,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT16",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 454,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT15",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 452,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT14",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 450,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT13",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 448,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT12",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 446,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT11",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 444,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT10",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 442,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT09",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 440,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT08",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 438,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT07",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 436,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT06",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 434,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT05",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 432,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT04",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 430,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT03",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 428,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT02",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 426,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "SOLLWERT01",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 424,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "REZEPTNUMMER",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 422,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "PLATZHALTER",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 420,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT79",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 418,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT78",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 416,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT77",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 414,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT76",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 412,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT75",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 410,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT74",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 408,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT73",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 406,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT72",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 404,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT71",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 402,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT70",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 400,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT69",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 398,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT68",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 396,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT67",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 394,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT66",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 392,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT65",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 390,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT64",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 388,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT63",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 386,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT62",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 384,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT61",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 382,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT60",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 380,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT59",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 378,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT58",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 376,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT57",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 374,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT56",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 372,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT55",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 370,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT54",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 368,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT53",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 366,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT52",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 364,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT51",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 362,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT50",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 360,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT49",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 358,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT48",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 356,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT47",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 354,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT46",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 352,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT45",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 350,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT44",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 348,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT43",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 346,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT42",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 344,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT41",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 342,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT40",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 340,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT39",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 338,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT38",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 336,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT37",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 334,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT36",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 332,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT35",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 330,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT34",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 328,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT33",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 326,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT32",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 324,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT31",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 322,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT30",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 320,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT29",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 318,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT28",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 316,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT27",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 314,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT26",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 312,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT25",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 310,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT24",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 308,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT23",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 306,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT22",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 304,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT21",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 302,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT20",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 300,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT19",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 298,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT18",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 296,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT17",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 294,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT16",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 292,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT15",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 290,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT14",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 288,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT13",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 286,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT12",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 284,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT11",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 282,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT10",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 280,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT09",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 278,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT08",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 276,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT07",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 274,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT06",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 272,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT05",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 270,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT04",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 268,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT03",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 266,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT02",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 264,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MINWERT01",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 262,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT79",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 260,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT78",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 258,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT77",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 256,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT76",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 254,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT75",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 252,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT74",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 250,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT73",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 248,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT72",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 246,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT71",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 244,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT70",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 242,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT69",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 240,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT68",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 238,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT67",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 236,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT66",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 234,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT65",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 232,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT64",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 230,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT63",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 228,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT62",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 226,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT61",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 224,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT60",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 222,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT59",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 220,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT58",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 218,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT57",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 216,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT56",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 214,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT55",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 212,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT54",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 210,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT53",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 208,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT52",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 206,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT51",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 204,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT50",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 202,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT49",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 200,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT48",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 198,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT47",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 196,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT46",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 194,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT45",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 192,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT44",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 190,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT43",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 188,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT42",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 186,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT41",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 184,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT40",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 182,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT39",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 180,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT38",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 178,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT37",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 176,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT36",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 174,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT35",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 172,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT34",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 170,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT33",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 168,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT32",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 166,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT31",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 164,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT30",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 162,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT29",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 160,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT28",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 158,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT27",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 156,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT26",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 154,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT25",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 152,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT24",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 150,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT23",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 148,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT22",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 146,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT21",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 144,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT20",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 142,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT19",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 140,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT18",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 138,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT17",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 136,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT16",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 134,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT15",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 132,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT14",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 130,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT13",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 128,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT12",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 126,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT11",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 124,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT10",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 122,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT09",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 120,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT08",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 118,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT07",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 116,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT06",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 114,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT05",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 112,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT04",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 110,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT03",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 108,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT02",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 106,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "MAXWERT01",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 104,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "INPUT",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 102,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "INFOFILE",
+      "description": "",
+      "dataType": "Int32",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 100,
+        "bit": 0,
+        "data_type": "INT"
+      },
+      "engineeringLowLimit": -32767.0,
+      "engineeringHighLimit": 32768.0
+    },
+    {
+      "name": "AKTUAL",
+      "description": "",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 0,
+        "bit": 0,
+        "data_type": "BOOL"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "D932_TEMPFILTER",
+      "description": "",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 0,
+        "bit": 1,
+        "data_type": "BOOL"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "DATARETURN",
+      "description": "AG6_Daten?ern",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 0,
+        "bit": 2,
+        "data_type": "BOOL"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "GELADEN",
+      "description": "",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 0,
+        "bit": 3,
+        "data_type": "BOOL"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "GESICHERT",
+      "description": "",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 0,
+        "bit": 4,
+        "data_type": "BOOL"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "X82_0_STATUS",
+      "description": "AG6_X82_0_Status_Vorwaerm_ein",
+      "dataType": "Boolean",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 0,
+        "bit": 5,
+        "data_type": "BOOL"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "DATEINAME",
+      "description": "",
+      "dataType": "String",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 1010,
+        "bit": 60,
+        "data_type": "BYTE"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "DATEINAMEPMS",
+      "description": "",
+      "dataType": "String",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 1070,
+        "bit": 60,
+        "data_type": "BYTE"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "REZ_STR",
+      "description": "",
+      "dataType": "String",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 1130,
+        "bit": 10,
+        "data_type": "BYTE"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "REZEPTNAME",
+      "description": "",
+      "dataType": "String",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 1140,
+        "bit": 40,
+        "data_type": "BYTE"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    },
+    {
+      "name": "REZEPTNAME_AKTUELL",
+      "description": "",
+      "dataType": "String",
+      "valueSource": "opc",
+      "opcServer": "{Device}",
+      "opcAddressConfig": {
+        "protocol": "s7",
+        "area": "DB",
+        "db_number": 1005,
+        "offset": 1180,
+        "bit": 40,
+        "data_type": "BYTE"
+      },
+      "engineeringLowLimit": 0.0,
+      "engineeringHighLimit": 0.0
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# Local agent/tool state
+.omc/
+.moai/
+.claude/settings.local.json
+
+# 리뷰 증거 스크린샷은 커밋하지 않는다 (agent-rules `작업 증거 규율`)
+docs/pr-evidence/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,0 +1,26 @@
+# PureIron Wiki
+
+> PureIron 문서의 **단일 정본(Source of Truth) 허브**. 사람과 LLM 에이전트 모두 이 위키를 기준으로 삼는다. 루트 `README.md`·`AGENTS.md`·`CLAUDE.md`는 이 위키로 연결되는 짧은 진입점/투영(projection)이다.
+
+## SOT
+- [Agent Rules SOT — 에이전트 작업 규칙](docs/wiki/sot/agent-rules.md): LLM 에이전트가 PureIron에서 작업할 때 따르는 규칙의 **정본**이다.
+- [API & Events SOT — 라우터·이벤트 계약](docs/wiki/sot/api-events.md): PureIron의 REST prefix, WebSocket wire protocol, Chat SSE event, 내부 event bus topic 계약이다.
+- [Architecture SOT — 시스템 구조](docs/wiki/sot/architecture.md): PureIron은 단일 FastAPI 백엔드 + 단일 React 프론트엔드 + PostgreSQL(TimescaleDB + pgvector) + Redis로 구성된 모놀리식 Web HMI/SCADA 서버다.
+- [Data Contracts SOT — DB·설정 스키마](docs/wiki/sot/data-contracts.md): PureIron의 DB 스키마와 YAML/JSON 설정 파일 계약이다.
+- [Frontend SOT — React·Jotai·SCADA UI·3D Twin](docs/wiki/sot/frontend.md): 이 문서는 PureIron frontend의 **구조·상태·실시간·UI 작업 규칙**에 대한 정본이다. 상세 구현은 `frontend/src/**`가 정본이고, `frontend/AGENTS.md`와 `frontend/CLAUDE.md`는 도구별 operational cheat sheet다.
+- [MES/Schedule SOT — v1 용어와 작업 플로우 계약](docs/wiki/sot/mes-schedule.md): 이 문서는 PureIron의 **MES-lite / Schedule 기능의 v1 고객 노출 용어와 사용자 플로우 계약의 정본**이다.
+- [Product SOT — 제품 의도](docs/wiki/sot/product.md): PureIron은 중소 제조업과 산업시설을 위한 경량 Web HMI/SCADA 플랫폼이다.
+- [Runtime Config SOT — 환경변수·설정](docs/wiki/sot/runtime-config.md): PureIron 런타임 설정의 정본은 `backend/src/pureiron/config.py`의 `Settings(BaseSettings)` 클래스다.
+- [Testing SOT — 검증 계층·명령·게이트](docs/wiki/sot/testing.md): 이 문서는 PureIron의 **검증 계층, 실행 명령, 변경 유형별 최소 게이트**에 대한 정본이다. 개별 테스트의 상세 assertion은 `backend/tests/**`, `backend/tests/e2e/**`, `tests/e2e/**`가 정본이다.
+
+## GTM
+- [First Contract — 첫 계약 GTM/PoC 결정 프레임](docs/wiki/gtm/first-contract.md): 이 문서는 PureIron의 **첫 유료 계약(PoC → 유료 전환)에 관한 결정의 정본 위치**다. 타깃 고객, PoC 패키지, 데모, 가격/패키징, 성공 기준, 제외 범위, 설비 안정성 FAQ를 여기서 다룬다.
+
+## Reports
+- [MVP Gap Audit — 첫 read-only PoC 기준 구현 격차](docs/wiki/reports/mvp-gap.md): 이 문서는 **첫 read-only PoC**([read-only-poc-proposal](../../sales/read-only-poc-proposal.md))를 실제로 수행하기 위해 현재 MVP 구현에서 부족한 부분을 코드/테스트/SOT 기준으로 점검한 **gap audit**이다.
+
+## ADR
+- [ADR — 아키텍처 결정 기록](docs/wiki/adr/index.md): 이 문서는 PureIron의 **바꾸면 안 되는 핵심 결정과 그 이유**를 모아두는 ADR 정본이다.
+
+## Archive
+- [(Archive) Legacy User Manual 포인터](docs/wiki/archive/manual-legacy.md): 원본 사용자 매뉴얼(`MANUAL.md`, 약 1,760줄, 한국어)은 **삭제하지 않고 legacy archive로 유지**한다. 이 문서는 포인터 + 주제→SOT 추출 맵이며 본문을 복사하지 않는다. `status: archive`이므로 `llms-full.md` 생성 입력에서 제외된다.

@@ -1,0 +1,190 @@
+# PureIron Wiki Section Index — 생성물. `python scripts/wiki.py build`로 갱신.
+#
+# 용도: 큰 SOT 문서를 통째로 읽지 말고 필요한 절만 읽는다.
+#   1) Grep 으로 이 파일에서 키워드를 찾는다 (매칭 줄만 반환됨).
+#   2) 그 줄의 path/offset/limit 으로 Read(path, offset=offset, limit=limit).
+#
+# 열: doc_id	path	anchor	offset	limit	bytes	level	heading
+#   offset/limit = 파일 전체 기준 1-indexed 시작 줄 / 줄 수 (Read 인자 그대로)
+#   bytes        = 해당 절을 읽는 비용 (한국어는 대략 1.5~2바이트/토큰)
+adr-index	docs/wiki/adr/index.md	architecture-decision-records	19	402	18651	h1	Architecture Decision Records
+adr-index	docs/wiki/adr/index.md	1-adr-경계	25	15	723	h2	1. ADR 경계
+adr-index	docs/wiki/adr/index.md	2-제품사업을-기준으로-한-최상위-결정	40	12	917	h2	2. 제품·사업을 기준으로 한 최상위 결정
+adr-index	docs/wiki/adr/index.md	3-기술-adr-요약	52	20	1492	h2	3. 기술 ADR 요약
+adr-index	docs/wiki/adr/index.md	adr-001-no-orm	72	18	712	h2	ADR-001: No ORM
+adr-index	docs/wiki/adr/index.md	adr-002-no-plugin-system	90	18	1391	h2	ADR-002: No Plugin System
+adr-index	docs/wiki/adr/index.md	adr-003-no-premature-abstract-base-classes	108	18	818	h2	ADR-003: No Premature Abstract Base Classes
+adr-index	docs/wiki/adr/index.md	adr-004-yaml--rest-config-only	126	18	769	h2	ADR-004: YAML + REST Config Only
+adr-index	docs/wiki/adr/index.md	adr-005-fixed-expression-function-set	144	18	697	h2	ADR-005: Fixed Expression Function Set
+adr-index	docs/wiki/adr/index.md	adr-006-auto-migrations-on-boot	162	18	674	h2	ADR-006: Auto-migrations on Boot
+adr-index	docs/wiki/adr/index.md	adr-007-scadagateway-singleton-no-appstate	180	18	789	h2	ADR-007: ScadaGateway Singleton, No `app.state`
+adr-index	docs/wiki/adr/index.md	adr-008-graceful-degradation	198	18	814	h2	ADR-008: Graceful Degradation
+adr-index	docs/wiki/adr/index.md	adr-009-tagstore-lock-discipline	216	17	724	h2	ADR-009: TagStore Lock Discipline
+adr-index	docs/wiki/adr/index.md	adr-010-event-driven-tag-updates	233	18	720	h2	ADR-010: Event-driven Tag Updates
+adr-index	docs/wiki/adr/index.md	adr-011-frontend-typescript-strictness	251	18	769	h2	ADR-011: Frontend TypeScript Strictness
+adr-index	docs/wiki/adr/index.md	adr-012-tag-definition-db-sot-runtime-value-volatile	269	18	758	h2	ADR-012: Tag Definition DB SoT, Runtime Value Volatile
+adr-index	docs/wiki/adr/index.md	adr-013-v1-does-not-replace-existing-plc-control	287	18	806	h2	ADR-013: v1 Does Not Replace Existing PLC Control
+adr-index	docs/wiki/adr/index.md	adr-014-simulator3d-twinagent-are-assistive-not-autonomous-control	305	18	897	h2	ADR-014: Simulator·3D Twin·Agent Are Assistive, Not Autonomous Control
+adr-index	docs/wiki/adr/index.md	adr-015-start-as-field-deployed-solution-not-finished-saas	323	18	875	h2	ADR-015: Start as Field-deployed Solution, Not Finished SaaS
+adr-index	docs/wiki/adr/index.md	adr-016-sot--projection--generated-boundary	341	18	806	h2	ADR-016: SOT / Projection / Generated Boundary
+adr-index	docs/wiki/adr/index.md	adr-017-operator-ui-over-marketing-ui	359	18	813	h2	ADR-017: Operator UI Over Marketing UI
+adr-index	docs/wiki/adr/index.md	adr-018-device-health-is-not-a-tag	377	18	915	h2	ADR-018: Device Health Is Not a Tag
+adr-index	docs/wiki/adr/index.md	4-새-adr-추가-규칙	395	26	455	h2	4. 새 ADR 추가 규칙
+archive-manual-legacy	docs/wiki/archive/manual-legacy.md	archive-legacy-user-manual	12	35	2432	h1	(Archive) Legacy User Manual
+archive-manual-legacy	docs/wiki/archive/manual-legacy.md	원본	16	4	150	h2	원본
+archive-manual-legacy	docs/wiki/archive/manual-legacy.md	주제--sot-추출-맵	20	24	1817	h2	주제 → SOT 추출 맵
+archive-manual-legacy	docs/wiki/archive/manual-legacy.md	상태	44	3	142	h2	상태
+gtm-first-contract	docs/wiki/gtm/first-contract.md	first-contract	14	273	24481	h1	First Contract
+gtm-first-contract	docs/wiki/gtm/first-contract.md	이-문서의-원천	22	6	292	h2	이 문서의 원천
+gtm-first-contract	docs/wiki/gtm/first-contract.md	결정-상태-표기	28	11	449	h2	결정 상태 표기
+gtm-first-contract	docs/wiki/gtm/first-contract.md	초기-타깃-고객-가설	39	10	1037	h2	초기 타깃 고객 가설
+gtm-first-contract	docs/wiki/gtm/first-contract.md	첫-구매자--진입-채널	49	8	884	h2	첫 구매자 / 진입 채널
+gtm-first-contract	docs/wiki/gtm/first-contract.md	고객-페인-요약	57	14	925	h2	고객 페인 (요약)
+gtm-first-contract	docs/wiki/gtm/first-contract.md	대표-고객--1순위-후보의-가장-큰-페인-확정-추가-창업자-인터뷰	65	6	560	h3	대표 고객 / 1순위 후보의 가장 큰 페인 (`확정`, 추가 창업자 인터뷰)
+gtm-first-contract	docs/wiki/gtm/first-contract.md	첫-계약-메시지	71	14	1374	h2	첫 계약 메시지
+gtm-first-contract	docs/wiki/gtm/first-contract.md	poc-제안서-구조	85	12	922	h2	PoC 제안서 구조
+gtm-first-contract	docs/wiki/gtm/first-contract.md	데모-시나리오-영업대표-미팅용-데모-패키지	97	12	1504	h2	데모 시나리오 (영업/대표 미팅용 데모 패키지)
+gtm-first-contract	docs/wiki/gtm/first-contract.md	poc-기간--투입	109	23	1420	h2	PoC 기간 / 투입
+gtm-first-contract	docs/wiki/gtm/first-contract.md	1단계-사전-데모--현장-점검--1주	113	9	540	h3	1단계: 사전 데모 / 현장 점검 — 1주
+gtm-first-contract	docs/wiki/gtm/first-contract.md	2단계-read-only-현장-poc--2주	122	10	722	h3	2단계: read-only 현장 PoC — 2주
+gtm-first-contract	docs/wiki/gtm/first-contract.md	가격--패키징	132	22	1901	h2	가격 / 패키징
+gtm-first-contract	docs/wiki/gtm/first-contract.md	가격-anchor-확정-추가-창업자-인터뷰	140	14	992	h3	가격 anchor (`확정`, 추가 창업자 인터뷰)
+gtm-first-contract	docs/wiki/gtm/first-contract.md	현장-설치-범위--제외-범위	154	41	2551	h2	현장 설치 범위 / 제외 범위
+gtm-first-contract	docs/wiki/gtm/first-contract.md	실제-현장-poc-기본-범위-확정-창업자-인터뷰	156	13	910	h3	실제 현장 PoC 기본 범위 (`확정`, 창업자 인터뷰)
+gtm-first-contract	docs/wiki/gtm/first-contract.md	첫-poc-plc--프로토콜--네트워크-원칙-확정-추가-창업자-인터뷰	169	9	924	h3	첫 PoC PLC / 프로토콜 / 네트워크 원칙 (`확정`, 추가 창업자 인터뷰)
+gtm-first-contract	docs/wiki/gtm/first-contract.md	제외-확정-창업자-인터뷰--productsotproductmdmvp-제외--제한--agent-rulessotagent-rulesmd제품-판단-원칙-정본	178	17	676	h3	제외 (`확정`, 창업자 인터뷰 + [product](../sot/product.md#mvp-제외--제한) · [agent-rules](../sot/agent-rules.md#제품-판단-원칙) 정본)
+gtm-first-contract	docs/wiki/gtm/first-contract.md	plc-제어-불간섭을-계약제안서에서-표현하는-법	195	9	1023	h2	PLC 제어 불간섭을 계약/제안서에서 표현하는 법
+gtm-first-contract	docs/wiki/gtm/first-contract.md	보안--데이터--설비-안정성-faq	204	15	1600	h2	보안 / 데이터 / 설비 안정성 FAQ
+gtm-first-contract	docs/wiki/gtm/first-contract.md	데이터-저장--배포-방식-확정-추가-창업자-인터뷰	219	15	1235	h2	데이터 저장 / 배포 방식 (`확정`, 추가 창업자 인터뷰)
+gtm-first-contract	docs/wiki/gtm/first-contract.md	중앙-관제--승인-기반-제어는-장기-방향-확정-v1첫-계약-범위-아님	226	8	836	h3	중앙 관제 / 승인 기반 제어는 장기 방향 (`확정`, v1/첫 계약 범위 아님)
+gtm-first-contract	docs/wiki/gtm/first-contract.md	poc-성공-기준과-유료-전환-조건	234	30	2155	h2	PoC 성공 기준과 유료 전환 조건
+gtm-first-contract	docs/wiki/gtm/first-contract.md	poc-성공-기준-후보-확정-후보군-구체-수치기간은-needs-founder-input	238	12	975	h3	PoC 성공 기준 후보 (`확정` 후보군, 구체 수치/기간은 `needs-founder-input`)
+gtm-first-contract	docs/wiki/gtm/first-contract.md	유료-전환-신호-후보-확정-후보군	250	8	423	h3	유료 전환 신호 후보 (`확정` 후보군)
+gtm-first-contract	docs/wiki/gtm/first-contract.md	유료-전환-조건-tbd--needs-founder-input	258	6	501	h3	유료 전환 조건 (`TBD` / `needs-founder-input`)
+gtm-first-contract	docs/wiki/gtm/first-contract.md	창업자-딥인터뷰-질문	264	13	2178	h2	창업자 딥인터뷰 질문
+gtm-first-contract	docs/wiki/gtm/first-contract.md	backlog--다음-단계	277	10	1411	h2	Backlog / 다음 단계
+wiki-index	docs/wiki/index.md	pureiron-wiki	12	62	3773	h1	PureIron Wiki
+wiki-index	docs/wiki/index.md	구획-문서-수명-기준	18	12	631	h2	구획 (문서 수명 기준)
+wiki-index	docs/wiki/index.md	sot-지도	30	22	1290	h2	SOT 지도
+wiki-index	docs/wiki/index.md	sot-외-구획	45	7	252	h3	SOT 외 구획
+wiki-index	docs/wiki/index.md	생성물-수기-편집-금지	52	11	900	h2	생성물 (수기 편집 금지)
+wiki-index	docs/wiki/index.md	도구	63	11	511	h2	도구
+report-mvp-gap	docs/wiki/reports/mvp-gap.md	mvp-gap-audit	22	83	18010	h1	MVP Gap Audit
+report-mvp-gap	docs/wiki/reports/mvp-gap.md	상태-분류-기준	34	9	464	h2	상태 분류 기준
+report-mvp-gap	docs/wiki/reports/mvp-gap.md	흐름별-현재-상태	43	15	6045	h2	흐름별 현재 상태
+report-mvp-gap	docs/wiki/reports/mvp-gap.md	교차cross-cutting-격차	58	8	2165	h2	교차(cross-cutting) 격차
+report-mvp-gap	docs/wiki/reports/mvp-gap.md	다음-구현-우선순위-issue-후보	66	14	6174	h2	다음 구현 우선순위 (issue 후보)
+report-mvp-gap	docs/wiki/reports/mvp-gap.md	다음-후보-backlog-잔여만	80	8	902	h2	다음 후보 backlog (잔여만)
+report-mvp-gap	docs/wiki/reports/mvp-gap.md	v1에서-유지되는-제외-backlog-낮춤	88	9	456	h2	v1에서 유지되는 제외 (backlog 낮춤)
+report-mvp-gap	docs/wiki/reports/mvp-gap.md	검증	97	8	147	h2	검증
+sot-agent-rules	docs/wiki/sot/agent-rules.md	agent-rules-sot	15	196	14352	h1	Agent Rules SOT
+sot-agent-rules	docs/wiki/sot/agent-rules.md	이-문서의-역할	23	33	2198	h2	이 문서의 역할
+sot-agent-rules	docs/wiki/sot/agent-rules.md	작업-전-컨텍스트-로딩-순서	56	17	675	h2	작업 전 컨텍스트 로딩 순서
+sot-agent-rules	docs/wiki/sot/agent-rules.md	제품-판단-원칙	73	15	519	h2	제품 판단 원칙
+sot-agent-rules	docs/wiki/sot/agent-rules.md	불변-규칙	88	15	1795	h2	불변 규칙
+sot-agent-rules	docs/wiki/sot/agent-rules.md	no-config-ui-범위	103	17	1439	h2	“No config UI” 범위
+sot-agent-rules	docs/wiki/sot/agent-rules.md	구현-작업-규율	120	17	571	h2	구현 작업 규율
+sot-agent-rules	docs/wiki/sot/agent-rules.md	작업-증거-규율	137	9	1050	h2	작업 증거 규율
+sot-agent-rules	docs/wiki/sot/agent-rules.md	위키-규율	146	10	779	h2	위키 규율
+sot-agent-rules	docs/wiki/sot/agent-rules.md	문서-읽기-규율-섹션-단위-검색	156	15	1464	h2	문서 읽기 규율 (섹션 단위 검색)
+sot-agent-rules	docs/wiki/sot/agent-rules.md	중복-방지-원칙	171	17	795	h2	중복 방지 원칙
+sot-agent-rules	docs/wiki/sot/agent-rules.md	자동-생성-vs-수기-관리-범위	188	8	773	h2	자동 생성 vs 수기 관리 범위
+sot-agent-rules	docs/wiki/sot/agent-rules.md	기여-흐름-raw--wiki--pr--review	196	15	1614	h2	기여 흐름 (raw → wiki → PR → review)
+sot-api-events	docs/wiki/sot/api-events.md	api--events-sot	15	131	10503	h1	API & Events SOT
+sot-api-events	docs/wiki/sot/api-events.md	이-문서의-원천	23	8	868	h2	이 문서의 원천
+sot-api-events	docs/wiki/sot/api-events.md	라우터-프리픽스	31	31	2580	h2	라우터 프리픽스
+sot-api-events	docs/wiki/sot/api-events.md	주요-api-계약-요약	62	16	3308	h2	주요 API 계약 요약
+sot-api-events	docs/wiki/sot/api-events.md	websocket-ws	78	31	1367	h2	WebSocket (`/ws`)
+sot-api-events	docs/wiki/sot/api-events.md	연결-직후	82	8	145	h3	연결 직후
+sot-api-events	docs/wiki/sot/api-events.md	클라이언트--서버	90	7	163	h3	클라이언트 → 서버
+sot-api-events	docs/wiki/sot/api-events.md	서버--클라이언트	97	12	967	h3	서버 → 클라이언트
+sot-api-events	docs/wiki/sot/api-events.md	chat-sse-이벤트	109	19	815	h2	Chat SSE 이벤트
+sot-api-events	docs/wiki/sot/api-events.md	내부-이벤트-버스	128	18	829	h2	내부 이벤트 버스
+sot-architecture	docs/wiki/sot/architecture.md	architecture-sot	14	183	14355	h1	Architecture SOT
+sot-architecture	docs/wiki/sot/architecture.md	이-문서의-원천	24	6	480	h2	이 문서의 원천
+sot-architecture	docs/wiki/sot/architecture.md	아키텍처-경계	30	10	568	h2	아키텍처 경계
+sot-architecture	docs/wiki/sot/architecture.md	core-domain-model-boundary-sot	40	22	4209	h2	Core Domain Model Boundary (SoT)
+sot-architecture	docs/wiki/sot/architecture.md	통신-레이어	62	10	408	h2	통신 레이어
+sot-architecture	docs/wiki/sot/architecture.md	백엔드-주요-모듈-backendsrcpureiron	72	19	1205	h2	백엔드 주요 모듈 (`backend/src/pureiron/`)
+sot-architecture	docs/wiki/sot/architecture.md	지원-디바이스-프로토콜-v1	91	17	1708	h2	지원 디바이스 프로토콜 (v1)
+sot-architecture	docs/wiki/sot/architecture.md	scadagateway-싱글톤	108	11	645	h2	ScadaGateway 싱글톤
+sot-architecture	docs/wiki/sot/architecture.md	tagsourcekind-taxonomy	119	12	554	h2	TagSourceKind Taxonomy
+sot-architecture	docs/wiki/sot/architecture.md	온톨로지-투영-ontology-projection	131	26	2346	h2	온톨로지 투영 (Ontology Projection)
+sot-architecture	docs/wiki/sot/architecture.md	이벤트-버스--잠금-규율	157	9	394	h2	이벤트 버스 · 잠금 규율
+sot-architecture	docs/wiki/sot/architecture.md	데이터-흐름-태그-쓰기	166	14	293	h2	데이터 흐름: 태그 쓰기
+sot-architecture	docs/wiki/sot/architecture.md	db-마이그레이션	180	6	343	h2	DB 마이그레이션
+sot-architecture	docs/wiki/sot/architecture.md	프론트엔드-경계	186	11	350	h2	프론트엔드 경계
+sot-data-contracts	docs/wiki/sot/data-contracts.md	data-contracts-sot	20	180	15731	h1	Data Contracts SOT
+sot-data-contracts	docs/wiki/sot/data-contracts.md	이-문서의-원천	28	8	847	h2	이 문서의 원천
+sot-data-contracts	docs/wiki/sot/data-contracts.md	마이그레이션-규율	36	17	1446	h2	마이그레이션 규율
+sot-data-contracts	docs/wiki/sot/data-contracts.md	tag-정의-계약	53	20	1040	h2	Tag 정의 계약
+sot-data-contracts	docs/wiki/sot/data-contracts.md	approved-tag-collection-contract	73	25	3648	h2	Approved tag collection contract
+sot-data-contracts	docs/wiki/sot/data-contracts.md	backend-mode-postgres--json	98	13	648	h2	Backend mode (`postgres` / `json`)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	historian-retention--query-window	111	26	1951	h2	Historian retention & query window
+sot-data-contracts	docs/wiki/sot/data-contracts.md	project-config-root-계약	137	57	5026	h2	Project config root 계약
+sot-data-contracts	docs/wiki/sot/data-contracts.md	project-package-exportimport-계약	161	33	3368	h3	Project package export/import 계약
+sot-data-contracts	docs/wiki/sot/data-contracts.md	문서화-원칙	194	6	384	h2	문서화 원칙
+sot-frontend	docs/wiki/sot/frontend.md	frontend-sot	24	268	16937	h1	Frontend SOT
+sot-frontend	docs/wiki/sot/frontend.md	1-문서-경계	32	12	592	h2	1. 문서 경계
+sot-frontend	docs/wiki/sot/frontend.md	2-스택과-실행-명령	44	24	625	h2	2. 스택과 실행 명령
+sot-frontend	docs/wiki/sot/frontend.md	3-디렉터리-책임	68	20	1219	h2	3. 디렉터리 책임
+sot-frontend	docs/wiki/sot/frontend.md	4-상태-관리-원칙	88	28	2049	h2	4. 상태 관리 원칙
+sot-frontend	docs/wiki/sot/frontend.md	5-websocket실시간-태그-규칙	116	17	830	h2	5. WebSocket·실시간 태그 규칙
+sot-frontend	docs/wiki/sot/frontend.md	6-api-client-규칙	133	8	483	h2	6. API client 규칙
+sot-frontend	docs/wiki/sot/frontend.md	7-typescript-규칙	141	20	492	h2	7. TypeScript 규칙
+sot-frontend	docs/wiki/sot/frontend.md	8-공정-화면-규칙	161	23	867	h2	8. 공정 화면 규칙
+sot-frontend	docs/wiki/sot/frontend.md	9-3d-twin-규칙	184	10	593	h2	9. 3D Twin 규칙
+sot-frontend	docs/wiki/sot/frontend.md	10-chatbot-sse-규칙	194	21	564	h2	10. ChatBot SSE 규칙
+sot-frontend	docs/wiki/sot/frontend.md	11-operator-ui-규칙	215	23	839	h2	11. Operator UI 규칙
+sot-frontend	docs/wiki/sot/frontend.md	12-변경검증-원칙	238	19	926	h2	12. 변경·검증 원칙
+sot-frontend	docs/wiki/sot/frontend.md	13-design-system-primitive-계약	257	25	4785	h2	13. Design system primitive 계약
+sot-frontend	docs/wiki/sot/frontend.md	15-overlay-계약	282	10	1171	h2	15. Overlay 계약
+sot-mes-schedule	docs/wiki/sot/mes-schedule.md	messchedule-sot	15	87	8357	h1	MES/Schedule SOT
+sot-mes-schedule	docs/wiki/sot/mes-schedule.md	결정-상태-표기	25	10	456	h2	결정 상태 표기
+sot-mes-schedule	docs/wiki/sot/mes-schedule.md	1-내부-모델-vs-고객-노출-라벨-분리	35	14	1084	h2	1. 내부 모델 vs 고객 노출 라벨 분리
+sot-mes-schedule	docs/wiki/sot/mes-schedule.md	2-v1-고객-노출-용어	49	18	1702	h2	2. v1 고객 노출 용어
+sot-mes-schedule	docs/wiki/sot/mes-schedule.md	3-v1-사용자-플로우-12단계	67	19	1733	h2	3. v1 사용자 플로우 (1~2단계)
+sot-mes-schedule	docs/wiki/sot/mes-schedule.md	4-에이전트-연계-시나리오에서-3계층이-필요한-지점	86	11	1373	h2	4. 에이전트 연계 시나리오에서 3계층이 필요한 지점
+sot-mes-schedule	docs/wiki/sot/mes-schedule.md	5-v1-범위-밖--주의	97	5	576	h2	5. v1 범위 밖 / 주의
+sot-product	docs/wiki/sot/product.md	product-sot	14	239	13402	h1	Product SOT
+sot-product	docs/wiki/sot/product.md	이-문서의-원천	22	6	303	h2	이 문서의 원천
+sot-product	docs/wiki/sot/product.md	제품-정체성	28	16	846	h2	제품 정체성
+sot-product	docs/wiki/sot/product.md	v1-경량-web-hmiscada	32	6	383	h3	v1: 경량 Web HMI/SCADA
+sot-product	docs/wiki/sot/product.md	장기-iiot-agent-platform	38	6	381	h3	장기: IIoT Agent Platform
+sot-product	docs/wiki/sot/product.md	대상-고객과-사용자	44	31	1430	h2	대상 고객과 사용자
+sot-product	docs/wiki/sot/product.md	초기-구매의사결정-고객	48	16	752	h3	초기 구매/의사결정 고객
+sot-product	docs/wiki/sot/product.md	실제-사용자-역할	64	11	574	h3	실제 사용자 역할
+sot-product	docs/wiki/sot/product.md	고객이-겪는-문제	75	13	724	h2	고객이 겪는 문제
+sot-product	docs/wiki/sot/product.md	v1-핵심-가치	88	17	817	h2	v1 핵심 가치
+sot-product	docs/wiki/sot/product.md	v1-핵심-기능	105	40	2532	h2	v1 핵심 기능
+sot-product	docs/wiki/sot/product.md	simulator--3d-digital-twin--ai-simulation-방향	145	10	812	h2	Simulator / 3D Digital Twin / AI Simulation 방향
+sot-product	docs/wiki/sot/product.md	확장-기능--장기-방향	155	32	1499	h2	확장 기능 / 장기 방향
+sot-product	docs/wiki/sot/product.md	mvp-제외--제한	187	15	805	h2	MVP 제외 / 제한
+sot-product	docs/wiki/sot/product.md	디자인-방향	202	12	620	h2	디자인 방향
+sot-product	docs/wiki/sot/product.md	첫-계약-전략	214	16	1670	h2	첫 계약 전략
+sot-product	docs/wiki/sot/product.md	성공-기준	230	14	655	h2	성공 기준
+sot-product	docs/wiki/sot/product.md	성능--비기능-요구	244	9	240	h2	성능 / 비기능 요구
+sot-runtime-config	docs/wiki/sot/runtime-config.md	runtime-config-sot	13	82	5923	h1	Runtime Config SOT
+sot-runtime-config	docs/wiki/sot/runtime-config.md	이-문서의-원천	25	5	335	h2	이 문서의 원천
+sot-runtime-config	docs/wiki/sot/runtime-config.md	settings-환경변수	30	32	2226	h2	`Settings` 환경변수
+sot-runtime-config	docs/wiki/sot/runtime-config.md	직접-읽는-환경변수	62	9	461	h2	직접 읽는 환경변수
+sot-runtime-config	docs/wiki/sot/runtime-config.md	설정-파일-위치	71	6	515	h2	설정 파일 위치
+sot-runtime-config	docs/wiki/sot/runtime-config.md	agent-troubleshooting-poc-설정	77	9	1112	h2	Agent troubleshooting PoC 설정
+sot-runtime-config	docs/wiki/sot/runtime-config.md	drift-검사	86	9	507	h2	drift 검사
+sot-testing	docs/wiki/sot/testing.md	testing-sot	32	318	27203	h1	Testing SOT
+sot-testing	docs/wiki/sot/testing.md	1-문서-경계	40	20	1306	h2	1. 문서 경계
+sot-testing	docs/wiki/sot/testing.md	2-기본-실행-명령	60	35	1204	h2	2. 기본 실행 명령
+sot-testing	docs/wiki/sot/testing.md	3-테스트-계층	95	73	9877	h2	3. 테스트 계층
+sot-testing	docs/wiki/sot/testing.md	오류-로깅-점검-게이트	135	33	4799	h3	오류 로깅 점검 게이트
+sot-testing	docs/wiki/sot/testing.md	4-변경-유형별-최소-게이트	168	22	3389	h2	4. 변경 유형별 최소 게이트
+sot-testing	docs/wiki/sot/testing.md	5-acceptance-criteria-현재-범위	190	69	6256	h2	5. Acceptance Criteria 현재 범위
+sot-testing	docs/wiki/sot/testing.md	ac-1ac-10-testse2etest_acceptancepy	192	15	701	h3	AC-1~AC-10 (`tests/e2e/test_acceptance.py`)
+sot-testing	docs/wiki/sot/testing.md	ac-11ac-17-backendtestse2etest_phase2_acceptancepy	207	12	531	h3	AC-11~AC-17 (`backend/tests/e2e/test_phase2_acceptance.py`)
+sot-testing	docs/wiki/sot/testing.md	ac-18-demo-acceptance-path-backendtestse2etest_demo_acceptancepy--수동-체크리스트	219	40	4983	h3	AC-18 Demo Acceptance Path (`backend/tests/e2e/test_demo_acceptance.py` + 수동 체크리스트)
+sot-testing	docs/wiki/sot/testing.md	ac-18-자동화backend-in-process-dbredisllm-불필요	235	11	1119	h4	AC-18 자동화(backend in-process, DB/Redis/LLM 불필요)
+sot-testing	docs/wiki/sot/testing.md	ac-18-수동-데모-체크리스트자동화-대상-아님	246	13	2542	h4	AC-18 수동 데모 체크리스트(자동화 대상 아님)
+sot-testing	docs/wiki/sot/testing.md	6-non-functional-현재-범위	259	13	629	h2	6. Non-functional 현재 범위
+sot-testing	docs/wiki/sot/testing.md	7-외부-의존성환경-기준	272	16	777	h2	7. 외부 의존성·환경 기준
+sot-testing	docs/wiki/sot/testing.md	8-테스트-작성-규칙	288	25	1603	h2	8. 테스트 작성 규칙
+sot-testing	docs/wiki/sot/testing.md	9-실패-처리-원칙	313	19	809	h2	9. 실패 처리 원칙
+sot-testing	docs/wiki/sot/testing.md	10-pr작업-완료-보고-형식	332	18	491	h2	10. PR/작업 완료 보고 형식
