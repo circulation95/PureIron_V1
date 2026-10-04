@@ -156,6 +156,9 @@ def operator_extract(pib: Path, work: Path) -> None:
             name = member.name
             if name in METADATA or name.startswith(("bootstrap/", "keys/")):
                 tar.extract(member, work, filter="data")
+    # runbook처럼 이 사용자만 쓸 수 있게(`install -d -m 700`) — 실행 환경 umask(CI 002 등)와 무관.
+    for path in [work, *work.rglob("*")]:
+        path.chmod(0o700 if path.is_dir() else 0o600)
 
 
 def bootstrap(
