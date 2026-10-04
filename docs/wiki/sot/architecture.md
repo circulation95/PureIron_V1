@@ -194,3 +194,36 @@ Frontend setTag()
 - WebSocket singleton을 통한 실시간 태그 반영
 - React Three Fiber 기반 3D Digital Twin
 - Agent SSE 이벤트와 3D 하이라이트 연결
+
+## 목표 설계(미구현)
+
+> **target design — 아직 구현되지 않았다.** 이 절은 Foundation 재설계(2026-10-04)로 PureIron_V1에 만들 구조다. 위 절들의 현행 사실(legacy 기준)과 섞어 읽지 않는다. 결정 근거는 [ADR](../adr/index.md) 019~028. 구현되면 해당 내용을 현행 절로 옮기고 이 절에서 지운다.
+
+### 서비스 구성 (ADR-019)
+
+| 서비스 | 역할 | 비고 |
+|---|---|---|
+| `collector` | 장비 통신(1차 Modbus TCP), `ValueBatch`·`DeviceHealth` 송신 | 무상태, DB 접근 없음, 60s 메모리 링버퍼 |
+| `core` | 태그·알람·이력·인증·감사·실시간(WS)·장비 상태·프로젝트 적용, REST `/api/v1` | 유일한 조립 지점 `SiteRuntime.build(settings)` → `create_app(rt)`, 생성자 주입 |
+| `web` | nginx + React(로그인 + 태그 현황·알람/ACK·트렌드·장비 상태·감사 로그) | core OpenAPI에서 타입 생성 |
+| `site-db` | TimescaleDB PG16 (`pureiron/site-db:<ver>`로 retag) | core readiness 필수 |
+| `ai` | core read-only API 소비 | 계약만, 첫 완료 범위 제외 |
+| Updater | 호스트 systemd 서비스(컨테이너 아님) | 번들 검증·백업·마이그레이션·전환·롤백 |
+
+- core 모듈: `platform`(db·settings·bus·migrate), `acquisition`, `tags`, `alarms`, `historian`, `auth`, `audit`, `realtime`, `devices`, `project`, `api` + `runtime.py`·`app.py`·`cli.py`.
+- import 계약(import-linter): 도메인·`platform`·`api`는 `runtime`·`app`을 import하지 않는다(진입점 `cli`만), 계층 `api` > 도메인 > `platform`, 도메인 간은 `<module>.ports`만.
+- 이벤트 pub/sub(ADR-010)은 core 프로세스 내부에서만 쓴다.
+
+### 통신 경계 (ADR-020)
+
+- collector ↔ core: gRPC 양방향 스트림 `Acquisition.Session`(core가 서버). core → `AcquisitionPlan`/`Ack`, collector → `Hello`/`ValueBatch`/`DeviceHealth`.
+- Ack는 core in-memory ingest 직후. collector 링버퍼는 core 다운·단절 구간만, DB 장애는 core historian 상한 버퍼(600,000행)가 담당.
+- `replay=true` batch는 historian에만 기록(deadband·알람·WS 우회), 중복은 `UNIQUE(tag_id, time)`로 흡수.
+- 무신호 `max(3×poll, 5s)` → 장비 태그 BAD, 장비 DISCONNECTED.
+
+### 배포·중앙 (ADR-022, ADR-023)
+
+- 배포 정본: 벤더 repo `pureiron-fleet`의 `sites/<site>.yaml`(generation 카운터). PR 승인·merge = 배포 승인 → 서명 번들 `.pib` 게시.
+- 중앙 = 벤더 내부 도구: 작은 `control-api`(등록·자격증명·heartbeat·desired·reports·drafts·fleet) + 읽기 전용 `control-web`(basic auth, HTTPS 뒤). 현장 → 중앙 polling만 있다.
+- 현장 Updater 적용 단계: `fetched` → `verified` → `committed` → `locked` → `backed_up` → `migrating` → `switching` → `checking` → `succeeded`, 실패 시 `rolling_back`/`failed`. 상태 파일은 fsync 후 rename, systemd 재시작 시 `recover()`가 끝까지 수렴시킨다.
+- 폐쇄망 현장도 같은 `.pib`를 USB 등으로 반입해 같은 검증을 거친다.

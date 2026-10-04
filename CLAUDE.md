@@ -10,16 +10,23 @@ PureIron — 중소 산업시설용 경량 오픈소스 SCADA: FastAPI 백엔드
 
 <!-- Projection of docs/wiki/sot/agent-rules.md#불변-규칙. Keep short. Update via wiki workflow (scripts/wiki.py build). -->
 
-- **No `app.state`** — 모든 상태는 `gateway.*` 경유(`request.app.state` 금지)
-- **No ORM** — asyncpg raw SQL, 멱등 마이그레이션만으로 스키마 변경
-- **No plugin system** — v1 지원 프로토콜(OPC-UA·Modbus·S7·LS·AB·MELSEC)은 `drivers/`에 직접 구현, registry/plugin화 금지. 새 프로토콜도 `drivers/`에 직접 추가
-- **No config UI** — 인프라/env·플러그인 레지스트리·범용 config 빌더 UI 금지. v1 운영 설정(Tag/Device/Alarm/User/Dashboard)은 REST API + 제한된 화면 허용, seed는 YAML/JSON(상세 [agent-rules](docs/wiki/sot/agent-rules.md))
-- **20개 고정 expression 함수** — 확장 불가, 복잡 로직은 샌드박스 스크립트로
-- **Lock discipline** — DB I/O·`tag.changed.*` 발행은 TagStore 락 밖에서(데드락 방지)
-- **Graceful degradation** — 선택적 서비스(DB/Redis/RAG/LangGraph)는 안전하게 실패, 전체 크래시 금지
-- **Event-driven** — 태그 변경은 `tag.changed.*` pub/sub으로 전파
-- **Device health is not a tag** — `DriverHealth.snapshot()`(`/api/devices`)이 단일 소스. 디바이스 추가 시 사용자는 일반 태그만 추가하고 `[health]` 시스템 태그는 생성하지 않는다(상세 [backend/CLAUDE.md](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/CLAUDE.md))
-- **Frontend** — No `as any` / `@ts-ignore`, `tsc --noEmit` 통과 필수
+V1 새 코드(`services/`·`packages/`·`deploy/`)에 적용한다. 구현 전이라 ADR-019~028의 목표 설계 기준이다.
+
+- **No ORM** — asyncpg raw SQL만
+- **단일 조립 지점** — core는 `SiteRuntime.build(settings)` → `create_app(rt)`, 생성자 주입, 전역 조회·`app.state` 금지, import-linter로 경계 강제
+- **서비스 경계** — collector 무상태·DB 무접근, collector↔core는 `collector.proto` gRPC만, 이벤트 pub/sub은 core 내부에서만
+- **Lock discipline** — TagStore 락 안에서 DB I/O·이벤트 발행 금지
+- **계약 우선** — proto·OpenAPI·JSON Schema가 정본, 호환성 diff 통과, 생성물 drift 0
+- **마이그레이션** — `pureiron-core migrate` ADD-only만, 부팅 자동 실행 금지
+- **서명 번들** — 현장 변경은 서명된 `.pib`로만, 검증 실패는 중단 전 거부, registry pull 금지
+- **프로젝트 정본** — 고객 project repo(Git), 비밀값은 `secret://`만, 고객별 코드 분기 금지
+- **Graceful degradation** — `ai`·중앙 없이도 현장 동작, collector 다운 = BAD/DISCONNECTED, site-db 필수
+- **Device health is not a tag** — collector `DeviceHealth` → core `/api/v1/devices` 단일 소스
+- **쓰기 비활성** — `WriteRequest` 미송신, PLC 제어 대체 금지
+- **No plugin system / No config UI / 20개 고정 expression 함수** — 프로토콜은 collector `drivers/` 직접 구현, 현장 편집은 REST `PATCH`만(편집 화면 없음)
+- **엄격 게이트** — pyright·tsc strict, 억제 주석 0건, 생성 코드(`_gen/`)는 검사 제외 + drift 게이트
+
+legacy [`PureIron_ignition@legacy-final`](https://github.com/circulation95/PureIron_ignition/tree/legacy-final) 코드를 읽을 때의 규칙(`gateway.*`, Redis 등)은 [agent-rules](docs/wiki/sot/agent-rules.md)의 `legacy 코드 참고 규칙` 절에만 있다. 새 코드에 적용하지 않는다.
 
 결정 근거는 [ADR](docs/wiki/adr/index.md). 도메인 세부는 위키 SOT([architecture](docs/wiki/sot/architecture.md) · [data-contracts](docs/wiki/sot/data-contracts.md) · [runtime-config](docs/wiki/sot/runtime-config.md) · [api-events](docs/wiki/sot/api-events.md) · [frontend](docs/wiki/sot/frontend.md)) 참조.
 

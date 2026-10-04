@@ -6,14 +6,14 @@
 아래 `세부 탐색` 절차대로 **섹션 단위**로 찾는다.
 
 ## SOT 요약
-- **sot-agent-rules** (14KB/13절) — LLM 에이전트가 PureIron에서 작업할 때 따르는 규칙의 **정본**이다. ([docs/wiki/sot/agent-rules.md](wiki/sot/agent-rules.md))
+- **sot-agent-rules** (17KB/14절) — LLM 에이전트가 PureIron에서 작업할 때 따르는 규칙의 **정본**이다. ([docs/wiki/sot/agent-rules.md](wiki/sot/agent-rules.md))
 - **sot-api-events** (11KB/10절) — PureIron의 REST prefix, WebSocket wire protocol, Chat SSE event, 내부 event bus topic 계약이다. ([docs/wiki/sot/api-events.md](wiki/sot/api-events.md))
-- **sot-architecture** (14KB/14절) — PureIron은 단일 FastAPI 백엔드 + 단일 React 프론트엔드 + PostgreSQL(TimescaleDB + pgvector) + Redis로 구성된 모놀리식 Web HMI/SCADA 서버다. ([docs/wiki/sot/architecture.md](wiki/sot/architecture.md))
-- **sot-data-contracts** (16KB/10절) — PureIron의 DB 스키마와 YAML/JSON 설정 파일 계약이다. ([docs/wiki/sot/data-contracts.md](wiki/sot/data-contracts.md))
+- **sot-architecture** (17KB/18절) — PureIron은 단일 FastAPI 백엔드 + 단일 React 프론트엔드 + PostgreSQL(TimescaleDB + pgvector) + Redis로 구성된 모놀리식 Web HMI/SCADA 서버다. ([docs/wiki/sot/architecture.md](wiki/sot/architecture.md))
+- **sot-data-contracts** (20KB/15절) — PureIron의 DB 스키마와 YAML/JSON 설정 파일 계약이다. ([docs/wiki/sot/data-contracts.md](wiki/sot/data-contracts.md))
 - **sot-frontend** (18KB/15절) — 이 문서는 PureIron frontend의 **구조·상태·실시간·UI 작업 규칙**에 대한 정본이다. 상세 구현은 `frontend/src/**`가 정본이고, `frontend/AGENTS.md`와 `frontend/CLAUDE.md`는 도구별 operational cheat sheet다. ([docs/wiki/sot/frontend.md](wiki/sot/frontend.md))
 - **sot-mes-schedule** (9KB/7절) — 이 문서는 PureIron의 **MES-lite / Schedule 기능의 v1 고객 노출 용어와 사용자 플로우 계약의 정본**이다. ([docs/wiki/sot/mes-schedule.md](wiki/sot/mes-schedule.md))
 - **sot-product** (13KB/18절) — PureIron은 중소 제조업과 산업시설을 위한 경량 Web HMI/SCADA 플랫폼이다. ([docs/wiki/sot/product.md](wiki/sot/product.md))
-- **sot-runtime-config** (6KB/7절) — PureIron 런타임 설정의 정본은 `backend/src/pureiron/config.py`의 `Settings(BaseSettings)` 클래스다. ([docs/wiki/sot/runtime-config.md](wiki/sot/runtime-config.md))
+- **sot-runtime-config** (8KB/11절) — PureIron 런타임 설정의 정본은 `backend/src/pureiron/config.py`의 `Settings(BaseSettings)` 클래스다. ([docs/wiki/sot/runtime-config.md](wiki/sot/runtime-config.md))
 - **sot-testing** (29KB/17절) — 이 문서는 PureIron의 **검증 계층, 실행 명령, 변경 유형별 최소 게이트**에 대한 정본이다. 개별 테스트의 상세 assertion은 `backend/tests/**`, `backend/tests/e2e/**`, `tests/e2e/**`가 정본이다. ([docs/wiki/sot/testing.md](wiki/sot/testing.md))
 
 ## SOT 외 구획 (필요할 때만 열기)
@@ -22,16 +22,21 @@
 `reports/**` 는 `last_verified` 시점의 감사 결과이므로 결론 근거로 쓰기 전에 코드로 재확인한다.
 
 ## 핵심 불변 규칙
-- No `app.state` — 모든 상태는 `gateway.*` 경유(`request.app.state` 금지)
-- No ORM — asyncpg raw SQL, 멱등 마이그레이션만으로 스키마 변경
-- No plugin system — v1 지원 프로토콜(OPC-UA·Modbus·S7·LS·AB·MELSEC)은 `drivers/`에 직접 구현하고 동적 로딩·registry·plugin lifecycle로 추상화하지 않는다. 새 프로토콜도 `drivers/`에 직접 추가한다. v1 지원 프로토콜 정본 표는 [architecture](wiki/sot/architecture.md)
-- No config UI — 런타임 인프라/env·플러그인 레지스트리·드라이버 빌더·schema-less 범용 no-code config 빌더를 UI로 노출하지 않는다. v1 운영에 필요한 Tag/Device/Alarm/User/Dashboard 설정은 REST API와 제한된 화면으로 제공하고, seed/demo 초기값은 YAML/JSON으로 유지한다(상세는 아래 “No config UI 범위” 절, 근거는 [adr](wiki/adr/index.md) ADR-004)
-- 20개 고정 expression 함수 — 확장 불가, 복잡 로직은 샌드박스 스크립트로
-- Lock discipline — DB I/O·`tag.changed.*` 발행은 TagStore 락 밖에서(데드락 방지)
-- Graceful degradation — 선택적 서비스(DB/Redis/RAG/LangGraph)는 안전하게 실패, 전체 크래시 금지
-- Event-driven — 태그 변경은 `tag.changed.*` pub/sub으로 전파
-- Device health is not a tag — `DriverHealth.snapshot()`(`/api/devices`)이 단일 소스, `[health]` 시스템 태그 생성 금지
-- Frontend — No `as any` / `@ts-ignore` / `@ts-expect-error`, `tsc --noEmit` 통과 필수
+- No ORM — asyncpg raw SQL만 사용한다(core·control-api 모두). 근거 ADR-001
+- 단일 조립 지점 — core는 `SiteRuntime.build(settings)` → `create_app(rt)`에서만 조립하고 의존성은 생성자로 주입한다. 전역 싱글톤 조회·`app.state` 금지, 모듈 경계는 import-linter 계약으로 강제. 근거 ADR-007 개정·ADR-019
+- 서비스 경계 — collector는 무상태·DB 무접근, collector↔core 통신은 `collector.proto` gRPC 계약만. core 내부 이벤트 pub/sub은 프로세스 안에서만 쓴다. 근거 ADR-010·ADR-020
+- Lock discipline — TagStore 락 안에서 DB I/O·이벤트 발행 금지(데드락 방지). 근거 ADR-009
+- 계약 우선 — `collector.proto`·OpenAPI·JSON Schema가 정본이다. 호환성 diff를 통과해야 하고 생성물은 재생성 diff 0을 유지한다. 근거 ADR-028
+- 마이그레이션 — 스키마 변경은 `pureiron-core migrate`의 ADD-only 마이그레이션만. 부팅 시 자동 실행 금지, 제거는 epoch 규칙(deprecated 후 다음 epoch 이후)으로만. 근거 ADR-024
+- 서명 번들 — 현장 변경은 서명된 `.pib`로만 반입한다. 검증 실패는 서비스 중단 전에 거부, registry pull 금지, 이미지는 config digest로 확인. 근거 ADR-023
+- 프로젝트 정본 — 고객 설정 정본은 고객 project repo(Git)다. 비밀값은 `secret://<name>` 참조만, 제품 코드에 고객별 분기(`site_id == "…"`, 고객 이름) 금지. 근거 ADR-025·ADR-026
+- Graceful degradation — 선택 서비스(`ai`·중앙)가 없어도 현장 모니터링·알람·이력은 동작한다. collector 다운 = 해당 장비 BAD/DISCONNECTED, site-db는 필수(core readiness 조건). 근거 ADR-008 개정
+- Device health is not a tag — 장비 상태는 collector `DeviceHealth` → core `GET /api/v1/devices`가 단일 소스, 태그로 만들지 않는다. 근거 ADR-018
+- 쓰기 비활성 — `WriteRequest`는 계약만 두고 보내지 않는다. 기존 PLC 제어를 대체하지 않는다. 근거 ADR-013
+- No plugin system — 프로토콜은 collector `drivers/`에 직접 구현하고, 추가는 proto `TagPoint.address` oneof 확장으로만 한다. registry·동적 로딩 금지. 근거 ADR-002
+- No config UI — 인프라·env·드라이버·범용 config 빌더 UI 금지. 현장 편집은 REST `PATCH`만(아래 “No config UI” 범위 절). 근거 ADR-004·ADR-025
+- 20개 고정 expression 함수 — 확장 불가, 복잡 로직은 샌드박스 스크립트로. 근거 ADR-005
+- 엄격 게이트 — pyright strict·tsc/eslint strict, 억제 주석(`type: ignore`·`eslint-disable`·`as any`·`@ts-ignore`·`@ts-expect-error`) 0건. 생성 코드(`_gen/`)는 억제 대신 검사 제외 + drift 게이트. 근거 ADR-011·ADR-028
 
 ## 세부 탐색 (섹션 단위 — 문서를 통째로 읽지 않는다)
 위 SOT 는 대부분 10KB 이상이라 전문 Read 는 컨텍스트 낭비다. 순서를 지킨다.

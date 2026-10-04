@@ -7,29 +7,39 @@
 # 열: doc_id	path	anchor	offset	limit	bytes	level	heading
 #   offset/limit = 파일 전체 기준 1-indexed 시작 줄 / 줄 수 (Read 인자 그대로)
 #   bytes        = 해당 절을 읽는 비용 (한국어는 대략 1.5~2바이트/토큰)
-adr-index	docs/wiki/adr/index.md	architecture-decision-records	19	402	18651	h1	Architecture Decision Records
+adr-index	docs/wiki/adr/index.md	architecture-decision-records	19	639	41774	h1	Architecture Decision Records
 adr-index	docs/wiki/adr/index.md	1-adr-경계	25	15	723	h2	1. ADR 경계
 adr-index	docs/wiki/adr/index.md	2-제품사업을-기준으로-한-최상위-결정	40	12	917	h2	2. 제품·사업을 기준으로 한 최상위 결정
-adr-index	docs/wiki/adr/index.md	3-기술-adr-요약	52	20	1492	h2	3. 기술 ADR 요약
-adr-index	docs/wiki/adr/index.md	adr-001-no-orm	72	18	712	h2	ADR-001: No ORM
-adr-index	docs/wiki/adr/index.md	adr-002-no-plugin-system	90	18	1391	h2	ADR-002: No Plugin System
-adr-index	docs/wiki/adr/index.md	adr-003-no-premature-abstract-base-classes	108	18	818	h2	ADR-003: No Premature Abstract Base Classes
-adr-index	docs/wiki/adr/index.md	adr-004-yaml--rest-config-only	126	18	769	h2	ADR-004: YAML + REST Config Only
-adr-index	docs/wiki/adr/index.md	adr-005-fixed-expression-function-set	144	18	697	h2	ADR-005: Fixed Expression Function Set
-adr-index	docs/wiki/adr/index.md	adr-006-auto-migrations-on-boot	162	18	674	h2	ADR-006: Auto-migrations on Boot
-adr-index	docs/wiki/adr/index.md	adr-007-scadagateway-singleton-no-appstate	180	18	789	h2	ADR-007: ScadaGateway Singleton, No `app.state`
-adr-index	docs/wiki/adr/index.md	adr-008-graceful-degradation	198	18	814	h2	ADR-008: Graceful Degradation
-adr-index	docs/wiki/adr/index.md	adr-009-tagstore-lock-discipline	216	17	724	h2	ADR-009: TagStore Lock Discipline
-adr-index	docs/wiki/adr/index.md	adr-010-event-driven-tag-updates	233	18	720	h2	ADR-010: Event-driven Tag Updates
-adr-index	docs/wiki/adr/index.md	adr-011-frontend-typescript-strictness	251	18	769	h2	ADR-011: Frontend TypeScript Strictness
-adr-index	docs/wiki/adr/index.md	adr-012-tag-definition-db-sot-runtime-value-volatile	269	18	758	h2	ADR-012: Tag Definition DB SoT, Runtime Value Volatile
-adr-index	docs/wiki/adr/index.md	adr-013-v1-does-not-replace-existing-plc-control	287	18	806	h2	ADR-013: v1 Does Not Replace Existing PLC Control
-adr-index	docs/wiki/adr/index.md	adr-014-simulator3d-twinagent-are-assistive-not-autonomous-control	305	18	897	h2	ADR-014: Simulator·3D Twin·Agent Are Assistive, Not Autonomous Control
-adr-index	docs/wiki/adr/index.md	adr-015-start-as-field-deployed-solution-not-finished-saas	323	18	875	h2	ADR-015: Start as Field-deployed Solution, Not Finished SaaS
-adr-index	docs/wiki/adr/index.md	adr-016-sot--projection--generated-boundary	341	18	806	h2	ADR-016: SOT / Projection / Generated Boundary
-adr-index	docs/wiki/adr/index.md	adr-017-operator-ui-over-marketing-ui	359	18	813	h2	ADR-017: Operator UI Over Marketing UI
-adr-index	docs/wiki/adr/index.md	adr-018-device-health-is-not-a-tag	377	18	915	h2	ADR-018: Device Health Is Not a Tag
-adr-index	docs/wiki/adr/index.md	4-새-adr-추가-규칙	395	26	455	h2	4. 새 ADR 추가 규칙
+adr-index	docs/wiki/adr/index.md	3-기술-adr-요약	52	35	3226	h2	3. 기술 ADR 요약
+adr-index	docs/wiki/adr/index.md	adr-001-no-orm	87	18	712	h2	ADR-001: No ORM
+adr-index	docs/wiki/adr/index.md	adr-002-no-plugin-system	105	18	1391	h2	ADR-002: No Plugin System
+adr-index	docs/wiki/adr/index.md	adr-003-no-premature-abstract-base-classes	123	18	818	h2	ADR-003: No Premature Abstract Base Classes
+adr-index	docs/wiki/adr/index.md	adr-004-yaml--rest-config-only	141	18	769	h2	ADR-004: YAML + REST Config Only
+adr-index	docs/wiki/adr/index.md	adr-005-fixed-expression-function-set	159	18	697	h2	ADR-005: Fixed Expression Function Set
+adr-index	docs/wiki/adr/index.md	adr-006-auto-migrations-on-boot	177	20	1026	h2	ADR-006: Auto-migrations on Boot
+adr-index	docs/wiki/adr/index.md	adr-007-scadagateway-singleton-no-appstate	197	21	1405	h2	ADR-007: ScadaGateway Singleton, No `app.state`
+adr-index	docs/wiki/adr/index.md	adr-008-graceful-degradation	218	21	1477	h2	ADR-008: Graceful Degradation
+adr-index	docs/wiki/adr/index.md	adr-009-tagstore-lock-discipline	239	19	863	h2	ADR-009: TagStore Lock Discipline
+adr-index	docs/wiki/adr/index.md	adr-010-event-driven-tag-updates	258	20	999	h2	ADR-010: Event-driven Tag Updates
+adr-index	docs/wiki/adr/index.md	adr-011-frontend-typescript-strictness	278	18	769	h2	ADR-011: Frontend TypeScript Strictness
+adr-index	docs/wiki/adr/index.md	adr-012-tag-definition-db-sot-runtime-value-volatile	296	21	1245	h2	ADR-012: Tag Definition DB SoT, Runtime Value Volatile
+adr-index	docs/wiki/adr/index.md	adr-013-v1-does-not-replace-existing-plc-control	317	20	1087	h2	ADR-013: v1 Does Not Replace Existing PLC Control
+adr-index	docs/wiki/adr/index.md	adr-014-simulator3d-twinagent-are-assistive-not-autonomous-control	337	20	1033	h2	ADR-014: Simulator·3D Twin·Agent Are Assistive, Not Autonomous Control
+adr-index	docs/wiki/adr/index.md	adr-015-start-as-field-deployed-solution-not-finished-saas	357	20	1065	h2	ADR-015: Start as Field-deployed Solution, Not Finished SaaS
+adr-index	docs/wiki/adr/index.md	adr-016-sot--projection--generated-boundary	377	18	806	h2	ADR-016: SOT / Projection / Generated Boundary
+adr-index	docs/wiki/adr/index.md	adr-017-operator-ui-over-marketing-ui	395	18	813	h2	ADR-017: Operator UI Over Marketing UI
+adr-index	docs/wiki/adr/index.md	adr-018-device-health-is-not-a-tag	413	20	1165	h2	ADR-018: Device Health Is Not a Tag
+adr-index	docs/wiki/adr/index.md	adr-019-현장-서비스-분할--collector--core--ai--web	433	21	1912	h2	ADR-019: 현장 서비스 분할 — collector / core / ai / web
+adr-index	docs/wiki/adr/index.md	adr-020-collector--core-grpc-계약--ack--replay-의미론	454	20	1875	h2	ADR-020: collector ↔ core gRPC 계약 · Ack · replay 의미론
+adr-index	docs/wiki/adr/index.md	adr-021-timescaledb-유지--기록-정책	474	19	1207	h2	ADR-021: TimescaleDB 유지 · 기록 정책
+adr-index	docs/wiki/adr/index.md	adr-022-desiredstate-gitops--generation-카운터	493	22	2097	h2	ADR-022: DesiredState GitOps · generation 카운터
+adr-index	docs/wiki/adr/index.md	adr-023-단일-서명-번들--신뢰-루트--이미지-신원config-digest	515	20	2189	h2	ADR-023: 단일 서명 번들 · 신뢰 루트 · 이미지 신원(config digest)
+adr-index	docs/wiki/adr/index.md	adr-024-확장형-마이그레이션--epoch-envelope--백업-경계	535	20	2043	h2	ADR-024: 확장형 마이그레이션 · epoch envelope · 백업 경계
+adr-index	docs/wiki/adr/index.md	adr-025-프로젝트-정본--드래프트-회수단조-site_rev	555	19	1635	h2	ADR-025: 프로젝트 정본 · 드래프트 회수(단조 site_rev)
+adr-index	docs/wiki/adr/index.md	adr-026-repo-레이아웃--고객별-repo	574	19	1532	h2	ADR-026: repo 레이아웃 · 고객별 repo
+adr-index	docs/wiki/adr/index.md	adr-027-지원-호스트-매트릭스	593	19	1281	h2	ADR-027: 지원 호스트 매트릭스
+adr-index	docs/wiki/adr/index.md	adr-028-3단-검증-게이트--generated--authored--runner-격리	612	20	2225	h2	ADR-028: 3단 검증 게이트 · generated ≠ authored · runner 격리
+adr-index	docs/wiki/adr/index.md	4-새-adr-추가-규칙	632	26	455	h2	4. 새 ADR 추가 규칙
 archive-manual-legacy	docs/wiki/archive/manual-legacy.md	archive-legacy-user-manual	12	35	2432	h1	(Archive) Legacy User Manual
 archive-manual-legacy	docs/wiki/archive/manual-legacy.md	원본	16	4	150	h2	원본
 archive-manual-legacy	docs/wiki/archive/manual-legacy.md	주제--sot-추출-맵	20	24	1817	h2	주제 → SOT 추출 맵
@@ -77,19 +87,20 @@ report-mvp-gap	docs/wiki/reports/mvp-gap.md	다음-구현-우선순위-issue-후
 report-mvp-gap	docs/wiki/reports/mvp-gap.md	다음-후보-backlog-잔여만	80	8	902	h2	다음 후보 backlog (잔여만)
 report-mvp-gap	docs/wiki/reports/mvp-gap.md	v1에서-유지되는-제외-backlog-낮춤	88	9	456	h2	v1에서 유지되는 제외 (backlog 낮춤)
 report-mvp-gap	docs/wiki/reports/mvp-gap.md	검증	97	8	147	h2	검증
-sot-agent-rules	docs/wiki/sot/agent-rules.md	agent-rules-sot	15	196	14352	h1	Agent Rules SOT
+sot-agent-rules	docs/wiki/sot/agent-rules.md	agent-rules-sot	15	213	16958	h1	Agent Rules SOT
 sot-agent-rules	docs/wiki/sot/agent-rules.md	이-문서의-역할	23	33	2198	h2	이 문서의 역할
-sot-agent-rules	docs/wiki/sot/agent-rules.md	작업-전-컨텍스트-로딩-순서	56	17	675	h2	작업 전 컨텍스트 로딩 순서
+sot-agent-rules	docs/wiki/sot/agent-rules.md	작업-전-컨텍스트-로딩-순서	56	17	632	h2	작업 전 컨텍스트 로딩 순서
 sot-agent-rules	docs/wiki/sot/agent-rules.md	제품-판단-원칙	73	15	519	h2	제품 판단 원칙
-sot-agent-rules	docs/wiki/sot/agent-rules.md	불변-규칙	88	15	1795	h2	불변 규칙
-sot-agent-rules	docs/wiki/sot/agent-rules.md	no-config-ui-범위	103	17	1439	h2	“No config UI” 범위
-sot-agent-rules	docs/wiki/sot/agent-rules.md	구현-작업-규율	120	17	571	h2	구현 작업 규율
-sot-agent-rules	docs/wiki/sot/agent-rules.md	작업-증거-규율	137	9	1050	h2	작업 증거 규율
-sot-agent-rules	docs/wiki/sot/agent-rules.md	위키-규율	146	10	779	h2	위키 규율
-sot-agent-rules	docs/wiki/sot/agent-rules.md	문서-읽기-규율-섹션-단위-검색	156	15	1464	h2	문서 읽기 규율 (섹션 단위 검색)
-sot-agent-rules	docs/wiki/sot/agent-rules.md	중복-방지-원칙	171	17	795	h2	중복 방지 원칙
-sot-agent-rules	docs/wiki/sot/agent-rules.md	자동-생성-vs-수기-관리-범위	188	8	773	h2	자동 생성 vs 수기 관리 범위
-sot-agent-rules	docs/wiki/sot/agent-rules.md	기여-흐름-raw--wiki--pr--review	196	15	1614	h2	기여 흐름 (raw → wiki → PR → review)
+sot-agent-rules	docs/wiki/sot/agent-rules.md	불변-규칙	88	20	3066	h2	불변 규칙
+sot-agent-rules	docs/wiki/sot/agent-rules.md	legacy-코드-참고-규칙-pureiron_ignition	108	10	933	h2	legacy 코드 참고 규칙 (PureIron_ignition)
+sot-agent-rules	docs/wiki/sot/agent-rules.md	no-config-ui-범위	118	19	1794	h2	“No config UI” 범위
+sot-agent-rules	docs/wiki/sot/agent-rules.md	구현-작업-규율	137	17	571	h2	구현 작업 규율
+sot-agent-rules	docs/wiki/sot/agent-rules.md	작업-증거-규율	154	9	1050	h2	작업 증거 규율
+sot-agent-rules	docs/wiki/sot/agent-rules.md	위키-규율	163	10	779	h2	위키 규율
+sot-agent-rules	docs/wiki/sot/agent-rules.md	문서-읽기-규율-섹션-단위-검색	173	15	1464	h2	문서 읽기 규율 (섹션 단위 검색)
+sot-agent-rules	docs/wiki/sot/agent-rules.md	중복-방지-원칙	188	17	795	h2	중복 방지 원칙
+sot-agent-rules	docs/wiki/sot/agent-rules.md	자동-생성-vs-수기-관리-범위	205	8	773	h2	자동 생성 vs 수기 관리 범위
+sot-agent-rules	docs/wiki/sot/agent-rules.md	기여-흐름-raw--wiki--pr--review	213	15	1614	h2	기여 흐름 (raw → wiki → PR → review)
 sot-api-events	docs/wiki/sot/api-events.md	api--events-sot	15	131	10503	h1	API & Events SOT
 sot-api-events	docs/wiki/sot/api-events.md	이-문서의-원천	23	8	868	h2	이 문서의 원천
 sot-api-events	docs/wiki/sot/api-events.md	라우터-프리픽스	31	31	2580	h2	라우터 프리픽스
@@ -100,7 +111,7 @@ sot-api-events	docs/wiki/sot/api-events.md	클라이언트--서버	90	7	163	h3	�
 sot-api-events	docs/wiki/sot/api-events.md	서버--클라이언트	97	12	967	h3	서버 → 클라이언트
 sot-api-events	docs/wiki/sot/api-events.md	chat-sse-이벤트	109	19	815	h2	Chat SSE 이벤트
 sot-api-events	docs/wiki/sot/api-events.md	내부-이벤트-버스	128	18	829	h2	내부 이벤트 버스
-sot-architecture	docs/wiki/sot/architecture.md	architecture-sot	14	183	14355	h1	Architecture SOT
+sot-architecture	docs/wiki/sot/architecture.md	architecture-sot	14	216	17416	h1	Architecture SOT
 sot-architecture	docs/wiki/sot/architecture.md	이-문서의-원천	24	6	480	h2	이 문서의 원천
 sot-architecture	docs/wiki/sot/architecture.md	아키텍처-경계	30	10	568	h2	아키텍처 경계
 sot-architecture	docs/wiki/sot/architecture.md	core-domain-model-boundary-sot	40	22	4209	h2	Core Domain Model Boundary (SoT)
@@ -113,8 +124,12 @@ sot-architecture	docs/wiki/sot/architecture.md	온톨로지-투영-ontology-proj
 sot-architecture	docs/wiki/sot/architecture.md	이벤트-버스--잠금-규율	157	9	394	h2	이벤트 버스 · 잠금 규율
 sot-architecture	docs/wiki/sot/architecture.md	데이터-흐름-태그-쓰기	166	14	293	h2	데이터 흐름: 태그 쓰기
 sot-architecture	docs/wiki/sot/architecture.md	db-마이그레이션	180	6	343	h2	DB 마이그레이션
-sot-architecture	docs/wiki/sot/architecture.md	프론트엔드-경계	186	11	350	h2	프론트엔드 경계
-sot-data-contracts	docs/wiki/sot/data-contracts.md	data-contracts-sot	20	180	15731	h1	Data Contracts SOT
+sot-architecture	docs/wiki/sot/architecture.md	프론트엔드-경계	186	12	351	h2	프론트엔드 경계
+sot-architecture	docs/wiki/sot/architecture.md	목표-설계미구현	198	32	3060	h2	목표 설계(미구현)
+sot-architecture	docs/wiki/sot/architecture.md	서비스-구성-adr-019	202	15	1340	h3	서비스 구성 (ADR-019)
+sot-architecture	docs/wiki/sot/architecture.md	통신-경계-adr-020	217	7	556	h3	통신 경계 (ADR-020)
+sot-architecture	docs/wiki/sot/architecture.md	배포중앙-adr-022-adr-023	224	6	800	h3	배포·중앙 (ADR-022, ADR-023)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	data-contracts-sot	20	228	19539	h1	Data Contracts SOT
 sot-data-contracts	docs/wiki/sot/data-contracts.md	이-문서의-원천	28	8	847	h2	이 문서의 원천
 sot-data-contracts	docs/wiki/sot/data-contracts.md	마이그레이션-규율	36	17	1446	h2	마이그레이션 규율
 sot-data-contracts	docs/wiki/sot/data-contracts.md	tag-정의-계약	53	20	1040	h2	Tag 정의 계약
@@ -123,7 +138,12 @@ sot-data-contracts	docs/wiki/sot/data-contracts.md	backend-mode-postgres--json	9
 sot-data-contracts	docs/wiki/sot/data-contracts.md	historian-retention--query-window	111	26	1951	h2	Historian retention & query window
 sot-data-contracts	docs/wiki/sot/data-contracts.md	project-config-root-계약	137	57	5026	h2	Project config root 계약
 sot-data-contracts	docs/wiki/sot/data-contracts.md	project-package-exportimport-계약	161	33	3368	h3	Project package export/import 계약
-sot-data-contracts	docs/wiki/sot/data-contracts.md	문서화-원칙	194	6	384	h2	문서화 원칙
+sot-data-contracts	docs/wiki/sot/data-contracts.md	문서화-원칙	194	7	385	h2	문서화 원칙
+sot-data-contracts	docs/wiki/sot/data-contracts.md	목표-설계미구현	201	47	3807	h2	목표 설계(미구현)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	마이그레이션스키마-호환-adr-024	205	7	1004	h3	마이그레이션·스키마 호환 (ADR-024)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	기록-정책-adr-021	212	4	195	h3	기록 정책 (ADR-021)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	프로젝트-정본-adr-025	216	19	1460	h3	프로젝트 정본 (ADR-025)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	배포-정본번들-adr-022-adr-023	235	13	784	h3	배포 정본·번들 (ADR-022, ADR-023)
 sot-frontend	docs/wiki/sot/frontend.md	frontend-sot	24	268	16937	h1	Frontend SOT
 sot-frontend	docs/wiki/sot/frontend.md	1-문서-경계	32	12	592	h2	1. 문서 경계
 sot-frontend	docs/wiki/sot/frontend.md	2-스택과-실행-명령	44	24	625	h2	2. 스택과 실행 명령
@@ -164,13 +184,17 @@ sot-product	docs/wiki/sot/product.md	디자인-방향	202	12	620	h2	디자인 �
 sot-product	docs/wiki/sot/product.md	첫-계약-전략	214	16	1670	h2	첫 계약 전략
 sot-product	docs/wiki/sot/product.md	성공-기준	230	14	655	h2	성공 기준
 sot-product	docs/wiki/sot/product.md	성능--비기능-요구	244	9	240	h2	성능 / 비기능 요구
-sot-runtime-config	docs/wiki/sot/runtime-config.md	runtime-config-sot	13	82	5923	h1	Runtime Config SOT
+sot-runtime-config	docs/wiki/sot/runtime-config.md	runtime-config-sot	13	110	8134	h1	Runtime Config SOT
 sot-runtime-config	docs/wiki/sot/runtime-config.md	이-문서의-원천	25	5	335	h2	이 문서의 원천
 sot-runtime-config	docs/wiki/sot/runtime-config.md	settings-환경변수	30	32	2226	h2	`Settings` 환경변수
 sot-runtime-config	docs/wiki/sot/runtime-config.md	직접-읽는-환경변수	62	9	461	h2	직접 읽는 환경변수
 sot-runtime-config	docs/wiki/sot/runtime-config.md	설정-파일-위치	71	6	515	h2	설정 파일 위치
 sot-runtime-config	docs/wiki/sot/runtime-config.md	agent-troubleshooting-poc-설정	77	9	1112	h2	Agent troubleshooting PoC 설정
-sot-runtime-config	docs/wiki/sot/runtime-config.md	drift-검사	86	9	507	h2	drift 검사
+sot-runtime-config	docs/wiki/sot/runtime-config.md	drift-검사	86	10	508	h2	drift 검사
+sot-runtime-config	docs/wiki/sot/runtime-config.md	목표-설계미구현	96	27	2210	h2	목표 설계(미구현)
+sot-runtime-config	docs/wiki/sot/runtime-config.md	지원-호스트-adr-027	100	5	448	h3	지원 호스트 (ADR-027)
+sot-runtime-config	docs/wiki/sot/runtime-config.md	호스트-경로	105	11	625	h3	호스트 경로
+sot-runtime-config	docs/wiki/sot/runtime-config.md	실행-규칙	116	7	773	h3	실행 규칙
 sot-testing	docs/wiki/sot/testing.md	testing-sot	32	318	27203	h1	Testing SOT
 sot-testing	docs/wiki/sot/testing.md	1-문서-경계	40	20	1306	h2	1. 문서 경계
 sot-testing	docs/wiki/sot/testing.md	2-기본-실행-명령	60	35	1204	h2	2. 기본 실행 명령

@@ -13,7 +13,7 @@ sources:
   - docs/wiki/sot/api-events.md
   - docs/wiki/sot/frontend.md
   - docs/wiki/sot/testing.md
-last_verified: 2026-06-28
+last_verified: 2026-10-04
 ---
 
 # Architecture Decision Records
@@ -58,14 +58,29 @@ PureIron v1은 기술 과시용 플랫폼이 아니다. 첫 계약 가능성과 
 | 003 | No premature abstract base classes | 단일 구현 추상화는 가독성과 실행 속도를 해친다 |
 | 004 | YAML + REST config only | SCADA 구성은 텍스트 diff와 버전 관리가 중요하다 |
 | 005 | Fixed expression function set | 임의 함수 확장은 보안·성능·디버깅 리스크가 크다 |
-| 006 | Auto-migrations on boot | 단일 컨테이너 부팅과 재시작 안전성을 우선한다 |
-| 007 | ScadaGateway singleton, no `app.state` | typed runtime root가 테스트·리팩터링에 유리하다 |
-| 008 | Graceful degradation | 부분 장애에도 핵심 모니터링은 유지해야 한다 |
+| 006 | ~~Auto-migrations on boot~~ — **Superseded by 024**(legacy 경로에만 유효) | 단일 컨테이너 부팅과 재시작 안전성을 우선한다 |
+| 007 | ScadaGateway singleton, no `app.state` (**개정**: 새 경로는 단일 조립 지점 + 생성자 주입) | typed runtime root가 테스트·리팩터링에 유리하다 |
+| 008 | Graceful degradation (**개정**: 선택 서비스 = ai·중앙, site-db는 필수) | 부분 장애에도 핵심 모니터링은 유지해야 한다 |
 | 009 | TagStore lock discipline | 락 안 I/O와 이벤트 발행은 데드락 위험이 크다 |
 | 010 | Event-driven tag updates | polling보다 변경분 pub/sub이 확장성과 효율이 좋다 |
 | 011 | Frontend no `as any` / TS suppression | 타입 우회는 운영 UI 런타임 버그로 이어진다 |
-| 012 | Tag definition = DB SoT, runtime value = volatile | 정의는 일관성이 중요하고 값은 디바이스 재읽기로 복구 가능하다 |
+| 012 | Tag definition = DB SoT, runtime value = volatile (**개정**: 정본 = 고객 project repo Git) | 정의는 일관성이 중요하고 값은 디바이스 재읽기로 복구 가능하다 |
 | 018 | Device health is not a tag | 연결 상태는 드라이버 런타임 상태이지 사용자 태그 정의가 아니다 |
+
+**Foundation 재설계 ADR (2026-10-04, 상태: Accepted — target design(미구현))** — PureIron_V1의 새 경로에 적용한다. legacy(PureIron_ignition@legacy-final) 코드에는 기존 ADR이 그대로 유효하다.
+
+| ADR | 결정 | 한 줄 근거 |
+|---|---|---|
+| 019 | 현장 서비스 분할(collector/core/ai/web) + 단일 조립 지점 | 장비 장애 격리, 배포 경계 = 서비스 경계 |
+| 020 | collector↔core gRPC 계약·Ack·replay | 무상태 collector, 손실·중복 경계 명시 |
+| 021 | TimescaleDB 유지·기록 정책(압축·CAGG·프로젝트별 retention) | 검증된 저장소, 보존 요구는 고객별 |
+| 022 | DesiredState GitOps·generation 카운터 | PR 승인 = 배포 승인, 감사 가능한 번호 |
+| 023 | 단일 서명 번들·신뢰 루트·이미지 신원(config digest) | 온라인·폐쇄망 동일 검증 경로 |
+| 024 | 확장형 마이그레이션·epoch envelope·백업 경계(006 대체) | 구 앱이 새 스키마에서 동작해야 롤백이 안전 |
+| 025 | 프로젝트 정본 = 고객 Git repo, 드래프트 회수(단조 site_rev) | 현장 수정이 조용히 덮어써지는 사고 차단 |
+| 026 | repo 레이아웃(PureIron_V1)·고객별 repo | legacy 무접촉, 고객별 권한·이력 분리 |
+| 027 | 지원 호스트 = Ubuntu 24.04 x86_64, venv Updater | 지원 조합 하나로 실측 검증 |
+| 028 | 3단 게이트(G1/G2/G3)·generated ≠ authored·runner 격리 | 배포 결함은 VM e2e로만 잡힌다 |
 
 ---
 
@@ -161,6 +176,8 @@ SQLAlchemy, Tortoise, Piccolo 같은 ORM을 도입하지 않는다. DB 접근은
 
 ## ADR-006: Auto-migrations on Boot
 
+**상태**: **Superseded by [ADR-024](#adr-024-확장형-마이그레이션--epoch-envelope--백업-경계)** — Foundation 재설계(2026-10-04). 아래 결정은 legacy(PureIron_ignition@legacy-final) 경로에만 유효하다. 새 경로는 부팅 시 자동 마이그레이션을 하지 않고 Updater가 `pureiron-core migrate`를 호출한다.
+
 **결정**
 `backend/src/pureiron/db/migrations/*.sql`을 boot 시 알파벳순으로 자동 실행한다. 모든 migration은 멱등이어야 하며 forward-only를 기본으로 한다.
 
@@ -193,6 +210,9 @@ SQLAlchemy, Tortoise, Piccolo 같은 ORM을 도입하지 않는다. DB 접근은
 - 테스트에서 gateway monkeypatch가 필요할 수 있다.
 - 멀티 인스턴스 상태 공유는 Redis/DB 등 외부 계층으로 분리해야 한다.
 
+**개정 (Foundation 재설계(2026-10-04), 새 경로 — target design(미구현))**
+새 경로(core)는 전역 싱글톤을 두지 않는다. 유일한 조립 지점 `SiteRuntime.build(settings)`가 런타임을 만들고 `create_app(rt)`에 넘기며, 모든 의존성은 **생성자 주입**이다. 모듈에서 전역 상태를 조회(`gateway.*` 같은 import-time 싱글톤)하지 않고, `app.state` 금지는 그대로 유지한다. typed runtime root라는 원래 이유는 `SiteRuntime`이 이어받는다. 근거·경계 검사는 [ADR-019](#adr-019-현장-서비스-분할--collector--core--ai--web).
+
 **관련 SOT**: [architecture](../sot/architecture.md), [testing](../sot/testing.md)
 
 ## ADR-008: Graceful Degradation
@@ -211,6 +231,9 @@ DB, Redis, RAG, LangGraph, external LLM 등 선택 서비스 초기화가 실패
 - 일부 기능은 503 또는 degraded 상태를 반환한다.
 - UI/API가 현재 비활성 기능을 명확히 보여줘야 한다.
 
+**개정 (Foundation 재설계(2026-10-04), 새 경로 — target design(미구현))**
+새 경로에는 Redis가 없다. 선택 서비스 = `ai` 서비스와 중앙(control-api) — 둘이 없어도 현장 모니터링·알람·이력은 동작한다. collector가 다운되면 core는 죽지 않고 해당 장비 태그를 BAD, 장비를 DISCONNECTED로 표시한다. 반면 **site-db는 선택이 아니라 core readiness의 필수 조건**이다(`/readyz`는 DB 연결과 스키마 호환 범위를 확인). 관련: [ADR-019](#adr-019-현장-서비스-분할--collector--core--ai--web), [ADR-020](#adr-020-collector--core-grpc-계약--ack--replay-의미론).
+
 **관련 SOT**: [architecture](../sot/architecture.md), [runtime-config](../sot/runtime-config.md), [testing](../sot/testing.md)
 
 ## ADR-009: TagStore Lock Discipline
@@ -227,6 +250,8 @@ TagStore lock은 in-memory 상태 변경에만 사용한다. DB I/O와 `event_bu
 
 - in-memory 상태와 DB 사이에 짧은 eventual consistency window가 생긴다.
 - 테스트는 이 경계를 전제로 작성해야 한다.
+
+**유지 (Foundation 재설계(2026-10-04))**: 새 경로 core `tags/`에도 그대로 적용한다(DB I/O·이벤트 발행은 락 밖).
 
 **관련 SOT**: [architecture](../sot/architecture.md), [api-events](../sot/api-events.md), [testing](../sot/testing.md)
 
@@ -245,6 +270,8 @@ TagStore lock은 in-memory 상태 변경에만 사용한다. DB I/O와 `event_bu
 
 - 이벤트 순서, 중복, 실패 처리는 구독자 책임이다.
 - 정의 CRUD와 값 변경 이벤트를 혼동하면 안 된다.
+
+**유지 (Foundation 재설계(2026-10-04))**: 새 경로에서는 **core 프로세스 내부(in-process) 범위**의 이벤트 전파에 한정한다. 서비스 간(collector↔core)은 gRPC 계약([ADR-020](#adr-020-collector--core-grpc-계약--ack--replay-의미론))이다.
 
 **관련 SOT**: [api-events](../sot/api-events.md), [frontend](../sot/frontend.md)
 
@@ -282,6 +309,9 @@ Frontend에서 `as any`, `@ts-ignore`, `@ts-expect-error`, tsconfig strictness �
 - 재시작 직후 값이 비는 시간이 있을 수 있다.
 - historian 저장과 current value contract를 명확히 구분해야 한다.
 
+**개정 (Foundation 재설계(2026-10-04), 새 경로 — target design(미구현))**
+태그 정의의 정본은 **고객 project repo(Git)**다. 현장 site-db는 적용본 + 현장 드래프트(단조 `site_rev`)를 담는다. `tag_id`는 태그 path 기준으로 안정적이며 재사용하지 않는다(삭제는 `retired_at`). 런타임 값이 휘발된다는 부분은 그대로 유지한다. 근거: [ADR-025](#adr-025-프로젝트-정본--드래프트-회수단조-site_rev).
+
 **관련 SOT**: [data-contracts](../sot/data-contracts.md), [api-events](../sot/api-events.md)
 
 ## ADR-013: v1 Does Not Replace Existing PLC Control
@@ -299,6 +329,8 @@ PureIron v1은 기존 PLC 제어 로직을 대체하지 않는다. 관제, 알�
 
 - “완전 자동화 플랫폼”처럼 보이는 장기 비전 일부는 v1에서 보류된다.
 - 대신 고객 설득은 “기존 설비를 유지하면서 웹/모바일 관제를 얹는다”에 집중한다.
+
+**유지 (Foundation 재설계(2026-10-04))**: 새 경로에서도 유지한다. `collector.proto`의 `WriteRequest`는 계약만 두고 비활성(core 미송신, collector 수신 시 REJECTED)이며, 쓰기 활성화는 이 ADR을 재검토하는 별도 ADR 이후에만 한다.
 
 **관련 SOT**: [product](../sot/product.md), [architecture](../sot/architecture.md)
 
@@ -318,6 +350,8 @@ Simulator, 3D Digital Twin, Agent-assisted Simulation은 v1의 고객 설득과 
 - Agent가 할 수 있는 액션 범위가 제한된다.
 - 장기적으로 자동화로 확장하려면 approval, audit, simulator validation 데이터가 축적되어야 한다.
 
+**유지 (Foundation 재설계(2026-10-04))**: 새 경로에서도 유지한다. `ai` 서비스는 core read-only API만 소비한다.
+
 **관련 SOT**: [product](../sot/product.md), [frontend](../sot/frontend.md), [api-events](../sot/api-events.md)
 
 ## ADR-015: Start as Field-deployed Solution, Not Finished SaaS
@@ -335,6 +369,8 @@ Simulator, 3D Digital Twin, Agent-assisted Simulation은 v1의 고객 설득과 
 
 - 초기에는 서비스/프로젝트 성격이 강해진다.
 - 반복 패턴을 제품화하지 않으면 커스텀 지옥이 될 수 있으므로 SOT와 config 구조가 중요하다.
+
+**유지 (Foundation 재설계(2026-10-04))**: 새 경로에서도 유지한다. 중앙(control-api·control-web·fleet repo)은 고객용 SaaS가 아니라 벤더 내부 배포 도구다.
 
 **관련 SOT**: [product](../sot/product.md), [data-contracts](../sot/data-contracts.md)
 
@@ -390,7 +426,208 @@ Frontend는 SaaS landing page처럼 보이면 안 된다. 운영자가 매일 �
 - health history가 필요하면 별도 `device_health_history` 저장소를 설계해야 한다.
 - 기존 `[health]` 잔여 데이터는 검색에서 방어적으로 숨겨야 한다.
 
+**유지 (Foundation 재설계(2026-10-04))**: 새 경로에서도 유지한다. 장비 상태는 collector가 `collector.proto`의 `DeviceHealth` 메시지로 보내고 core `GET /api/v1/devices`가 단일 소스다. 태그로 만들지 않는다.
+
 **관련 SOT**: [architecture](../sot/architecture.md), [api-events](../sot/api-events.md), [frontend](../sot/frontend.md)
+
+## ADR-019: 현장 서비스 분할 — collector / core / ai / web
+
+**상태**: Accepted — target design(미구현). Foundation 재설계(2026-10-04).
+
+**결정**
+현장 런타임을 단일 FastAPI 프로세스(legacy `ScadaGateway`)에서 서비스 단위로 나눈다. compose 프로젝트 `pureiron` = `collector`(장비 통신) · `core`(태그·알람·이력·인증·감사·실시간·프로젝트 적용) · `web`(nginx + React) · `site-db`(TimescaleDB PG16) · `simulator`(dev profile). `ai`는 core read-only API 계약만 정의하고 첫 완료 범위에서 제외한다. Updater는 컨테이너가 아니라 **호스트 systemd 서비스**다. core의 유일한 조립 지점은 `SiteRuntime.build(settings)` → `create_app(rt)`이며 모든 의존성은 생성자로 주입한다. 도메인 모듈은 import-linter 계약(진입점만 runtime/app import, `api` > 도메인 > `platform` 계층, 도메인 간은 `<module>.ports`만)으로 경계를 강제한다.
+
+**이유**
+
+- 장비 통신 장애·재시작이 core(알람·이력·UI)를 같이 죽이지 않게 격리한다.
+- 업데이트·롤백을 이미지 단위로 다루려면 서비스 경계가 배포 경계와 일치해야 한다.
+- 전역 싱글톤 조회를 없애면 테스트에서 런타임을 통째로 갈아끼울 수 있고, 의존 방향을 정적 검사로 지킬 수 있다.
+- Updater가 컨테이너 안에 있으면 자기 자신과 docker를 교체·복구할 수 없다.
+
+**트레이드오프**
+
+- 프로세스 간 통신(gRPC)과 배포 단위가 늘어 운영 표면이 커진다.
+- legacy 기능(OPC-UA 외 프로토콜, UDT, 스크립트, 대시보드, Agent, MES)은 순서대로 다시 이식해야 하며 그동안 legacy와 새 경로 2벌을 유지한다.
+
+**관련 SOT**: [architecture](../sot/architecture.md#목표-설계미구현), [runtime-config](../sot/runtime-config.md#목표-설계미구현)
+
+## ADR-020: collector ↔ core gRPC 계약 · Ack · replay 의미론
+
+**상태**: Accepted — target design(미구현).
+
+**결정**
+collector와 core는 `packages/contracts/collector.proto`의 양방향 스트림 `Acquisition.Session` 하나로 통신한다(core = 서버). core가 `AcquisitionPlan`(장비·태그 주소)을 내려주고 collector는 `ValueBatch{seq}`를 100ms 또는 500값마다 올린다. collector는 **무상태**이며 DB에 접근하지 않고, core `Ack` 전까지 최대 60초 메모리 링버퍼에 보관한다. core는 in-memory ingest(현재값 반영 + historian 상한 버퍼 600,000행 적재) 직후 Ack한다. 재연결 후 재전송분(`replay=true`)은 **historian에만** 원시 기록하고(deadband·알람·WS 우회), 중복은 `UNIQUE(tag_id, time)`로 흡수한다. 스트림 종료 또는 `max(3×poll, 5s)` 무신호면 해당 장비 태그는 BAD, 장비는 DISCONNECTED. 쓰기(`WriteRequest`)는 계약만 두고 비활성이다(ADR-013).
+
+**이유**
+
+- collector를 무상태로 두면 재시작·교체가 안전하고 장비 측 장애를 core와 분리할 수 있다.
+- Ack 시점을 core in-memory ingest로 고정하면 링버퍼는 core 다운·단절 구간만, DB 장애는 core 상한 버퍼만 책임진다.
+- replay를 라이브 경로와 분리해야 알람 중복·deadband 상태 오염이 없다.
+
+**트레이드오프**
+
+- core 프로세스 crash 시 아직 flush되지 않은 버퍼는 손실될 수 있다(정상 시 flush 주기 1초분, DB 장애 중이면 상한 내 전체). 이 허용 손실을 문서화한다.
+- proto는 호환성 diff 게이트(ADR-028)로 보호해야 하며 프로토콜 추가는 `TagPoint.address` oneof 확장으로만 한다.
+
+**관련 SOT**: [architecture](../sot/architecture.md#목표-설계미구현), [data-contracts](../sot/data-contracts.md#목표-설계미구현)
+
+## ADR-021: TimescaleDB 유지 · 기록 정책
+
+**상태**: Accepted — target design(미구현).
+
+**결정**
+이력 저장소는 TimescaleDB(PG16)를 유지한다. `tag_history`는 1일 chunk hypertable, 2일 지난 chunk는 압축, 보존 기간은 **프로젝트 설정**(`historian.retention_days`, 기본 365일), 1분·1시간 continuous aggregate(`WITH NO DATA` + refresh policy)를 둔다. 기록은 태그별 deadband + `max_interval`로 줄인다. `tag_id`는 태그 path 기준으로 안정적이며 재사용하지 않는다(삭제는 `retired_at` 표시).
+
+**이유**
+
+- legacy에서 이미 검증된 저장소이고, 압축·CAGG·retention을 DB 기능으로 해결해 코드량을 줄인다.
+- legacy의 하드코딩 retention(`027_*`)을 고객별 프로젝트 설정으로 옮겨야 현장마다 다른 보존 요구를 수용한다.
+
+**트레이드오프**
+
+- Timescale extension 업그레이드는 전진 전용이라 site-db 이미지 변경은 앱 변경과 분리된 `db-step` release로만 한다(ADR-024).
+- 압축 chunk와 CAGG는 마이그레이션 lint 제약(ADR-024)을 강하게 만든다.
+
+**관련 SOT**: [data-contracts](../sot/data-contracts.md#목표-설계미구현)
+
+## ADR-022: DesiredState GitOps · generation 카운터
+
+**상태**: Accepted — target design(미구현).
+
+**결정**
+현장별 배포 목표(DesiredState)는 벤더 내부 repo `pureiron-fleet`의 `sites/<site>.yaml`이 정본이다(product release, 프로젝트 repo·버전, 적용 창). **이 PR의 승인·merge가 곧 배포 승인**이다. 파일 안 `generation: N` 카운터는 PR마다 정확히 +1이어야 하고(`check-gen.yml`), 중앙 `control-api`에 이미 게시된 최대 gen보다 커야 한다. 현장 Updater 규칙: 같은 gen은 멱등(no-op), 낮은 gen은 `E_GEN` 거부, 실패 후 **자동 재시도 없음**, 취소는 이전 내용으로 되돌린 **더 높은 gen**(revert PR). 현장은 중앙을 polling만 하고 중앙이 현장에 접속하지 않는다. control-web은 읽기 전용이다.
+
+PoC 무료 모드(첫 유료 계약 전): GitHub Free private repo라 branch protection·Environment 승인이 없으므로, fleet `publish.yml`이 서명 직전 merge된 PR의 승인(허용 승인자 목록, 작성자 제외)을 API로 확인하고 없으면 `E_APPROVAL`로 서명을 거부한다. PR을 거치지 않은 main 직접 push(merge commit에 PR 연결이 없음)도 서명을 거부한다. 유료 전환 시 GitHub 기능(branch protection, Environment required reviewer)으로 되돌린다.
+
+**이유**
+
+- 누가 언제 어떤 현장에 무엇을 배포했는지가 Git 이력과 PR 리뷰로 남는다.
+- git 이력 기반 번호(`rev-list --count`)는 fetch 깊이·merge 방식·이력 재작성에 흔들리므로 파일 내 카운터가 감사 가능하다.
+- 현장발 polling만 허용하면 고객 방화벽 인바운드 개방이 필요 없다.
+
+**트레이드오프**
+
+- PoC 동안 승인 강제는 GitHub 기능이 아니라 workflow 검사 수준이다(단일 runner 호스트 장애 위험 포함).
+- 여러 epoch를 건너뛰는 현장은 단계별 연속 PR(`stepwise.py`)이 필요하다.
+
+**관련 SOT**: [architecture](../sot/architecture.md#목표-설계미구현), [runtime-config](../sot/runtime-config.md#목표-설계미구현)
+
+## ADR-023: 단일 서명 번들 · 신뢰 루트 · 이미지 신원(config digest)
+
+**상태**: Accepted — target design(미구현).
+
+**결정**
+현장에 들어가는 모든 변경은 서명된 단일 번들 `.pib`(tar: `manifest.json`·`manifest.sig`·`release-cert.json`·`.sig`·이미지·프로젝트)로만 전달하며, **온라인과 폐쇄망이 같은 파일·같은 검증 경로**를 쓴다. registry pull은 하지 않는다. 신뢰 체인: 오프라인 root key(Ed25519) → release key 인증서(유효 180일, serial) → manifest 서명. 검증 순서는 ① 서명·인증서(`E_SIG`/`E_CERT`) ② site_id(`E_SITE`) ③ generation(`E_GEN`) ④ 파일 sha256·이미지 신원(`E_DIGEST`) ⑤ 스키마 호환·Updater 버전(`E_SCHEMA`/`E_UPDATER`) ⑥ 미회수 드래프트(`E_DRAFT`)이며, 어느 단계든 실패하면 **서비스를 멈추기 전에** 거부한다. 이미지 신원은 image **config digest**(`docker image inspect .Id`)다: 설치 시 classic image store를 고정하고, 로드 후 `pureiron/<svc>:<release>` 태그와 `.Id == manifest.config_digest`를 assert하며 compose는 `pull_policy: never`. site-db도 업스트림 이미지를 `pureiron/site-db:<ver>`로 retag해 같은 규칙을 따른다. 서명·검증 코드는 `packages/bundle-tools` 한 벌을 CI·Updater·control-api가 공유한다.
+
+**이유**
+
+- 폐쇄망 현장이 1순위 고객군이므로 온라인 전용 경로를 따로 두면 검증되지 않은 경로가 생긴다.
+- `docker save/load`는 registry digest를 잃지만 config digest는 내용 주소라 보존된다.
+- "CI가 서명한 것과 Updater가 검증하는 것이 다르다"는 결함을 코드 한 벌로 원천 차단한다.
+
+**트레이드오프**
+
+- 번들은 항상 전체 이미지를 포함한다(델타 없음). 크기 예산 1.5 GiB, 1.2 GiB 경보.
+- root key 분실은 치명적이다: 대표가 오프라인 장비에서 생성하고 사본 2부를 서로 다른 장소에 보관한다(M2 착수 전). 그 전에는 test key만 쓴다.
+
+**관련 SOT**: [runtime-config](../sot/runtime-config.md#목표-설계미구현), [data-contracts](../sot/data-contracts.md#목표-설계미구현)
+
+## ADR-024: 확장형 마이그레이션 · epoch envelope · 백업 경계
+
+**상태**: Accepted — target design(미구현). **ADR-006을 대체**한다(새 경로).
+
+**결정**
+새 경로에서는 부팅 시 자동 마이그레이션을 하지 않는다. 스키마 변경은 별도 명령 `pureiron-core migrate up`(이력 테이블 `schema_migrations` + checksum, `pg_advisory_lock`, 파일 단위 트랜잭션, 실패 즉시 중단)으로만 하고 **Updater가 호출**한다. 마이그레이션은 **ADD-only**(확장형)이며 lint가 DROP·RENAME·타입 변경·제약 추가·NOT NULL 무기본값·UNIQUE INDEX·trigger 등을 거부한다. 제거(contract)는 deprecated 표시 후 다음 epoch 이후에만 한다. 마이그레이션을 포함한 release마다 정수 **epoch**를 +1하고, 앱은 `app_expected ≤ 현재 스키마 ≤ app_max_compatible(= expected + 1)` 범위에서만 ready다. 따라서 N-1 앱이 N 스키마에서 동작해야 하고(G1 게이트), 1 epoch를 넘는 점프는 거부한다. 업데이트 전 백업 = `pg_dump`(tag_history 제외) + 프로젝트 스냅샷(`project_state` 포함) + compose/manifest + secret 참조 목록. 롤백 = 직전 이미지 digest + 직전 프로젝트 복원이며 **스키마는 전진만**, 운영 이력(사용자·ACK·감사·tag_history)은 되돌리지 않는다.
+
+**이유**
+
+- 업데이트 실패 시 구 앱이 새 스키마에서 계속 동작해야 롤백·취소(revert PR)가 실제로 안전하다.
+- 부팅 시 자동 실행은 실패 구문을 경고 후 건너뛰는 등 중단 지점을 통제할 수 없었다(legacy `gateway.py`).
+- 운영 이력을 되돌리면 현장 감사 기록이 사라진다.
+
+**트레이드오프**
+
+- 컬럼 제거·이름 변경이 최소 2 release에 걸친다.
+- 오래 방치된 현장은 epoch당 1단계씩 적용해야 해 업데이트 시간이 늘어난다.
+
+**관련 SOT**: [data-contracts](../sot/data-contracts.md#목표-설계미구현), [architecture](../sot/architecture.md#목표-설계미구현)
+
+## ADR-025: 프로젝트 정본 · 드래프트 회수(단조 site_rev)
+
+**상태**: Accepted — target design(미구현). ADR-012 개정의 근거.
+
+**결정**
+고객 프로젝트(장비·태그·알람·화면 설정)의 정본은 **고객별 Git repo**(`pureiron-project-<id>`)다. 현장 site-db의 프로젝트는 적용본이며, 현장에서 REST `PATCH`로 고친 내용은 드래프트로 남는다. `PATCH`마다 `site_rev`가 단조 증가(리셋 없음)하고, 적용 시 `base_site_rev`를 기록한다. 미회수 드래프트가 있으면 새 배포는 `E_DRAFT`로 거부된다. 회수는 현장 전체 스냅샷 export → 벤더가 고객 repo에서 `pureiron-project absorb` → PR(`absorbs: {site: rev}` 기록) 순서다. 비밀값은 프로젝트에 넣지 않고 `secret://<name>` 참조만 둔다. 프로젝트 파일은 정규화 규칙(YAML 1.2 strict, RFC 8785 숫자, 기본값 생략, POSIX 경로, UTF-8 NFC, LF)으로 **무손실 왕복**하고 `content_hash`로 버전을 식별한다. legacy 변환기는 지원하지 않는 항목을 반드시 보고한다.
+
+**이유**
+
+- 고객별 설정 이력·리뷰·롤백을 Git으로 일원화한다.
+- 현장 긴급 수정은 허용하되, 그 수정이 다음 배포에 조용히 덮어써지는 사고를 차단한다.
+
+**트레이드오프**
+
+- 현장 편집 화면은 두지 않는다(REST만, No config UI). 회수는 벤더 운영 절차가 필요하다.
+- 정규화 규칙 때문에 사람이 쓴 YAML 서식이 export 후 바뀔 수 있다(`fmt --check`로 고정).
+
+**관련 SOT**: [data-contracts](../sot/data-contracts.md#목표-설계미구현)
+
+## ADR-026: repo 레이아웃 · 고객별 repo
+
+**상태**: Accepted — target design(미구현).
+
+**결정**
+새 코드는 새 repo `circulation95/PureIron_V1`의 `services/`(core·collector·updater·control-api·web·control-web·ai) · `packages/`(contracts·project-tools·bundle-tools) · `deploy/` · `tests/e2e/`에 둔다. 기존 `PureIron_ignition`은 태그 `legacy-final`로 고정해 참조만 하고(이식 완료 전 archive 금지), legacy 인용은 `PureIron_ignition@legacy-final:<path>` permalink로 한다. repo는 개인 계정 `circulation95` 소유 private으로 시작한다: 제품(V1), `pureiron-fleet`(배포 정본), `pureiron-fleet-e2e`(nightly e2e·runner), 고객별 `pureiron-project-<id>`. 고객 repo는 V1의 재사용 workflow `validate-project.yml`을 호출하며(V1 Actions access = "repositories owned by the user"), 제품 코드에 고객별 분기(`site_id == "…"`, 고객 이름 리터럴)를 두지 않는다.
+
+**이유**
+
+- legacy repo의 CI·runner·미커밋 작업을 건드리지 않고 깨끗한 게이트로 시작할 수 있다.
+- 고객별 repo로 접근 권한·이력·배포 단위를 고객마다 분리한다.
+
+**트레이드오프**
+
+- 이식 기간 동안 두 repo를 오가며 참조해야 한다.
+- 고객이 repo를 직접 소유해야 하는 시점이 오면 project-tools·workflow를 공개 repo로 분리하거나 org로 이전해야 한다.
+
+**관련 SOT**: [architecture](../sot/architecture.md#목표-설계미구현), [agent-rules](../sot/agent-rules.md)
+
+## ADR-027: 지원 호스트 매트릭스
+
+**상태**: Accepted — target design(미구현).
+
+**결정**
+현장 호스트는 **Ubuntu 24.04 x86_64 하나만** 지원한다. 설치는 오프라인 기준: preflight(OS·아키텍처·`/usr/bin/python3.12`·디스크 ≥ 50 GiB·포트·시간 동기) → 번들에 든 docker-ce `.deb` 설치 → `/etc/docker/daemon.json`으로 classic image store 고정 → 이미지 로드 → systemd. Updater는 Python 3.12 **venv tarball**(`/opt/pureiron/updater/<ver>`, `current` symlink)이다. 데이터 경로는 `/var/lib/pureiron/{db,state,backups,bundles}`. 개발·PoC 검증은 개발 PC(Windows 11 Pro) Hyper-V 위 Ubuntu 24.04 VM으로 한다.
+
+**이유**
+
+- 지원 조합을 하나로 묶어야 2인 팀이 설치·업데이트·롤백을 실측 검증할 수 있다.
+- zipapp은 native `.so`(cryptography)를 못 읽고, shiv는 런타임 추출 캐시에 의존해 기각했다. venv는 서명·검증 코드를 CI와 공유할 수 있다.
+
+**트레이드오프**
+
+- 다른 배포판·ARM·Windows 서버 현장은 지원하지 않는다(요구가 생기면 별도 ADR).
+- 호스트 python3.12·classic image store·Ubuntu 24.04에 묶인다.
+
+**관련 SOT**: [runtime-config](../sot/runtime-config.md#목표-설계미구현)
+
+## ADR-028: 3단 검증 게이트 · generated ≠ authored · runner 격리
+
+**상태**: Accepted — target design(미구현).
+
+**결정**
+검증은 3단이다. **G1**(PR마다): ruff, pyright strict, tsc/eslint strict-type-checked, import-linter(+음성 fixture), 계약 호환성 diff(`buf breaking`, `oasdiff`, schema diff)와 생성물 drift, migration lint, 단위·통합, 재현 빌드, N-1 스키마 호환, 고객 분기 금지 검사 — **부채 예외 없음**(`type: ignore`·`eslint-disable`·`as any`·`@ts-ignore` 0건). **G2**(nightly): VM 3대(site-a·site-b·central) e2e로 설치·예약 업데이트·격리·롤백·거부·장애 주입·폐쇄망·드래프트 회수·fleet 표시. **G3**(release candidate): 중앙 차단 24h, 백업·복원, 2,000태그 성능 측정. 계약(proto·OpenAPI·JSON Schema)이 정본이고 코드 생성물(`src/<pkg>/_gen/`, `schema.d.ts`)은 커밋하되 **generated ≠ authored**: 생성 `.py`는 pyright·ruff 대상에서 빼고 `.pyi`(mypy-protobuf)를 타입 정본으로 strict 소비하며, 재생성 diff로 drift를 막는다(설정 원문: `[tool.pyright] ignore = ["src/<pkg>/_gen/**/*.py"]`, ruff `extend-exclude = ["src/*/_gen"]`, 검사 job `contracts-drift`). runner는 PoC 동안 개발 PC의 self-hosted 3개(`g1`, `e2e`, `publish`)를 repo 단위로 등록하고, nightly·runner는 별도 repo `pureiron-fleet-e2e`에 둔다. V1에는 legacy workflow가 없어 legacy job이 새 runner를 점유하지 않는다.
+
+**이유**
+
+- 배포 경로 결함은 PR 단위 검사로 잡히지 않아 VM e2e가 필요하다.
+- 생성 코드를 strict 검사에 넣으면 억제 주석이 생기고, 억제 주석 0건 규칙과 충돌한다.
+- 첫 계약 전 현금 지출 0 원칙 때문에 hosted runner 분 과금을 쓰지 않는다.
+
+**트레이드오프**
+
+- 단일 호스트(개발 PC)가 runner·VM·서명 키를 함께 맡아 장애 시 동시 소실 위험이 있다(주 1회 외장 백업, 키 오프라인 사본).
+- 유료 전환(첫 유료 계약 또는 2번째 상시 개발자) 시 hosted G1·Environment 승인으로 되돌리는 작업이 남는다.
+
+**관련 SOT**: [testing](../sot/testing.md), [agent-rules](../sot/agent-rules.md)
 
 ## 4. 새 ADR 추가 규칙
 

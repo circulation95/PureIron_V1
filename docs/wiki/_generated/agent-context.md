@@ -5,7 +5,7 @@
 
 # Agent Rules SOT
 
-> **legacy(PureIron_ignition) 기준** — 아래 규칙 중 코드 경로·모듈 이름(`gateway.*`, `TagStore`, `drivers/` 등)은 [`PureIron_ignition@legacy-final`](https://github.com/circulation95/PureIron_ignition/tree/legacy-final) 구현 기준이다. PureIron_V1 새 경로에 대한 규칙 변경은 [ADR](../adr/index.md)에서 다룬다.
+> **PureIron_V1 기준** — 아래 `불변 규칙`은 V1 새 코드(`services/`·`packages/`·`deploy/`)에 적용하며, 아직 구현 전이라 [ADR](../adr/index.md) 019~028의 목표 설계를 따른다. legacy [`PureIron_ignition@legacy-final`](https://github.com/circulation95/PureIron_ignition/tree/legacy-final) 코드를 읽을 때의 규칙은 `legacy 코드 참고 규칙` 절에만 있고 새 코드에 적용하지 않는다.
 
 LLM 에이전트가 PureIron에서 작업할 때 따르는 규칙의 **정본**이다.
 
@@ -57,7 +57,7 @@ PureIron 작업을 시작할 때는 다음 순서로 컨텍스트를 확인한�
    - API/이벤트: `api-events.md`
    - 프론트엔드: `frontend.md`
    - 테스트: `testing.md`
-5. 필요한 경우 projection 문서: `AGENTS.md`, `CLAUDE.md`, `backend/CLAUDE.md`, `frontend/CLAUDE.md`
+5. 필요한 경우 projection 문서: `AGENTS.md`, `CLAUDE.md`
 
 루트 projection보다 `docs/wiki/sot/**`를 우선한다.
 
@@ -78,18 +78,33 @@ v1은 기존 PLC 제어를 대체하지 않는다. 실제 설비 자동 제어, 
 
 ## 불변 규칙
 
-- No `app.state` — 모든 상태는 `gateway.*` 경유(`request.app.state` 금지)
-- No ORM — asyncpg raw SQL, 멱등 마이그레이션만으로 스키마 변경
-- No plugin system — v1 지원 프로토콜(OPC-UA·Modbus·S7·LS·AB·MELSEC)은 `drivers/`에 직접 구현하고 동적 로딩·registry·plugin lifecycle로 추상화하지 않는다. 새 프로토콜도 `drivers/`에 직접 추가한다. v1 지원 프로토콜 정본 표는 [architecture](../sot/architecture.md)
-- No config UI — 런타임 인프라/env·플러그인 레지스트리·드라이버 빌더·schema-less 범용 no-code config 빌더를 UI로 노출하지 않는다. v1 운영에 필요한 Tag/Device/Alarm/User/Dashboard 설정은 REST API와 제한된 화면으로 제공하고, seed/demo 초기값은 YAML/JSON으로 유지한다(상세는 아래 “No config UI 범위” 절, 근거는 [adr](../adr/index.md) ADR-004)
-- 20개 고정 expression 함수 — 확장 불가, 복잡 로직은 샌드박스 스크립트로
-- Lock discipline — DB I/O·`tag.changed.*` 발행은 TagStore 락 밖에서(데드락 방지)
-- Graceful degradation — 선택적 서비스(DB/Redis/RAG/LangGraph)는 안전하게 실패, 전체 크래시 금지
-- Event-driven — 태그 변경은 `tag.changed.*` pub/sub으로 전파
-- Device health is not a tag — `DriverHealth.snapshot()`(`/api/devices`)이 단일 소스, `[health]` 시스템 태그 생성 금지
-- Frontend — No `as any` / `@ts-ignore` / `@ts-expect-error`, `tsc --noEmit` 통과 필수
+- No ORM — asyncpg raw SQL만 사용한다(core·control-api 모두). 근거 ADR-001
+- 단일 조립 지점 — core는 `SiteRuntime.build(settings)` → `create_app(rt)`에서만 조립하고 의존성은 생성자로 주입한다. 전역 싱글톤 조회·`app.state` 금지, 모듈 경계는 import-linter 계약으로 강제. 근거 ADR-007 개정·ADR-019
+- 서비스 경계 — collector는 무상태·DB 무접근, collector↔core 통신은 `collector.proto` gRPC 계약만. core 내부 이벤트 pub/sub은 프로세스 안에서만 쓴다. 근거 ADR-010·ADR-020
+- Lock discipline — TagStore 락 안에서 DB I/O·이벤트 발행 금지(데드락 방지). 근거 ADR-009
+- 계약 우선 — `collector.proto`·OpenAPI·JSON Schema가 정본이다. 호환성 diff를 통과해야 하고 생성물은 재생성 diff 0을 유지한다. 근거 ADR-028
+- 마이그레이션 — 스키마 변경은 `pureiron-core migrate`의 ADD-only 마이그레이션만. 부팅 시 자동 실행 금지, 제거는 epoch 규칙(deprecated 후 다음 epoch 이후)으로만. 근거 ADR-024
+- 서명 번들 — 현장 변경은 서명된 `.pib`로만 반입한다. 검증 실패는 서비스 중단 전에 거부, registry pull 금지, 이미지는 config digest로 확인. 근거 ADR-023
+- 프로젝트 정본 — 고객 설정 정본은 고객 project repo(Git)다. 비밀값은 `secret://<name>` 참조만, 제품 코드에 고객별 분기(`site_id == "…"`, 고객 이름) 금지. 근거 ADR-025·ADR-026
+- Graceful degradation — 선택 서비스(`ai`·중앙)가 없어도 현장 모니터링·알람·이력은 동작한다. collector 다운 = 해당 장비 BAD/DISCONNECTED, site-db는 필수(core readiness 조건). 근거 ADR-008 개정
+- Device health is not a tag — 장비 상태는 collector `DeviceHealth` → core `GET /api/v1/devices`가 단일 소스, 태그로 만들지 않는다. 근거 ADR-018
+- 쓰기 비활성 — `WriteRequest`는 계약만 두고 보내지 않는다. 기존 PLC 제어를 대체하지 않는다. 근거 ADR-013
+- No plugin system — 프로토콜은 collector `drivers/`에 직접 구현하고, 추가는 proto `TagPoint.address` oneof 확장으로만 한다. registry·동적 로딩 금지. 근거 ADR-002
+- No config UI — 인프라·env·드라이버·범용 config 빌더 UI 금지. 현장 편집은 REST `PATCH`만(아래 “No config UI” 범위 절). 근거 ADR-004·ADR-025
+- 20개 고정 expression 함수 — 확장 불가, 복잡 로직은 샌드박스 스크립트로. 근거 ADR-005
+- 엄격 게이트 — pyright strict·tsc/eslint strict, 억제 주석(`type: ignore`·`eslint-disable`·`as any`·`@ts-ignore`·`@ts-expect-error`) 0건. 생성 코드(`_gen/`)는 억제 대신 검사 제외 + drift 게이트. 근거 ADR-011·ADR-028
 
 > 위 bullet은 `scripts/wiki.py build`가 파싱해 `docs/LLM_WIKI.md`·`docs/wiki/_generated/agent-context.md`로 투영한다. 한 줄을 고치면 build 후 양쪽에 반영된다. 결정 근거·트레이드오프는 [adr](../adr/index.md) 참조.
+
+## legacy 코드 참고 규칙 (PureIron_ignition)
+
+이식 작업에서 [`PureIron_ignition@legacy-final`](https://github.com/circulation95/PureIron_ignition/tree/legacy-final) 코드를 읽을 때의 맥락이다. **V1 새 코드에는 적용하지 않는다.**
+
+- legacy 백엔드 상태는 `ScadaGateway` 싱글톤 `gateway.*`에 모여 있다(`request.app.state` 미사용). V1은 이 패턴을 쓰지 않는다(ADR-007 개정)
+- legacy 마이그레이션은 부팅 시 `backend/src/pureiron/db/migrations/*.sql` 알파벳순 자동 실행이다(ADR-006, V1에서는 ADR-024로 대체)
+- legacy 선택 서비스는 DB/Redis/RAG/LangGraph이고, 실패해도 서버가 계속 뜬다
+- legacy 태그 변경은 `tag.changed.*` pub/sub, 장비 상태는 `DriverHealth.snapshot()`(`/api/devices`)이다
+- legacy v1 운영 설정 화면(Tag/Device/Alarm/User/Dashboard)과 `/api/settings`·`/api/tags`·`/api/devices`가 존재한다
 
 ## “No config UI” 범위
 
@@ -106,7 +121,9 @@ v1은 기존 PLC 제어를 대체하지 않는다. 실제 설비 자동 제어, 
 - Tag/Device/Alarm/User/Dashboard 등 v1 운영 설정의 REST API와 고정 스코프 설정 화면. API 계약은 [api-events](../sot/api-events.md), 화면 규칙은 [frontend](../sot/frontend.md)를 따른다.
 - seed/demo 초기값을 담은 YAML/JSON config.
 
-기존 Settings/Tag/Device 화면과 `/api/settings`·`/api/tags`·`/api/devices` 등 API는 이 허용 범위에 속한다. 결정 근거와 트레이드오프는 [adr](../adr/index.md)의 ADR-004(YAML + REST Config Only)를 따른다.
+legacy의 Settings/Tag/Device 화면과 `/api/settings`·`/api/tags`·`/api/devices` 등 API는 이 허용 범위에 속한다.
+
+**V1(새 경로)**: 운영 설정의 정본은 고객 project repo(YAML)다. 현장 화면은 로그인 + 태그 현황·알람/ACK·트렌드·장비 상태·감사 로그 5개이고 **설정 편집 화면은 없다**. 현장 긴급 수정은 REST `PATCH`(드래프트, `site_rev` 증가)로만 하고 벤더가 고객 repo로 회수한다(ADR-025). 결정 근거와 트레이드오프는 [adr](../adr/index.md)의 ADR-004(YAML + REST Config Only)를 따른다.
 
 ## 구현 작업 규율
 

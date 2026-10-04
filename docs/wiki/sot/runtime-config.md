@@ -92,3 +92,31 @@ PureIron 런타임 설정의 정본은 `backend/src/pureiron/config.py`의 `Sett
 - secret처럼 보이는 비공란 기본값은 source warning으로만 표기한다.
 - check를 통과시키기 위해 `config.py` 기본값을 임의로 바꾸지 않는다.
 - secret/API key 값을 위키 본문에 복사하지 않는다.
+
+## 목표 설계(미구현)
+
+> **target design — 아직 구현되지 않았다.** 이 절은 Foundation 재설계(2026-10-04)로 PureIron_V1에 만들 구조다. 위 절들의 현행 사실(legacy 기준)과 섞어 읽지 않는다. 결정 근거는 [ADR](../adr/index.md) 019~028. 구현되면 해당 내용을 현행 절로 옮기고 이 절에서 지운다.
+
+### 지원 호스트 (ADR-027)
+
+- Ubuntu 24.04 x86_64 전용, 오프라인 설치: preflight(OS·`/usr/bin/python3.12`·`/var/lib/pureiron` 여유 ≥ 50 GiB·포트 80/443·시간 동기) → 번들의 docker-ce `.deb` → `/etc/docker/daemon.json` `{"features":{"containerd-snapshotter":false}}`(classic image store) → 이미지 로드 → systemd.
+- 개발·PoC: 개발 PC(Windows 11 Pro) Hyper-V의 Ubuntu 24.04 VM(site-a·site-b·central).
+
+### 호스트 경로
+
+| 경로 | 내용 |
+|---|---|
+| `/var/lib/pureiron/db` | site-db 데이터 |
+| `/var/lib/pureiron/state/` | `updater.json`(적용 단계 상태), `site.key`(0600, 현장 Ed25519 키), `secrets/<name>`(0600), `compose/g<gen>.yml`, `metrics/` |
+| `/var/lib/pureiron/backups/g<gen>/` | 업데이트 전 백업(pg_dump −tag_history, 프로젝트 스냅샷, compose/manifest, secret 참조 목록) |
+| `/var/lib/pureiron/bundles/` | 받은 `.pib` |
+| `/opt/pureiron/updater/<ver>`, `current` | Updater venv(symlink 전환) |
+| `/etc/pureiron/root.pub` | 신뢰 루트 공개키(raw 32바이트 Ed25519) |
+
+### 실행 규칙
+
+- compose 프로젝트명 `pureiron` 고정(`-p pureiron`), 모든 이미지 `pureiron/<svc>:<release>` + `pull_policy: never`, 로드 후 `.Id == config_digest` assert.
+- 비밀값: `pureiron-site secret set <name>`으로 `state/secrets/`에 저장, 프로젝트는 `secret://<name>`만 참조. 중앙 토큰은 `control_api_token`.
+- 현장 CLI(`pureiron-site`): `enroll`, `apply <pib>`, `bundle verify <pib>`, `status`, `secret set`, `report export`, `project export`.
+- Redis 없음(ADR-008 개정). core `/readyz` = DB 연결 + 스키마 호환 범위 + collector 세션.
+- 관측: core·collector `/metrics`, Updater가 60초마다 `state/metrics/<svc>.prom`·일별 jsonl로 기록, `/var/lib/pureiron` 사용률 경고 ≥ 0.80·위험 ≥ 0.90.
