@@ -15,6 +15,7 @@ import base64
 import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 from pureiron_updater.state import fsync_dir
@@ -55,10 +56,9 @@ def set_secret(
     path = secrets_dir / name
     if if_missing and path.exists():
         return False
-    tmp = secrets_dir / f".{name}.tmp"
-    tmp.unlink(missing_ok=True)
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
-    fd = os.open(tmp, flags, 0o600)
+    # 고유한 임시 파일(mkstemp: O_EXCL·0600) — 동시 실행끼리 서로의 tmp를 지우지 않는다.
+    fd, tmp_name = tempfile.mkstemp(dir=secrets_dir, prefix=f".{name}.", suffix=".tmp")
+    tmp = Path(tmp_name)
     with os.fdopen(fd, "wb") as handle:
         handle.write(value)
         handle.flush()

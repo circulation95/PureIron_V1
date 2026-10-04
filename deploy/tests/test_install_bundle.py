@@ -94,7 +94,9 @@ def write_updater_tar(directory: Path, version: str) -> Path:
     return path
 
 
-def build_bundle(tmp: Path, *, compose_version: str = COMPOSE_DEB) -> Built:
+def build_bundle(
+    tmp: Path, *, compose_version: str = COMPOSE_DEB, updater_version: str | None = None
+) -> Built:
     keydir = tmp / "keys"
     keydir.mkdir(parents=True)
     root_seed, release_seed = bytes(range(32)), bytes(range(32, 64))
@@ -107,9 +109,11 @@ def build_bundle(tmp: Path, *, compose_version: str = COMPOSE_DEB) -> Built:
     (keydir / CERT_FILE).write_bytes(cert_json)
     (keydir / CERT_SIG).write_bytes(cert_sig)
     write_debs(tmp / "debs", compose_version)
-    updater = write_updater_tar(tmp / "updater", default_updater_version())
+    version = updater_version or default_updater_version()
+    updater = write_updater_tar(tmp / "updater", version)
     code = main(
         [
+            *("--updater-version", version),
             *("--release", "2026.10.0"),
             *("--updater-tar", str(updater)),
             *("--debs-dir", str(tmp / "debs")),
@@ -253,6 +257,42 @@ def test_bootstrap_verify_rejects(built: Built, tmp_path: Path, case: str) -> No
     assert "FAIL" in run.stderr
 
 
+def test_bootstrap_refuses_planted_files_before_running_python(
+    built: Built, tmp_path: Path
+) -> None:
+    """보안 리뷰 C-1: 검증 전 추출물에 섞인 모듈(json.py 등)이 있으면 python 전에 멈춘다."""
+    work = tmp_path / "w"
+    operator_extract(built.pib, work)
+    marker = tmp_path / "pwned"
+    (work / "json.py").write_text(
+        f"open({marker.as_posix()!r}, 'w').write('x')\n", encoding="utf-8"
+    )
+    run = bash(
+        work / "bootstrap" / "bootstrap-verify.sh",
+        *("--root-fpr", built.fingerprint, "--bundle", built.pib.as_posix()),
+        *("--dest", (work / "dest").as_posix()),
+        cwd=work,
+    )
+    assert run.returncode == 1
+    assert "must contain only" in run.stderr
+    assert not marker.exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlink 생성에 관리자 권한이 필요(Windows)")
+def test_bootstrap_refuses_symlinks(built: Built, tmp_path: Path) -> None:
+    work = tmp_path / "w"
+    operator_extract(built.pib, work)
+    (work / "bootstrap" / "evil").symlink_to("..")
+    run = bash(
+        work / "bootstrap" / "bootstrap-verify.sh",
+        *("--root-fpr", built.fingerprint, "--bundle", built.pib.as_posix()),
+        *("--dest", (work / "dest").as_posix()),
+        cwd=work,
+    )
+    assert run.returncode == 1
+    assert "symbolic links" in run.stderr
+
+
 # ── 호스트 스텁 ──────────────────────────────────────────────────────────────
 
 
@@ -270,7 +310,9 @@ STUBS = {
     "timedatectl": 'echo "${STUB_NTP:-yes}"',
     "dpkg-query": (
         'case "${@: -1}" in iptables|libseccomp2) echo "install ok installed" ;;'
-        ' ${STUB_CONFLICT:-none}) echo "install ok installed" ;; *) exit 1 ;; esac'
+        ' ${STUB_CONFLICT:-none}) echo "install ok installed" ;;'
+        ' ${STUB_PREINSTALLED:-none}) echo "install ok installed ${STUB_PREINSTALLED_VERSION:-}" ;;'
+        " *) exit 1 ;; esac"
     ),
     "dpkg": 'echo "dpkg $*" >> "$STUB_LOG"',
     "systemctl": (
@@ -400,6 +442,7 @@ def test_install_failure_rolls_back(
     assert "rolled back" in run.stderr
     log = host.log.read_text(encoding="utf-8")
     assert "dpkg -r docker-compose-plugin docker-ce docker-ce-cli containerd.io" in log
+    assert "systemctl disable --now docker" in log
     for leftover in (
         "etc/pureiron/root.pub",
         "etc/docker/daemon.json",
@@ -423,3 +466,74 @@ def test_install_refuses_a_different_trust_root(
     assert run.returncode != 0
     assert planted.read_bytes() == bytes(32)
     shutil.rmtree(prefix / "etc/pureiron")
+
+
+LINUX_ONLY = pytest.mark.skipif(
+    sys.platform == "win32", reason="install.sh는 symlink가 필요(CI·VM: Linux)"
+)
+
+
+@LINUX_ONLY
+def test_preinstalled_docker_of_the_same_version_is_kept_on_rollback(
+    built: Built, staged: tuple[Path, Host, Path]
+) -> None:
+    """코드 리뷰 M-4: 이번 실행 전부터 있던 패키지는 되돌릴 때 지우지 않는다."""
+    dest, host, _prefix = staged
+    env = {
+        "STUB_PREINSTALLED": "docker-ce",
+        "STUB_PREINSTALLED_VERSION": "5:28.3.3-1",
+        "STUB_COMPOSE": "2.16.0",
+    }
+    run = install(dest, host, built.pib, env=env)
+    assert run.returncode != 0
+    log = host.log.read_text(encoding="utf-8")
+    assert "dpkg -r docker-compose-plugin docker-ce-cli containerd.io" in log
+    assert "systemctl disable --now docker" not in log
+
+
+@LINUX_ONLY
+def test_preinstalled_docker_of_another_version_stops_before_changes(
+    built: Built, staged: tuple[Path, Host, Path]
+) -> None:
+    dest, host, prefix = staged
+    env = {"STUB_PREINSTALLED": "docker-ce", "STUB_PREINSTALLED_VERSION": "5:27.0.0-1"}
+    run = install(dest, host, built.pib, env=env)
+    assert run.returncode != 0
+    assert "already installed" in run.stderr
+    assert "dpkg" not in host.log.read_text(encoding="utf-8")
+    assert not (prefix / "etc/docker/daemon.json").exists()
+
+
+def stage_bundle(bundle: Built, work: Path) -> Path:
+    run = bootstrap(bundle, work)
+    assert run.returncode == 0, run.stderr
+    return work / "dest"
+
+
+@LINUX_ONLY
+@pytest.mark.parametrize("fails", [False, True])
+def test_updater_only_replaces_venv_and_unit_or_restores(
+    built: Built, staged: tuple[Path, Host, Path], tmp_path: Path, fails: bool
+) -> None:
+    """코드 리뷰 M-5: Updater 교체는 새 unit으로 바꾸고, 재검증 실패 시 이전 current·unit 복원."""
+    dest, host, prefix = staged
+    assert install(dest, host, built.pib).returncode == 0
+    old = default_updater_version()
+    unit = prefix / "etc/systemd/system/pureiron-updater.service"
+    unit.write_text(unit.read_text(encoding="utf-8") + "# old release\n", encoding="utf-8")
+    old_unit = unit.read_bytes()
+    newer = build_bundle(tmp_path / "v2", updater_version="9.9.9")
+    new_dest = stage_bundle(newer, tmp_path / "w2")
+    pib = tampered_copy(newer, tmp_path / "bad2.pib", "containerd.io") if fails else newer.pib
+    run = install(new_dest, host, pib, "--updater-only")
+    current = prefix / "opt/pureiron/updater/current"
+    if fails:
+        assert run.returncode != 0
+        assert os.readlink(current) == old
+        assert not (prefix / "opt/pureiron/updater/9.9.9").exists()
+        assert unit.read_bytes() == old_unit
+    else:
+        assert run.returncode == 0, run.stdout + run.stderr
+        assert os.readlink(current) == "9.9.9"
+        assert unit.read_bytes() == (ROOT / "deploy/systemd/pureiron-updater.service").read_bytes()
+    assert "dpkg -r" not in host.log.read_text(encoding="utf-8")

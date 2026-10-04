@@ -187,3 +187,20 @@ def test_site_document_round_trip_and_domain_separation() -> None:
         open_document(json.dumps(tampered).encode(), SitePurpose.ENROLLMENT)
     with pytest.raises(SignedDocumentError):
         open_document(data, SitePurpose.ENROLLMENT, keys.public_key(OTHER_SEED))
+
+
+def test_reports_need_the_registered_key() -> None:
+    """리뷰: 자기 키(payload.public_key) 검증은 enrollment에서만 — 보고는 등록 키가 필요하다."""
+    seed = bytes(range(100, 132))
+    payload: dict[str, Json] = {"public_key": keys.public_key(seed).hex(), "reports": []}
+    data = json.dumps(sign_document(seed, SitePurpose.REPORTS, payload)).encode()
+    with pytest.raises(SignedDocumentError, match="registered"):
+        open_document(data, SitePurpose.REPORTS)
+
+
+def test_oversized_key_member_rejected(tmp_path: Path) -> None:
+    kit = InstallKit(tmp_path)
+    kit.put(ROOT_PEM_PAYLOAD, keys.export_pem(ROOT_PUB).encode() + b"#" * 5000)
+    with pytest.raises(BundleRejectedError) as err:
+        verify_install_bundle(kit.build(), ROOT_PUB)
+    assert err.value.code is RejectCode.E_FORMAT

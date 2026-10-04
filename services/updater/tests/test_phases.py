@@ -21,6 +21,7 @@ from updater_fakes import (
 )
 
 from pureiron_bundle.verify import AttemptResult
+from pureiron_updater import gc
 from pureiron_updater.phases import AttemptInProgressError, Updater
 from pureiron_updater.ports import CoreUnavailableError
 from pureiron_updater.recover import recover
@@ -483,3 +484,14 @@ def test_success_collects_generations_older_than_previous(site: Site) -> None:
     assert {"pureiron/core:r1", "pureiron/core:r2", "pureiron/site-db:2.30.2-pg16"} <= tags
     assert "pureiron/core:r0" not in tags
     assert release_ids("r0")["core"] not in site.world.ids
+
+
+def test_gc_failure_does_not_change_the_result(site: Site, monkeypatch: pytest.MonkeyPatch) -> None:
+    """리뷰: 정리 실패는 확정된 결과(성공)와 apply 종료 코드에 영향을 주지 않는다."""
+
+    def broken(*_args: object, **_kwargs: object) -> list[str]:
+        raise PermissionError("backups unreadable")
+
+    monkeypatch.setattr(gc, "collect", broken)
+    state = installed(site).updater().state
+    assert (state.applied_gen, state.last_result) == (1, AttemptResult.SUCCEEDED)

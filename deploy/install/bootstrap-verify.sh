@@ -2,18 +2,23 @@
 # 새 호스트 부트스트랩 검증(plan M2 설치 번들 2단계). openssl만으로 설치 번들을 검증하는 1회용 경로다 —
 # 설치가 끝나면 설치된 Updater(bundle-tools)가 같은 번들을 다시 검증한다(5a, P3).
 #
-# 실행 전에 운영자는 이 파일의 sha256을 runbook(종이) 값과 대조한다:
-#   tar -xf pureiron-install-<release>.pib bootstrap/ manifest.json manifest.sig \
-#       release-cert.json release-cert.sig keys/
+# 실행 전에 운영자는 **전용 빈 디렉터리**에 아래 파일만 이름으로 풀고, 이 스크립트의 sha256을
+# runbook(종이) 값과 대조한다 — 아직 검증 안 된 tar이므로 다른 곳(예: /root)에 통째로 풀지 않는다:
+#   install -d -m 700 /root/pib-meta && cd /root/pib-meta
+#   tar --force-local --no-same-owner --no-same-permissions -xf <번들> \
+#       manifest.json manifest.sig release-cert.json release-cert.sig \
+#       keys/root.pub keys/root.pem bootstrap/bootstrap-verify.sh
 #   sha256sum bootstrap/bootstrap-verify.sh        # runbook 값과 같아야 실행
 #   sudo bash bootstrap/bootstrap-verify.sh --root-fpr <runbook root 지문> \
-#       --bundle pureiron-install-<release>.pib --dest /root/pureiron-install
+#       --bundle <번들> --dest /root/pureiron-install
 #
-# 순서: ① keys/root.pub 지문 == --root-fpr, keys/root.pem(SPKI) 안의 raw 32B == root.pub
+# 순서: ⓪ 현재 디렉터리에 위 7개 파일(+ keys/·bootstrap/)만 있고 symlink가 없다
+#       ① keys/root.pub 지문 == --root-fpr, keys/root.pem(SPKI) 안의 raw 32B == root.pub
 #       ② root가 release-cert.json에 한 서명(purpose release-cert)
 #       ③ cert의 release key가 manifest.json에 한 서명, kind install, created_at ∈ cert 유효기간
 #       ④ --dest(비어 있음)에 manifest `files`에 적힌 경로만 풀고 일반 파일인지·sha256 대조.
-# 하나라도 틀리면 종료 코드 1로 멈춘다. 현재 디렉터리 = 2단계에서 메타데이터를 푼 곳.
+# 하나라도 틀리면 종료 코드 1로 멈춘다. python은 격리 모드(-I)로만 부른다 — 현재 디렉터리의
+# 모듈(검증 전 tar가 심었을 수 있는 json.py 등)을 import하지 않는다.
 set -euo pipefail
 
 PY="${PUREIRON_PYTHON:-python3}"
@@ -40,8 +45,22 @@ ROOT_FPR="$(printf '%s' "$ROOT_FPR" | tr 'A-F' 'a-f' | tr -d ' :')"
 for tool in openssl sha256sum tar od "$PY"; do
   command -v "$tool" >/dev/null 2>&1 || die "required tool missing: $tool"
 done
+# ⓪ 검증 전 추출물: 정해진 파일만, symlink 없음(심어진 모듈·링크로 검증을 우회하지 못하게)
+EXPECTED="bootstrap
+bootstrap/bootstrap-verify.sh
+keys
+keys/root.pem
+keys/root.pub
+manifest.json
+manifest.sig
+release-cert.json
+release-cert.sig"
+[ -z "$(find . -type l -print -quit)" ] || die "symbolic links in $(pwd) — extract into an empty directory"
+found="$(find . -mindepth 1 | sed 's|^\./||' | LC_ALL=C sort)"
+[ "$found" = "$EXPECTED" ] \
+  || die "$(pwd) must contain only the extracted metadata (use an empty directory), found: $(echo "$found" | tr '\n' ' ')"
 for f in manifest.json manifest.sig release-cert.json release-cert.sig keys/root.pub keys/root.pem; do
-  [ -f "$f" ] && [ ! -L "$f" ] || die "$f missing in $(pwd) (extract the metadata first)"
+  [ -f "$f" ] || die "$f is not a regular file"
 done
 
 WORK="$(mktemp -d)"
@@ -67,7 +86,7 @@ openssl pkeyutl -verify -pubin -inkey keys/root.pem -rawin \
 echo "release cert OK"
 
 # ③ cert → manifest(+ 형식 확인). release 공개키 PEM과 files 목록은 python3(표준 라이브러리)로 만든다.
-"$PY" - "$WORK" <<'PYEOF' || die "release-cert.json / manifest.json are malformed"
+"$PY" -I - "$WORK" <<'PYEOF' || die "release-cert.json / manifest.json are malformed"
 import base64, json, re, sys
 from datetime import datetime
 work = sys.argv[1]

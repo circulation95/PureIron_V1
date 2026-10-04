@@ -53,7 +53,8 @@ DEBS=(containerd.io docker-ce-cli docker-ce docker-compose-plugin)
 log() { printf '== %s\n' "$*"; }
 
 # manifest(이미 bootstrap-verify가 서명 확인) → 셸 변수
-eval "$("$PY" - "$HERE/manifest.json" <<'PYEOF'
+# python은 격리 모드(-I): 현재 디렉터리·환경 변수의 모듈 경로를 쓰지 않는다. 종료 코드를 먼저 본다.
+MANIFEST_VARS="$("$PY" -I - "$HERE/manifest.json" <<'PYEOF'
 import json, re, shlex, sys
 m = json.load(open(sys.argv[1], encoding="utf-8"))
 assert m["kind"] == "install"
@@ -66,16 +67,21 @@ for key, value in (
     ("COMPOSE_MIN", m["docker"]["compose_min"]),
 ):
     print(f"{key}={shlex.quote(value)}")
+packages = " ".join(f"[{shlex.quote(k)}]={shlex.quote(v)}" for k, v in sorted(m["docker"]["packages"].items()))
+print(f"declare -A DEB_VERSIONS=({packages})")
 PYEOF
-)"
+)" || { echo "install: cannot read $HERE/manifest.json" >&2; exit 1; }
+eval "$MANIFEST_VARS"
 VENV="$OPT/$UPDATER_VERSION"
 
 # ── 되돌리기 기록 ──────────────────────────────────────────────────────────────
 CREATED=()          # 이번 실행이 새로 만든 파일·디렉터리(역순으로 지운다)
-DEBS_INSTALLED=0
+RESTORE=()          # "백업:원래 경로" — 이번 실행이 바꾼 기존 파일(--updater-only의 unit)
+NEW_DEBS=()         # 이번 실행 전에 없던 Docker 패키지(되돌릴 때 이것만 dpkg -r)
 PREVIOUS_CURRENT=""
 UNIT_ENABLED=0
 DONE=0
+BACKUP_DIR="$(mktemp -d)"
 
 remember() { CREATED+=("$1"); }
 
@@ -88,12 +94,19 @@ rollback() {
   if [ -n "$PREVIOUS_CURRENT" ]; then
     ln -sfn "$PREVIOUS_CURRENT" "$OPT/current.new" && mv -Tf "$OPT/current.new" "$OPT/current"
   fi
-  if [ "$DEBS_INSTALLED" = 1 ]; then
-    dpkg -r docker-compose-plugin docker-ce docker-ce-cli containerd.io >&2
+  if [ "${#NEW_DEBS[@]}" -gt 0 ]; then
+    if [[ " ${NEW_DEBS[*]} " == *" docker-ce "* ]]; then systemctl disable --now docker >&2; fi
+    local remove=() pkg
+    for pkg in docker-compose-plugin docker-ce docker-ce-cli containerd.io; do
+      if [[ " ${NEW_DEBS[*]} " == *" $pkg "* ]]; then remove+=("$pkg"); fi
+    done
+    dpkg -r "${remove[@]}" >&2
   fi
-  local i
+  local i entry
   for ((i = ${#CREATED[@]} - 1; i >= 0; i--)); do rm -rf -- "${CREATED[$i]}"; done
+  for entry in "${RESTORE[@]}"; do cp -p -- "${entry%%:*}" "${entry#*:}"; done
   systemctl daemon-reload >/dev/null 2>&1
+  rm -rf "$BACKUP_DIR"
   echo "install: rolled back" >&2
   exit "$status"
 }
@@ -111,7 +124,20 @@ install_file() {  # install_file <src> <dst> <mode> — 같은 내용이면 그�
   remember "$dst"
 }
 
+replace_file() {  # replace_file <src> <dst> <mode> — 다르면 백업하고 교체(되돌릴 때 복원)
+  local src="$1" dst="$2" mode="$3"
+  [ -e "$dst" ] || { install_file "$src" "$dst" "$mode"; return; }
+  cmp -s "$src" "$dst" && return 0
+  local backup
+  backup="$BACKUP_DIR/$(basename "$dst").$RANDOM"
+  cp -p -- "$dst" "$backup"
+  RESTORE+=("$backup:$dst")
+  install -m "$mode" "$src" "$dst"
+}
+
 version_ge() { [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n 1)" = "$2" ]; }
+
+deb_status() { dpkg-query -W -f='${Status} ${Version}' "$1" 2>/dev/null || true; }
 
 # ── 3·4 호스트·Docker ─────────────────────────────────────────────────────────
 if [ "$UPDATER_ONLY" = 0 ]; then
@@ -119,10 +145,23 @@ if [ "$UPDATER_ONLY" = 0 ]; then
   bash "$HERE/install/preflight.sh" --root "$STATE_ROOT" "${PREFLIGHT_ARGS[@]}"
 
   log "4 docker (classic image store, PD-19)"
+  # 이미 깔린 Docker 패키지는 번들과 같은 버전일 때만 둔다(재실행). 다르면 바꾸기 전에 멈춘다 —
+  # 되돌릴 때 원래 버전을 복원할 deb가 없다.
+  missing=()
+  for pkg in "${DEBS[@]}"; do
+    status="$(deb_status "$pkg")"
+    case "$status" in
+      "install ok installed ${DEB_VERSIONS[$pkg]}") ;;
+      "install ok installed "*)
+        echo "install: $pkg ${status##* } is already installed; the bundle has ${DEB_VERSIONS[$pkg]} — remove it first" >&2
+        false ;;
+      *) missing+=("$pkg") ;;
+    esac
+  done
   install_file "$HERE/install/daemon.json" "$DAEMON_JSON" 0644
   deb_files=()
   for pkg in "${DEBS[@]}"; do deb_files+=("$HERE/debs/$pkg.deb"); done
-  DEBS_INSTALLED=1
+  NEW_DEBS=("${missing[@]}")  # 실제로 dpkg -i 하기 직전에만 기록(그 전에 멈추면 지울 것 없음)
   dpkg -i "${deb_files[@]}"
   systemctl enable --now docker
   driver="$(docker info --format '{{.Driver}}')"
@@ -149,14 +188,17 @@ fi
 mkdir -p "$OPT"
 if [ -L "$OPT/current" ]; then PREVIOUS_CURRENT="$(readlink "$OPT/current")"; fi
 if [ "$PREVIOUS_CURRENT" != "$UPDATER_VERSION" ]; then
-  # 서명된 tarball의 최상위는 <ver>/ 하나여야 한다.
-  if tar -tzf "$HERE/$UPDATER_TAR" | grep -qv "^$UPDATER_VERSION/"; then
-    echo "install: $UPDATER_TAR has entries outside $UPDATER_VERSION/" >&2
+  # 서명된 tarball의 최상위는 <ver>/ 하나여야 한다(목록을 끝까지 받은 뒤 검사 — 파이프 조기
+  # 종료(SIGPIPE)가 pipefail로 검사를 통과시키지 않게).
+  entries="$(tar --force-local -tzf "$HERE/$UPDATER_TAR")"
+  outside="$(printf '%s\n' "$entries" | grep -v "^$UPDATER_VERSION/" || true)"
+  if [ -n "$outside" ]; then
+    echo "install: $UPDATER_TAR has entries outside $UPDATER_VERSION/: $outside" >&2
     false
   fi
   rm -rf "$VENV"
   remember "$VENV"
-  tar -xzf "$HERE/$UPDATER_TAR" -C "$OPT" --no-same-owner
+  tar --force-local -xzf "$HERE/$UPDATER_TAR" -C "$OPT" --no-same-owner
   ln -sfn "$UPDATER_VERSION" "$OPT/current.new"
   mv -Tf "$OPT/current.new" "$OPT/current"
   [ -n "$PREVIOUS_CURRENT" ] || remember "$OPT/current"
@@ -166,7 +208,12 @@ if [ ! -L "$CLI_LINK" ]; then
   ln -s /opt/pureiron/updater/current/bin/pureiron-site "$CLI_LINK"
   remember "$CLI_LINK"
 fi
-install_file "$HERE/systemd/pureiron-updater.service" "$UNIT" 0644
+if [ "$UPDATER_ONLY" = 1 ]; then
+  # Updater 교체는 새 릴리스의 unit으로 바꾼다(실패 시 복원). 신뢰 루트(root.pub)는 바꾸지 않는다.
+  replace_file "$HERE/systemd/pureiron-updater.service" "$UNIT" 0644
+else
+  install_file "$HERE/systemd/pureiron-updater.service" "$UNIT" 0644
+fi
 systemctl daemon-reload
 if ! systemctl is-enabled --quiet pureiron-updater; then
   systemctl enable pureiron-updater
@@ -180,11 +227,15 @@ site() {
     "$OPT/current/bin/pureiron-site" "$@"
 }
 site bundle verify "$BUNDLE" --kind install
-site secret set db_password --generate --if-missing
-site secret set updater_token --generate --if-missing
+for name in db_password updater_token; do
+  secret="$STATE_ROOT/state/secrets/$name"
+  [ -e "$secret" ] || remember "$secret"
+  site secret set "$name" --generate --if-missing
+done
 
 DONE=1
 trap - ERR
+rm -rf "$BACKUP_DIR"
 if [ "$UPDATER_ONLY" = 1 ] && systemctl is-active --quiet pureiron-updater; then
   systemctl restart pureiron-updater
 fi

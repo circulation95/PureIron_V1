@@ -63,7 +63,8 @@ def open_document(
     data: bytes, purpose: SitePurpose, public: bytes | None = None
 ) -> dict[str, Json]:
     """봉투를 검증하고 payload를 돌려준다. `public`이 None이면 payload의 `public_key`(hex)로
-    검증한다(enrollment 자기 서명). 형식·용도·서명이 틀리면 `SignedDocumentError`."""
+    검증한다 — enrollment(자기 서명)에서만 허용, 다른 용도는 등록된 키가 필요하다.
+    형식·용도·서명이 틀리면 `SignedDocumentError`."""
     try:
         envelope: object = json.loads(data)
     except (UnicodeDecodeError, ValueError) as exc:
@@ -80,6 +81,9 @@ def open_document(
     if not isinstance(payload, dict) or not isinstance(signature, str):
         raise SignedDocumentError("payload must be an object and signature a hex string")
     if public is None:
+        if purpose is not SitePurpose.ENROLLMENT:
+            # 자기 키 검증은 등록 문서에서만 — 보고 등은 등록된 키로만 검증해야 한다.
+            raise SignedDocumentError(f"{purpose.value} documents need the registered site key")
         public = _payload_key(payload)
     try:
         raw_signature = bytes.fromhex(signature)

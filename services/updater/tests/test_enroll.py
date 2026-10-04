@@ -14,8 +14,8 @@ from updater_fakes import Kit
 from pureiron_bundle import keys
 from pureiron_bundle.manifest import Json
 from pureiron_bundle.sitesign import SitePurpose, open_document
-from pureiron_updater import cli
-from pureiron_updater.enroll import load_identity
+from pureiron_updater import cli, enroll
+from pureiron_updater.enroll import SiteIdentity, load_identity
 from pureiron_updater.settings import Settings, merged_env, parse_env_file
 
 
@@ -84,7 +84,7 @@ def test_enroll_creates_key_identity_and_signed_enrollment(host: Host) -> None:
     [
         ["enroll", "--site", "Site_A"],
         ["enroll", "--site", "site-b"],
-        ["enroll", "--site", "site-a", "--next-seq", "5"],
+        ["enroll", "--site", "site-a", "--next-seq", "0"],
     ],
 )
 def test_enroll_refuses_inconsistent_requests(host: Host, argv: list[str]) -> None:
@@ -92,32 +92,68 @@ def test_enroll_refuses_inconsistent_requests(host: Host, argv: list[str]) -> No
     assert cli.main(argv) == cli.EXIT_CONFIG
 
 
-def test_re_enroll_rotates_key_and_keeps_or_sets_seq(host: Host) -> None:
+def _identity(host: Host) -> SiteIdentity:
+    identity = load_identity(host.state)
+    assert identity is not None
+    return identity
+
+
+def test_re_enroll_rotates_key_and_next_seq_only_moves_the_counter(host: Host) -> None:
     assert cli.main(["enroll", "--site", "site-a"]) == cli.EXIT_OK
-    first = load_identity(host.state)
+    first = _identity(host)
     assert cli.main(["enroll", "--site", "site-a", "--re-enroll"]) == cli.EXIT_OK
-    second = load_identity(host.state)
-    assert first is not None
-    assert second is not None
+    second = _identity(host)
     assert second.fingerprint != first.fingerprint
     assert second.next_report_seq == first.next_report_seq
-    # 상태 분실: next_seq 없이 재등록하면 거부, 벤더 값을 주면 그 값부터.
+    # 벤더 rekey 응답 반영: 키는 그대로, 카운터만(단조 증가).
+    assert cli.main(["enroll", "--site", "site-a", "--next-seq", "7"]) == cli.EXIT_OK
+    third = _identity(host)
+    assert (third.fingerprint, third.next_report_seq) == (second.fingerprint, 7)
+    assert cli.main(["enroll", "--site", "site-a", "--next-seq", "3"]) == cli.EXIT_CONFIG
+
+
+def test_lost_state_re_enroll_waits_for_vendor_seq(host: Host) -> None:
+    assert cli.main(["enroll", "--site", "site-a"]) == cli.EXIT_OK
+    _report(host.state / "reports", "20261005T010000000000Z-g1-aaaa.json", 1)
+    assert cli.main(["report", "export", "--out", str(host.root / "usb")]) == cli.EXIT_OK
+    # 디스크 일부 손상: 키·site.json 분실, 적용·보고 이력은 남음 → 신규 enroll 거부.
     (host.state / "site.key").unlink()
     (host.state / "site.json").unlink()
-    assert cli.main(["enroll", "--site", "site-a"]) == cli.EXIT_OK  # 새 설치처럼 처음부터
-    (host.state / "site.json").unlink()
-    assert cli.main(["enroll", "--site", "site-a", "--re-enroll"]) == cli.EXIT_CONFIG
-    assert cli.main(["enroll", "--site", "site-a", "--re-enroll", "--next-seq", "42"]) == 0
-    third = load_identity(host.state)
-    assert third is not None
-    assert third.next_report_seq == 42
-    assert host.enrollment()["next_report_seq"] == 42
+    assert cli.main(["enroll", "--site", "site-a"]) == cli.EXIT_CONFIG
+    assert cli.main(["enroll", "--site", "site-a", "--re-enroll"]) == cli.EXIT_OK
+    pending = _identity(host)
+    assert pending.seq_pending
+    assert host.enrollment()["seq_pending"] is True
+    _report(host.state / "reports", "20261006T010000000000Z-g2-bbbb.json", 2)
+    assert cli.main(["report", "export", "--out", str(host.root / "usb")]) == cli.EXIT_CONFIG
+    # rekey 응답(next_seq = 마지막 seq + 1) 반영 뒤에는 그 번호부터.
+    assert cli.main(["enroll", "--site", "site-a", "--next-seq", "2"]) == cli.EXIT_OK
+    confirmed = _identity(host)
+    assert (confirmed.seq_pending, confirmed.fingerprint) == (False, pending.fingerprint)
+    assert cli.main(["report", "export", "--out", str(host.root / "usb")]) == cli.EXIT_OK
+    assert (host.root / "usb" / "pureiron-reports-site-a-000002-000002.json").exists()
 
 
 def test_key_without_identity_needs_re_enroll(host: Host) -> None:
     assert cli.main(["enroll", "--site", "site-a"]) == cli.EXIT_OK
     (host.state / "site.json").unlink()
     assert cli.main(["enroll", "--site", "site-a"]) == cli.EXIT_CONFIG
+
+
+def test_enroll_records_site_in_env_file_even_if_process_env_has_it(
+    host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """리뷰 M-3: 서비스는 env 파일만 읽는다 — 프로세스 환경에 있어도 파일에 기록해야 한다."""
+    monkeypatch.setenv("PUREIRON_SITE_ID", "site-a")
+    assert cli.main(["enroll", "--site", "site-a"]) == cli.EXIT_OK
+    assert host.env()["PUREIRON_SITE_ID"] == "site-a"
+
+
+def test_enroll_refuses_a_different_site_in_env_file(host: Host) -> None:
+    host.env_file.parent.mkdir(parents=True)
+    host.env_file.write_text("PUREIRON_SITE_ID=site-b\n", encoding="utf-8")
+    assert cli.main(["enroll", "--site", "site-a"]) == cli.EXIT_CONFIG
+    assert not (host.state / "site.key").exists()
 
 
 def test_secret_set_from_stdin_and_generate(
@@ -171,6 +207,47 @@ def test_report_export_assigns_monotonic_seq_and_signs(host: Host) -> None:
     _report(reports, "20261007T010000000000Z-g3-cccc.json", 3)
     assert cli.main(["report", "export", "--out", str(out)]) == cli.EXIT_OK
     assert (out / "pureiron-reports-site-a-000003-000003.json").exists()
+
+
+def test_interrupted_export_resumes_with_the_same_seq(
+    host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """리뷰 M-1: 묶음을 쓰기 전에 죽어도 다음 실행이 같은 보고·같은 seq로 끝내고, 그 사이 새
+    보고는 다음 seq를 받는다(seq 재사용·같은 보고의 다른 seq 없음)."""
+    out = host.root / "usb"
+    assert cli.main(["enroll", "--site", "site-a"]) == cli.EXIT_OK
+    reports = host.state / "reports"
+    _report(reports, "20261005T010000000000Z-g1-aaaa.json", 1)
+
+    def crash(*_args: object) -> object:
+        raise OSError("USB pulled")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(enroll, "sign_document", crash)
+        assert cli.main(["report", "export", "--out", str(out)]) == cli.EXIT_CONFIG
+    assert _identity(host).next_report_seq == 2  # 예약됨
+    _report(reports, "20261004T010000000000Z-g9-zzzz.json", 9)  # 정렬상 앞에 끼는 늦은 보고
+    assert cli.main(["report", "export", "--out", str(out)]) == cli.EXIT_OK
+    public = keys.public_key((host.state / "site.key").read_bytes())
+    first = open_document(
+        (out / "pureiron-reports-site-a-000001-000001.json").read_bytes(),
+        SitePurpose.REPORTS,
+        public,
+    )
+    found = first["reports"]
+    assert isinstance(found, list)
+    assert [r["generation"] for r in found if isinstance(r, dict)] == [1]
+    assert cli.main(["report", "export", "--out", str(out)]) == cli.EXIT_OK
+    assert (out / "pureiron-reports-site-a-000002-000002.json").exists()
+    assert not (reports / ".export.json").exists()
+
+
+def test_report_export_rejects_non_object_report(host: Host) -> None:
+    assert cli.main(["enroll", "--site", "site-a"]) == cli.EXIT_OK
+    reports = host.state / "reports"
+    reports.mkdir(parents=True)
+    (reports / "x.json").write_text("[1, 2]", encoding="utf-8")
+    assert cli.main(["report", "export", "--out", str(host.root / "usb")]) == cli.EXIT_CONFIG
 
 
 def test_install_bundle_verify_before_enroll(

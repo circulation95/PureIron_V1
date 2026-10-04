@@ -238,7 +238,8 @@ def test_poll_downloads_with_range_resume_then_applies(tmp_path: Path, server: S
     updater = site.updater()
     with pytest.raises(PollError):
         poll_once(updater, api)
-    part = site.settings.bundles_dir / "g1.pib.part"
+    sha = hashlib.sha256(blob).hexdigest()
+    part = site.settings.bundles_dir / f"poll-{sha[:16]}.pib.part"
     assert part.stat().st_size == 1000
     assert poll_once(updater, api)
     ranges = [h.get("range") for _, p, h, _ in server.requests if p == "/bundle.pib"]
@@ -264,7 +265,7 @@ def test_poll_discards_corrupt_download(tmp_path: Path, server: Server) -> None:
     server.blob = blob[:-1] + bytes([blob[-1] ^ 1])
     with pytest.raises(PollError, match="sha256"):
         poll_once(site.updater(), api)
-    assert not (site.settings.bundles_dir / "g1.pib.part").exists()
+    assert not list(site.settings.bundles_dir.glob("*.part"))
     assert site.updater().state.attempt is None
 
 

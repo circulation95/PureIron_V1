@@ -206,7 +206,7 @@ class Updater:
     def _supersedes(self, current: Attempt, bundle: Path, sha256: str) -> bool:
         """새 번들을 부작용 없이(추출 없음) 검증해 `current`보다 높은 generation인지 판정한다."""
         try:
-            result = verify_bundle(bundle, self._verify_context(current.first_install))
+            result = verify_bundle(bundle, self._verify_context(self.state.applied_gen is None))
         except BundleRejectedError as exc:
             self._reject_unsubmitted(bundle, sha256, exc.code.value, exc.detail)
             return False
@@ -616,10 +616,17 @@ class Updater:
         self.finished.append(attempt)
         metrics.write_prom(self.settings.state_dir, state, attempt, ended)
         if attempt.phase is Phase.SUCCEEDED:
+            self._collect_garbage(attempt)
+        return False
+
+    def _collect_garbage(self, attempt: Attempt) -> None:
+        """정리 실패는 이미 확정된 결과에 영향을 주지 않는다(다음 성공 때 다시 시도)."""
+        try:
             gc.collect(
                 self.deps.docker,
                 self.settings.compose_dir,
                 self.settings.backups_dir,
                 keep=(attempt.generation, attempt.from_generation),
             )
-        return False
+        except Exception:
+            log.exception("gc after generation %s failed", attempt.generation)

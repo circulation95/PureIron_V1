@@ -166,7 +166,9 @@ def poll_once(updater: Updater, api: ControlApi) -> bool:
         return False
     bundles = updater.settings.bundles_dir
     bundles.mkdir(parents=True, exist_ok=True)
-    final = bundles / f"g{desired.generation}.pib"
+    # 이름은 서명 전에 믿을 수 없는 generation이 아니라 기대 sha256으로 — 대기 시도의 번들 사본과
+    # 겹쳐 그 시도가 정리될 때 새 번들까지 지워지는 일이 없게 한다(`_copy_in`과 같은 방식).
+    final = bundles / f"poll-{desired.sha256.removeprefix('sha256:')[:16]}.pib"
     part = final.with_name(final.name + PART_SUFFIX)
     have = part.stat().st_size if part.exists() else 0
     free = shutil.disk_usage(bundles).free
