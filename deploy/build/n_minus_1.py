@@ -1,9 +1,10 @@
-"""n-minus-1 게이트(G1-5, ADR-024): 직전 epoch 앱(N-1)의 core 통합 테스트를 현재 스키마(N)에서 돌린다.
+"""n-minus-1 게이트(G1-5, ADR-024): 직전 epoch 앱(N-1)의 통합 테스트를 현재 스키마(N)에서 돌린다.
 
-1. 현재 카탈로그의 epoch N을 구한다. N == 1이면 직전 release가 없으므로 notice 후 통과(bootstrap).
-2. `deploy/releases/*.json`에서 `schema.app_expected == N-1`인 가장 최근 기록의 core-test 이미지를 고른다.
-3. 임시 docker network에 site-db를 띄우고 현재 core 이미지로 `migrate up`(N), 압축 chunk·CAGG 데이터를
-   넣은 뒤, N-1 core-test 이미지를 `PUREIRON_TEST_EXISTING_DSN` 모드로 실행한다.
+1. 현재 카탈로그의 epoch N을 구한다. N == 1이면 직전 release가 없어 notice 후 통과(bootstrap).
+2. `deploy/releases/*.json`에서 `schema.app_expected == N-1`인 최근 기록의 core-test 이미지를
+   고른다.
+3. 임시 docker network에 site-db를 띄우고 현재 core 이미지로 `migrate up`(N), 압축 chunk·CAGG
+   데이터를 넣은 뒤, N-1 core-test 이미지를 `PUREIRON_TEST_EXISTING_DSN` 모드로 실행한다.
 """
 
 from __future__ import annotations
@@ -71,11 +72,25 @@ def pick_previous(records: list[ReleaseRecord], current_epoch: int) -> ReleaseRe
 
 
 def _docker(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["docker", *args], capture_output=True, text=True, encoding="utf-8", check=check)
+    return subprocess.run(
+        ["docker", *args], capture_output=True, text=True, encoding="utf-8", check=check
+    )
 
 
 def _psql(container: str, sql: str) -> None:
-    _docker("exec", container, "psql", "-v", "ON_ERROR_STOP=1", "-U", "pureiron", "-d", "pureiron", "-c", sql)
+    _docker(
+        "exec",
+        container,
+        "psql",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-U",
+        "pureiron",
+        "-d",
+        "pureiron",
+        "-c",
+        sql,
+    )
 
 
 def run_gate(previous: ReleaseRecord) -> int:
@@ -88,19 +103,54 @@ def run_gate(previous: ReleaseRecord) -> int:
     _docker("network", "create", network)
     try:
         _docker(
-            "run", "-d", "--rm", "--name", db, "--network", network,
-            "-e", "POSTGRES_USER=pureiron", "-e", "POSTGRES_DB=pureiron", "-e", f"POSTGRES_PASSWORD={password}",
+            "run",
+            "-d",
+            "--rm",
+            "--name",
+            db,
+            "--network",
+            network,
+            "-e",
+            "POSTGRES_USER=pureiron",
+            "-e",
+            "POSTGRES_DB=pureiron",
+            "-e",
+            f"POSTGRES_PASSWORD={password}",
             f"pureiron/site-db:{lock['version']}",
         )
         for _ in range(60):
-            if _docker("exec", db, "pg_isready", "-U", "pureiron", "-d", "pureiron", check=False).returncode == 0:
+            if (
+                _docker(
+                    "exec", db, "pg_isready", "-U", "pureiron", "-d", "pureiron", check=False
+                ).returncode
+                == 0
+            ):
                 break
             time.sleep(1)
-        _docker("run", "--rm", "--network", network, "-e", f"PUREIRON_DB_DSN={dsn}", current_core, "migrate", "up")
+        _docker(
+            "run",
+            "--rm",
+            "--network",
+            network,
+            "-e",
+            f"PUREIRON_DB_DSN={dsn}",
+            current_core,
+            "migrate",
+            "up",
+        )
         _psql(db, SEED_SQL)
         _psql(db, REFRESH_SQL)
         result = subprocess.run(
-            ["docker", "run", "--rm", "--network", network, "-e", f"PUREIRON_TEST_EXISTING_DSN={dsn}", previous.core_test],
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                network,
+                "-e",
+                f"PUREIRON_TEST_EXISTING_DSN={dsn}",
+                previous.core_test,
+            ],
             check=False,
         )
         return result.returncode
@@ -116,9 +166,15 @@ def main() -> int:
         return 0
     previous = pick_previous(load_records(RELEASES), current_epoch)
     if previous is None:
-        print(f"::error::no release record with schema.app_expected == {current_epoch - 1}", file=sys.stderr)
+        print(
+            f"::error::no release record with schema.app_expected == {current_epoch - 1}",
+            file=sys.stderr,
+        )
         return 1
-    print(f"n-minus-1: {previous.core_test} (epoch {previous.app_expected}) against schema epoch {current_epoch}")
+    print(
+        f"n-minus-1: {previous.core_test} (epoch {previous.app_expected}) "
+        f"against schema epoch {current_epoch}"
+    )
     return run_gate(previous)
 
 

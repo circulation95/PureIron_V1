@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 RELEASES = ROOT / "deploy" / "releases"
 RECORD_SERVICES = ("core", "collector", "web", "core-test")
 
+
 def build_record(name: str, release: str) -> dict[str, object]:
     catalog = load_catalog(ROOT / "services" / "core" / "migrations")
     lock = read_lock(RELEASES / "site-db.lock")

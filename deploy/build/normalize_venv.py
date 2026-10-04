@@ -21,7 +21,9 @@ def normalize(venv: Path) -> list[Path]:
         if record.exists():
             suffix = f"{cache.parent.name}/{VOLATILE},"
             lines = record.read_text(encoding="utf-8").splitlines(keepends=True)
-            record.write_text("".join(line for line in lines if not line.startswith(suffix)), encoding="utf-8")
+            record.write_text(
+                "".join(line for line in lines if not line.startswith(suffix)), encoding="utf-8"
+            )
         cache.unlink()
         removed.append(cache)
     return removed

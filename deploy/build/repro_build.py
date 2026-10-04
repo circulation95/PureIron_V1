@@ -21,7 +21,9 @@ OUT = ROOT / "artifacts" / "repro"
 
 def build_round(label: str) -> dict[str, str]:
     env = {**os.environ, "NO_CACHE": "1", "PUREIRON_RELEASE": f"repro-{label}"}
-    subprocess.run(["bash", "deploy/build/build_images.sh", *SERVICES], cwd=ROOT, env=env, check=True)
+    subprocess.run(
+        ["bash", "deploy/build/build_images.sh", *SERVICES], cwd=ROOT, env=env, check=True
+    )
     keep = OUT / label
     keep.mkdir(parents=True, exist_ok=True)
     digests: dict[str, str] = {}
@@ -41,12 +43,17 @@ def main() -> int:
     first, second = build_round("a"), build_round("b")
     mismatched = compare(first, second)
     report = {"first": first, "second": second, "mismatched": mismatched}
-    (OUT / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (OUT / "report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     for svc in SERVICES:
         mark = "MISMATCH" if svc in mismatched else "same"
         print(f"{svc:10s} {first[svc]}  {second[svc]}  {mark}")
     if mismatched:
-        print(f"::error::non-reproducible images: {', '.join(mismatched)} (artifacts/repro/)", file=sys.stderr)
+        print(
+            f"::error::non-reproducible images: {', '.join(mismatched)} (artifacts/repro/)",
+            file=sys.stderr,
+        )
         return 1
     return 0
 
