@@ -264,3 +264,16 @@ window: { recurring: { tz: Asia/Seoul, days: [sat, sun], start: "02:00", end: "0
 - **release 기록**: `deploy/releases/r<N>.json`에 계약 패턴(`YYYY.M.N`)의 `version` 필드 추가(`release_record.py --version`, r0 = `2026.10.0`) — manifest·fleet의 `product`는 이 버전을 쓰고 이미지 태그는 `pureiron/<svc>:r<N>` 유지. site-db tar도 image store에 보관한다.
 - **번들 빌더**: `deploy/bundle/build_bundle.py`(fleet 파일 + release 기록 + image store + 프로젝트 → 서명 `.pib` + `<pib 이름>.bundle-metrics.json`), 쓴 뒤 `--root-pub`로 자체 검증, 1.5 GiB 초과 시 실패(1.2 GiB 경보). r0 실측: 738 MB(site-db 599 MB), 빌드 약 18 s, 검증 약 3 s(WSL2).
 - 설치 번들(`kind: install`)은 별도 계약 `install-manifest.schema.json`으로 M2c에서 추가한다(`kind` const 변경은 비호환 변경).
+
+### V1 구현 현황 (M2b Updater 상태기계·recover, 2026-10-05)
+
+- **Updater**(`services/updater`, CLI `pureiron-site apply|bundle verify|status|recover|run`): plan M2 phase 표 전체와 `recover()` 수렴 규칙. phase별 동작·실패 경로의 정본은 [`services/updater/README.md`](../../../services/updater/README.md).
+- **상태 파일** `state/updater.json`: tmp write → fsync → rename → fsync(dir). 저장된 phase = 실행 중 단계(의도)이고 모든 바깥 호출은 멱등이다.
+- **generation 기록**: 커밋(`committed`, 창 안) 전 종료(거부·적재 실패)는 generation을 기록하지 않고 번들 sha256만 건너뛴다(서명 실패 번들의 gen은 믿지 않음). 커밋 후 종료는 `last_attempted_gen`·`last_result`로 남아 같은 gen을 다시 시도하지 않는다.
+- **번들 payload 추가**: `compose/site.compose.yml`(서명 대상). Updater는 manifest 이미지 태그로 `.env`를 만들고 `docker compose config`가 해석한 활성 서비스·이미지가 manifest 태그와 정확히 같을 때만 적용한다(`E_DIGEST`).
+- **site-db**: 적용 중인 것과 config digest·태그가 다른 번들은 `E_DIGEST`로 거부(db-step release 미구현). 롤백은 site-db를 바꾸지 않는다.
+- **편집 잠금**: core HTTP(`/api/v1/project/edit-lock`, web 프록시 경유)로 잡고 푼다. HTTP가 없으면 site-db에서 `psql`로 updater 잠금만 푼다(core 이미지 버전 무관). 풀지 못하면 종료 phase로 남아 다음 tick에 다시 푼다. 커밋된 대기 시도는 새 번들이 검증상 더 높은 generation일 때만, 잠금을 풀고 보고한 뒤 대체된다.
+- **일시 장애**: docker 데몬이 없으면 진행·복구하지 않고 기다린다. `migrating`은 `up --wait site-db` 뒤에 실행한다(재부팅 직후 DB 복구 대기).
+- **Updater 실패 코드**(ApplyAttempt `code`, 번들 거부 코드와 별개): `E_LOAD`(이미지 적재), `E_BACKUP`, `E_MIGRATE`, `E_SWITCH`, `E_HEALTH`, `E_SUPERSEDED`(커밋된 대기 시도를 새 번들이 대체), `E_BUNDLE`(커밋 후 번들 사본 소실).
+- **결과 기록**: `state/reports/*.json`(ApplyAttempt 필드 — 서명·전송은 M2c/M4), `state/metrics/updater.prom`.
+- **아직 없음**: GOOD 비율·첫 batch 신호(core 태그 품질 지표 = M3a, 그 전엔 ready + collector 세션만), 서비스 메트릭 60 s 스크랩(M3a), enroll·report export·systemd unit·설치 번들(M2c), 실제 docker·VM crash 실측(M2d).
