@@ -26,6 +26,8 @@ dev = [
     "types-grpcio>=1.0.0.20250914",
     "types-jsonschema>=4.25",
     "asyncpg-stubs>=0.30",
+    # e2e(tests/e2e): cloud-init NoCloud seed ISO를 순수 Python으로 만든다(PD-24 Hyper-V VM).
+    "pycdlib>=1.14",
 ]
 
 [tool.uv]

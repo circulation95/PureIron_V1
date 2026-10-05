@@ -25,6 +25,7 @@ PY_PACKAGES=(
   packages/bundle-tools
   packages/contracts
   deploy
+  tests/e2e
 )
 SCHEMAS=(project manifest install-manifest fleet-site)
 OPENAPI_SERVICES=(core control-api)
@@ -48,8 +49,8 @@ tools_bin() { bash "$ROOT/scripts/tools.sh" | tail -1; }
 job_lint_type() {
   log "lint-type"
   uv sync --all-packages --locked
-  uv run ruff check services packages deploy
-  uv run ruff format --check services packages deploy
+  uv run ruff check services packages deploy tests
+  uv run ruff format --check services packages deploy tests
   local p
   for p in "${PY_PACKAGES[@]}"; do
     uv run pyright -p "$p"
@@ -61,7 +62,7 @@ job_no_suppressions() {
   log "no-suppressions (억제 주석·app.state 0건)"
   local hits
   hits="$(grep -rnE 'app\.state|type: ?ignore|pyright: ?(ignore|basic|standard|reportGeneralTypeIssues)|noqa|fmt: ?(off|skip)|pragma: ?no ?cover|eslint-disable|\bas any\b|@ts-ignore|@ts-expect-error|@ts-nocheck' \
-    services packages deploy \
+    services packages deploy tests \
     --include='*.py' --include='*.pyi' --include='*.ts' --include='*.tsx' --include='*.js' --include='*.mjs' \
     --exclude-dir=_gen --exclude-dir=node_modules --exclude-dir=dist || true)"
   [ -z "$hits" ] || fail "suppression/app.state found:
@@ -76,7 +77,7 @@ job_import_linter() {
 
 job_unit() {
   log "unit"
-  uv run pytest services packages deploy -q
+  uv run pytest services packages deploy tests/e2e -q
 }
 
 job_contracts_gen() {
