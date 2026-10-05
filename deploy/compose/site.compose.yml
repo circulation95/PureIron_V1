@@ -9,6 +9,9 @@ services:
   site-db:
     image: pureiron/site-db:${PUREIRON_SITE_DB_VERSION:-2.30.2-pg16}
     pull_policy: never
+    # TimescaleDB 텔레메트리(기본 basic)는 telemetry.timescale.com으로 접속을 시도한다(M2d VM 실측:
+    # 폐쇄망 현장의 외부 DNS 질의). 이미지는 db-step release로만 바꾸므로 기동 인자로 끈다.
+    command: ["postgres", "-c", "timescaledb.telemetry_level=off"]
     environment:
       POSTGRES_USER: pureiron
       POSTGRES_DB: pureiron
