@@ -552,7 +552,9 @@ class Updater:
             self.deps.compose.up(prev)
             check_running(self.deps.compose.running_images(prev), images)
             backup_dir = self.settings.backups_dir / f"g{self._gen(attempt)}"
-            restore_project(self.deps.compose, prev, backup_dir)
+            restore_project(
+                self.deps.compose, prev, backup_dir, reader_uid=self.settings.secret_uid
+            )
             failure = self._wait_ready(None)
             if failure is not None:
                 raise _RollbackError(f"previous generation not ready: {failure}")
