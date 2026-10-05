@@ -97,6 +97,10 @@ package_upgrade: false
 bootcmd:
   - [systemctl, mask, --now, pollinate.service, snapd.service, snapd.socket,
      snapd.seeded.service, systemd-timesyncd.service]
+  # SSH 로그인마다 update-motd의 릴리스 업그레이드 확인이 changelogs.ubuntu.com을 조회했다
+  # (실측 dns_lookups). sshd가 뜨기 전에 끈다.
+  - [sed, -i, "s/^Prompt=.*/Prompt=never/", /etc/update-manager/release-upgrades]
+  - [chmod, -x, /etc/update-motd.d/91-release-upgrade]
 write_files:
   - path: /etc/e2e-audit.nft
     permissions: "0644"

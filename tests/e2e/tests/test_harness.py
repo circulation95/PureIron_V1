@@ -59,6 +59,9 @@ def test_seed_masks_phone_home_before_network() -> None:
     bootcmd = user_data.decode().split("bootcmd:", 1)[1].split("write_files:", 1)[0]
     for unit in ("pollinate.service", "snapd.service", "snapd.socket", "systemd-timesyncd"):
         assert unit in bootcmd
+    # 로그인마다 changelogs.ubuntu.com 조회(실측 dns_lookups) — sshd 전에 끈다.
+    assert "Prompt=never" in bootcmd
+    assert "91-release-upgrade" in bootcmd
 
 
 def test_seed_iso_round_trip(tmp_path: Path) -> None:
