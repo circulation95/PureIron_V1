@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import stat
 import sys
 from collections.abc import Mapping, Sequence
@@ -41,9 +42,16 @@ def test_restore_mounts_reader_owned_copy(tmp_path: Path, monkeypatch: pytest.Mo
     """서비스(UMask 0027)가 만든 root 0640 백업은 컨테이너 uid가 못 읽는다 → 그 uid 소유 사본."""
     directory = _complete_backup(tmp_path)
     chowned: list[tuple[Path, int, int]] = []
+
+    def as_root() -> int:
+        return 0
+
+    def record_chown(path: str | os.PathLike[str], uid: int, gid: int) -> None:
+        chowned.append((Path(path), uid, gid))
+
     if sys.platform != "win32":
-        monkeypatch.setattr(backup.os, "geteuid", lambda: 0)
-        monkeypatch.setattr(backup.os, "chown", lambda p, u, g: chowned.append((Path(p), u, g)))
+        monkeypatch.setattr(os, "geteuid", as_root)
+        monkeypatch.setattr(os, "chown", record_chown)
     compose = RecordingCompose()
     target = ComposeTarget(tmp_path / "g1")
     backup.restore_project(cast(Compose, compose), target, directory, reader_uid=10001)
