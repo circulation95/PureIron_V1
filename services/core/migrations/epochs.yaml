@@ -3,3 +3,4 @@
 # 앱 envelope: app_expected = 가장 큰 epoch, app_max_compatible = app_expected + 1.
 epochs:
   1: 0005_project_state.sql
+  2: 0007_cagg_1h_policy.sql

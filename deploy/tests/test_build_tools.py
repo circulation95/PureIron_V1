@@ -3,8 +3,17 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from images import read_lock
-from n_minus_1 import ReleaseRecord, load_records, pick_previous
+from n_minus_1 import (
+    WAIVERS,
+    GateError,
+    ReleaseRecord,
+    Waiver,
+    load_records,
+    load_waivers,
+    pick_previous,
+)
 from repro_build import compare
 
 
@@ -41,3 +50,27 @@ def test_pick_previous_epoch_release_in_numeric_order(tmp_path: Path) -> None:
     assert previous == ReleaseRecord("r10", "r10", 2, "pureiron/core-test:r10", "x")
     assert pick_previous(records, 2) == records[0]
     assert pick_previous(records, 1) is None
+
+
+def test_waivers_are_scoped_to_previous_release(tmp_path: Path) -> None:
+    path = tmp_path / "waivers.json"
+    assert load_waivers(path, "r0") == []
+    path.write_text(
+        json.dumps({"r0": [{"test": "a.py::test_x", "reason": "global count"}]}), encoding="utf-8"
+    )
+    assert load_waivers(path, "r0") == [Waiver("a.py::test_x", "global count")]
+    assert load_waivers(path, "r1") == []
+
+
+@pytest.mark.parametrize(
+    "entry", [{"test": "a.py::test_x", "reason": " "}, {"test": "a.py", "reason": "r"}]
+)
+def test_waiver_needs_node_id_and_reason(tmp_path: Path, entry: dict[str, str]) -> None:
+    path = tmp_path / "waivers.json"
+    path.write_text(json.dumps({"r0": [entry]}), encoding="utf-8")
+    with pytest.raises(GateError):
+        load_waivers(path, "r0")
+
+
+def test_repo_waivers_load() -> None:
+    assert all(w.reason for w in load_waivers(WAIVERS, "r0"))
