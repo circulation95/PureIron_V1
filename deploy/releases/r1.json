@@ -1,16 +1,16 @@
 {
-  "commit": "5b1db66a505dc9fe9dce21936cb2a6bbffebd23f",
+  "commit": "556c65c75dce584fd1b918e8924d19db6d336f67",
   "images": {
     "collector": {
-      "config_digest": "sha256:e2e4d7d91d4eb4d8e1813986531acc11c7209618bf89cb3512497e48c6044fc0",
+      "config_digest": "sha256:e92b4c9fc74459093f0872a9fed8d695430447e4629828107ddcde67bcc7113c",
       "tag": "pureiron/collector:r1"
     },
     "core": {
-      "config_digest": "sha256:d697edb9dcae92f8581ed4720690b65c6763bbc34b34d4dbd4217359c171e448",
+      "config_digest": "sha256:80dccd9e7fb9ce0ad78ae93111868402a925d69144bdf01a2d41d90b5c526384",
       "tag": "pureiron/core:r1"
     },
     "core-test": {
-      "config_digest": "sha256:34ce6aaf6c83ac5b271e82ffd1c1b967ad791851234ae3d0ffc9fcda2af2b317",
+      "config_digest": "sha256:395d352529209f241257f6eac5634a7d5b250db4d2c72c3741c5ca4c8aa0e535",
       "tag": "pureiron/core-test:r1"
     },
     "site-db": {
@@ -19,7 +19,7 @@
       "upstream": "timescale/timescaledb:2.30.2-pg16@sha256:6f139d56042989bd35f50ba5986e492cd32e35cc6778c50be2659add298dc09f"
     },
     "web": {
-      "config_digest": "sha256:557d7d98b5d8cc5147ec1f49519ddb181d9edeafeff1c6532a82a174f513dc43",
+      "config_digest": "sha256:3a79af64087b3e3a896643dd5fc4ce5d2186691b6d5617fd71708d9cfdd8161d",
       "tag": "pureiron/web:r1"
     }
   },
