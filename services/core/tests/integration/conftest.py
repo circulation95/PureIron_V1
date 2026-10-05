@@ -31,7 +31,7 @@ REPO = Path(__file__).resolve().parents[4]
 COMPOSE_DIR = REPO / "deploy" / "compose"
 MIGRATIONS = REPO / "services" / "core" / "migrations"
 PROJECT = "pureiron-it"
-DB_PORT = int(os.environ.get("PUREIRON_DEV_DB_PORT", "55432"))
+DB_PORT = int(os.environ.get("PUREIRON_DEV_DB_PORT", "25432"))
 CORE_PORT = int(os.environ.get("PUREIRON_DEV_CORE_PORT", "18000"))
 WEB_PORT = int(os.environ.get("PUREIRON_IT_WEB_PORT", "18080"))
 EXISTING_DSN = os.environ.get("PUREIRON_TEST_EXISTING_DSN")
@@ -79,14 +79,21 @@ def compose(
         "dev",
         *args,
     ]
-    return subprocess.run(
+    result = subprocess.run(
         cmd,
         env={**os.environ, **env},
         capture_output=True,
         text=True,
         encoding="utf-8",
-        check=check,
+        check=False,
     )
+    if check and result.returncode != 0:
+        # CalledProcessError는 출력을 보여주지 않아 CI 로그에서 원인(포트 충돌 등)이 사라진다.
+        raise AssertionError(
+            f"docker compose {' '.join(args)} exited {result.returncode}\n"
+            f"{result.stdout}{result.stderr}"
+        )
+    return result
 
 
 def wait_http(url: str, *, status: int = 200, timeout_s: float = 120.0) -> bytes:

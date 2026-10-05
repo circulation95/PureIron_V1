@@ -1,9 +1,11 @@
 # 개발·CI 전용 override: 호스트 loopback에 site-db·core를 노출한다(현장 compose에는 없음).
 #   docker compose -p pureiron -f site.compose.yml -f site.dev.yml --profile dev up -d
+# 기본 포트는 Windows 동적 범위(49152-65535) 밖에 둔다: Docker Desktop은 호스트 Windows에 포트를
+# 열고, Hyper-V/WinNAT가 그 범위에서 블록을 예약하면 "ports are not available"로 실패한다.
 services:
   site-db:
     ports:
-      - 127.0.0.1:${PUREIRON_DEV_DB_PORT:-55432}:5432
+      - 127.0.0.1:${PUREIRON_DEV_DB_PORT:-25432}:5432
   core:
     ports:
       - 127.0.0.1:${PUREIRON_DEV_CORE_PORT:-18000}:8000
