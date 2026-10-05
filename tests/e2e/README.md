@@ -34,6 +34,10 @@ uv run python tests/e2e/m2d/run.py all --from scenarios
 uv run python tests/e2e/m2d/run.py destroy         # VM·차분 디스크 삭제(golden 유지)
 ```
 
+부분 재실행(`<step>`, `--from`)은 VM이 켜져 있고 SSH가 되어야 한다(복원·리셋 직전에 카운터를 읽는다) — VM이
+꺼졌거나 `state.json`이 이 하네스 이전 형식이면(`seed_rows` 0 → 이력 보존 판정이 거짓 FAIL) `--from vm`으로
+다시 시작한다.
+
 결과는 `artifacts/e2e/m2d-<시각>/results.json`(항목별 PASS/FAIL·측정값)과 `bundle-metrics.json`
 (번들별 크기·이미지 크기·빌드/검증/로드 시간·phase 시간).
 
@@ -45,7 +49,7 @@ uv run python tests/e2e/m2d/run.py destroy         # VM·차분 디스크 삭제
 | `vm` | golden(클라우드 이미지 → 64 GiB 동적 VHDX, 읽기 전용) 위 차분 디스크, seed ISO(cloud-init: 사용자·고정 IP·OS phone-home 끄기·nftables 감시 테이블) |
 | `install` | runbook 2단계(메타데이터만 전용 디렉터리에 추출 → `bootstrap-verify.sh` sha256·root 지문 대조) → `install.sh --offline-time-confirmed` → enroll → g1 → 서비스 시작. `/readyz` 200, overlay2 + classic store, 실행 이미지 `.Id` == r0 config digest. 압축 chunk 이력 시드 후 체크포인트 `c0` |
 | `scenarios` | `c0`에서 거부(다른 현장 `E_SITE`·변조 `E_DIGEST`) exit 1, 같은 gen 재빌드는 no-op exit 0(R-7 멱등) — 모두 core `StartedAt`·실행 이미지 불변 / `c0`에서 r0→r1(압축 DB 위 epoch 2) 성공 → 낮은 gen `E_GEN` 거부 / `c0`에서 r1′ → 5분 안에 r0 digest + `failed` |
-| `crash` | phase(`fetched`~`rolling_back`)마다 `systemctl kill -s KILL pureiron-updater`와 `Restart-VM -Force` 각 1회 → 10분 안에 수렴(결과·실행 이미지·편집 잠금 해제) |
+| `crash` | phase(`fetched`~`rolling_back`)마다 `systemctl kill -s KILL pureiron-updater`와 `Restart-VM -Type Reset -Force` 각 1회 → 10분 안에 수렴(결과·실행 이미지·편집 잠금 해제) |
 | `report` | nftables 외부 접속 카운터(`ext_out_v4`·`dns_out`·`ext_out_v6`·`ext_fwd`)의 **누적** 합 0 (`vm` 단계 기준값도 따로 0이어야 한다) |
 
 거부 보고는 번들 sha256 12자로 찾는다(`reports/<started>-g<gen>-<sha12>.json`) — 커밋 전 거부는 서명을
@@ -58,7 +62,7 @@ cert 단계의 `max_seen_created_at` 역행(`E_CERT`)에 먼저 걸린다.
 `pureiron-site apply`로 스테이징하면 시도는 `verified`로 대기하고, 창이 열리면 **서비스**가 이어서 적용한다.
 VM 쪽 `site/crash_at.py`가 상태 파일(원자적 rename)을 inotify로 보다가 목표 phase에 들어간 순간 실행 중인
 프로세스를 `SIGSTOP`으로 얼려 그 phase에 붙잡아 두고, `kill`이면 `systemctl kill -s KILL`, `reset`이면
-호스트가 `Restart-VM -Force`를 건다. `fetched`(번들 검증)는 CLI가 실행하므로 CLI를 대상으로 한다.
+호스트가 `Restart-VM -Type Reset -Force`(전원 리셋)를 건다. `fetched`(번들 검증)는 CLI가 실행하므로 CLI를 대상으로 한다.
 `migrating`은 실제 마이그레이션이 일어나도록 `c0`(epoch 1)에서, `rolling_back`은 r1′로 일으킨다.
 
 서비스 tick 주기는 e2e에서 `PUREIRON_POLL_INTERVAL_S=10`(기본 60)으로 줄인다.
