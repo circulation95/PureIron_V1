@@ -12,6 +12,7 @@ from n_minus_1 import (
     Waiver,
     check_envelope,
     check_main_run,
+    check_waived_run,
     load_records,
     load_waivers,
     pick_previous,
@@ -59,20 +60,23 @@ def test_waivers_are_scoped_to_previous_release(tmp_path: Path) -> None:
     path = tmp_path / "waivers.json"
     assert load_waivers(path, "r0") == []
     path.write_text(
-        json.dumps({"r0": [{"test": "a.py::test_x", "reason": "global count"}]}), encoding="utf-8"
+        json.dumps({"r0": [{"test": "a.py::test_x", "reason": "global count", "expect": "x"}]}),
+        encoding="utf-8",
     )
-    assert load_waivers(path, "r0") == [Waiver("a.py::test_x", "global count")]
+    assert load_waivers(path, "r0") == [Waiver("a.py::test_x", "global count", "x")]
     assert load_waivers(path, "r1") == []
 
 
 @pytest.mark.parametrize(
     "entry",
     [
-        {"test": "a.py::test_x", "reason": " "},
-        {"test": "a.py", "reason": "r"},
-        {"test": "a.py::", "reason": "r"},
-        {"test": "a.py::test_", "reason": "r"},
-        {"test": "a.py::TestX", "reason": "r"},
+        {"test": "a.py::test_x", "reason": " ", "expect": "x"},
+        {"test": "a.py", "reason": "r", "expect": "x"},
+        {"test": "a.py::", "reason": "r", "expect": "x"},
+        {"test": "a.py::test_", "reason": "r", "expect": "x"},
+        {"test": "a.py::TestX", "reason": "r", "expect": "x"},
+        {"test": "a.py::test_x", "reason": "r"},
+        {"test": "a.py::test_x", "reason": "r", "expect": "("},
     ],
 )
 def test_waiver_needs_node_id_and_reason(tmp_path: Path, entry: dict[str, str]) -> None:
@@ -104,7 +108,7 @@ def test_pytest_counts_reads_last_summary() -> None:
     assert pytest_counts("no summary") == {}
 
 
-WAIVERS_ONE = [Waiver("a.py::test_x", "why")]
+WAIVERS_ONE = [Waiver("a.py::test_x", "why", "x")]
 
 
 @pytest.mark.parametrize(
@@ -134,3 +138,12 @@ def test_check_main_run(returncode: int, counts: dict[str, int], ok: bool) -> No
 )
 def test_check_envelope(status: dict[str, object], ok: bool) -> None:
     assert (check_envelope(status, previous_epoch=1, current_epoch=2) is None) is ok
+
+
+def test_check_waived_run_requires_expected_reason() -> None:
+    waiver = Waiver("a.py::test_x", "why", r"policy[\s\S]*assert 2 == 1")
+    failed = "E  policy count\nE  assert 2 == 1\n=== 1 failed in 0.2s ==="
+    assert check_waived_run(waiver, failed) is None
+    other = "E  assert 0 == 1\n=== 1 failed in 0.2s ==="
+    assert "different reason" in (check_waived_run(waiver, other) or "")
+    assert "stale" in (check_waived_run(waiver, "=== 1 passed in 0.2s ===") or "")

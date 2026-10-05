@@ -12,9 +12,10 @@
    N 스키마에서 ready가 되는 근거를 테스트 선택과 무관하게 직접 확인한다.
 5. `n_minus_1_waivers.json`에 그 N-1 release로 등록된 테스트만 `--deselect` 한다. N-1 이미지는
    동결이라 고칠 수 없으므로, 앱 동작이 아니라 스키마 모양을 지나치게 좁게 단정한 테스트만
-   사유와 함께 올린다(예: 전역 개수 단정). waiver 테스트는 따로 돌려 **여전히 실패하는지**
-   확인한다(통과하면 낡은 waiver라 게이트 실패). 본 실행은 통과 ≥ 1, deselect 수 == waiver 수,
-   실패 0이어야 한다. 건너뛴 테스트는 `::warning::`으로 남긴다.
+   사유·기대 실패 정규식(`expect`)과 함께 올린다(예: 전역 개수 단정). waiver 테스트는 따로 돌려
+   **여전히 그 이유로 실패하는지** 확인한다(통과하거나 다른 이유로 실패하면 게이트 실패).
+   본 실행은 통과 ≥ 1, deselect 수 == waiver 수, 실패 0이어야 한다. 건너뛴 테스트는
+   `::warning::`으로 남긴다.
 """
 
 from __future__ import annotations
@@ -69,6 +70,8 @@ class GateError(RuntimeError):
 class Waiver:
     test: str
     reason: str
+    expect: str
+    """waiver 테스트 단독 실행 출력에서 찾을 정규식 — 등록한 이유로 실패하는지 확인한다."""
 
 
 def load_waivers(path: Path, release: str) -> list[Waiver]:
@@ -85,12 +88,17 @@ def load_waivers(path: Path, release: str) -> list[Waiver]:
     for entry in cast(list[object], entries):
         item = cast(dict[str, object], entry) if isinstance(entry, dict) else {}
         test, reason = str(item.get("test", "")).strip(), str(item.get("reason", "")).strip()
-        if not _NODE_ID.match(test) or not reason:
+        expect = str(item.get("expect", "")).strip()
+        if not _NODE_ID.match(test) or not reason or not expect:
             raise GateError(
                 f"{path.name}: {release} entry needs an exact pytest node id "
-                f"(path.py::test_name) and a reason: {test!r}"
+                f"(path.py::test_name), a reason and an expect regex: {test!r}"
             )
-        waivers.append(Waiver(test, reason))
+        try:
+            re.compile(expect)
+        except re.error as exc:
+            raise GateError(f"{path.name}: {test} expect is not a regex: {exc}") from exc
+        waivers.append(Waiver(test, reason, expect))
     return waivers
 
 
@@ -113,6 +121,18 @@ def check_main_run(returncode: int, counts: dict[str, int], waivers: list[Waiver
         return f"N-1 run executed no passing test ({counts})"
     if counts.get("deselected", 0) != len(waivers):
         return f"deselected {counts.get('deselected', 0)} tests, expected {len(waivers)} waivers"
+    return None
+
+
+def check_waived_run(waiver: Waiver, output: str) -> str | None:
+    """waiver 테스트 단독 실행 판정: 정확히 1건 실패 + 등록한 이유(`expect`)로."""
+    counts = pytest_counts(output)
+    if counts != {"failed": 1}:
+        return (
+            f"waiver {waiver.test} must still fail exactly once (stale or not matching): {counts}"
+        )
+    if not re.search(waiver.expect, output):
+        return f"waiver {waiver.test} fails for a different reason (expect {waiver.expect!r})"
     return None
 
 
@@ -177,9 +197,16 @@ def pick_previous(records: list[ReleaseRecord], current_epoch: int) -> ReleaseRe
 
 
 def _docker(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["docker", *args], capture_output=True, text=True, encoding="utf-8", check=check
+    result = subprocess.run(
+        ["docker", *args], capture_output=True, text=True, encoding="utf-8", check=False
     )
+    if check and result.returncode != 0:
+        # 출력을 잡아 두므로 실패 원인(stderr)을 오류에 싣는다.
+        raise GateError(
+            f"docker {' '.join(args[:2])} failed ({result.returncode}): "
+            f"{(result.stderr or result.stdout).strip()[-1000:]}"
+        )
+    return result
 
 
 def _psql(container: str, sql: str) -> str:
@@ -255,7 +282,16 @@ def run_gate(
         )
         for _ in range(60):
             ready = _docker(
-                "exec", db, "pg_isready", "-U", "pureiron", "-d", "pureiron", check=False
+                "exec",
+                db,
+                "pg_isready",
+                "-h",
+                "127.0.0.1",
+                "-U",
+                "pureiron",
+                "-d",
+                "pureiron",
+                check=False,
             )
             if ready.returncode == 0:
                 break
@@ -309,12 +345,9 @@ def _judge(
             waiver.test,
             entrypoint="pytest",
         )
-        counts = pytest_counts(waived.stdout)
-        if counts != {"failed": 1}:
-            problems.append(
-                f"waiver {waiver.test} must still fail exactly once (stale or not matching): "
-                f"exit {waived.returncode}, {counts}"
-            )
+        problem = check_waived_run(waiver, waived.stdout)
+        if problem:
+            problems.append(problem)
 
     deselect = [arg for w in waivers for arg in ("--deselect", w.test)]
     main_run = _run_core_test(previous.core_test, network, dsn, *deselect)
@@ -372,6 +405,9 @@ def main() -> int:
         print(f"::warning::n-minus-1 waived {waiver.test} ({previous.name}): {waiver.reason}")
     try:
         return run_gate(previous, current_release, current_epoch, waivers)
+    except GateError as exc:
+        print(f"::error::{exc}", file=sys.stderr)
+        return 1
     finally:
         # 커밋마다 생기는 ci-<sha> 이미지를 남기지 않는다(단일 runner 디스크, PD-24).
         _docker("image", "rm", "-f", f"pureiron/core:{current_release}", check=False)

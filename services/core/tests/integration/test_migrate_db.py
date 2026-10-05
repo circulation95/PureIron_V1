@@ -266,11 +266,14 @@ async def _policy_ran(conn: asyncpg.Connection, job_id: int, timeout_s: float = 
     그 실행을 기다리게 되고, 아직 시작 전이면 같은 job을 직접 실행한다(동시 실행이면 계속 대기)."""
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
-        successes = await conn.fetchval(
-            "SELECT total_successes FROM timescaledb_information.job_stats WHERE job_id = $1",
+        stats = await conn.fetchrow(
+            "SELECT total_successes, total_failures "
+            "FROM timescaledb_information.job_stats WHERE job_id = $1",
             job_id,
         )
-        if successes:
+        if stats is not None and stats["total_failures"]:
+            raise AssertionError(f"refresh policy job {job_id} failed in the scheduler")
+        if stats is not None and stats["total_successes"]:
             return
         try:
             await conn.execute(f"CALL run_job({job_id})")
@@ -325,34 +328,42 @@ async def test_epoch2_on_compressed_epoch1_db(stack: Stack, fresh_database: str)
 
 
 @pytest.mark.fresh_db
-async def test_epoch2_resumes_after_crash_between_files(stack: Stack, fresh_database: str) -> None:
-    """epoch 2의 두 파일 사이에서 끊긴 상태들(구문은 실행·기록 전 / 0006만 기록)에서 `up` → 수렴."""
+@pytest.mark.parametrize("recorded", [False, True], ids=["ran-not-recorded", "0006-recorded"])
+async def test_epoch2_resumes_after_crash_between_files(
+    stack: Stack, fresh_database: str, recorded: bool
+) -> None:
+    """epoch 2의 두 파일 사이에서 끊긴 상태에서 `up` → 수렴.
+
+    - `ran-not-recorded`: 0006 구문은 실행됐지만 기록 전에 죽음 → 재실행은 IF NOT EXISTS로 지나간다.
+    - `0006-recorded`: 0006까지 기록되고 0007 전에 죽음 → epoch는 1에 머문다(r0 앱 ready).
+    """
     catalog = migrate.load_catalog(MIGRATIONS)
     cagg = next(m for m in catalog.migrations if m.filename == "0006_cagg_1h.sql")
     env = stack.cli_env(fresh_database)
     assert _cli(env, "migrate", "up", "--to", "1").returncode == 0
     conn = await asyncpg.connect(stack.dsn(fresh_database), password=stack.password)
     try:
-        # ① 0006 구문은 실행됐지만 기록 전에 죽음 → 재실행은 IF NOT EXISTS로 지나간다.
         await conn.execute(cagg.sql)
+        if recorded:
+            await conn.execute(
+                "INSERT INTO schema_migrations (version, name, checksum, release) "
+                "VALUES ($1, $2, $3, 'test')",
+                cagg.version,
+                cagg.name,
+                cagg.checksum,
+            )
         status = json.loads(_cli(env, "migrate", "status", "--json").stdout)
-        assert (status["cur"], status["pending"][0]) == (1, "0006_cagg_1h.sql")
-        # ② 0006까지 기록되고 0007 전에 죽음 → epoch는 1에 머문다(r0 앱 ready, r1 앱 not ready).
-        await conn.execute(
-            "INSERT INTO schema_migrations (version, name, checksum, release) "
-            "VALUES ($1, $2, $3, 'test')",
-            cagg.version,
-            cagg.filename,
-            cagg.checksum,
+        pending = ["0007_cagg_1h_policy.sql"]
+        assert (status["cur"], status["pending"]) == (
+            1,
+            pending if recorded else ["0006_cagg_1h.sql", *pending],
         )
-        status = json.loads(_cli(env, "migrate", "status", "--json").stdout)
-        assert (status["cur"], status["pending"]) == (1, ["0007_cagg_1h_policy.sql"])
     finally:
         await conn.close()
 
-    up = _cli(env, "migrate", "up")
+    up = _cli(env, "migrate", "up", "--to", "2")
     assert up.returncode == 0, up.stderr
-    assert "applied 1" in up.stdout
+    assert f"applied {1 if recorded else 2}" in up.stdout
     conn = await asyncpg.connect(stack.dsn(fresh_database), password=stack.password)
     try:
         assert await migrate.read_epoch(conn) == 2
