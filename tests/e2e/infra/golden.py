@@ -41,9 +41,13 @@ class Network:
 
 
 # 외부로 나가려는 패킷을 세는 규칙(이름 → nft match).
-# 내부 망·loopback·docker bridge(172.16/12)는 제외한다.
+# 내부 망·loopback·docker bridge(172.16/12)·멀티캐스트(224/4, docker0 IGMP 등 링크 밖으로 안 나감)·
+# 제한 broadcast는 제외한다.
 OUT_RULES = (
-    ("ext_out_v4", "ip daddr != {{ 127.0.0.0/8, {cidr}, 172.16.0.0/12 }}"),
+    (
+        "ext_out_v4",
+        "ip daddr != {{ 127.0.0.0/8, {cidr}, 172.16.0.0/12, 224.0.0.0/4, 255.255.255.255 }}",
+    ),
     ("dns_out", "meta l4proto {{ tcp, udp }} th dport 53 ip daddr != 127.0.0.0/8"),
     ("ext_out_v6", "ip6 daddr != {{ ::1, fe80::/10, ff00::/8 }}"),
 )
@@ -60,11 +64,11 @@ def nft_audit(cidr: str) -> str:
     return "\n".join(
         [
             "table inet e2e_audit {",
-            "    chain out {",
+            "    chain audit_out {",
             "        type filter hook output priority -10; policy accept;",
             *rules(OUT_RULES),
             "    }",
-            "    chain fwd {",
+            "    chain audit_fwd {",  # `fwd`는 nft 예약어
             "        type filter hook forward priority -10; policy accept;",
             *rules(FWD_RULES),
             "    }",
@@ -88,6 +92,11 @@ users:
 ssh_pwauth: false
 package_update: false
 package_upgrade: false
+# network-online 전에 끈다 — runcmd에서 끄면 pollinate(entropy.ubuntu.com)·snapd(api.snapcraft.io)가
+# 이미 DNS를 질의한 뒤다(첫 실측 dns_out 36).
+bootcmd:
+  - [systemctl, mask, --now, pollinate.service, snapd.service, snapd.socket,
+     snapd.seeded.service, systemd-timesyncd.service]
 write_files:
   - path: /etc/e2e-audit.nft
     permissions: "0644"
@@ -110,8 +119,8 @@ write_files:
 runcmd:
   - [systemctl, daemon-reload]
   - [systemctl, enable, --now, e2e-audit.service]
-  - [systemctl, disable, --now, systemd-timesyncd.service, snapd.service, snapd.socket,
-     apt-daily.timer, apt-daily-upgrade.timer, motd-news.timer, fwupd-refresh.timer]
+  - [systemctl, disable, --now, apt-daily.timer, apt-daily-upgrade.timer, motd-news.timer,
+     fwupd-refresh.timer]
   - [sh, -c, "pro config set apt_news=false || true"]
   - [touch, /var/lib/e2e-ready]
 """

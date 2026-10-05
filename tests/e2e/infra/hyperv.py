@@ -11,6 +11,9 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+# '시간 동기화' 통합 서비스(Id 끝 GUID, 언어와 무관).
+TIME_SYNC_ID = "2497F4DE-E9FA-4204-80E4-4B75C46419C0"
+
 
 class HyperVError(RuntimeError):
     pass
@@ -22,13 +25,17 @@ def ps_quote(value: str) -> str:
 
 
 def run_ps(script: str, *, timeout_s: float = 300) -> str:
+    """오류는 `$ErrorActionPreference='Stop'`의 종결 오류로만 판정한다. `-Command`의 종료 코드는
+    마지막 `$?`를 따르므로 `-ErrorAction SilentlyContinue`로 넘긴 '없음'도 1이 된다 → 끝에 `exit 0`.
+    """
     result = subprocess.run(
         [
             "powershell.exe",
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'; " + script,
+            "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'; "
+            "[Console]::OutputEncoding = [Text.Encoding]::UTF8; " + script + "; exit 0",
         ],
         capture_output=True,
         text=True,
@@ -38,7 +45,8 @@ def run_ps(script: str, *, timeout_s: float = 300) -> str:
         check=False,
     )
     if result.returncode != 0:
-        raise HyperVError(f"powershell failed ({result.returncode}): {result.stderr.strip()}")
+        detail = (result.stderr.strip() or result.stdout.strip())[-1500:]
+        raise HyperVError(f"powershell failed ({result.returncode}): {detail}")
     return result.stdout.strip()
 
 
@@ -88,7 +96,9 @@ def create_vm(spec: VmSpec, parent_vhdx: Path) -> None:
         "-AutomaticStopAction TurnOff -CheckpointType Standard; "
         f"Set-VMFirmware -VMName {name} -SecureBootTemplate MicrosoftUEFICertificateAuthority; "
         f"Add-VMDvdDrive -VMName {name} -Path {iso}; "
-        f"Enable-VMIntegrationService -VMName {name} -Name 'Time Synchronization'"
+        # 이름은 OS 언어로 지역화된다(예: '시간 동기화') → 서비스 ID로 고른다.
+        f"Get-VMIntegrationService -VMName {name} | "
+        f"Where-Object {{ $_.Id -like '*\\{TIME_SYNC_ID}' }} | Enable-VMIntegrationService"
     )
 
 

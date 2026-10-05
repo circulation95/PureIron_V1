@@ -17,6 +17,9 @@ powershell -ExecutionPolicy Bypass -File tests\e2e\infra\setup-host.ps1
   다른 곳으로 전달하지 않는다 — VM은 인터넷에 닿지 않는다.
 - C: 여유: golden 2.1 GB + VM 차분 디스크 수 GB + 번들(회당 약 0.74 GB × 실행 수). 작업 디렉터리는
   `C:\PureIron_e2e`(`PUREIRON_E2E_ROOT`).
+- 메모리: VM 4 GiB + 체크포인트 복원. WSL VM(번들 빌드·Docker Desktop)이 페이지 캐시를 늦게 돌려줘
+  복원이 `0x8007000E`로 실패할 수 있어, 하네스는 VM 시작·복원·리셋 전에 WSL 캐시를 비운다(`wsl -u root`).
+- 한국어 등 지역화된 Windows: Hyper-V 통합 서비스 이름이 번역되므로 하네스는 서비스 ID로 고른다.
 
 빌드 호스트(WSL runner)에는 `~/pureiron/keys/test`(test root·release key, `deploy/keys/README.md`),
 image store의 `r0`·`r1` tar, `~/m2d-tools/qemu-img`(sudo 없이 `apt-get download qemu-utils liburing2
@@ -41,9 +44,13 @@ uv run python tests/e2e/m2d/run.py destroy         # VM·차분 디스크 삭제
 | `prepare` | WSL 사본에서 r1′(`r1f`: collector가 세션을 맺지 않는 파생 이미지 → `/readyz` 503), 설치 번들 **실빌드**(`fetch_debs.sh`·`build_updater.sh`), g1(r0) |
 | `vm` | golden(클라우드 이미지 → 64 GiB 동적 VHDX, 읽기 전용) 위 차분 디스크, seed ISO(cloud-init: 사용자·고정 IP·OS phone-home 끄기·nftables 감시 테이블) |
 | `install` | runbook 2단계(메타데이터만 전용 디렉터리에 추출 → `bootstrap-verify.sh` sha256·root 지문 대조) → `install.sh --offline-time-confirmed` → enroll → g1 → 서비스 시작. `/readyz` 200, overlay2 + classic store, 실행 이미지 `.Id` == r0 config digest. 압축 chunk 이력 시드 후 체크포인트 `c0` |
-| `scenarios` | 거부 3종(다른 현장·같은 gen 재빌드·변조) exit 1 + core `StartedAt` 불변 / `c0`에서 r0→r1(압축 DB 위 epoch 2) 성공 / `c0`에서 r1′ → 5분 안에 r0 digest + `failed` |
+| `scenarios` | `c0`에서 거부(다른 현장 `E_SITE`·변조 `E_DIGEST`) exit 1, 같은 gen 재빌드는 no-op exit 0(R-7 멱등) — 모두 core `StartedAt`·실행 이미지 불변 / `c0`에서 r0→r1(압축 DB 위 epoch 2) 성공 → 낮은 gen `E_GEN` 거부 / `c0`에서 r1′ → 5분 안에 r0 digest + `failed` |
 | `crash` | phase(`fetched`~`rolling_back`)마다 `systemctl kill -s KILL pureiron-updater`와 `Restart-VM -Force` 각 1회 → 10분 안에 수렴(결과·실행 이미지·편집 잠금 해제) |
 | `report` | nftables 외부 접속 카운터(`ext_out_v4`·`dns_out`·`ext_out_v6`·`ext_fwd`) 0 |
+
+거부 보고는 번들 sha256 12자로 찾는다(`reports/<started>-g<gen>-<sha12>.json`) — 커밋 전 거부는 서명을
+믿기 전이라 gen이 `unknown`이다. 낮은 gen 번들은 적용된 gen보다 **뒤에** 빌드한다 — 먼저 만든 번들은
+cert 단계의 `max_seen_created_at` 역행(`E_CERT`)에 먼저 걸린다.
 
 ### crash 주입 방식
 

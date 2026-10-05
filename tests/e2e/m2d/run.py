@@ -12,8 +12,9 @@
    `bootstrap-verify.sh`) → `install.sh --offline-time-confirmed` → enroll → g1 apply → 서비스 시작.
    `/readyz` 200, classic image store(overlay2), 이미지 `.Id` == r0 config digest. 압축 chunk가 있는
    이력을 넣고 체크포인트 `c0`(epoch 1)를 만든다.
-4. `scenarios` — 거부 3종(다른 현장·같은 gen 재빌드·변조) 각 exit 1 + core `StartedAt` 불변,
-   `c0`에서 r0→r1(압축 DB 위 epoch 2 migrate) 성공, `c0`에서 r1' → 5분 안에 r0 digest 복귀 +
+4. `scenarios` — `c0`에서 거부(다른 현장 `E_SITE`·변조 `E_DIGEST`) exit 1과 같은 gen 재빌드 no-op
+   exit 0(R-7 멱등), 모두 core `StartedAt`·실행 이미지 불변. `c0`에서 r0→r1(압축 DB 위 epoch 2
+   migrate) 성공 → 그 위에서 낮은 gen `E_GEN` 거부. `c0`에서 r1' → 5분 안에 r0 digest 복귀 +
    `failed`.
 5. `crash` — phase마다 `systemctl kill -s KILL pureiron-updater`와 `Restart-VM -Force`를 1회씩.
    서비스가 그 시도를 실행하도록 창이 조금 뒤에 열리는 번들을 CLI로 스테이징하고(`verified` 대기),
@@ -29,9 +30,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -111,9 +114,13 @@ class Context:
 
     def record(self, name: str, ok: bool, **detail: object) -> None:
         entry: dict[str, object] = {"name": name, "ok": ok, **detail}
-        self.results.append(entry)
+        # 단계를 다시 돌리면(`run.py <step>`) 같은 항목은 마지막 결과로 바꾼다.
+        self.results = [r for r in self.results if r["name"] != name] + [entry]
         self.save()
-        print(f"[{'PASS' if ok else 'FAIL'}] {name} {json.dumps(detail, ensure_ascii=False)}")
+        print(
+            f"[{'PASS' if ok else 'FAIL'}] {name} {json.dumps(detail, ensure_ascii=False)}",
+            flush=True,
+        )
 
 
 def log(message: str) -> None:
@@ -216,6 +223,7 @@ def step_vm(ctx: Context) -> None:
         vm_dir / "seed.iso", golden.seed_files("site-a", VM_IP, pub, golden.Network())
     )
     hyperv.create_vm(hyperv.VmSpec(VM_NAME, vm_dir / "disk.vhdx", seed, SWITCH), GOLDEN)
+    reclaim_host_memory()
     hyperv.start(VM_NAME)
     host = vm()
     waited = host.wait_ssh(timeout_s=900)
@@ -239,6 +247,33 @@ def nft_counters(host: Vm) -> dict[str, object]:
             if counter is not None:
                 counters[str(rule.get("comment"))] = counter["packets"]
     return counters
+
+
+def reclaim_host_memory() -> None:
+    """WSL(번들 빌드·Docker Desktop)의 페이지 캐시를 비워 VM 시작·복원에 쓸 호스트 메모리를
+    돌려받는다. WSL VM은 캐시를 Windows에 늦게 돌려줘 4 GiB VM 복원이 0x8007000E로
+    실패했다(첫 실측)."""
+    subprocess.run(
+        [
+            "wsl",
+            "-d",
+            golden.WSL_DISTRO,
+            "-u",
+            "root",
+            "--exec",
+            "sh",
+            "-c",
+            "sync; echo 3 > /proc/sys/vm/drop_caches; echo 1 > /proc/sys/vm/compact_memory",
+        ],
+        capture_output=True,
+        timeout=120,
+        check=False,
+    )
+
+
+def as_root(script: str) -> str:
+    """원격 root 셸에서 `script` 전체를 실행한다(`cd` 등이 sudo 밖에서 돌지 않게)."""
+    return f"sudo bash -c {shlex.quote(script)}"
 
 
 def probe(host: Vm) -> dict[str, object]:
@@ -276,16 +311,23 @@ def step_install(ctx: Context) -> None:
     meta = "manifest.json manifest.sig release-cert.json release-cert.sig keys/root.pub "
     meta += "keys/root.pem bootstrap/bootstrap-verify.sh"
     started = time.monotonic()
+    # runbook 2단계는 root 셸에서 친다(/root는 700, bootstrap-verify ⓪은 추출물이
+    # 실행 사용자 소유인지 본다).
     out = host.run(
-        "sudo install -d -m 700 /root/pib-meta && cd /root/pib-meta && "
-        f"sudo tar --no-same-owner --no-same-permissions -xf {remote_install} {meta} && "
-        "sudo sha256sum bootstrap/bootstrap-verify.sh"
+        as_root(
+            "install -d -m 700 /root/pib-meta && cd /root/pib-meta && "
+            "tar --force-local --no-same-owner --no-same-permissions "
+            f"-xf {remote_install} {meta} && sha256sum bootstrap/bootstrap-verify.sh"
+        )
     ).stdout
     if not out.startswith(ctx.runbook_bootstrap):
         raise E2EError(f"bootstrap-verify.sh sha256 mismatch: {out.strip()}")
     host.run(
-        "cd /root/pib-meta && sudo bash bootstrap/bootstrap-verify.sh "
-        f"--root-fpr {ctx.runbook_fpr} --bundle {remote_install} --dest /root/pureiron-install",
+        as_root(
+            "cd /root/pib-meta && bash bootstrap/bootstrap-verify.sh "
+            f"--root-fpr {ctx.runbook_fpr} --bundle {remote_install} "
+            "--dest /root/pureiron-install"
+        ),
         timeout_s=900,
     )
     host.run(
@@ -389,10 +431,13 @@ def converge(host: Vm, gen: int, timeout_s: float = CONVERGE_S) -> tuple[dict[st
     return snap, time.monotonic() - started
 
 
-def latest_report(host: Vm, gen: int) -> dict[str, object]:
+def report_for(host: Vm, pib: Path) -> dict[str, object]:
+    """그 번들의 최근 보고. 파일 이름 `<started>-g<gen>-<sha256 12자>.json`에서 sha로 찾는다 —
+    커밋 전 거부는 gen을 믿지 않아 `g unknown`이므로 gen으로는 못 찾는다."""
+    sha12 = hashlib.sha256(pib.read_bytes()).hexdigest()[:12]
     out = host.run(
-        f"sudo sh -c 'ls -t /var/lib/pureiron/state/reports/*-g{gen}-*.json "
-        "/var/lib/pureiron/state/reports/exported/*-g{gen}-*.json 2>/dev/null | head -1 | "
+        f"sudo sh -c 'ls -t /var/lib/pureiron/state/reports/*-{sha12}.json "
+        f"/var/lib/pureiron/state/reports/exported/*-{sha12}.json 2>/dev/null | head -1 | "
         "xargs -r cat'",
         check=False,
     ).stdout
@@ -419,7 +464,7 @@ def apply_and_check(
     stage(host, pib, check=False)
     snap, waited = converge(host, gen)
     took = time.monotonic() - started
-    state, report = updater_state(snap), latest_report(host, gen)
+    state, report = updater_state(snap), report_for(host, pib)
     want = ctx.digests[release if expect == "succeeded" else prev]
     ok = state.get("last_result") == expect and running_digests(snap) == want
     detail: dict[str, object] = {
@@ -439,39 +484,66 @@ def apply_and_check(
     return {**detail, "snapshot": snap, "converge_s": waited}
 
 
-def step_scenarios(ctx: Context) -> None:
-    host = vm()
+def stage_untouched(
+    ctx: Context,
+    name: str,
+    host: Vm,
+    pib: Path,
+    *,
+    want_exit: int,
+    want_code: str | None,
+    want: str,
+) -> None:
+    """적용되면 안 되는 번들: CLI 종료 코드·거부 코드, core `StartedAt`·실행 이미지 불변."""
     before = probe(host)
-    started_at = core_started_at(before)
+    result = stage(host, pib, check=False)
+    after = probe(host)
+    unchanged = core_started_at(after) == core_started_at(before)
+    images_ok = running_digests(after) == ctx.digests[want]
+    code = report_for(host, pib).get("code")
+    ctx.record(
+        name,
+        result.returncode == want_exit and code == want_code and unchanged and images_ok,
+        exit=result.returncode,
+        code=code,
+        core_started_at_unchanged=unchanged,
+        images_match=images_ok,
+    )
+    host.run(f"sudo rm -f {INCOMING}/{pib.name}", check=False)
+
+
+def restore_c0() -> None:
+    reclaim_host_memory()
+    hyperv.restore(VM_NAME, "c0")
+    vm().wait_ssh()
+
+
+def step_scenarios(ctx: Context) -> None:
     gen = ctx.next_gen
-    # 거부 코드(VM 수동 1회): 다른 현장, 같은 gen 재빌드, 변조
+    # 거부 코드(VM 수동 1회): 다른 현장, 변조 — c0(applied g1 = r0) 위에서
     other = BUNDLES / ctx.run_id / f"pureiron-site-b-g{gen}.pib"
     wsl(
         f"uv run --no-sync python tests/e2e/m2d/bundles.py site --work {WSL_HOME}/work "
         f"--out '{golden.wsl_path(other.parent)}' --gen {gen} --product {RELEASES['r1']} "
         "--window-start 2026-01-01T00:00:00Z --window-end 2027-01-01T00:00:00Z --site site-b"
     )
-    same_gen = build_site_bundle(ctx, 1, "r1", datetime.now(UTC) - timedelta(days=1))
-    tampered = same_gen.with_name("tampered.pib")
+    # 같은 gen(1) 재빌드 — 내용이 달라도 gen 규칙상 멱등 no-op(R-7).
+    same = build_site_bundle(ctx, 1, "r1", datetime.now(UTC) - timedelta(days=1))
+    same = same.replace(same.with_name(f"pureiron-{SITE}-g1-r1.pib"))
+    tampered = same.with_name("tampered.pib")
     data = bytearray(build_site_bundle(ctx, gen, "r1", datetime.now(UTC)).read_bytes())
     data[len(data) // 2] ^= 0xFF
     tampered.write_bytes(bytes(data))
-    for label, pib in (("site", other), ("same-gen", same_gen), ("tampered", tampered)):
-        result = stage(host, pib, check=False)
-        report = latest_report(host, 1 if label == "same-gen" else gen)
-        after = probe(host)
-        ctx.record(
-            f"reject {label}",
-            result.returncode == 1 and core_started_at(after) == started_at,
-            exit=result.returncode,
-            code=report.get("code"),
-            core_started_at_unchanged=core_started_at(after) == started_at,
-        )
-        host.run(f"sudo rm -f {INCOMING}/{pib.name}", check=False)
+    restore_c0()
+    host = vm()
+    for label, pib, code in (("site", other, "E_SITE"), ("tampered", tampered, "E_DIGEST")):
+        stage_untouched(ctx, f"reject {label}", host, pib, want_exit=1, want_code=code, want="r0")
+    stage_untouched(
+        ctx, "same gen rebuild → no-op", host, same, want_exit=0, want_code=None, want="r0"
+    )
 
     # c0(epoch 1, 압축 chunk)에서 r0→r1
-    hyperv.restore(VM_NAME, "c0")
-    vm().wait_ssh()
+    restore_c0()
     up = apply_and_check(
         ctx, "r0→r1 on compressed epoch-1 DB", gen, "r1", expect="succeeded", prev="r0"
     )
@@ -483,9 +555,12 @@ def step_scenarios(ctx: Context) -> None:
         and int(str(db.get("compressed_chunks") or 0)) > 0,
         db=db,
     )
+    # applied g2 위에서 g1 → E_GEN(낮은 gen). g2보다 뒤에 빌드해야 한다 — 먼저 만든 번들은
+    # cert 단계의 `max_seen_created_at` 역행(E_CERT)에 먼저 걸린다(첫 실측).
+    lower = build_site_bundle(ctx, 1, "r1", datetime.now(UTC) - timedelta(days=1))
+    stage_untouched(ctx, "reject lower gen", vm(), lower, want_exit=1, want_code="E_GEN", want="r1")
     # c0에서 r1' → 5분 안에 r0 복귀 + failed
-    hyperv.restore(VM_NAME, "c0")
-    vm().wait_ssh()
+    restore_c0()
     rb = apply_and_check(
         ctx, "r1' health failure → rollback", gen, "r1f", expect="failed", prev="r0"
     )
@@ -519,12 +594,13 @@ def crash_once(ctx: Context, phase: str, mode: str, *, gen: int, release: str, p
     line = watcher.stdout.readline().strip() if watcher.stdout else ""
     hit = line.startswith("HIT")
     if hit and mode == "reset":
+        reclaim_host_memory()
         hyperv.restart_force(VM_NAME)
     stage_proc.wait(timeout=1800)
     watcher.wait(timeout=60)
     # fetched(CLI 검증 중) crash 뒤에는 서비스가 같은 시도를 이어받는다(재부팅이면 시작 시 recover).
     snap, waited = converge(vm(), gen)
-    state, report = updater_state(snap), latest_report(vm(), gen)
+    state, report = updater_state(snap), report_for(vm(), pib)
     want = ctx.digests[release if expect == "succeeded" else prev]
     unlocked = edit_unlocked(snap)
     ok = hit and state.get("last_result") == expect and running_digests(snap) == want and unlocked
@@ -548,8 +624,7 @@ def step_crash(ctx: Context) -> None:
     gen = ctx.next_gen
     # migrating: 실제 마이그레이션이 일어나도록 c0(epoch 1)에서 r0→r1
     for mode in ("kill", "reset"):
-        hyperv.restore(VM_NAME, "c0")
-        vm().wait_ssh()
+        restore_c0()
         crash_once(ctx, "migrating", mode, gen=gen, release="r1", prev="r0")
     gen += 1
     current = "r1"

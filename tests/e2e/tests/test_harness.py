@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 from pathlib import Path, PureWindowsPath
 
 import crash_at
@@ -43,6 +44,20 @@ def test_nft_audit_counts_every_rule_by_name() -> None:
     for name, _ in (*golden.OUT_RULES, *golden.FWD_RULES):
         assert f'counter log prefix "e2e-{name} " comment "{name}"' in text
     assert text.count("{") == text.count("}")
+    # 첫 실측 회귀: `fwd`는 nft 예약어라 chain 이름이 되면 테이블 전체가 로드되지 않았다.
+    chains = re.findall(r"^\s*chain (\S+) \{", text, re.MULTILINE)
+    assert chains
+    assert not {"fwd", "forward", "output", "input"} & set(chains)
+    # docker0 IGMP(224.0.0.22)는 링크 밖으로 나가지 않는다 — 외부 접속으로 세지 않는다.
+    assert "224.0.0.0/4" in dict(golden.OUT_RULES)["ext_out_v4"]
+
+
+def test_seed_masks_phone_home_before_network() -> None:
+    """pollinate·snapd는 runcmd 전에 DNS를 질의했다(첫 실측 dns_out 36) → bootcmd에서 mask."""
+    user_data = golden.seed_files("site-a", "10.77.0.10", "k", golden.Network())["user-data"]
+    bootcmd = user_data.decode().split("bootcmd:", 1)[1].split("write_files:", 1)[0]
+    for unit in ("pollinate.service", "snapd.service", "snapd.socket", "systemd-timesyncd"):
+        assert unit in bootcmd
 
 
 def test_seed_iso_round_trip(tmp_path: Path) -> None:
