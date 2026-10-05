@@ -1,0 +1,17 @@
+{
+  "include": [
+    "infra",
+    "m2d",
+    "site",
+    "tests"
+  ],
+  "extraPaths": [
+    "infra",
+    "site",
+    "m2d",
+    "../../deploy/build"
+  ],
+  "pythonVersion": "3.12",
+  "pythonPlatform": "Linux",
+  "typeCheckingMode": "strict"
+}

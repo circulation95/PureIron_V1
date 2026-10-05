@@ -68,3 +68,10 @@ def test_secrets_come_from_files_only() -> None:
         assert spec["file"].startswith("${PUREIRON_SECRETS_DIR:-/var/lib/pureiron/state/secrets}/")
     text = COMPOSE.read_text(encoding="utf-8")
     assert "POSTGRES_PASSWORD:" not in text
+
+
+def test_site_db_telemetry_off() -> None:
+    """폐쇄망 현장: TimescaleDB 텔레메트리가 외부로 접속을 시도하지 않는다(M2d VM 실측)."""
+    command = cast(list[str], _services()["site-db"]["command"])
+    assert command[0] == "postgres"
+    assert "timescaledb.telemetry_level=off" in command

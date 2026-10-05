@@ -16,7 +16,7 @@
 | `migrating` | `up --wait site-db`(DB 준비 대기) → 새 core 이미지로 `migrate up --to <target>` | `rolling_back(E_MIGRATE)` |
 | `switching` | 태그 `.Id` 재확인 → `up -d --wait --remove-orphans` → 실행 컨테이너 `.Image` 확인 → `project apply` | `rolling_back(E_SWITCH)` |
 | `checking` | `/readyz` ready + collector 세션(+ baseline > 0이면 GOOD 비율 ≥ baseline − 2%p), 제한 90 s | `rolling_back(E_HEALTH)` |
-| `rolling_back` | 직전 compose `up -d` + `.Id` 확인 + project restore(site_rev·base 포함) + ready | 2회 실패 → `failed_manual`(경보) |
+| `rolling_back` | 직전 compose `up -d` + `.Id` 확인 + project restore(site_rev·base 포함, 백업의 컨테이너 uid 소유 0400 사본을 mount — 서비스 `UMask=0027` 백업은 컨테이너가 못 읽음) + ready | 2회 실패 → `failed_manual`(경보) |
 | 종료 | 편집 잠금 해제(HTTP 실패 시 site-db `psql`로 updater 잠금만 해제 — core 이미지 무관) → 보고 → 확정 | 해제 실패 → 종료 phase로 남아 다음 tick에 재시도 |
 
 - docker 데몬이 응답하지 않으면(재부팅 직후 등) `advance`·`recover`는 아무것도 바꾸지 않고 다음 tick을 기다린다 — 일시 장애를 영구 실패로 분류하지 않는다.
