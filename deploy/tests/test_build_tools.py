@@ -10,9 +10,12 @@ from n_minus_1 import (
     GateError,
     ReleaseRecord,
     Waiver,
+    check_envelope,
+    check_main_run,
     load_records,
     load_waivers,
     pick_previous,
+    pytest_counts,
 )
 from repro_build import compare
 
@@ -63,7 +66,14 @@ def test_waivers_are_scoped_to_previous_release(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "entry", [{"test": "a.py::test_x", "reason": " "}, {"test": "a.py", "reason": "r"}]
+    "entry",
+    [
+        {"test": "a.py::test_x", "reason": " "},
+        {"test": "a.py", "reason": "r"},
+        {"test": "a.py::", "reason": "r"},
+        {"test": "a.py::test_", "reason": "r"},
+        {"test": "a.py::TestX", "reason": "r"},
+    ],
 )
 def test_waiver_needs_node_id_and_reason(tmp_path: Path, entry: dict[str, str]) -> None:
     path = tmp_path / "waivers.json"
@@ -74,3 +84,53 @@ def test_waiver_needs_node_id_and_reason(tmp_path: Path, entry: dict[str, str]) 
 
 def test_repo_waivers_load() -> None:
     assert all(w.reason for w in load_waivers(WAIVERS, "r0"))
+
+
+def test_waiver_file_shape_errors_are_gate_errors(tmp_path: Path) -> None:
+    path = tmp_path / "waivers.json"
+    path.write_text("[]", encoding="utf-8")
+    with pytest.raises(GateError):
+        load_waivers(path, "r0")
+    path.write_text(json.dumps({"r0": {"test": "x"}}), encoding="utf-8")
+    with pytest.raises(GateError):
+        load_waivers(path, "r0")
+
+
+def test_pytest_counts_reads_last_summary() -> None:
+    out = "x.py ..s\n=== 1 passed, 9 skipped, 1 deselected in 0.69s ===\n"
+    assert pytest_counts(out) == {"passed": 1, "skipped": 9, "deselected": 1}
+    assert pytest_counts("=== 1 failed in 0.1s ===") == {"failed": 1}
+    assert pytest_counts("=== 2 errors in 0.1s ===") == {"error": 2}
+    assert pytest_counts("no summary") == {}
+
+
+WAIVERS_ONE = [Waiver("a.py::test_x", "why")]
+
+
+@pytest.mark.parametrize(
+    ("returncode", "counts", "ok"),
+    [
+        (0, {"passed": 1, "skipped": 9, "deselected": 1}, True),
+        (1, {"passed": 1, "failed": 1, "deselected": 1}, False),
+        (0, {"skipped": 10, "deselected": 1}, False),
+        (0, {"passed": 2}, False),
+        (0, {"passed": 1, "deselected": 2}, False),
+    ],
+)
+def test_check_main_run(returncode: int, counts: dict[str, int], ok: bool) -> None:
+    assert (check_main_run(returncode, counts, WAIVERS_ONE) is None) is ok
+
+
+@pytest.mark.parametrize(
+    ("status", "ok"),
+    [
+        ({"cur": 2, "app_expected": 1, "app_max_compatible": 2, "checksum_ok": True}, True),
+        ({"cur": 1, "app_expected": 1, "app_max_compatible": 2, "checksum_ok": True}, False),
+        ({"cur": 2, "app_expected": 2, "app_max_compatible": 3, "checksum_ok": True}, False),
+        ({"cur": 2, "app_expected": 1, "app_max_compatible": 1, "checksum_ok": True}, False),
+        ({"cur": 2, "app_expected": 1, "app_max_compatible": 2, "checksum_ok": False}, False),
+        ({}, False),
+    ],
+)
+def test_check_envelope(status: dict[str, object], ok: bool) -> None:
+    assert (check_envelope(status, previous_epoch=1, current_epoch=2) is None) is ok

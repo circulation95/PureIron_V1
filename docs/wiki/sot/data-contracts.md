@@ -207,7 +207,7 @@ uv run python scripts/project_package.py import \
 - 부팅 시 자동 실행 없음. `pureiron-core migrate status|up|verify|lint`, 이력 `schema_migrations(version, name, checksum, applied_at, release)`, `pg_advisory_lock`, 파일 단위 트랜잭션, 실패 즉시 중단.
 - ADD-only lint 거부 목록: DROP/RENAME/`ALTER … TYPE`/TRUNCATE, `ADD CONSTRAINT`, NOT NULL 무기본값, `CREATE UNIQUE INDEX`, `CREATE TRIGGER`, `refresh_continuous_aggregate` 호출, `WITH NO DATA` 없는 CAGG.
 - epoch: 마이그레이션을 포함한 release만 +1. 앱 ready 조건 `app_expected ≤ 현재 epoch ≤ app_max_compatible(= expected + 1)`. 1 epoch 초과 점프는 `E_SCHEMA`(단계 적용).
-- baseline 스키마: `schema_meta`, `tags`(`id`, `path unique` — path 기준 안정 id), `tag_history`(1일 chunk hypertable, `UNIQUE(tag_id, time)`, 2일 후 압축), 1분 CAGG, `project_state`. epoch 2(r1)에서 1시간 CAGG `tag_history_1h`를 더했다(`project_id, version, content_hash, base_site_rev, site_rev, edit_lock_owner, edit_lock_gen`).
+- baseline 스키마: `schema_meta`, `tags`(`id`, `path unique` — path 기준 안정 id), `tag_history`(1일 chunk hypertable, `UNIQUE(tag_id, time)`, 2일 후 압축), 1분 CAGG, `project_state`(`project_id, version, content_hash, base_site_rev, site_rev, edit_lock_owner, edit_lock_gen`). epoch 2(r1)에서 1시간 CAGG `tag_history_1h`를 더했다(아래 CAGG 조회 계약).
 
 ### 기록 정책 (ADR-021)
 
@@ -290,7 +290,11 @@ window: { recurring: { tz: Asia/Seoul, days: [sat, sun], start: "02:00", end: "0
 
 ### V1 구현 현황 (M2d r1 release, 2026-10-05)
 
-- **r1 = epoch 2**(`deploy/releases/r1.json`, 2026.10.1): `tag_history_1h`(1시간 CAGG, 1분 CAGG와 같은 열 `avg·min·max·last·samples`). 1분 평균을 다시 평균하면 표본 수 가중이 틀어지므로 원본 `tag_history`에서 직접 집계한다(압축 chunk도 읽음). refresh policy는 `start_offset` 3일·`end_offset` 1시간·1시간 주기. 앱 envelope는 [2, 3] — r0 앱(envelope [1, 2])은 epoch 2 DB에서 계속 ready다(롤백 경로).
-- 통합 테스트가 "압축 chunk가 있는 epoch 1 DB → `migrate up` → 1시간 CAGG가 압축 chunk를 집계"를 고정한다. r1 번들 실측: 739 MB, 빌드 15 s(WSL2).
-- **n-minus-1 waiver**: N-1 core-test 이미지는 동결이라 고칠 수 없다. 앱 동작이 아니라 스키마 모양을 지나치게 좁게 단정한 테스트만 `deploy/build/n_minus_1_waivers.json`(N-1 release × pytest node id × 사유)으로 deselect 하고 게이트가 `::warning::`으로 남긴다. 첫 항목: r0 `test_baseline_timescale_objects`(refresh policy 전역 개수 == 1, epoch 2에서 2). r1부터 같은 검사는 CAGG별 개수로 센다 — 스키마 단정은 다음 epoch가 객체를 더해도 성립하게 쓴다.
-- **아직 없음**: Hyper-V VM 실측(폐쇄망 설치·r0→r1·r1′ 롤백·crash 주입·nftables) — 현재 계정이 Hyper-V Administrators가 아니어서 다음 PR.
+- **r1 = epoch 2**(`deploy/releases/r1.json`, 2026.10.1): `tag_history_1h`(1시간 CAGG, 1분 CAGG와 같은 열 `avg·min·max·last·samples`). 1분 CAGG 위에 계층으로 쌓지 않고 원본 `tag_history`에서 직접 집계한다 — 1시간 refresh가 1분 policy 범위(1일)에 묶이지 않게(압축 chunk도 읽음). 앱 envelope는 [2, 3] — r0 앱(envelope [1, 2])은 epoch 2 DB에서 계속 ready다(롤백 경로).
+- **CAGG 조회 계약**(1분·1시간 공통):
+  - `samples` = bucket의 행 수(`count(*)`, `value_num`이 NULL인 bool·BAD 행 포함)라 `avg(value_num)`의 분모와 다르다. 가중 롤업에 쓰지 않는다(필요하면 다음 epoch에 `count(value_num)` 열을 더한다).
+  - `materialized_only`(기본 true)라 policy가 아직 채우지 않은 구간은 원본으로 돌아가 읽지 않는다. 1시간 CAGG의 최신 구간은 `end_offset` 1시간 + 주기 1시간으로 최대 약 2시간 늦다 — 소비자(M3a historian)는 최근 구간을 1분 CAGG·원본과 합쳐 읽는다.
+  - refresh policy 범위: 1분 `[now-1일, now-1분]`, 1시간 `[now-3일, now-1시간]`. 이 범위보다 오래된 구간은 policy가 채우지 않는다. **업그레이드 이전 이력의 1시간 CAGG backfill은 아직 없다** — 1시간 CAGG를 읽는 쪽(M3a `GET /history?agg=1h`)과 함께 backfill 명령·실행 시점(Updater `succeeded` 뒤 부수 효과 또는 core 명령)을 정한다. 그 전까지 r0→r1 현장의 1시간 CAGG는 업그레이드 시점 3일 전부터만 있다(현재 운영 현장 없음).
+- 통합 테스트: 압축 chunk가 있는 epoch 1 DB → `migrate up` → **refresh policy job**이 채운 1시간 CAGG를 원본 직접 집계와 bucket마다 대조(값이 분마다 바뀌고 BAD 행 포함, policy 범위 밖은 비어 있음), 0006·0007 사이 crash 상태(구문 실행·기록 전 / 0006만 기록)에서 `up` 수렴. r1 번들 실측: 739 MB, 빌드 15 s(WSL2).
+- **n-minus-1**: 게이트는 N-1 테스트와 별개로 N-1 이미지의 `pureiron-core migrate status --json`이 `cur == N`·envelope 안·checksum 정상인지 직접 본다(롤백된 N-1 앱이 ready가 되는 근거). N-1 core-test 이미지는 동결이라 고칠 수 없으므로, 앱 동작이 아니라 스키마 모양을 지나치게 좁게 단정한 테스트만 `deploy/build/n_minus_1_waivers.json`(N-1 release × 정확한 pytest node id × 사유)으로 deselect 한다. 게이트는 waiver 테스트를 따로 돌려 **여전히 실패하는지** 확인하고(통과하면 낡은 waiver → 실패), 본 실행은 통과 ≥ 1·deselect 수 == waiver 수·실패 0이어야 한다. 첫 항목: r0 `test_baseline_timescale_objects`(refresh policy 전역 개수 == 1, epoch 2에서 2). r1부터 같은 검사는 CAGG별 개수로 센다 — 스키마 단정은 다음 epoch가 객체를 더해도 성립하게 쓴다.
+- **아직 없음**: Hyper-V VM 실측(폐쇄망 설치·r0→r1·r1′ 롤백·crash 주입·nftables) — 현재 계정이 Hyper-V Administrators가 아니어서 다음 PR. 1시간 CAGG backfill(M3a). Updater `schema_epoch`를 migrate 결과(`migrate status`의 `cur`)로 맞추는 보정 — migrate가 DB에는 다 적용하고 0 아닌 코드로 끝나면 상태(1)와 DB(2)가 어긋나 다음 epoch 번들을 `E_SCHEMA`로 거부할 수 있다(M2b 설계 이월).
