@@ -609,7 +609,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "destroy":
         hyperv.remove(VM_NAME, E2E / "vms" / VM_NAME / "disk.vhdx")
         return 0
-    if args.command == "all" and args.start is None:
+    fresh = args.command == "prepare" or (args.command == "all" and args.start is None)
+    if fresh:  # prepare는 새 실행(run id·결과)을 시작한다
         run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         ctx = Context(run_id=run_id, artifacts=str(REPO / "artifacts" / "e2e" / f"m2d-{run_id}"))
         ctx.save()
