@@ -52,7 +52,9 @@ STATE_FILE = E2E / "state.json"
 GOLDEN = E2E / "golden" / "ubuntu-24.04-64g.vhdx"
 CLOUD_IMAGE = E2E / "images" / "ubuntu-24.04-server-cloudimg-amd64.img"
 BUNDLES = E2E / "bundles"
-VM_NAME, VM_IP, SWITCH = "pureiron-site-a", "10.77.0.10", "pureiron-int"
+VM_NAME, VM_IP = "pureiron-site-a", "10.77.0.10"
+# setup-host.ps1 -Switch 와 같은 이름(기본 pureiron-int).
+SWITCH = os.environ.get("PUREIRON_E2E_SWITCH", "pureiron-int")
 SITE = "site-a"
 WSL_HOME = "$HOME/m2d-e2e"
 INSTALL_RELEASE = "2026.10.1"
