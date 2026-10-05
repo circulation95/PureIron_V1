@@ -59,11 +59,22 @@ def test_drop_warning_is_logged_once_per_outage(caplog: pytest.LogCaptureFixture
     ring = RingBuffer(1.0, clock)
     with caplog.at_level(logging.WARNING, logger="pureiron_collector.ring"):
         for _ in range(5):
-            ring.append(1, samples(2))
             clock.now += 2  # 매번 이전 batch가 창 밖
+            ring.append(1, samples(2))
+        ring.ack(0)  # heartbeat Ack는 아무것도 해제하지 않음 → 복구 아님
         ring.ack(ring.oldest_unacked_seq)  # core 복구
         ring.ack(ring.oldest_unacked_seq)
     messages = [r.getMessage() for r in caplog.records]
     assert len(messages) == 2
     assert "dropping oldest batches (from seq 1)" in messages[0]
     assert "8 sample(s) were dropped" in messages[1]
+
+
+def test_oldest_unacked_seq_skips_expired_batches() -> None:
+    clock = Clock()
+    ring = RingBuffer(10.0, clock)
+    ring.append(1, samples(1))
+    clock.now += 5
+    ring.append(1, samples(1))
+    clock.now += 6  # 첫 batch만 만료
+    assert ring.oldest_unacked_seq == 2

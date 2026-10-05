@@ -13,7 +13,8 @@ from grpc import aio
 
 from pureiron_collector._gen import collector_pb2 as pb
 from pureiron_collector._gen import collector_pb2_grpc as pb_grpc
-from pureiron_collector.drivers.common import DevicePoller, good
+from pureiron_collector.drivers.common import DevicePoller, good, retry_delay
+from pureiron_collector.drivers.modbus import ModbusDevice
 from pureiron_collector.health import DeviceHealth
 from pureiron_collector.plan import DevicePlan, parse_plan
 from pureiron_collector.settings import CollectorSettings, SettingsError
@@ -206,10 +207,14 @@ class PlanCore(pb_grpc.AcquisitionServicer):
                 yield pb.CoreMsg(plan=device_plan_msg(5, 3))
             elif kind == "health":
                 self.health.append(message.health)
-            elif kind == "batch" and message.batch.seq != HEARTBEAT_SEQ:
-                self.batches.append(message.batch)
+            elif kind == "batch":
                 yield pb.CoreMsg(ack=pb.Ack(seq=message.batch.seq))
-                if len(self.batches) >= 3 and self.health:
+                if message.batch.seq == HEARTBEAT_SEQ:
+                    continue
+                self.batches.append(message.batch)
+                if len(self.batches) == 3:
+                    yield pb.CoreMsg(plan=device_plan_msg(6, 2))  # 세션 도중 plan 변경
+                if len(self.batches) >= 6 and self.health:
                     self.ready.set()
 
 
@@ -243,7 +248,10 @@ async def test_pipeline_streams_good_samples_health_and_ring_drains_on_ack() -> 
     assert (first.plan_rev, first.replay) == (5, False)
     assert {s.tag_id for s in first.samples} <= {1, 2, 3}
     assert all(s.quality == pb.GOOD for b in core.batches for s in b.samples)
+    # 세션 도중 plan이 바뀌어도 이미 보낸 batch를 replay로 다시 보내지 않는다(seq 단조 증가).
+    assert not any(b.replay for b in core.batches)
     assert [b.seq for b in core.batches] == list(range(1, len(core.batches) + 1))
+    assert core.batches[-1].plan_rev == 6
     assert core.health[-1].device_name == "plc"
     assert core.health[-1].connected
     assert ring.oldest_unacked_seq == 0 or ring.oldest_unacked_seq > core.batches[2].seq
@@ -291,10 +299,109 @@ async def test_failed_device_reports_bad_samples_and_error_health() -> None:
     sent: list[pb.Sample] = []
     plan = parse_plan(device_plan_msg(1, 2)).devices[0]
     poller = DevicePoller(plan, DeadDriver(plan), DeviceHealth("plc", "modbus_tcp"), sent.extend)
-    await poller.poll_once()
-    await poller.poll_once()
-    assert [(s.tag_id, s.quality) for s in sent] == [(1, pb.BAD), (2, pb.BAD)] * 2
+    assert await poller.poll_once() is False
+    assert await poller.poll_once() is False
+    # BAD는 끊긴 순간 한 번만(매 주기 반복하지 않음)
+    assert [(s.tag_id, s.quality) for s in sent] == [(1, pb.BAD), (2, pb.BAD)]
     health = poller.health.to_proto()
     assert (health.status, health.connected, health.consecutive_failures) == ("error", False, 2)
     assert health.read_success_rate == 0.0
     assert health.last_error == "no route"
+
+
+class SilentThenAckingCore(pb_grpc.AcquisitionServicer):
+    """첫 세션은 plan만 보내고 침묵(RST 없는 단절 흉내), 두 번째 세션부터 Ack 한다."""
+
+    def __init__(self) -> None:
+        self.sessions: list[list[pb.ValueBatch]] = []
+        self.replayed = asyncio.Event()
+
+    async def Session(
+        self,
+        request_iterator: AsyncIterator[pb.CollectorMsg],
+        context: aio.ServicerContext[pb.CollectorMsg, pb.CoreMsg],
+    ) -> AsyncIterator[pb.CoreMsg]:
+        batches: list[pb.ValueBatch] = []
+        self.sessions.append(batches)
+        silent = len(self.sessions) == 1
+        async for message in request_iterator:
+            kind = message.WhichOneof("msg")
+            if kind == "hello":
+                yield pb.CoreMsg(plan=device_plan_msg(1, 2))
+            elif kind == "batch" and message.batch.seq != HEARTBEAT_SEQ:
+                batches.append(message.batch)
+                if not silent:
+                    yield pb.CoreMsg(ack=pb.Ack(seq=message.batch.seq))
+                if any(b.replay for b in batches) and any(not b.replay for b in batches):
+                    self.replayed.set()
+            elif kind == "batch" and not silent:
+                yield pb.CoreMsg(ack=pb.Ack(seq=message.batch.seq))
+
+
+async def test_silent_core_triggers_reconnect_and_replay() -> None:
+    core = SilentThenAckingCore()
+    server = aio.server()
+    pb_grpc.add_AcquisitionServicer_to_server(core, server)
+    port = server.add_insecure_port("127.0.0.1:0")
+    await server.start()
+    settings = replace(FAST, core_target=f"127.0.0.1:{port}", core_silence_s=0.3)
+    collector = Collector(settings, driver_factory=FakeDriver)
+    stop = asyncio.Event()
+    runner = asyncio.create_task(collector.run_forever(stop))
+    try:
+        await asyncio.wait_for(core.replayed.wait(), 5)
+    finally:
+        stop.set()
+        await asyncio.wait_for(runner, 5)
+        await server.stop(0)
+
+    first, second = core.sessions[0], core.sessions[1]
+    assert first
+    replays = [b for b in second if b.replay]
+    # 두 번째 세션은 replay가 먼저, 그 뒤 live
+    assert second[: len(replays)] == replays
+    assert {b.seq for b in first} <= {b.seq for b in replays}
+
+
+async def _swallow(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    await reader.read()  # 연결은 받고 Modbus 응답은 하지 않음
+    writer.close()
+
+
+def _poller_for(port: int, timeout_ms: int) -> DevicePoller:
+    device = parse_plan(device_plan_msg(1, 1)).devices[0]
+    plan = replace(device, host="127.0.0.1", port=port, timeout_ms=timeout_ms)
+    sink: list[pb.Sample] = []
+    return DevicePoller(plan, ModbusDevice(plan), DeviceHealth("plc", "modbus_tcp"), sink.extend)
+
+
+async def test_cancel_while_device_never_answers_stops_poller() -> None:
+    server = await asyncio.start_server(_swallow, "127.0.0.1", 0)
+    poller = _poller_for(server.sockets[0].getsockname()[1], timeout_ms=5000)
+    task = asyncio.create_task(poller.run())
+    try:
+        await asyncio.sleep(0.5)  # execute()가 응답을 기다리는 중
+        task.cancel()
+        # wait_for는 시간 초과 시 다시 cancel하고 끝까지 기다리므로(버그면 멈춤) wait로 본다.
+        done, _ = await asyncio.wait({task}, timeout=2)
+        assert task in done, "poller swallowed cancellation"
+        assert task.cancelled()
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+async def test_no_response_counts_as_timeout() -> None:
+    server = await asyncio.start_server(_swallow, "127.0.0.1", 0)
+    poller = _poller_for(server.sockets[0].getsockname()[1], timeout_ms=200)
+    try:
+        assert await poller.poll_once() is False
+    finally:
+        server.close()
+        await server.wait_closed()
+    assert poller.health.timeout_count == 1
+
+
+def test_retry_delay_backs_off_to_cap() -> None:
+    assert [retry_delay(1.0, n) for n in (1, 2, 3, 6, 10)] == [1.0, 2.0, 4.0, 30.0, 30.0]
+    assert retry_delay(0.1, 1) == 0.5  # 빠른 poll이라도 재연결은 최소 0.5s 간격

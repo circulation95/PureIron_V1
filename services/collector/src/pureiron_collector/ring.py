@@ -44,6 +44,7 @@ class RingBuffer:
 
     @property
     def oldest_unacked_seq(self) -> int:
+        self._evict(self._clock())
         return self._entries[0].batch.seq if self._entries else 0
 
     def append(self, plan_rev: int, samples: Sequence[pb.Sample]) -> pb.ValueBatch:
@@ -55,15 +56,17 @@ class RingBuffer:
         return batch
 
     def ack(self, seq: int) -> None:
-        """seq 이하를 모두 해제한다(Ack는 누적). 이미 해제된 seq의 Ack는 무시된다."""
-        if self._dropping_since is not None:
+        """seq 이하를 모두 해제한다(Ack는 누적). 이미 해제된 seq·heartbeat(0)의 Ack는 무시된다."""
+        released = False
+        while self._entries and self._entries[0].batch.seq <= seq:
+            self._entries.popleft()
+            released = True
+        if released and self._dropping_since is not None:
             log.warning(
                 "core acked again; %d sample(s) were dropped while unacked",
                 self.dropped_samples - self._dropping_since,
             )
             self._dropping_since = None
-        while self._entries and self._entries[0].batch.seq <= seq:
-            self._entries.popleft()
 
     def pending(self) -> list[pb.ValueBatch]:
         """재연결 직후 다시 보낼 batch들(오래된 순, `replay=true` 사본)."""

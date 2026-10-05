@@ -35,6 +35,18 @@ class ModbusPoint:
     word_order: Order
 
 
+BIT_TYPES: frozenset[str] = frozenset({"coil", "discrete"})
+_WORDS = {"int32": 2, "uint32": 2, "float32": 2, "float64": 4}
+ADDRESS_SPACE = 0x10000
+
+
+def width(point: ModbusPoint) -> int:
+    """태그 하나가 차지하는 레지스터(또는 비트) 수."""
+    if point.register_type in BIT_TYPES:
+        return 1
+    return _WORDS.get(point.data_type, 1)
+
+
 @dataclass(frozen=True, slots=True)
 class DevicePlan:
     device_id: str
@@ -72,9 +84,7 @@ def _point(tag: pb.TagPoint) -> ModbusPoint | str:
     word_order = _order(address.word_order)
     if byte_order is None or word_order is None:
         return f"tag {tag.tag_id}: unknown byte/word order"
-    if address.address > 0xFFFF:
-        return f"tag {tag.tag_id}: address {address.address} out of range"
-    return ModbusPoint(
+    point = ModbusPoint(
         tag_id=tag.tag_id,
         register_type=cast(RegisterType, address.register_type),
         address=address.address,
@@ -82,6 +92,21 @@ def _point(tag: pb.TagPoint) -> ModbusPoint | str:
         byte_order=byte_order,
         word_order=word_order,
     )
+    if point.address + width(point) > ADDRESS_SPACE:
+        return f"tag {tag.tag_id}: address {point.address} out of range"
+    return point
+
+
+def _device_problem(device: pb.Device, seen: set[str]) -> str | None:
+    if device.device_id in seen:
+        return f"device {device.device_id}: duplicate device_id"
+    if device.protocol not in SUPPORTED_PROTOCOLS:
+        return f"device {device.device_id}: unsupported protocol {device.protocol!r}"
+    if not device.host or not 0 < device.port <= 0xFFFF:
+        return f"device {device.device_id}: invalid host/port {device.host!r}:{device.port}"
+    if device.unit_id > 0xFF:
+        return f"device {device.device_id}: unit_id {device.unit_id} out of range"
+    return None
 
 
 def parse_plan(plan: pb.AcquisitionPlan) -> ParsedPlan:
@@ -97,9 +122,10 @@ def parse_plan(plan: pb.AcquisitionPlan) -> ParsedPlan:
     devices: list[DevicePlan] = []
     known: set[str] = set()
     for device in plan.devices:
+        problem = _device_problem(device, known)
         known.add(device.device_id)
-        if device.protocol not in SUPPORTED_PROTOCOLS:
-            problems.append(f"device {device.device_id}: unsupported protocol {device.protocol!r}")
+        if problem is not None:
+            problems.append(problem)
             continue
         devices.append(
             DevicePlan(

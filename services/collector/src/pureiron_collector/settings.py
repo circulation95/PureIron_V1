@@ -47,6 +47,8 @@ class CollectorSettings:
     batch_max_samples: int = 500
     ring_window_s: float = 60.0
     health_interval_s: float = 2.0
+    # core가 이 시간 동안 아무것도(Ack 포함) 보내지 않으면 끊긴 세션으로 보고 재연결한다.
+    core_silence_s: float = 5.0
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str]) -> CollectorSettings:
@@ -59,4 +61,5 @@ class CollectorSettings:
             batch_max_samples=_int(environ, "PUREIRON_COLLECTOR_BATCH_MAX_SAMPLES", 500),
             ring_window_s=_float(environ, "PUREIRON_COLLECTOR_RING_WINDOW_S", 60.0),
             health_interval_s=_float(environ, "PUREIRON_COLLECTOR_HEALTH_INTERVAL_S", 2.0),
+            core_silence_s=_float(environ, "PUREIRON_COLLECTOR_CORE_SILENCE_S", 5.0),
         )

@@ -15,24 +15,17 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from pymodbus.client import AsyncModbusTcpClient
+from pymodbus.exceptions import ModbusIOException
 from pymodbus.pdu import ModbusPDU
 
 from pureiron_collector._gen import collector_pb2 as pb
 from pureiron_collector.drivers.common import Value, bad, good
-from pureiron_collector.plan import DevicePlan, ModbusPoint, RegisterType
+from pureiron_collector.plan import BIT_TYPES, DevicePlan, ModbusPoint, RegisterType, width
 
 log = logging.getLogger(__name__)
 
 MAX_REGISTERS = 125
 MAX_BITS = 2000
-BIT_TYPES: frozenset[RegisterType] = frozenset({"coil", "discrete"})
-_WIDTH = {"int32": 2, "uint32": 2, "float32": 2, "float64": 4}
-
-
-def width(point: ModbusPoint) -> int:
-    if point.register_type in BIT_TYPES:
-        return 1
-    return _WIDTH.get(point.data_type, 1)
 
 
 @dataclass(slots=True)
@@ -71,6 +64,8 @@ def decode(words: Sequence[int | bool], point: ModbusPoint) -> Value:
     if point.data_type == "bool":
         return int(words[0]) != 0
     ordered = [int(word) for word in words[: width(point)]]
+    if len(ordered) < width(point):
+        raise ValueError(f"short response for tag {point.tag_id}")
     if point.word_order == "little":
         ordered.reverse()
     payload = b"".join(word.to_bytes(2, point.byte_order) for word in ordered)
@@ -166,7 +161,13 @@ class ModbusDevice:
         client = await self._connected_client()
         samples: list[pb.Sample] = []
         for block in self.blocks:
-            response = await self._read(client, block)
+            try:
+                response = await self._read(client, block)
+            except ModbusIOException as exc:
+                # 응답 없음은 timeout으로 올려 health.timeout_count에 잡히게 한다.
+                if "no response" in str(exc).lower():
+                    raise TimeoutError(str(exc)) from exc
+                raise
             ts_ns = time.time_ns()
             if response.isError():
                 # 장비가 응답은 했다(연결 정상) — 이 블록 태그만 BAD.

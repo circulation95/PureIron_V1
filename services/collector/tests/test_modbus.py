@@ -192,3 +192,8 @@ async def test_unreachable_device_raises() -> None:
     with pytest.raises(ConnectionError):
         await driver.poll()
     await driver.close()
+
+
+def test_decode_short_response_raises() -> None:
+    with pytest.raises(ValueError, match="short response"):
+        decode([1], point(1, 0, "int32"))

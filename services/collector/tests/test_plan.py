@@ -75,3 +75,32 @@ def test_parse_skips_invalid_entries_and_reports_them() -> None:
     joined = "\n".join(parsed.problems)
     for needle in ("tag 2", "tag 3", "tag 4", "tag 6", "unsupported protocol 's7'", "device ghost"):
         assert needle in joined
+
+
+def test_parse_rejects_bad_devices_and_address_overflow() -> None:
+    plan = pb.AcquisitionPlan(
+        plan_rev=1,
+        devices=[
+            pb.Device(device_id="ok", protocol="modbus_tcp", host="h", port=502),
+            pb.Device(device_id="ok", protocol="modbus_tcp", host="h2", port=502),
+            pb.Device(device_id="nohost", protocol="modbus_tcp", host="", port=502),
+            pb.Device(device_id="noport", protocol="modbus_tcp", host="h", port=0),
+            pb.Device(device_id="unit", protocol="modbus_tcp", host="h", port=502, unit_id=256),
+        ],
+        tags=[
+            tag(65535, "ok"),
+            tag(65534, "ok", data_type="float64"),  # 65534..65537 → 범위 밖
+        ],
+    )
+    parsed = parse_plan(plan)
+    assert [(d.device_id, d.host) for d in parsed.devices] == [("ok", "h")]
+    assert [p.tag_id for p in parsed.devices[0].points] == [65535]
+    joined = " | ".join(parsed.problems)
+    for needle in (
+        "duplicate device_id",
+        "device nohost",
+        "device noport",
+        "unit_id 256",
+        "tag 65534",
+    ):
+        assert needle in joined

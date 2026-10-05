@@ -43,10 +43,20 @@ def bad(tag_ids: Iterable[int], ts_ns: int) -> list[pb.Sample]:
     return [pb.Sample(tag_id=tag_id, ts_unix_ns=ts_ns, quality=pb.BAD) for tag_id in tag_ids]
 
 
+MAX_RETRY_S = 30.0
+
+
+def retry_delay(period_s: float, failures: int) -> float:
+    """연속 실패 n번째 뒤 다음 시도까지(poll 주기에서 시작해 두 배씩, 상한 30s)."""
+    return min(MAX_RETRY_S, max(period_s, 0.5) * 2 ** max(0, failures - 1))
+
+
 class DevicePoller:
     """장비 하나를 `poll_ms`마다 읽어 sink로 보낸다.
 
-    읽기가 주기보다 길면 쉬지 않고 바로 다음을 읽는다.
+    읽기가 주기보다 길면 쉬지 않고 바로 다음을 읽는다. 통신이 끊기면 그 장비의 태그를 **끊긴 순간
+    한 번** BAD로 내보내고(매 주기 반복하지 않음 — core는 무신호·DeviceHealth로 판정), 재연결은
+    지수 backoff로 시도한다.
     """
 
     def __init__(
@@ -58,32 +68,41 @@ class DevicePoller:
         self._sink = sink
         self.health.tag_count = len(plan.points)
 
-    async def poll_once(self) -> None:
+    async def poll_once(self) -> bool:
+        """한 번 읽는다. 성공하면 True."""
         started = time.monotonic()
         try:
             samples = await self._driver.poll()
-        except asyncio.CancelledError:
-            raise
         except Exception as exc:
-            if self.health.consecutive_failures == 0:
-                log.warning("device %s: poll failed: %s", self.plan.device_id, exc)
+            # pymodbus는 응답 대기 중 받은 취소를 ModbusIOException으로 바꿔 던진다.
+            # 취소로 되돌린다 — 삼키면 task.cancel()이 사라져 stop_pollers·종료가 멈춘다.
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                raise asyncio.CancelledError from exc
+            first = self.health.consecutive_failures == 0
             self.health.record_failure(exc)
-            self._sink(bad((point.tag_id for point in self.plan.points), time.time_ns()))
+            if first:
+                log.warning("device %s: poll failed: %s", self.plan.device_id, exc)
+                self._sink(bad((point.tag_id for point in self.plan.points), time.time_ns()))
             await self._driver.close()
-            return
+            return False
         latency_ms = (time.monotonic() - started) * 1000
         bad_count = sum(1 for sample in samples if sample.quality != pb.GOOD)
         if self.health.consecutive_failures:
             log.info("device %s: recovered", self.plan.device_id)
         self.health.record_success(latency_ms, bad_count)
         self._sink(samples)
+        return True
 
     async def run(self) -> None:
         period = self.plan.poll_ms / 1000
         try:
             while True:
                 started = time.monotonic()
-                await self.poll_once()
-                await asyncio.sleep(max(0.0, period - (time.monotonic() - started)))
+                if await self.poll_once():
+                    delay = period - (time.monotonic() - started)
+                else:
+                    delay = retry_delay(period, self.health.consecutive_failures)
+                await asyncio.sleep(max(0.0, delay))
         finally:
             await self._driver.close()
