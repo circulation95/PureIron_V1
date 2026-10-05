@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 import time
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
@@ -271,7 +272,7 @@ class Collector:
                     message = reader.result()
                     if not isinstance(message, pb.CoreMsg):
                         break
-                    session.last_rx = time.monotonic()
+                    session.last_rx = math.inf  # 처리 중에는 watchdog이 판정하지 않는다.
                     got_plan = await self._handle(message, session.outgoing) or got_plan
                     # plan 적용(stop_pollers)처럼 처리에 걸린 시간을 core 침묵으로 세지 않는다.
                     session.last_rx = time.monotonic()
