@@ -38,7 +38,7 @@ import shlex
 import subprocess
 import sys
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
@@ -98,7 +98,17 @@ class Context:
     current: str = "r0"
     results: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
     bundles: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
-    nft_before: dict[str, object] = field(default_factory=dict[str, object])
+    nft_before: dict[str, int] = field(default_factory=dict[str, int])
+    nft_total: dict[str, int] = field(default_factory=dict[str, int])
+    """VM 부팅 이후 누적 외부 접속 시도 — 복원·리셋으로 카운터가 되돌아가도 잃지 않게
+    구간마다 더한다."""
+    nft_last: dict[str, int] = field(default_factory=dict[str, int])
+    nft_c0: dict[str, int] = field(default_factory=dict[str, int])
+    nft_mark_at: int = 0
+    """마지막 표시의 VM 시각(epoch s) — resolved 로그를 이 뒤부터 읽는다."""
+    dns_lookups: dict[str, int] = field(default_factory=dict[str, int])
+    """resolved가 조회한 이름별 횟수(로컬 호스트 이름 제외) — dns_out 출처 증거."""
+    seed_rows: int = 0
 
     def save(self) -> None:
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -106,7 +116,9 @@ class Context:
 
     @classmethod
     def load(cls) -> Context:
-        return cls(**json.loads(STATE_FILE.read_text(encoding="utf-8")))
+        data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in known})
 
     @property
     def out(self) -> Path:
@@ -167,11 +179,19 @@ def build_site_bundle(ctx: Context, gen: int, release: str, window_open_at: date
         f"--out '{golden.wsl_path(out)}' --gen {gen} --product {RELEASES[release]} "
         f"--window-start {start} --window-end {end} --site {SITE}"
     )
-    pib = out / f"pureiron-{SITE}-g{gen}.pib"
-    metrics = json.loads(pib.with_name(pib.stem + ".bundle-metrics.json").read_text("utf-8"))
-    ctx.bundles.append({"gen": gen, "release": release, "file": pib.name, **metrics})
+    built = out / f"pureiron-{SITE}-g{gen}.pib"
+    metrics = json.loads(built.with_name(built.stem + ".bundle-metrics.json").read_text("utf-8"))
+    # 같은 gen의 다른 release(설치 g1=r0, 시나리오 g1=r1)가 서로 덮어쓰지 않게
+    # 이름에 release를 둔다.
+    pib = built.replace(out / f"pureiron-{SITE}-g{gen}-{release}.pib")
+    entry: dict[str, object] = {"gen": gen, "release": release, "file": pib.name, **metrics}
+    ctx.bundles = [b for b in ctx.bundles if b.get("file") != pib.name] + [entry]
     ctx.save()
     return pib
+
+
+def site_bundle(ctx: Context, gen: int, release: str) -> Path:
+    return BUNDLES / ctx.run_id / f"pureiron-{SITE}-g{gen}-{release}.pib"
 
 
 def digests_of(release_json: dict[str, object]) -> dict[str, str]:
@@ -232,12 +252,22 @@ def step_vm(ctx: Context) -> None:
     for script in ("crash_at.py", "probe.py"):
         host.put(REPO / "tests" / "e2e" / "site" / script, f"{REMOTE}/{script}")
     ctx.nft_before = nft_counters(host)
+    ctx.nft_last = dict(ctx.nft_before)
+    ctx.nft_total = dict.fromkeys(ctx.nft_before, 0)
+    ctx.nft_mark_at, boot_lookups = resolved_lookups(host, 0)
+    ctx.dns_lookups = {}
     ctx.record("vm boot (cloud-init, internal-only switch)", True, ssh_after_s=round(waited, 1))
+    ctx.record(
+        "OS quiet before install (nftables baseline)",
+        not any(ctx.nft_before.values()),
+        baseline=ctx.nft_before,
+        dns_lookups=boot_lookups,
+    )
 
 
-def nft_counters(host: Vm) -> dict[str, object]:
+def nft_counters(host: Vm) -> dict[str, int]:
     out = host.run("sudo nft -j list table inet e2e_audit").stdout
-    counters: dict[str, object] = {}
+    counters: dict[str, int] = {}
     for entry in cast(list[dict[str, object]], json.loads(out)["nftables"]):
         rule = cast(dict[str, object] | None, entry.get("rule"))
         if rule is None:
@@ -247,6 +277,54 @@ def nft_counters(host: Vm) -> dict[str, object]:
             if counter is not None:
                 counters[str(rule.get("comment"))] = counter["packets"]
     return counters
+
+
+def nft_accumulate(
+    total: dict[str, int], last: dict[str, int], now: dict[str, int]
+) -> dict[str, int]:
+    """`last` 이후 늘어난 만큼 `total`에 더한 새 합계. 값이 줄었으면(표시 없이 재부팅)
+    0부터 센다."""
+    merged = dict(total)
+    for key, value in now.items():
+        before = last.get(key, 0)
+        merged[key] = merged.get(key, 0) + (value - before if value >= before else value)
+    return merged
+
+
+LOOKUP = re.compile(r"Looking up RR for (\S+) IN \S+")
+
+
+def dns_names(log: str) -> dict[str, int]:
+    """resolved 디버그 로그의 조회 이름별 횟수(로컬에서 답하는 호스트 이름 제외)."""
+    counts: dict[str, int] = {}
+    for found in LOOKUP.findall(log):
+        name = found.rstrip(".")
+        if name not in (SITE, "localhost"):
+            counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
+def resolved_lookups(host: Vm, since: int) -> tuple[int, dict[str, int]]:
+    """(지금 VM 시각, `since` 이후 resolved가 조회한 이름별 횟수). 0이면 부팅부터."""
+    flag = f"--since @{since} " if since else "-b "
+    out = host.run(
+        f"date +%s; sudo journalctl -u systemd-resolved {flag}--no-pager -o cat", check=False
+    ).stdout
+    first, _, log = out.partition("\n")
+    return as_int(first.strip()), dns_names(log)
+
+
+def nft_mark(ctx: Context, host: Vm) -> None:
+    """마지막 표시 이후의 외부 접속 시도를 누적한다. 체크포인트 복원·전원 리셋은 카운터를
+    되돌리므로 그 직전에 표시하고, 직후 기준을 c0 값·0으로 다시 잡는다. 그동안 resolved가
+    조회한 이름도 모은다(출처 증거)."""
+    now = nft_counters(host)
+    ctx.nft_total = nft_accumulate(ctx.nft_total, ctx.nft_last, now)
+    ctx.nft_last = now
+    ctx.nft_mark_at, names = resolved_lookups(host, ctx.nft_mark_at)
+    for name, count in names.items():
+        ctx.dns_lookups[name] = ctx.dns_lookups.get(name, 0) + count
+    ctx.save()
 
 
 def reclaim_host_memory() -> None:
@@ -298,13 +376,41 @@ def ready(snapshot: dict[str, object]) -> bool:
     return readyz.get("status") == 200
 
 
+def as_int(value: object) -> int:
+    """probe 값(문자열 숫자, 실패 시 `{"error": ...}`)을 정수로 — 못 읽으면 -1."""
+    try:
+        return int(str(value))
+    except ValueError:
+        return -1
+
+
+def judge_attempt(
+    snap: dict[str, object],
+    report: dict[str, object],
+    *,
+    expect: str,
+    want_digests: dict[str, str],
+    want_applied: int | None,
+) -> dict[str, bool]:
+    """끝난 시도 판정 항목(모두 참이어야 통과). `last_result`는 `failed_manual`도 `failed`로
+    접으므로(metrics.result_of) 자동 롤백 실패는 경보·보고의 `failed_manual`로 따로 본다."""
+    state = updater_state(snap)
+    return {
+        "result": state.get("last_result") == expect,
+        "no_manual_alarm": state.get("alarm") is None and report.get("failed_manual") is False,
+        "applied_gen": state.get("applied_gen") == want_applied,
+        "images_match": running_digests(snap) == want_digests,
+        "edit_unlocked": edit_unlocked(snap),
+    }
+
+
 # ---------------------------------------------------------------- 설치
 
 
 def step_install(ctx: Context) -> None:
     host = vm()
     install = Path(ctx.install_pib)
-    g1 = BUNDLES / ctx.run_id / f"pureiron-{SITE}-g1.pib"
+    g1 = site_bundle(ctx, 1, "r0")
     for bundle in (install, g1):
         host.put(bundle, f"{INCOMING}/{bundle.name}")
     remote_install = f"{INCOMING}/{install.name}"
@@ -346,17 +452,25 @@ def step_install(ctx: Context) -> None:
     docker = cast(dict[str, object], snap.get("docker") or {})
     classic = "containerd" not in json.dumps(docker.get("driver_status"))
     digests_ok = running_digests(snap) == ctx.digests["r0"]
+    installed = ready(snap) and digests_ok and docker.get("driver") == "overlay2" and classic
     ctx.record(
         "install bundle bootstrap + g1(r0) on offline VM",
-        ready(snap) and digests_ok and docker.get("driver") == "overlay2" and classic,
+        installed,
         install_s=round(install_s, 1),
         storage_driver=docker.get("driver"),
         classic_store=classic,
         images_match_r0=digests_ok,
         readyz=cast(dict[str, object], snap.get("readyz") or {}).get("status"),
     )
+    if not installed:  # 잘못된 기반 위에 c0를 찍고 이어 가지 않는다
+        raise E2EError("install failed — see results")
     seed_history(host)
+    ctx.seed_rows = as_int(
+        cast(dict[str, object], probe(host).get("db") or {}).get("tag_history_rows")
+    )
     host.run("sudo rm -f " + f"{INCOMING}/{install.name} {INCOMING}/{g1.name}")
+    nft_mark(ctx, host)
+    ctx.nft_c0 = dict(ctx.nft_last)
     hyperv.checkpoint(VM_NAME, "c0")
     ctx.current = "r0"
     ctx.save()
@@ -434,7 +548,8 @@ def converge(host: Vm, gen: int, timeout_s: float = CONVERGE_S) -> tuple[dict[st
 def report_for(host: Vm, pib: Path) -> dict[str, object]:
     """그 번들의 최근 보고. 파일 이름 `<started>-g<gen>-<sha256 12자>.json`에서 sha로 찾는다 —
     커밋 전 거부는 gen을 믿지 않아 `g unknown`이므로 gen으로는 못 찾는다."""
-    sha12 = hashlib.sha256(pib.read_bytes()).hexdigest()[:12]
+    with pib.open("rb") as f:
+        sha12 = hashlib.file_digest(f, "sha256").hexdigest()[:12]
     out = host.run(
         f"sudo sh -c 'ls -t /var/lib/pureiron/state/reports/*-{sha12}.json "
         f"/var/lib/pureiron/state/reports/exported/*-{sha12}.json 2>/dev/null | head -1 | "
@@ -460,20 +575,32 @@ def apply_and_check(
 ) -> dict[str, object]:
     host = vm()
     pib = build_site_bundle(ctx, gen, release, datetime.now(UTC) - timedelta(minutes=5))
+    applied_before = updater_state(probe(host)).get("applied_gen")
     started = time.monotonic()
     stage(host, pib, check=False)
     snap, waited = converge(host, gen)
     took = time.monotonic() - started
     state, report = updater_state(snap), report_for(host, pib)
     want = ctx.digests[release if expect == "succeeded" else prev]
-    ok = state.get("last_result") == expect and running_digests(snap) == want
+    checks = judge_attempt(
+        snap,
+        report,
+        expect=expect,
+        want_digests=want,
+        want_applied=gen if expect == "succeeded" else cast(int | None, applied_before),
+    )
+    rows = as_int(cast(dict[str, object], snap.get("db") or {}).get("tag_history_rows"))
+    checks["rows_kept"] = rows >= ctx.seed_rows > 0
+    ok = all(checks.values())
     detail: dict[str, object] = {
         "gen": gen,
         "release": release,
         "result": state.get("last_result"),
         "code": report.get("code"),
         "seconds": round(took, 1),
-        "images_match": running_digests(snap) == want,
+        "checks": checks,
+        "alarm": state.get("alarm"),
+        "images_match": checks["images_match"],
         "epoch": cast(dict[str, object], snap.get("db") or {}).get("epoch"),
         "verify_s": report.get("verify_s"),
         "load_s": report.get("load_s"),
@@ -512,9 +639,12 @@ def stage_untouched(
     host.run(f"sudo rm -f {INCOMING}/{pib.name}", check=False)
 
 
-def restore_c0() -> None:
+def restore_c0(ctx: Context) -> None:
+    nft_mark(ctx, vm())
     reclaim_host_memory()
     hyperv.restore(VM_NAME, "c0")
+    ctx.nft_last = dict(ctx.nft_c0)  # 복원은 카운터(메모리)도 c0 시점으로 되돌린다
+    ctx.save()
     vm().wait_ssh()
 
 
@@ -529,12 +659,11 @@ def step_scenarios(ctx: Context) -> None:
     )
     # 같은 gen(1) 재빌드 — 내용이 달라도 gen 규칙상 멱등 no-op(R-7).
     same = build_site_bundle(ctx, 1, "r1", datetime.now(UTC) - timedelta(days=1))
-    same = same.replace(same.with_name(f"pureiron-{SITE}-g1-r1.pib"))
-    tampered = same.with_name("tampered.pib")
+    tampered = same.with_name(f"pureiron-{SITE}-g{gen}-tampered.pib")
     data = bytearray(build_site_bundle(ctx, gen, "r1", datetime.now(UTC)).read_bytes())
     data[len(data) // 2] ^= 0xFF
     tampered.write_bytes(bytes(data))
-    restore_c0()
+    restore_c0(ctx)
     host = vm()
     for label, pib, code in (("site", other, "E_SITE"), ("tampered", tampered, "E_DIGEST")):
         stage_untouched(ctx, f"reject {label}", host, pib, want_exit=1, want_code=code, want="r0")
@@ -543,7 +672,7 @@ def step_scenarios(ctx: Context) -> None:
     )
 
     # c0(epoch 1, 압축 chunk)에서 r0→r1
-    restore_c0()
+    restore_c0(ctx)
     up = apply_and_check(
         ctx, "r0→r1 on compressed epoch-1 DB", gen, "r1", expect="succeeded", prev="r0"
     )
@@ -552,7 +681,7 @@ def step_scenarios(ctx: Context) -> None:
         "r1 schema after upgrade",
         db.get("epoch") == "2"
         and "tag_history_1h" in str(db.get("caggs"))
-        and int(str(db.get("compressed_chunks") or 0)) > 0,
+        and as_int(db.get("compressed_chunks")) > 0,
         db=db,
     )
     # applied g2 위에서 g1 → E_GEN(낮은 gen). g2보다 뒤에 빌드해야 한다 — 먼저 만든 번들은
@@ -560,7 +689,7 @@ def step_scenarios(ctx: Context) -> None:
     lower = build_site_bundle(ctx, 1, "r1", datetime.now(UTC) - timedelta(days=1))
     stage_untouched(ctx, "reject lower gen", vm(), lower, want_exit=1, want_code="E_GEN", want="r1")
     # c0에서 r1' → 5분 안에 r0 복귀 + failed
-    restore_c0()
+    restore_c0(ctx)
     rb = apply_and_check(
         ctx, "r1' health failure → rollback", gen, "r1f", expect="failed", prev="r0"
     )
@@ -577,12 +706,25 @@ def step_scenarios(ctx: Context) -> None:
 # ---------------------------------------------------------------- crash 주입
 
 
+def boot_id(host: Vm) -> str:
+    return host.run("cat /proc/sys/kernel/random/boot_id").stdout.strip()
+
+
+def service_restarts(host: Vm) -> int:
+    out = host.run("systemctl show -p NRestarts --value pureiron-updater").stdout
+    return as_int(out.strip())
+
+
 def crash_once(ctx: Context, phase: str, mode: str, *, gen: int, release: str, prev: str) -> None:
     host = vm()
     expect = "failed" if release == "r1f" else "succeeded"
+    # 창은 번들에 서명되므로 빌드 전에 정한다. service 대상이면 CLI 스테이징이 창 전에 끝났는지
+    # 확인한다 — 아니면 CLI가 phase를 직접 실행해 쉬고 있는 서비스를 죽이는 거짓 통과가 된다.
     open_at = datetime.now(UTC) + timedelta(seconds=WINDOW_LEAD_S)
     pib = build_site_bundle(ctx, gen, release, open_at)
     host.put(pib, f"{INCOMING}/{pib.name}")
+    applied_before = updater_state(probe(host)).get("applied_gen")
+    boot_before, restarts_before = boot_id(host), service_restarts(host)
     target = "cli" if phase == "fetched" else "service"
     watch_mode = "kill" if mode == "kill" else "freeze"
     watcher = host.start(
@@ -590,32 +732,62 @@ def crash_once(ctx: Context, phase: str, mode: str, *, gen: int, release: str, p
         f"--mode {watch_mode} --target {target} --timeout {WINDOW_LEAD_S + 600}"
     )
     time.sleep(2)
-    stage_proc = host.start(f"sudo pureiron-site apply {INCOMING}/{pib.name}")
+    apply_cmd = f"sudo pureiron-site apply {INCOMING}/{pib.name}"
+    staged_in_time: bool | None = None
+    stage_proc: subprocess.Popen[str] | None = None
+    if target == "cli":
+        stage_proc = host.start(apply_cmd, capture=False)
+    else:
+        result = subprocess.CompletedProcess[str]([], 2, "", "")
+        for _ in range(30):  # 서비스 tick이 잠금을 잡고 있으면 exit 2
+            result = host.run(apply_cmd, check=False)
+            if result.returncode != 2:
+                break
+            time.sleep(2)
+        staged_in_time = result.returncode == 0 and datetime.now(UTC) < open_at
     line = watcher.stdout.readline().strip() if watcher.stdout else ""
-    hit = line.startswith("HIT")
+    # 감시자는 HIT를 출력하고 곧 끝난다 — 리셋이 ssh를 끊기 전에 종료 코드를 받는다(rc 5 = 얼릴
+    # 프로세스 없음).
+    watcher_rc = watcher.wait(timeout=60)
+    hit = line.startswith("HIT") and watcher_rc == 0
     if hit and mode == "reset":
-        reclaim_host_memory()
+        nft_mark(ctx, host)  # 리셋은 카운터를 0으로 되돌린다
         hyperv.restart_force(VM_NAME)
-    stage_proc.wait(timeout=1800)
-    watcher.wait(timeout=60)
-    # fetched(CLI 검증 중) crash 뒤에는 서비스가 같은 시도를 이어받는다(재부팅이면 시작 시 recover).
+        ctx.nft_last = {}
+    if stage_proc is not None:
+        stage_proc.wait(timeout=1800)
     snap, waited = converge(vm(), gen)
-    state, report = updater_state(snap), report_for(vm(), pib)
+    report = report_for(vm(), pib)
     want = ctx.digests[release if expect == "succeeded" else prev]
-    unlocked = edit_unlocked(snap)
-    ok = hit and state.get("last_result") == expect and running_digests(snap) == want and unlocked
+    checks = judge_attempt(
+        snap,
+        report,
+        expect=expect,
+        want_digests=want,
+        want_applied=gen if expect == "succeeded" else cast(int | None, applied_before),
+    )
+    checks["hit"] = hit
+    if staged_in_time is not None:
+        checks["staged_before_window"] = staged_in_time
+    # 주입 효과: 리셋이면 boot id가 바뀌고, 서비스 kill이면 systemd 재시작 횟수가 는다.
+    if mode == "reset":
+        checks["rebooted"] = boot_id(vm()) != boot_before
+    elif target == "service":
+        checks["service_restarted"] = service_restarts(vm()) > restarts_before
+    rows = as_int(cast(dict[str, object], snap.get("db") or {}).get("tag_history_rows"))
+    checks["rows_kept"] = rows >= ctx.seed_rows > 0
     ctx.record(
         f"crash {mode} @ {phase}",
-        ok,
+        all(checks.values()),
         gen=gen,
         release=release,
         watcher=line,
-        result=state.get("last_result"),
+        result=updater_state(snap).get("last_result"),
         code=report.get("code"),
         converge_s=round(waited, 1),
-        images_match=running_digests(snap) == want,
-        edit_unlocked=unlocked,
-        alarm=state.get("alarm"),
+        checks=checks,
+        alarm=updater_state(snap).get("alarm"),
+        logs=report.get("logs") if not all(checks.values()) else None,
     )
     vm().run(f"sudo rm -f {INCOMING}/{pib.name}", check=False)
 
@@ -624,7 +796,7 @@ def step_crash(ctx: Context) -> None:
     gen = ctx.next_gen
     # migrating: 실제 마이그레이션이 일어나도록 c0(epoch 1)에서 r0→r1
     for mode in ("kill", "reset"):
-        restore_c0()
+        restore_c0(ctx)
         crash_once(ctx, "migrating", mode, gen=gen, release="r1", prev="r0")
     gen += 1
     current = "r1"
@@ -647,14 +819,13 @@ def step_crash(ctx: Context) -> None:
 
 
 def step_report(ctx: Context) -> None:
-    host = vm()
-    nft_after = nft_counters(host)
-    external = {k: v for k, v in nft_after.items() if v}
+    nft_mark(ctx, vm())
     ctx.record(
-        "no external connection attempts (nftables counters)",
-        not external,
-        before=ctx.nft_before,
-        after=nft_after,
+        "no external connection attempts since install (nftables, accumulated)",
+        not any(ctx.nft_total.values()),
+        baseline=ctx.nft_before,
+        total=ctx.nft_total,
+        dns_lookups=ctx.dns_lookups,
     )
     ctx.out.mkdir(parents=True, exist_ok=True)
     metrics = ctx.out / "bundle-metrics.json"

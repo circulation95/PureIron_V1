@@ -108,7 +108,7 @@ def start(name: str) -> None:
 
 def restart_force(name: str) -> None:
     """전원 리셋(게스트 종료 절차 없음) — 호스트 재부팅 주입(PD-24)."""
-    run_ps(f"Restart-VM -Name {ps_quote(name)} -Force")
+    run_ps(f"Restart-VM -Name {ps_quote(name)} -Type Reset -Force")
 
 
 def checkpoint(name: str, snapshot: str) -> None:

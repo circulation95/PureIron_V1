@@ -116,8 +116,16 @@ write_files:
       ExecStart=/usr/sbin/nft -f /etc/e2e-audit.nft
       [Install]
       WantedBy=multi-user.target
+  # 외부 DNS 패킷은 모두 systemd-resolved가 보낸다(컨테이너 질의도 Docker 내장 DNS → resolved).
+  # 디버그 로그의 `Looking up RR for <이름>`이 dns_out 카운터의 출처 증거가 된다.
+  - path: /etc/systemd/system/systemd-resolved.service.d/e2e-debug.conf
+    permissions: "0644"
+    content: |
+      [Service]
+      Environment=SYSTEMD_LOG_LEVEL=debug
 runcmd:
   - [systemctl, daemon-reload]
+  - [systemctl, restart, systemd-resolved.service]
   - [systemctl, enable, --now, e2e-audit.service]
   - [systemctl, disable, --now, apt-daily.timer, apt-daily-upgrade.timer, motd-news.timer,
      fwupd-refresh.timer]

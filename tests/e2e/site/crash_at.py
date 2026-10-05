@@ -149,6 +149,10 @@ def main(argv: list[str] | None = None) -> int:
         return 3 if outcome == "MISSED" else 4
     pids = [main_pid()] if args.target == "service" else cli_pids()
     pids = [pid for pid in pids if pid > 0]
+    if args.target == "service" and pids:
+        # cgroup 전체(하위 docker compose 등)를 얼린다 — 주 프로세스만 얼리면 자식이
+        # phase를 이어 간다.
+        subprocess.run(["systemctl", "kill", "-s", "SIGSTOP", SERVICE], check=True)
     for pid in pids:
         os.kill(pid, signal.SIGSTOP)
     hit_at = time.time()

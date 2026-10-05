@@ -6,6 +6,7 @@ import io
 import json
 import re
 from pathlib import Path, PureWindowsPath
+from typing import cast
 
 import crash_at
 import golden
@@ -112,3 +113,68 @@ def test_running_digests_only_app_services_that_run() -> None:
 def test_edit_unlocked(project: dict[str, object], ok: bool) -> None:
     assert run.edit_unlocked({**SNAP, "project": project}) is ok
     assert run.ready(SNAP)
+
+
+WANT = {"core": "sha256:c", "web": "sha256:w"}
+DONE: dict[str, object] = {
+    **SNAP,
+    "updater": {"last_result": "failed", "alarm": None, "applied_gen": 3, "attempt": None},
+}
+
+
+def test_judge_attempt_passes_clean_rollback() -> None:
+    checks = run.judge_attempt(
+        DONE, {"failed_manual": False}, expect="failed", want_digests=WANT, want_applied=3
+    )
+    assert all(checks.values())
+
+
+@pytest.mark.parametrize(
+    ("updater", "report", "failing"),
+    [
+        # result_of()가 failed_manual도 "failed"로 접는다 — 경보·보고로 가린다
+        # (첫 실측의 거짓 통과).
+        ({"alarm": "g18: E_HEALTH"}, {"failed_manual": True}, "no_manual_alarm"),
+        ({}, {"failed_manual": True}, "no_manual_alarm"),
+        ({}, {}, "no_manual_alarm"),  # 보고를 못 찾으면 통과시키지 않는다
+        ({"applied_gen": 4}, {"failed_manual": False}, "applied_gen"),
+        ({"last_result": "succeeded"}, {"failed_manual": False}, "result"),
+    ],
+)
+def test_judge_attempt_flags(
+    updater: dict[str, object], report: dict[str, object], failing: str
+) -> None:
+    snap = {**DONE, "updater": {**cast(dict[str, object], DONE["updater"]), **updater}}
+    checks = run.judge_attempt(snap, report, expect="failed", want_digests=WANT, want_applied=3)
+    assert not checks[failing]
+
+
+def test_nft_accumulate_survives_reset_and_restore() -> None:
+    total = run.nft_accumulate({"dns_out": 0}, {"dns_out": 2}, {"dns_out": 5})
+    assert total == {"dns_out": 3}
+    # 표시 없이 재부팅(카운터 0부터) — 줄어든 값은 새로 센 것으로 더한다
+    assert run.nft_accumulate(total, {"dns_out": 5}, {"dns_out": 1}) == {"dns_out": 4}
+    # 리셋 직후 기준 {} → 처음 보는 키는 0부터
+    assert run.nft_accumulate(total, {}, {"ext_out_v4": 2}) == {"dns_out": 3, "ext_out_v4": 2}
+
+
+@pytest.mark.parametrize(("value", "want"), [("7141", 7141), (12, 12), ({"error": "x"}, -1)])
+def test_as_int(value: object, want: int) -> None:
+    assert run.as_int(value) == want
+
+
+def test_dns_names_counts_lookups_except_local_host() -> None:
+    log = (
+        "Looking up RR for site-a IN A.\n"
+        "Looking up RR for changelogs.ubuntu.com IN AAAA.\n"
+        "Looking up RR for changelogs.ubuntu.com IN A.\n"
+        "Cache miss for x IN A\n"
+    )
+    assert run.dns_names(log) == {"changelogs.ubuntu.com": 2}
+
+
+def test_seed_enables_resolved_debug_for_dns_evidence() -> None:
+    user_data = golden.seed_files("site-a", "10.77.0.10", "k", golden.Network())["user-data"]
+    text = user_data.decode()
+    assert "systemd-resolved.service.d/e2e-debug.conf" in text
+    assert "SYSTEMD_LOG_LEVEL=debug" in text

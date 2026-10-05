@@ -71,11 +71,13 @@ class Vm:
             )
         return result
 
-    def start(self, command: str) -> subprocess.Popen[str]:
-        """오래 도는 원격 명령(출력 줄을 읽으며 기다린다 — crash 감시자)."""
+    def start(self, command: str, *, capture: bool = True) -> subprocess.Popen[str]:
+        """오래 도는 원격 명령(출력 줄을 읽으며 기다린다 — crash 감시자). 출력을 읽지 않을 명령은
+        `capture=False` — 읽지 않는 파이프가 차면 원격 쪽 write까지 멈춘다."""
+        out = subprocess.PIPE if capture else subprocess.DEVNULL
         return subprocess.Popen(
             [_tool("ssh"), *self._opts(), f"{USER}@{self.ip}", command],
-            stdout=subprocess.PIPE,
+            stdout=out,
             stderr=subprocess.STDOUT,
             text=True,
             encoding="utf-8",
