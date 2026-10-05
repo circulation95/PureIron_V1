@@ -135,6 +135,8 @@ def test_settings_validation() -> None:
     assert CollectorSettings.from_env({}).core_target == "127.0.0.1:50051"
     with pytest.raises(SettingsError):
         CollectorSettings.from_env({"PUREIRON_COLLECTOR_HEARTBEAT_S": "0"})
+    with pytest.raises(SettingsError, match="at least twice"):
+        CollectorSettings.from_env({"PUREIRON_COLLECTOR_HEARTBEAT_S": "3"})
 
 
 def test_collector_has_no_database_dependency() -> None:
@@ -208,12 +210,12 @@ class PlanCore(pb_grpc.AcquisitionServicer):
             elif kind == "health":
                 self.health.append(message.health)
             elif kind == "batch":
+                if message.batch.seq != HEARTBEAT_SEQ:
+                    self.batches.append(message.batch)
+                if len(self.batches) == 3 and message.batch.seq != HEARTBEAT_SEQ:
+                    # 세션 도중 plan 변경 — Ack보다 먼저 보내 미-Ack batch가 링에 남게 한다.
+                    yield pb.CoreMsg(plan=device_plan_msg(6, 2))
                 yield pb.CoreMsg(ack=pb.Ack(seq=message.batch.seq))
-                if message.batch.seq == HEARTBEAT_SEQ:
-                    continue
-                self.batches.append(message.batch)
-                if len(self.batches) == 3:
-                    yield pb.CoreMsg(plan=device_plan_msg(6, 2))  # 세션 도중 plan 변경
                 if len(self.batches) >= 6 and self.health:
                     self.ready.set()
 
@@ -405,3 +407,4 @@ async def test_no_response_counts_as_timeout() -> None:
 def test_retry_delay_backs_off_to_cap() -> None:
     assert [retry_delay(1.0, n) for n in (1, 2, 3, 6, 10)] == [1.0, 2.0, 4.0, 30.0, 30.0]
     assert retry_delay(0.1, 1) == 0.5  # 빠른 poll이라도 재연결은 최소 0.5s 간격
+    assert retry_delay(1.0, 10_000) == 30.0  # 장시간 정지(수천 번 실패)에도 overflow 없음

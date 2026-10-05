@@ -44,11 +44,13 @@ def bad(tag_ids: Iterable[int], ts_ns: int) -> list[pb.Sample]:
 
 
 MAX_RETRY_S = 30.0
+MAX_RETRY_EXPONENT = 16  # 2**16배면 이미 상한을 넘는다 — 장시간 정지에서 float overflow 방지
 
 
 def retry_delay(period_s: float, failures: int) -> float:
     """연속 실패 n번째 뒤 다음 시도까지(poll 주기에서 시작해 두 배씩, 상한 30s)."""
-    return min(MAX_RETRY_S, max(period_s, 0.5) * 2 ** max(0, failures - 1))
+    exponent = min(max(0, failures - 1), MAX_RETRY_EXPONENT)
+    return min(MAX_RETRY_S, max(period_s, 0.5) * 2**exponent)
 
 
 class DevicePoller:

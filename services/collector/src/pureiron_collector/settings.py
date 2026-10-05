@@ -50,6 +50,13 @@ class CollectorSettings:
     # core가 이 시간 동안 아무것도(Ack 포함) 보내지 않으면 끊긴 세션으로 보고 재연결한다.
     core_silence_s: float = 5.0
 
+    def __post_init__(self) -> None:
+        if self.heartbeat_s * 2 > self.core_silence_s:
+            raise SettingsError(
+                f"PUREIRON_COLLECTOR_CORE_SILENCE_S ({self.core_silence_s}) must be at least twice "
+                f"PUREIRON_COLLECTOR_HEARTBEAT_S ({self.heartbeat_s})"
+            )
+
     @classmethod
     def from_env(cls, environ: Mapping[str, str]) -> CollectorSettings:
         return cls(

@@ -6,8 +6,9 @@ poll은 세션과 무관하게 계속 돈다 — core가 없는 동안의 batch�
 
 세션 계약(core M3a-2가 지켜야 함):
 - core는 세션마다 Hello 뒤에 plan을 보낸다(같은 rev여도) — collector는 첫 plan에서 live를 켠다.
-- core는 heartbeat(seq 0)를 포함한 모든 batch에 Ack 한다 — `core_silence_s` 동안 아무 메시지도
-  없으면 collector는 세션을 끊고 재연결한다(RST 없는 단절에서 지연 데이터가 live로 가지 않게).
+- core는 Hello 직후부터(plan 전·DB 준비 전 포함) heartbeat(seq 0)를 포함한 모든 batch에 Ack 한다 —
+  `core_silence_s` 동안 아무 메시지도 없으면 collector는 세션을 끊고 재연결한다(RST 없는 단절에서
+  지연 데이터가 live로 가지 않게).
 - seq는 collector 프로세스마다 1부터 다시 시작하고, 링버퍼 drop으로 비는 구간이 있다. replay batch는
   원래 plan_rev를 유지한다.
 
@@ -22,6 +23,7 @@ import contextlib
 import logging
 import time
 from collections.abc import AsyncIterator, Callable, Sequence
+from dataclasses import dataclass
 
 from grpc import aio
 
@@ -170,6 +172,12 @@ class Backoff:
 type ChannelFactory = Callable[[str], aio.Channel]
 
 
+@dataclass(slots=True)
+class _Session:
+    outgoing: Outgoing
+    last_rx: float  # core 메시지를 마지막으로 받은(또는 처리를 끝낸) 시각
+
+
 def _reject(write: pb.WriteRequest) -> pb.CollectorMsg:
     log.warning("rejecting write request %s: %s", write.request_id, WRITE_DISABLED)
     return pb.CollectorMsg(
@@ -212,55 +220,50 @@ class Collector:
             outgoing.put_nowait(_reject(message.write))
         return False
 
+    async def _heartbeat(self, session: _Session) -> None:
+        while True:
+            await asyncio.sleep(self._settings.heartbeat_s)
+            empty = pb.ValueBatch(plan_rev=self.acquisition.plan_rev, seq=HEARTBEAT_SEQ)
+            session.outgoing.put_nowait(pb.CollectorMsg(batch=empty))
+
+    async def _health(self, session: _Session) -> None:
+        while True:
+            await asyncio.sleep(self._settings.health_interval_s)
+            for item in self.acquisition.health():
+                session.outgoing.put_nowait(pb.CollectorMsg(health=item))
+
+    async def _watchdog(self, session: _Session) -> None:
+        """core가 `core_silence_s` 동안 아무것도 보내지 않으면 반환한다(= 세션 종료 신호)."""
+        silence = self._settings.core_silence_s
+        while True:
+            await asyncio.sleep(min(1.0, silence / 4))
+            if time.monotonic() - session.last_rx > silence:
+                log.warning("core silent for %.1fs; reconnecting", silence)
+                return
+
     async def run_session(self, stop: asyncio.Event) -> bool:
         """세션 하나를 끝날 때까지 돈다. plan을 한 번이라도 받았으면 True."""
-        outgoing: Outgoing = asyncio.Queue()
+        session = _Session(asyncio.Queue(), time.monotonic())
         got_plan = False
 
         async def requests() -> AsyncIterator[pb.CollectorMsg]:
             yield self.hello()
             while True:
-                yield await outgoing.get()
-
-        async def heartbeat() -> None:
-            while True:
-                await asyncio.sleep(self._settings.heartbeat_s)
-                empty = pb.ValueBatch(plan_rev=self.acquisition.plan_rev, seq=HEARTBEAT_SEQ)
-                outgoing.put_nowait(pb.CollectorMsg(batch=empty))
-
-        last_rx = time.monotonic()
-        silent = asyncio.Event()
-
-        async def watchdog() -> None:
-            while True:
-                await asyncio.sleep(min(1.0, self._settings.core_silence_s / 4))
-                if time.monotonic() - last_rx > self._settings.core_silence_s:
-                    log.warning(
-                        "core silent for %.1fs; reconnecting", self._settings.core_silence_s
-                    )
-                    silent.set()
-                    return
-
-        async def health() -> None:
-            while True:
-                await asyncio.sleep(self._settings.health_interval_s)
-                for item in self.acquisition.health():
-                    outgoing.put_nowait(pb.CollectorMsg(health=item))
+                yield await session.outgoing.get()
 
         async with self._channel_factory(self._settings.core_target) as channel:
             call = pb_grpc.AcquisitionStub(channel).Session(requests())
             side_tasks = [
-                asyncio.create_task(heartbeat()),
-                asyncio.create_task(health()),
-                asyncio.create_task(watchdog()),
+                asyncio.create_task(self._heartbeat(session)),
+                asyncio.create_task(self._health(session)),
             ]
+            watchdog = asyncio.create_task(self._watchdog(session))
             stopper = asyncio.create_task(stop.wait())
-            silenced = asyncio.create_task(silent.wait())
             try:
                 while not stop.is_set():
                     reader = asyncio.ensure_future(call.read())
                     done, _ = await asyncio.wait(
-                        {reader, stopper, silenced}, return_when=asyncio.FIRST_COMPLETED
+                        {reader, stopper, watchdog}, return_when=asyncio.FIRST_COMPLETED
                     )
                     if reader not in done:
                         reader.cancel()
@@ -268,17 +271,18 @@ class Collector:
                     message = reader.result()
                     if not isinstance(message, pb.CoreMsg):
                         break
-                    last_rx = time.monotonic()
-                    got_plan = await self._handle(message, outgoing) or got_plan
+                    session.last_rx = time.monotonic()
+                    got_plan = await self._handle(message, session.outgoing) or got_plan
+                    # plan 적용(stop_pollers)처럼 처리에 걸린 시간을 core 침묵으로 세지 않는다.
+                    session.last_rx = time.monotonic()
             finally:
                 self.acquisition.detach()
-                for task in side_tasks:
+                for task in (*side_tasks, watchdog):
                     task.cancel()
                 stopper.cancel()
-                silenced.cancel()
                 call.cancel()
-                await asyncio.gather(*side_tasks, return_exceptions=True)
-                await asyncio.gather(stopper, silenced, return_exceptions=True)
+                await asyncio.gather(*side_tasks, watchdog, return_exceptions=True)
+                await asyncio.gather(stopper, return_exceptions=True)
         return got_plan
 
     async def run_forever(self, stop: asyncio.Event, backoff: Backoff | None = None) -> None:
