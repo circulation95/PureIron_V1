@@ -6,6 +6,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "grpcio>=1.75",
     "protobuf>=6.32",
+    "pymodbus>=3.15,<3.16",
 ]
 
 [project.scripts]

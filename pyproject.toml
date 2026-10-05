@@ -49,6 +49,8 @@ extend-ignore-names = ["Session"]
 
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**" = ["PLR0915"]
+# pymodbus SimAction 콜백은 위치 인자 6개로 호출된다(시그니처를 바꿀 수 없음).
+"deploy/simulator/simulator.py" = ["PLR0917"]
 
 [tool.ruff.lint.isort]
 known-first-party = [
