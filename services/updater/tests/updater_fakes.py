@@ -27,9 +27,10 @@ from ruamel.yaml import YAML
 
 from pureiron_bundle import keys
 from pureiron_bundle.images import config_digest_from_tar
-from pureiron_bundle.manifest import Json
+from pureiron_bundle.manifest import DOCKER_PACKAGES, Json
 from pureiron_bundle.sign import write_signed_bundle
 from pureiron_bundle.trust import format_timestamp, issue_cert
+from pureiron_bundle.verify import INSTALL_LAYOUT, ROOT_PEM_PAYLOAD, ROOT_PUB_PAYLOAD
 from pureiron_updater.phases import Deps, Updater
 from pureiron_updater.ports import (
     CommandError,
@@ -155,6 +156,46 @@ class Kit:
             "fleet_commit": f"abc{self.count:04x}",
         }
         out = self.tmp / "out" / f"{site}-g{generation}-{self.count}.pib"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        write_signed_bundle(
+            out,
+            document,
+            payload,
+            release_seed=RELEASE_SEED,
+            cert_json=self.cert[0],
+            cert_sig=self.cert[1],
+        )
+        return out
+
+    def install_bundle(self) -> Path:
+        """서명된 최소 설치 번들(`kind: install`) — 내용은 자리표시자."""
+        self.count += 1
+        src = self.tmp / f"install{self.count}"
+        root = keys.public_key(ROOT_SEED)
+        contents: dict[str, bytes] = {name: f"# {name}\n".encode() for name in INSTALL_LAYOUT}
+        contents[ROOT_PUB_PAYLOAD] = root
+        contents[ROOT_PEM_PAYLOAD] = keys.export_pem(root).encode()
+        contents["updater/updater-0.1.0.tar.gz"] = b"venv"
+        contents.update({f"debs/{p}.deb": p.encode() for p in DOCKER_PACKAGES})
+        payload: dict[str, Path] = {}
+        for name, data in contents.items():
+            path = src / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+            payload[name] = path
+        document: dict[str, Json] = {
+            "format": 1,
+            "kind": "install",
+            "release": "2026.10.0",
+            "created_at": format_timestamp(T0),
+            "updater": {"version": "0.1.0", "file": "updater/updater-0.1.0.tar.gz"},
+            "docker": {
+                "packages": dict.fromkeys(DOCKER_PACKAGES, "1.0-1"),
+                "compose_min": "2.17.0",
+            },
+            "trust_update": None,
+        }
+        out = self.tmp / "out" / f"pureiron-install-{self.count}.pib"
         out.parent.mkdir(parents=True, exist_ok=True)
         write_signed_bundle(
             out,
@@ -309,6 +350,23 @@ class FakeDocker:
             raise CommandError(f"No such image: {source}")
         self.w.tags[target] = resolved
         self.w.op(f"tag {target}")
+
+    def tags(self, prefix: str) -> list[str]:
+        self.w.daemon()
+        return sorted(t for t in self.w.tags if t.startswith(prefix))
+
+    def remove(self, ref: str) -> None:
+        self.w.daemon()
+        image = self.w.tags.get(ref)
+        if image is None:
+            raise CommandError(f"No such image: {ref}")
+        others = [t for t, i in self.w.tags.items() if i == image and t != ref]
+        if not others and image in self.w.running.values():
+            raise CommandError(f"conflict: image {ref} is used by a running container")
+        del self.w.tags[ref]
+        if image not in self.w.tags.values():
+            self.w.ids.discard(image)
+        self.w.op(f"rmi {ref}")
 
 
 class FakeCompose:

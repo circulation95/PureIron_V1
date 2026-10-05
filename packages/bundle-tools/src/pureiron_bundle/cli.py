@@ -6,6 +6,7 @@
     pureiron-bundle cert issue --root-key K --release-pub P --serial N [--days 180]
                                [--not-before TS] --out DIR
     pureiron-bundle verify PIB --root-pub P --site ID [--updater-version X] [--extract-to DIR]
+    pureiron-bundle verify PIB --root-pub P --kind install [--extract-to DIR]   # 설치 번들
 
 종료 코드: 0 성공, 1 번들 거부(stderr 첫 줄 = 거부 코드), 2 사용법·입력 파일 오류.
 """
@@ -22,6 +23,7 @@ from pathlib import Path
 
 from pureiron_bundle import keys
 from pureiron_bundle.errors import BundleRejectedError
+from pureiron_bundle.manifest import BundleKind
 from pureiron_bundle.pib import CERT_FILE, CERT_SIG
 from pureiron_bundle.trust import (
     DEFAULT_CERT_DAYS,
@@ -29,7 +31,7 @@ from pureiron_bundle.trust import (
     issue_cert,
     parse_timestamp,
 )
-from pureiron_bundle.verify import VerifyContext, verify_bundle
+from pureiron_bundle.verify import VerifyContext, verify_bundle, verify_install_bundle
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -58,7 +60,8 @@ def _parser() -> argparse.ArgumentParser:
     verify = sub.add_parser("verify", help=".pib 검증(새 설치 기준 상태)")
     verify.add_argument("bundle", type=Path)
     verify.add_argument("--root-pub", type=Path, required=True)
-    verify.add_argument("--site", required=True)
+    verify.add_argument("--kind", choices=[k.value for k in BundleKind], default="site")
+    verify.add_argument("--site", default=None, help="현장 번들(--kind site)에 필수")
     verify.add_argument("--updater-version", default=None)
     verify.add_argument("--extract-to", type=Path, default=None)
     return parser
@@ -106,7 +109,34 @@ def _cert(args: argparse.Namespace) -> int:
     return 0
 
 
+def _verify_install(args: argparse.Namespace) -> int:
+    try:
+        result = verify_install_bundle(
+            args.bundle, keys.read_public_key(args.root_pub), extract_to=args.extract_to
+        )
+    except BundleRejectedError as exc:
+        print(f"{exc.code}: {exc.detail}", file=sys.stderr)
+        return 1
+    manifest = result.manifest
+    report = {
+        "kind": BundleKind.INSTALL.value,
+        "release": manifest.release,
+        "created_at": format_timestamp(manifest.created_at),
+        "updater": manifest.updater_version,
+        "docker": dict(manifest.docker_packages),
+        "cert_serial": result.cert.serial,
+        "files": len(result.files),
+        "verify_s": round(result.verify_s, 3),
+    }
+    print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
 def _verify(args: argparse.Namespace) -> int:
+    if args.kind == BundleKind.INSTALL:
+        return _verify_install(args)
+    if args.site is None:
+        raise ValueError("--site is required for site bundles")
     ctx = VerifyContext(
         root_pubkey=keys.read_public_key(args.root_pub),
         site_id=args.site,

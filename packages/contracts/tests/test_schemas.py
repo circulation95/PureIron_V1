@@ -1,4 +1,4 @@
-"""계약 JSON Schema 3종이 2020-12로 유효하고 plan §6.2/§6.3 예시 문서를 받아들이는지."""
+"""계약 JSON Schema 4종이 2020-12로 유효하고 plan §6.2/§6.3 예시 문서를 받아들이는지."""
 
 from __future__ import annotations
 
@@ -15,6 +15,9 @@ CONTRACTS = Path(__file__).resolve().parents[1]
 SHA = "sha256:" + "a" * 64
 
 
+SCHEMA_NAMES = ("project", "manifest", "install-manifest", "fleet-site")
+
+
 def _schema(name: str) -> dict[str, object]:
     return cast(dict[str, object], json.loads((CONTRACTS / name).read_text(encoding="utf-8")))
 
@@ -28,7 +31,7 @@ class _Validator(Protocol):
 def _registry() -> Registry[Any]:
     resources = [
         (str(s["$id"]), Resource.from_contents(s))
-        for s in (_schema(f"{n}.schema.json") for n in ("project", "manifest", "fleet-site"))
+        for s in (_schema(f"{n}.schema.json") for n in SCHEMA_NAMES)
     ]
     return Registry[Any]().with_resources(resources)
 
@@ -40,7 +43,7 @@ def _validator(name: str, ref: str | None = None) -> _Validator:
     return cast(_Validator, validator)
 
 
-@pytest.mark.parametrize("name", ["project", "manifest", "fleet-site"])
+@pytest.mark.parametrize("name", SCHEMA_NAMES)
 def test_schema_is_valid_2020_12(name: str) -> None:
     Draft202012Validator.check_schema(_schema(f"{name}.schema.json"))
 
@@ -97,6 +100,25 @@ MANIFEST = {
     "fleet_commit": "abc123",
 }
 
+INSTALL_MANIFEST = {
+    "format": 1,
+    "kind": "install",
+    "release": "2026.11.0",
+    "created_at": "2026-11-02T01:00:00Z",
+    "updater": {"version": "0.2.0", "file": "updater/updater-0.2.0.tar.gz"},
+    "docker": {
+        "packages": {
+            "containerd.io": "1.7.27-1",
+            "docker-ce": "5:28.3.3-1~ubuntu.24.04~noble",
+            "docker-ce-cli": "5:28.3.3-1~ubuntu.24.04~noble",
+            "docker-compose-plugin": "2.39.1-1~ubuntu.24.04~noble",
+        },
+        "compose_min": "2.17.0",
+    },
+    "files": {"bootstrap/bootstrap-verify.sh": SHA, "debs/docker-ce.deb": SHA},
+    "trust_update": None,
+}
+
 PROJECT = {
     "schema_version": 1,
     "project_id": "acme",
@@ -109,6 +131,7 @@ PROJECT = {
 def test_examples_validate() -> None:
     _validator("fleet-site").validate(FLEET_SITE)
     _validator("manifest").validate(MANIFEST)
+    _validator("install-manifest").validate(INSTALL_MANIFEST)
     _validator("project").validate(PROJECT)
 
 
@@ -151,6 +174,19 @@ def test_project_file_kinds_validate() -> None:
         ),
         ("manifest", {**MANIFEST, "format": 2}, None),
         ("manifest", {**MANIFEST, "files": {"../escape": SHA}}, None),
+        ("install-manifest", {**INSTALL_MANIFEST, "kind": "site"}, None),
+        ("manifest", {**MANIFEST, "kind": "install"}, None),
+        ("install-manifest", {**INSTALL_MANIFEST, "files": {"debs/../x.deb": SHA}}, None),
+        (
+            "install-manifest",
+            {**INSTALL_MANIFEST, "updater": {"version": "0.2.0", "file": "updater/x.tar.gz"}},
+            None,
+        ),
+        (
+            "install-manifest",
+            {**INSTALL_MANIFEST, "docker": {"packages": {"docker-ce": "1"}, "compose_min": "2"}},
+            None,
+        ),
         ("project", {**PROJECT, "extra": True}, None),
         ("project", {"id": "plc-1", "protocol": "s7", "host": "h", "port": 102}, "#/$defs/device"),
         (
@@ -168,3 +204,11 @@ def test_project_file_kinds_validate() -> None:
 )
 def test_invalid_documents_are_rejected(name: str, document: object, ref: str | None) -> None:
     assert list(_validator(name, ref).iter_errors(document))
+
+
+def test_install_files_pattern_matches_site_manifest() -> None:
+    """`.pib` reader는 한 패턴(manifest.schema.json)으로 payload 경로를 검사한다 — 두 계약이
+    같아야 한다."""
+    site = cast(dict[str, dict[str, dict[str, object]]], _schema("manifest.schema.json"))
+    install = cast(dict[str, dict[str, dict[str, object]]], _schema("install-manifest.schema.json"))
+    assert install["properties"]["files"] == site["properties"]["files"]

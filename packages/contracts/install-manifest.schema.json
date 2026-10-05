@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pureiron.dev/contracts/install-manifest.schema.json",
+  "title": "PureIron signed install bundle manifest",
+  "description": "pureiron-install-<release>.pib의 manifest.json(plan M2 설치 번들 B3). 현장 번들과 같은 .pib 형식·서명 체인이고, payload는 Docker deb·Updater venv tarball·설치 스크립트·root 공개키다. files 경로 패턴은 manifest.schema.json과 같아야 한다(테스트가 검사).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "kind", "release", "created_at", "updater", "docker", "files"],
+  "properties": {
+    "format": {"const": 1},
+    "kind": {"const": "install"},
+    "release": {"$ref": "fleet-site.schema.json#/$defs/release"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "updater": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "file"],
+      "properties": {
+        "version": {"$ref": "#/$defs/semver"},
+        "file": {"type": "string", "pattern": "^updater/updater-[0-9]+\\.[0-9]+\\.[0-9]+\\.tar\\.gz$"}
+      }
+    },
+    "docker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["packages", "compose_min"],
+      "properties": {
+        "packages": {
+          "description": "deb 패키지 이름 → 버전. payload는 debs/<이름>.deb.",
+          "type": "object",
+          "required": ["containerd.io", "docker-ce", "docker-ce-cli", "docker-compose-plugin"],
+          "propertyNames": {"pattern": "^[a-z0-9][a-z0-9.+-]{1,63}$"},
+          "additionalProperties": {"type": "string", "pattern": "^[0-9A-Za-z.+~:-]{1,128}$"}
+        },
+        "compose_min": {
+          "description": "Updater가 쓰는 docker compose 기능의 최소 버전(up --wait-timeout).",
+          "$ref": "#/$defs/semver"
+        }
+      }
+    },
+    "files": {
+      "description": "번들 안 상대 경로 → sha256.",
+      "type": "object",
+      "propertyNames": {"pattern": "^(?!(.*/)?\\.\\.?(/|$))[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$"},
+      "additionalProperties": {"$ref": "#/$defs/sha256"}
+    },
+    "trust_update": {
+      "description": "root 서명된 min_cert_serial 상승(선택). 현장 번들 manifest와 같은 규칙.",
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["min_cert_serial"],
+          "properties": {"min_cert_serial": {"type": "integer", "minimum": 0}}
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "semver": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"}
+  }
+}

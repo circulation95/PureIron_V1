@@ -1,8 +1,13 @@
 """Updater 설정(환경변수, systemd `EnvironmentFile=/etc/pureiron/updater.env`).
 
+운영자가 직접 부르는 `pureiron-site`도 같은 값을 보도록, 프로세스 환경에 없는 변수는
+`PUREIRON_ENV_FILE`(기본 `/etc/pureiron/updater.env`)의 `KEY=VALUE` 줄에서 읽는다
+(프로세스 환경 우선).
+`enroll`이 이 파일에 `PUREIRON_SITE_ID`를 기록한다.
+
 | 변수 | 기본값 | 뜻 |
 |---|---|---|
-| `PUREIRON_SITE_ID` | (필수) | 이 현장 id — 번들 `site_id`와 같아야 한다 |
+| `PUREIRON_SITE_ID` | (필수, `enroll`이 기록) | 이 현장 id — 번들 `site_id`와 같아야 한다 |
 | `PUREIRON_ROOT` | `/var/lib/pureiron` | `{db,state,backups,bundles}` 상위 |
 | `PUREIRON_ROOT_PUB` | `/etc/pureiron/root.pub` | root 공개키(raw 32B) |
 | `PUREIRON_CORE_URL` | `http://127.0.0.1:<web port>/api/v1` | core API(web 프록시) |
@@ -10,6 +15,7 @@
 | `PUREIRON_CHECK_TIMEOUT_S` | `90` | `checking` 제한 시간 |
 | `PUREIRON_POLL_INTERVAL_S` | `60` | 서비스 loop 주기 |
 | `PUREIRON_WEB_BIND`·`PUREIRON_WEB_PORT` | compose 기본값 | 주면 generation `.env`에도 넣는다 |
+| `PUREIRON_SECRET_UID` | `10001` | secret 파일 소유자(컨테이너 서비스 사용자, root면 chown) |
 """
 
 from __future__ import annotations
@@ -26,6 +32,37 @@ class SettingsError(ValueError):
 
 
 _PASSTHROUGH = ("PUREIRON_WEB_BIND", "PUREIRON_WEB_PORT")
+ENV_FILE = Path("/etc/pureiron/updater.env")
+SITE_ID_VAR = "PUREIRON_SITE_ID"
+DEFAULT_SECRET_UID = 10001
+
+
+def env_file_path(env: Mapping[str, str]) -> Path:
+    return Path(env.get("PUREIRON_ENV_FILE") or ENV_FILE)
+
+
+def parse_env_file(text: str) -> dict[str, str]:
+    """systemd `EnvironmentFile` 부분집합: 빈 줄·`#` 주석 무시, `KEY=VALUE`, 값 양끝 따옴표 제거."""
+    values: dict[str, str] = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            value = value[1:-1]
+        values[key.strip()] = value
+    return values
+
+
+def merged_env(env: Mapping[str, str]) -> dict[str, str]:
+    """env 파일 값 위에 프로세스 환경을 덮는다(파일이 없으면 프로세스 환경 그대로)."""
+    try:
+        text = env_file_path(env).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return dict(env)
+    return {**parse_env_file(text), **env}
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +76,8 @@ class Settings:
     poll_interval_s: float = 60.0
     compose_env: tuple[tuple[str, str], ...] = ()
     updater_version: str = __version__
+    env_file: Path = ENV_FILE
+    secret_uid: int = DEFAULT_SECRET_UID
 
     @property
     def state_dir(self) -> Path:
@@ -68,15 +107,24 @@ class Settings:
             **dict(self.compose_env),
         }
 
+    @property
+    def site_key_file(self) -> Path:
+        return self.state_dir / "site.key"
+
     @classmethod
-    def from_env(cls, env: Mapping[str, str]) -> Settings:
-        site_id = env.get("PUREIRON_SITE_ID", "").strip()
-        if not site_id:
-            raise SettingsError("PUREIRON_SITE_ID is required")
+    def from_env(cls, env: Mapping[str, str], *, require_site: bool = True) -> Settings:
+        """`require_site=False`는 등록 전에도 쓰는 명령(enroll·secret·설치 번들 검증)용 —
+        그때 `site_id`는 빈 문자열일 수 있다."""
+        site_id = env.get(SITE_ID_VAR, "").strip()
+        if require_site and not site_id:
+            raise SettingsError(
+                f"{SITE_ID_VAR} is required (run: pureiron-site enroll --site <id>)"
+            )
         port = env.get("PUREIRON_WEB_PORT", "80")
         try:
             check_timeout = float(env.get("PUREIRON_CHECK_TIMEOUT_S", "90"))
             poll_interval = float(env.get("PUREIRON_POLL_INTERVAL_S", "60"))
+            secret_uid = int(env.get("PUREIRON_SECRET_UID", str(DEFAULT_SECRET_UID)))
         except ValueError as exc:
             raise SettingsError(str(exc)) from exc
         return cls(
@@ -88,4 +136,6 @@ class Settings:
             check_timeout_s=check_timeout,
             poll_interval_s=poll_interval,
             compose_env=tuple((k, env[k]) for k in _PASSTHROUGH if env.get(k)),
+            env_file=env_file_path(env),
+            secret_uid=secret_uid,
         )

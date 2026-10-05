@@ -1,0 +1,25 @@
+# 현장 Updater 서비스(plan M2, PD-5). install.sh가 /etc/systemd/system/에 설치하고 enable만 한다
+# (첫 `pureiron-site apply` 뒤 운영자가 start). `run`은 첫 tick에 recover()를 하므로
+# ExecStartPre가 필요 없다. 상태기계는 crash·재부팅 뒤 같은 결과로 수렴한다(services/updater/README.md).
+[Unit]
+Description=PureIron site Updater (signed bundle apply)
+Documentation=file:///opt/pureiron/updater/current
+# docker가 없거나 재시작 중이어도 Updater는 다음 tick을 기다린다 — Requires로 묶지 않는다.
+Wants=docker.service network-online.target
+After=docker.service network-online.target
+
+# 등록(`pureiron-site enroll`) 전에는 띄우지 않는다 — 현장 id 없이 재시작을 반복하지 않게.
+# 경로는 기본 PUREIRON_ROOT(/var/lib/pureiron) 고정 — 현장에서 PUREIRON_ROOT를 바꾸지 않는다.
+ConditionPathExists=/var/lib/pureiron/state/site.json
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/pureiron/updater.env
+ExecStart=/opt/pureiron/updater/current/bin/pureiron-site run
+Restart=always
+RestartSec=10
+UMask=0027
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

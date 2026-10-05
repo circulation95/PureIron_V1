@@ -13,6 +13,7 @@ from pathlib import Path
 from pureiron_bundle import keys
 from pureiron_bundle.manifest import (
     MANIFEST_FILE,
+    BundleKind,
     Json,
     SchemaName,
     manifest_bytes,
@@ -59,7 +60,12 @@ def write_signed_bundle(
     check_payload_names(payload)
     files: dict[str, Json] = {name: file_sha256(path) for name, path in payload.items()}
     full: dict[str, Json] = {**document, "files": files}
-    problems = validate(SchemaName.MANIFEST, full)
+    schema = (
+        SchemaName.INSTALL_MANIFEST
+        if full.get("kind") == BundleKind.INSTALL
+        else SchemaName.MANIFEST
+    )
+    problems = validate(schema, full)
     if problems:
         raise ValueError(f"{MANIFEST_FILE} violates the contract: " + "; ".join(problems))
     data = manifest_bytes(full)

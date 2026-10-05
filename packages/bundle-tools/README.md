@@ -1,18 +1,19 @@
 # pureiron-bundle-tools
 
-`.pib` 서명 번들의 생성·검증 공용 라이브러리. CI(서명), Updater(검증), control-api(게시 검사)가 같은 코드를 쓴다(ADR-023, P3). 검증 진입점은 `pureiron_bundle.verify.verify_bundle` 하나다.
+`.pib` 서명 번들의 생성·검증 공용 라이브러리. CI(서명), Updater(검증), control-api(게시 검사)가 같은 코드를 쓴다(ADR-023, P3). 검증 진입점은 현장 번들 `pureiron_bundle.verify.verify_bundle`, 설치 번들 `verify_install_bundle`이고 둘은 서명(①)·payload(④) 코드를 공유한다.
 
 | 모듈 | 내용 |
 |---|---|
 | `errors.py` | 거부 코드 `E_SIG`·`E_CERT`·`E_SITE`·`E_GEN`·`E_DIGEST`·`E_SCHEMA`·`E_UPDATER`·`E_DRAFT` + `E_FORMAT`(tar 구조·서명된 메타데이터의 형식 위반), `BundleRejectedError(code, detail)` |
 | `keys.py` | Ed25519 raw 32B 공개키·raw 64B 서명·지문 `sha256(raw32)`, 개인키 = raw 32B seed(0600, 덮어쓰기 금지), 결정적 PEM export/import |
 | `trust.py` | `release-cert.json`(JCS, `purpose: release-cert`) 발급·검증, 서명된 `created_at` 기준 유효기간, `TrustState`(min_cert_serial·max_seen_created_at), root 서명 `trust-update.sig`(JCS `{purpose: trust-update, min_cert_serial}`), 중복 키·실수 거부 JSON |
-| `manifest.py` | 계약 스키마(`schema/` = `packages/contracts` 사본, contracts-drift 검사) 검증, 타입 접근자, JCS 바이트 |
+| `manifest.py` | 계약 스키마(`schema/` = `packages/contracts` 사본, contracts-drift 검사) 검증, 타입 접근자, JCS 바이트. 종류(`kind`) = `site`(`manifest.schema.json`) · `install`(`install-manifest.schema.json`) |
 | `pib.py` | 결정적 writer, 스트리밍·적대적 입력 안전 reader(끝 표시·패딩 검사 포함) |
 | `tarsafe.py` | 모든 tar 읽기에 쓰는 `BoundedTarInfo`: pax 확장 헤더 ≤ 64 KiB·멤버당 1개, 전역 헤더·GNU long name/link·sparse(헤더 타입·`GNU.sparse.*` pax 키) 거부, pax 값 해석 오류도 거부 |
 | `images.py` | docker save tar(.tar/.tar.gz)의 config digest(`manifest.json` 정확히 1개), load 후 `.Id` 대조 helper |
 | `sign.py` | payload sha256 → manifest 서명 → `.pib` 쓰기(빌더용) |
-| `verify.py` | 고정 순서 ①~⑥ 검증과 순수 판정 규칙(gen·스키마 envelope·Updater 버전·드래프트 게이트) |
+| `verify.py` | 고정 순서 ①~⑥ 검증과 순수 판정 규칙(gen·스키마 envelope·Updater 버전·드래프트 게이트), 설치 번들 검증 |
+| `sitesign.py` | site key 서명 봉투(enrollment·report export, 용도 `purpose`로 도메인 분리) — 현장이 서명, control-api(M4)가 같은 코드로 검증 |
 
 ## `.pib` 형식
 
@@ -26,6 +27,15 @@
 - ⑤ envelope 일관성(`max = expected + 1`, `target = expected`), `cur > max` 또는 `expected − cur > 1` 거부, `== 1`이면 MIGRATE, 새 설치(None)는 0부터 MIGRATE. `min_updater ≤ updater`(semver, `E_UPDATER`).
 - ⑥ `absorbs[site]`가 있으면 `site_rev ≤ absorbs[site]`, 없으면 `site_rev == base_site_rev`(`E_DRAFT`).
 
+## 설치 번들 (`kind: install`, M2c)
+
+`pureiron-install-<release>.pib` — 같은 `.pib` 형식·서명 체인. `verify_install_bundle(path, root_pubkey, trust)`:
+
+- ① 서명·cert(`trust` 기준, 새 호스트는 기본 `TrustState()`) → 종류가 `install`이 아니면 `E_FORMAT`(현장 번들 검증기에 설치 번들을 넣어도 마찬가지).
+- 설치 배치: `bootstrap/bootstrap-verify.sh`, `install/{install.sh,preflight.sh,daemon.json,updater.env}`, `systemd/pureiron-updater.service`, `keys/root.{pub,pem}`, `updater.file`, `debs/<패키지>.deb`(집합 = `docker.packages` = containerd.io·docker-ce·docker-ce-cli·docker-compose-plugin)가 서명된 `files`에 있어야 한다(`E_FORMAT`).
+- ④ payload sha256(`E_DIGEST`) → 번들이 심을 `keys/root.pub`·`keys/root.pem`이 검증한 root와 같아야 한다(`E_SIG`).
+- site·generation·스키마·드래프트 판정은 없다. 빌더는 `deploy/bundle/build_install_bundle.py`, 현장 절차는 `deploy/install/README.md`.
+
 ## CLI
 
 ```bash
@@ -34,6 +44,7 @@ pureiron-bundle keys fingerprint DIR/test-root.pub
 pureiron-bundle keys export-pem DIR/test-root.pub > root.pem
 pureiron-bundle cert issue --root-key DIR/test-root.key --release-pub DIR/release.pub --serial 1 --out DIR
 pureiron-bundle verify site.pib --root-pub DIR/test-root.pub --site site-a [--updater-version 0.1.0] [--extract-to DIR]
+pureiron-bundle verify pureiron-install-2026.10.0.pib --root-pub DIR/test-root.pub --kind install
 ```
 
 `verify`는 새 설치 상태 기준으로 검증하고 결과 JSON을 출력한다. 거부 시 종료 코드 1, stderr 첫 줄이 `<거부 코드>: <상세>`. 키 보관 규칙은 `deploy/keys/README.md`.

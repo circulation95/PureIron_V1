@@ -9,6 +9,7 @@
 | control-api HTTP API | `openapi/control-api.json` | control-web(M4), 현장 Updater(M2) | `oasdiff breaking --fail-on ERR` |
 | 고객 프로젝트 | `project.schema.json` | project-tools, core 프로젝트 적용 | `tools/schema_diff.py` |
 | 번들 manifest | `manifest.schema.json` | bundle-tools(M2) | `tools/schema_diff.py` |
+| 설치 번들 manifest | `install-manifest.schema.json`(`kind: install`) | bundle-tools·`build_install_bundle.py`(M2c) | `tools/schema_diff.py` |
 | fleet 현장 파일 | `fleet-site.schema.json` | pureiron-fleet CI(M4) | `tools/schema_diff.py` |
 
 ## 생성 (generated ≠ authored, ADR-028)

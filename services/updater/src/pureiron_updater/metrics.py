@@ -1,8 +1,8 @@
 """시도 결과 기록: ApplyAttempt 보고 대기열(`state/reports/`)과 textfile 메트릭(`state/metrics/`).
 
-- `reports/<ended>-g<gen>.json`은 control-api `POST /sites/{site}/reports`(plan §6.4) 본문 필드를
-  담는다. site key 서명·`report_seq`·전송은 enroll(M2c)·control-api(M4) 몫이고, 폐쇄망은
-  `report export`가 이 파일들을 묶는다.
+- `reports/<started>-g<gen>-<sha256 12자>.json`은 control-api `POST /sites/{site}/reports`
+  (plan §6.4) 본문 필드를 담는다. `report_seq`·site key 서명은 `report export`(폐쇄망 USB
+  반출, `enroll.py`)가 묶을 때 붙이고, 온라인 전송은 control-api(M4) 몫이다.
 - `metrics/updater.prom`(plan §4.2): `updater_last_result`, `updater_applied_generation`,
   `updater_failed_manual`, `updater_phase_duration_seconds{phase}`(마지막 시도).
 """
@@ -57,10 +57,12 @@ def write_report(state_dir: Path, attempt: Attempt, ended_at: datetime) -> Path:
     }
     directory = state_dir / REPORTS_DIR
     directory.mkdir(parents=True, exist_ok=True)
-    # 파일 이름은 시도 시작 시각 기준 — `_finish`가 crash 뒤 다시 돌아도 같은 파일을 덮어쓴다.
+    # 파일 이름은 시도 시작 시각 + 번들 sha256 앞부분 — `_finish`가 crash 뒤 다시 돌아도 같은 파일을
+    # 덮어쓰고, 같은 순간 거부된 서로 다른 번들(generation 미상)끼리는 겹치지 않는다.
     stamp = attempt.started_at.strftime("%Y%m%dT%H%M%S%fZ")
     gen = "unknown" if attempt.generation is None else str(attempt.generation)
-    path = directory / f"{stamp}-g{gen}.json"
+    bundle = attempt.bundle_sha256.removeprefix("sha256:")[:12]
+    path = directory / f"{stamp}-g{gen}-{bundle}.json"
     atomic_write(path, (json.dumps(report, indent=2, sort_keys=True) + "\n").encode())
     return path
 

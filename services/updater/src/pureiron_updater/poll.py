@@ -1,8 +1,9 @@
 """control-api polling(현장발, plan §6.4) → 번들 다운로드(`fetched`, 창 밖 허용).
 
 - `GET /sites/{site}/desired` → `{generation, bundle_url, sha256, size}`(ETag = gen, 304).
-- 새 generation이면 `bundles/g<gen>.pib.part`에 **Range로 이어 받고**, 크기·sha256이 맞으면
-  `g<gen>.pib`로 이름을 바꿔 시도로 등록한다. 틀리면 `.part`를 지우고 다음 poll에서 처음부터.
+- 새 generation이면 `bundles/poll-<sha256 16자>.pib.part`에 **Range로 이어 받고**, 크기·sha256이
+  맞으면 `.part`를 떼어 시도로 등록한다(이름은 서명 전 믿을 수 없는 gen이 아니라 기대 sha256).
+  틀리면 `.part`를 지우고 다음 poll에서 처음부터.
 - 받기 전 여유 공간 ≥ 2배 번들 + 직전 백업 크기(PM-2 ⑥). 부족하면 받지 않고 기다린다.
 - 커밋된 시도가 진행 중이면 polling은 아무것도 하지 않는다.
 
@@ -166,7 +167,9 @@ def poll_once(updater: Updater, api: ControlApi) -> bool:
         return False
     bundles = updater.settings.bundles_dir
     bundles.mkdir(parents=True, exist_ok=True)
-    final = bundles / f"g{desired.generation}.pib"
+    # 이름은 서명 전에 믿을 수 없는 generation이 아니라 기대 sha256으로 — 대기 시도의 번들 사본과
+    # 겹쳐 그 시도가 정리될 때 새 번들까지 지워지는 일이 없게 한다(`_copy_in`과 같은 방식).
+    final = bundles / f"poll-{desired.sha256.removeprefix('sha256:')[:16]}.pib"
     part = final.with_name(final.name + PART_SUFFIX)
     have = part.stat().st_size if part.exists() else 0
     free = shutil.disk_usage(bundles).free
