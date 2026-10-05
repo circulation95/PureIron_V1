@@ -9,11 +9,12 @@ import urllib.request
 import asyncpg
 import pytest
 
+from pureiron_core.platform import migrate
 from pureiron_core.platform.db import Database
 from pureiron_core.project.ports import EditLockConflictError
 from pureiron_core.project.stub import PgProjectStateStore
 
-from .conftest import CORE_PORT, WEB_PORT, SiteDb, Stack, wait_http
+from .conftest import CORE_PORT, MIGRATIONS, WEB_PORT, SiteDb, Stack, wait_http
 
 pytestmark = pytest.mark.integration
 
@@ -39,7 +40,9 @@ def test_readyz_200_through_core_and_web(stack: Stack) -> None:
     ready = json.loads(wait_http(f"{CORE}/readyz", timeout_s=120))
     assert ready["status"] == "ready"
     assert ready["checks"]["db"]["ok"] is True
-    assert ready["checks"]["schema_envelope"]["cur"] == 1
+    assert (
+        ready["checks"]["schema_envelope"]["cur"] == migrate.load_catalog(MIGRATIONS).app_expected
+    )
     assert ready["checks"]["collector"]["ok"] is True, "collector must hold a gRPC session"
 
     via_web = json.loads(wait_http(f"{WEB}/api/v1/readyz", timeout_s=60))

@@ -1,0 +1,34 @@
+{
+  "commit": "556c65c75dce584fd1b918e8924d19db6d336f67",
+  "images": {
+    "collector": {
+      "config_digest": "sha256:e92b4c9fc74459093f0872a9fed8d695430447e4629828107ddcde67bcc7113c",
+      "tag": "pureiron/collector:r1"
+    },
+    "core": {
+      "config_digest": "sha256:80dccd9e7fb9ce0ad78ae93111868402a925d69144bdf01a2d41d90b5c526384",
+      "tag": "pureiron/core:r1"
+    },
+    "core-test": {
+      "config_digest": "sha256:395d352529209f241257f6eac5634a7d5b250db4d2c72c3741c5ca4c8aa0e535",
+      "tag": "pureiron/core-test:r1"
+    },
+    "site-db": {
+      "config_digest": "sha256:664d102710d5e505dd121d5f7f65265d58b1e75b22156b2fca85febbcf42e507",
+      "tag": "pureiron/site-db:2.30.2-pg16",
+      "upstream": "timescale/timescaledb:2.30.2-pg16@sha256:6f139d56042989bd35f50ba5986e492cd32e35cc6778c50be2659add298dc09f"
+    },
+    "web": {
+      "config_digest": "sha256:3a79af64087b3e3a896643dd5fc4ce5d2186691b6d5617fd71708d9cfdd8161d",
+      "tag": "pureiron/web:r1"
+    }
+  },
+  "name": "r1",
+  "release": "r1",
+  "schema": {
+    "app_expected": 2,
+    "app_max_compatible": 3,
+    "epoch": 2
+  },
+  "version": "2026.10.1"
+}

@@ -17,7 +17,9 @@ services:
     volumes:
       - ${PUREIRON_DB_DATA:-/var/lib/pureiron/db}:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U pureiron -d pureiron"]
+      # TCP(-h 127.0.0.1)로 본다 — 첫 기동의 initdb 임시 서버는 unix socket만 열어 socket 검사는
+      # 통과하지만 곧 재시작한다(그 사이 다른 컨테이너의 TCP 접속은 거부된다).
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U pureiron -d pureiron"]
       interval: 5s
       timeout: 3s
       retries: 30

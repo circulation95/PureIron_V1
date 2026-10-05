@@ -21,7 +21,7 @@ BASE = {
 }
 
 
-def test_real_baseline_is_epoch_one(migrations_dir: Path) -> None:
+def test_real_catalog_epochs(migrations_dir: Path) -> None:
     catalog = load_catalog(migrations_dir)
     assert [m.filename for m in catalog.migrations] == [
         "0001_schema_meta.sql",
@@ -29,10 +29,20 @@ def test_real_baseline_is_epoch_one(migrations_dir: Path) -> None:
         "0003_tag_history.sql",
         "0004_cagg_1m.sql",
         "0005_project_state.sql",
+        "0006_cagg_1h.sql",
+        "0007_cagg_1h_policy.sql",
     ]
-    assert catalog.epochs == {1: 5}
-    assert (catalog.app_expected, catalog.app_max_compatible) == (1, 2)
-    assert [m.transactional for m in catalog.migrations] == [True, True, True, False, True]
+    assert catalog.epochs == {1: 5, 2: 7}
+    assert (catalog.app_expected, catalog.app_max_compatible) == (2, 3)
+    assert [m.transactional for m in catalog.migrations] == [
+        True,
+        True,
+        True,
+        False,
+        True,
+        False,
+        True,
+    ]
 
 
 def test_epoch_lookup_and_reached(tmp_path: Path) -> None:

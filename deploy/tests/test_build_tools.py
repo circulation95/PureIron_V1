@@ -3,8 +3,21 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from images import read_lock
-from n_minus_1 import ReleaseRecord, load_records, pick_previous
+from n_minus_1 import (
+    WAIVERS,
+    GateError,
+    ReleaseRecord,
+    Waiver,
+    check_envelope,
+    check_main_run,
+    check_waived_run,
+    load_records,
+    load_waivers,
+    pick_previous,
+    pytest_counts,
+)
 from repro_build import compare
 
 
@@ -41,3 +54,96 @@ def test_pick_previous_epoch_release_in_numeric_order(tmp_path: Path) -> None:
     assert previous == ReleaseRecord("r10", "r10", 2, "pureiron/core-test:r10", "x")
     assert pick_previous(records, 2) == records[0]
     assert pick_previous(records, 1) is None
+
+
+def test_waivers_are_scoped_to_previous_release(tmp_path: Path) -> None:
+    path = tmp_path / "waivers.json"
+    assert load_waivers(path, "r0") == []
+    path.write_text(
+        json.dumps({"r0": [{"test": "a.py::test_x", "reason": "global count", "expect": "x"}]}),
+        encoding="utf-8",
+    )
+    assert load_waivers(path, "r0") == [Waiver("a.py::test_x", "global count", "x")]
+    assert load_waivers(path, "r1") == []
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"test": "a.py::test_x", "reason": " ", "expect": "x"},
+        {"test": "a.py", "reason": "r", "expect": "x"},
+        {"test": "a.py::", "reason": "r", "expect": "x"},
+        {"test": "a.py::test_", "reason": "r", "expect": "x"},
+        {"test": "a.py::TestX", "reason": "r", "expect": "x"},
+        {"test": "a.py::test_x", "reason": "r"},
+        {"test": "a.py::test_x", "reason": "r", "expect": "("},
+    ],
+)
+def test_waiver_needs_node_id_and_reason(tmp_path: Path, entry: dict[str, str]) -> None:
+    path = tmp_path / "waivers.json"
+    path.write_text(json.dumps({"r0": [entry]}), encoding="utf-8")
+    with pytest.raises(GateError):
+        load_waivers(path, "r0")
+
+
+def test_repo_waivers_load() -> None:
+    assert all(w.reason for w in load_waivers(WAIVERS, "r0"))
+
+
+def test_waiver_file_shape_errors_are_gate_errors(tmp_path: Path) -> None:
+    path = tmp_path / "waivers.json"
+    path.write_text("[]", encoding="utf-8")
+    with pytest.raises(GateError):
+        load_waivers(path, "r0")
+    path.write_text(json.dumps({"r0": {"test": "x"}}), encoding="utf-8")
+    with pytest.raises(GateError):
+        load_waivers(path, "r0")
+
+
+def test_pytest_counts_reads_last_summary() -> None:
+    out = "x.py ..s\n=== 1 passed, 9 skipped, 1 deselected in 0.69s ===\n"
+    assert pytest_counts(out) == {"passed": 1, "skipped": 9, "deselected": 1}
+    assert pytest_counts("=== 1 failed in 0.1s ===") == {"failed": 1}
+    assert pytest_counts("=== 2 errors in 0.1s ===") == {"error": 2}
+    assert pytest_counts("no summary") == {}
+
+
+WAIVERS_ONE = [Waiver("a.py::test_x", "why", "x")]
+
+
+@pytest.mark.parametrize(
+    ("returncode", "counts", "ok"),
+    [
+        (0, {"passed": 1, "skipped": 9, "deselected": 1}, True),
+        (1, {"passed": 1, "failed": 1, "deselected": 1}, False),
+        (0, {"skipped": 10, "deselected": 1}, False),
+        (0, {"passed": 2}, False),
+        (0, {"passed": 1, "deselected": 2}, False),
+    ],
+)
+def test_check_main_run(returncode: int, counts: dict[str, int], ok: bool) -> None:
+    assert (check_main_run(returncode, counts, WAIVERS_ONE) is None) is ok
+
+
+@pytest.mark.parametrize(
+    ("status", "ok"),
+    [
+        ({"cur": 2, "app_expected": 1, "app_max_compatible": 2, "checksum_ok": True}, True),
+        ({"cur": 1, "app_expected": 1, "app_max_compatible": 2, "checksum_ok": True}, False),
+        ({"cur": 2, "app_expected": 2, "app_max_compatible": 3, "checksum_ok": True}, False),
+        ({"cur": 2, "app_expected": 1, "app_max_compatible": 1, "checksum_ok": True}, False),
+        ({"cur": 2, "app_expected": 1, "app_max_compatible": 2, "checksum_ok": False}, False),
+        ({}, False),
+    ],
+)
+def test_check_envelope(status: dict[str, object], ok: bool) -> None:
+    assert (check_envelope(status, previous_epoch=1, current_epoch=2) is None) is ok
+
+
+def test_check_waived_run_requires_expected_reason() -> None:
+    waiver = Waiver("a.py::test_x", "why", r"policy[\s\S]*assert 2 == 1")
+    failed = "E  policy count\nE  assert 2 == 1\n=== 1 failed in 0.2s ==="
+    assert check_waived_run(waiver, failed) is None
+    other = "E  assert 0 == 1\n=== 1 failed in 0.2s ==="
+    assert "different reason" in (check_waived_run(waiver, other) or "")
+    assert "stale" in (check_waived_run(waiver, "=== 1 passed in 0.2s ===") or "")
