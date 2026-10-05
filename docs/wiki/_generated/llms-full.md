@@ -1891,7 +1891,7 @@ uv run python scripts/project_package.py import \
 - 부팅 시 자동 실행 없음. `pureiron-core migrate status|up|verify|lint`, 이력 `schema_migrations(version, name, checksum, applied_at, release)`, `pg_advisory_lock`, 파일 단위 트랜잭션, 실패 즉시 중단.
 - ADD-only lint 거부 목록: DROP/RENAME/`ALTER … TYPE`/TRUNCATE, `ADD CONSTRAINT`, NOT NULL 무기본값, `CREATE UNIQUE INDEX`, `CREATE TRIGGER`, `refresh_continuous_aggregate` 호출, `WITH NO DATA` 없는 CAGG.
 - epoch: 마이그레이션을 포함한 release만 +1. 앱 ready 조건 `app_expected ≤ 현재 epoch ≤ app_max_compatible(= expected + 1)`. 1 epoch 초과 점프는 `E_SCHEMA`(단계 적용).
-- baseline 스키마: `schema_meta`, `tags`(`id`, `path unique` — path 기준 안정 id), `tag_history`(1일 chunk hypertable, `UNIQUE(tag_id, time)`, 2일 후 압축), 1분 CAGG(이후 1시간), `project_state`(`project_id, version, content_hash, base_site_rev, site_rev, edit_lock_owner, edit_lock_gen`).
+- baseline 스키마: `schema_meta`, `tags`(`id`, `path unique` — path 기준 안정 id), `tag_history`(1일 chunk hypertable, `UNIQUE(tag_id, time)`, 2일 후 압축), 1분 CAGG, `project_state`. epoch 2(r1)에서 1시간 CAGG `tag_history_1h`를 더했다(`project_id, version, content_hash, base_site_rev, site_rev, edit_lock_owner, edit_lock_gen`).
 
 ### 기록 정책 (ADR-021)
 
@@ -1933,7 +1933,7 @@ window: { recurring: { tz: Asia/Seoul, days: [sat, sun], start: "02:00", end: "0
 ### V1 구현 현황 (M1, 2026-10-04)
 
 - **계약 파일**(정본): `packages/contracts/collector.proto`, `openapi/{core,control-api}.json`(코드에서 export), `project.schema.json`, `manifest.schema.json`, `fleet-site.schema.json`(JSON Schema 2020-12). 호환성은 `contracts-diff`(buf breaking FILE·oasdiff·`tools/schema_diff.py`), 생성물 동기는 `contracts-drift`.
-- **마이그레이션**: `services/core/migrations/0001_schema_meta`~`0005_project_state` + `epochs.yaml`(epoch 1 = baseline, lint 면제). 이력 `schema_migrations`는 runner가 만들고, 현재 epoch는 `schema_meta('epoch')`에 기록한다 — 구 앱이 자기 카탈로그 없이 envelope를 판정하기 위해서다. 새 마이그레이션 파일은 같은 PR에서 `epochs.yaml`에 epoch를 추가해야 한다(lint). checksum은 줄바꿈을 LF로 정규화한 sha256. 종료 코드 0/2 lock/3 checksum/4 실패/5 lint.
+- **마이그레이션**: `services/core/migrations/0001_schema_meta`~`0005_project_state`(epoch 1 = baseline, lint 면제), `0006_cagg_1h`·`0007_cagg_1h_policy`(epoch 2) + `epochs.yaml`. 이력 `schema_migrations`는 runner가 만들고, 현재 epoch는 `schema_meta('epoch')`에 기록한다 — 구 앱이 자기 카탈로그 없이 envelope를 판정하기 위해서다. 새 마이그레이션 파일은 같은 PR에서 `epochs.yaml`에 epoch를 추가해야 한다(lint). checksum은 줄바꿈을 LF로 정규화한 sha256. 종료 코드 0/2 lock/3 checksum/4 실패/5 lint.
 - `-- pureiron:no-transaction` 파일은 구문별 autocommit, 이후 파일(epoch ≥ 2)은 구문 1개·재실행 안전(`IF NOT EXISTS`/`if_not_exists`)이어야 한다.
 - baseline 이후 파일의 lint는 **허용 목록** 방식이다: `CREATE TABLE`·(UNIQUE 아닌) `CREATE INDEX`·`CREATE VIEW`·`CREATE MATERIALIZED VIEW`(CAGG는 `WITH NO DATA`)·`CREATE TYPE`·`CREATE EXTENSION IF NOT EXISTS`·`ALTER TYPE … ADD VALUE`·`ALTER TABLE`(액션은 `ADD`(제약·NOT NULL 무기본값 제외)와 `SET (timescaledb.…)`만)·`COMMENT ON`·`SELECT create_hypertable|add_compression_policy|add_continuous_aggregate_policy(…)`·`INSERT … ON CONFLICT DO NOTHING`. 그 밖(DO 블록·함수·EXECUTE·BEGIN/COMMIT·UPDATE/DELETE·OR REPLACE·drop_chunks·retention/remove 정책 등)은 거부. contract 제거는 `-- contract: drops <obj> deprecated in epoch <D>` 주석이 있고 파일 epoch ≥ D+1일 때만 허용.
 - `--base-ref`가 알 수 없는 커밋이면 실패한다(검사를 조용히 끄지 않음). base에 이미 있는 최대 version 이하 번호의 새 파일도 거부한다.
@@ -1971,6 +1971,13 @@ window: { recurring: { tz: Asia/Seoul, days: [sat, sun], start: "02:00", end: "0
 - **설정**: Updater·운영자 CLI 모두 프로세스 환경 + `/etc/pureiron/updater.env`(프로세스 환경 우선). `PUREIRON_SITE_ID`는 `enroll`이 기록한다.
 - **M2b 이월 처리**: 대기 시도는 검증상 더 높은 generation만 대체(CLI `apply`도 poll과 같은 규칙, 같은·낮은 gen은 새 번들만 `E_GEN` 보고), 보고 파일명에 번들 sha256 12자(같은 순간 거부 충돌 제거), 성공 뒤 GC(적용 gen·직전 gen의 compose·백업·이미지만 보존), compose 최소 버전 2.17.0(`up --wait-timeout`). 최초 설치 실패 뒤 재시도도 최초 설치로 진행(보호할 직전 상태 없음 — 의도된 동작).
 - **아직 없음**: 실제 호스트 설치·네트워크 차단·재부팅·`systemctl kill` crash 실측(M2d, Hyper-V VM), control-api 등록·rekey·보고 수신(M4), 운영 root key(D10, test key만).
+
+### V1 구현 현황 (M2d r1 release, 2026-10-05)
+
+- **r1 = epoch 2**(`deploy/releases/r1.json`, 2026.10.1): `tag_history_1h`(1시간 CAGG, 1분 CAGG와 같은 열 `avg·min·max·last·samples`). 1분 평균을 다시 평균하면 표본 수 가중이 틀어지므로 원본 `tag_history`에서 직접 집계한다(압축 chunk도 읽음). refresh policy는 `start_offset` 3일·`end_offset` 1시간·1시간 주기. 앱 envelope는 [2, 3] — r0 앱(envelope [1, 2])은 epoch 2 DB에서 계속 ready다(롤백 경로).
+- 통합 테스트가 "압축 chunk가 있는 epoch 1 DB → `migrate up` → 1시간 CAGG가 압축 chunk를 집계"를 고정한다. r1 번들 실측: 739 MB, 빌드 15 s(WSL2).
+- **n-minus-1 waiver**: N-1 core-test 이미지는 동결이라 고칠 수 없다. 앱 동작이 아니라 스키마 모양을 지나치게 좁게 단정한 테스트만 `deploy/build/n_minus_1_waivers.json`(N-1 release × pytest node id × 사유)으로 deselect 하고 게이트가 `::warning::`으로 남긴다. 첫 항목: r0 `test_baseline_timescale_objects`(refresh policy 전역 개수 == 1, epoch 2에서 2). r1부터 같은 검사는 CAGG별 개수로 센다 — 스키마 단정은 다음 epoch가 객체를 더해도 성립하게 쓴다.
+- **아직 없음**: Hyper-V VM 실측(폐쇄망 설치·r0→r1·r1′ 롤백·crash 주입·nftables) — 현재 계정이 Hyper-V Administrators가 아니어서 다음 PR.
 
 ---
 
