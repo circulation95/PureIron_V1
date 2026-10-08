@@ -353,7 +353,8 @@ async def test_epoch2_resumes_after_crash_between_files(
                 cagg.checksum,
             )
         status = json.loads(_cli(env, "migrate", "status", "--json").stdout)
-        pending = ["0007_cagg_1h_policy.sql"]
+        # 0007 + 그 뒤 epoch의 파일(다음 epoch가 생겨도 이 테스트는 epoch 2 경계만 본다)
+        pending = [m.filename for m in catalog.migrations if m.version > cagg.version]
         assert (status["cur"], status["pending"]) == (
             1,
             pending if recorded else ["0006_cagg_1h.sql", *pending],
