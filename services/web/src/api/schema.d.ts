@@ -77,6 +77,24 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * Acquisition
+         * @description 수집 상태 집계(준비 판정에는 쓰지 않음 — 장비가 꺼진 현장도 ready). 태그 값은 담지 않는다.
+         */
+        Acquisition: {
+            /** Devices Connected */
+            devices_connected: number;
+            /** Devices Total */
+            devices_total: number;
+            /** Good Ratio */
+            good_ratio: number | null;
+            /** Plan Rev */
+            plan_rev: number | null;
+            /** Tags Good */
+            tags_good: number;
+            /** Tags Total */
+            tags_total: number;
+        };
         /** Check */
         Check: {
             /** Detail */
@@ -134,6 +152,7 @@ export interface components {
         };
         /** Readiness */
         Readiness: {
+            acquisition: components["schemas"]["Acquisition"];
             checks: components["schemas"]["ReadinessChecks"];
             /**
              * Status

@@ -579,6 +579,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "grpcio" },
     { name = "protobuf" },
+    { name = "pureiron-project-tools" },
     { name = "ruamel-yaml" },
     { name = "uvicorn" },
 ]
@@ -589,6 +590,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.118" },
     { name = "grpcio", specifier = ">=1.75" },
     { name = "protobuf", specifier = ">=6.32" },
+    { name = "pureiron-project-tools", editable = "packages/project-tools" },
     { name = "ruamel-yaml", specifier = ">=0.18.15" },
     { name = "uvicorn", specifier = ">=0.37" },
 ]

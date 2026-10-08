@@ -1,4 +1,8 @@
-"""`/healthz`(프로세스 생존)·`/readyz`(DB + 스키마 epoch envelope + collector 세션), plan §6.5."""
+"""`/healthz`(프로세스 생존)·`/readyz`(DB + 스키마 epoch envelope + collector 세션), plan §6.5.
+
+`/readyz`는 수집 집계(`acquisition`: 장비 연결 수·태그 GOOD 비율)도 함께 낸다 — Updater `checking`
+단계의 GOOD 비율 기준(baseline - 2%p)이 이 값을 쓴다.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +12,7 @@ from fastapi import APIRouter, Response, status
 from pydantic import BaseModel
 
 from pureiron_core import __version__
-from pureiron_core.acquisition.ports import CollectorSessionStatus
+from pureiron_core.acquisition.ports import AcquisitionStatus
 from pureiron_core.platform.migrate import Envelope, SchemaUnavailableError
 
 
@@ -48,10 +52,22 @@ class ReadinessChecks(BaseModel):
     collector: Check
 
 
+class Acquisition(BaseModel):
+    """수집 상태 집계(준비 판정에는 쓰지 않음 — 장비가 꺼진 현장도 ready). 태그 값은 담지 않는다."""
+
+    plan_rev: int | None
+    devices_total: int
+    devices_connected: int
+    tags_total: int
+    tags_good: int
+    good_ratio: float | None
+
+
 class Readiness(BaseModel):
     status: Literal["ready", "not_ready"]
     version: str
     checks: ReadinessChecks
+    acquisition: Acquisition
 
 
 async def _schema_check(db_ok: bool, schema: SchemaProbe) -> SchemaEnvelopeCheck:
@@ -91,7 +107,7 @@ async def _schema_check(db_ok: bool, schema: SchemaProbe) -> SchemaEnvelopeCheck
 
 
 def build_health_router(
-    *, db: DatabaseProbe, schema: SchemaProbe, collector: CollectorSessionStatus
+    *, db: DatabaseProbe, schema: SchemaProbe, collector: AcquisitionStatus
 ) -> APIRouter:
     router = APIRouter(tags=["ops"])
 
@@ -117,8 +133,20 @@ def build_health_router(
         ready = checks.db.ok and checks.schema_envelope.ok and checks.collector.ok
         if not ready:
             response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        summary = collector.summary()
+        acquisition = Acquisition(
+            plan_rev=summary.plan_rev,
+            devices_total=summary.devices_total,
+            devices_connected=summary.devices_connected,
+            tags_total=summary.tags_total,
+            tags_good=summary.tags_good,
+            good_ratio=summary.good_ratio,
+        )
         return Readiness(
-            status="ready" if ready else "not_ready", version=__version__, checks=checks
+            status="ready" if ready else "not_ready",
+            version=__version__,
+            checks=checks,
+            acquisition=acquisition,
         )
 
     return router

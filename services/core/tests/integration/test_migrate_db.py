@@ -42,7 +42,7 @@ def test_up_is_idempotent_and_status_reports_epoch(stack: Stack, fresh_database:
     env = stack.cli_env(fresh_database)
     first = _cli(env, "migrate", "up")
     assert first.returncode == 0, first.stderr
-    assert "applied 7" in first.stdout
+    assert "applied 8" in first.stdout
     second = _cli(env, "migrate", "up")
     assert second.returncode == 0, second.stderr
     assert "applied 0" in second.stdout
@@ -50,9 +50,9 @@ def test_up_is_idempotent_and_status_reports_epoch(stack: Stack, fresh_database:
     status = _cli(env, "migrate", "status", "--json")
     assert status.returncode == 0, status.stderr
     assert json.loads(status.stdout) == {
-        "cur": 2,
-        "app_expected": 2,
-        "app_max_compatible": 3,
+        "cur": 3,
+        "app_expected": 3,
+        "app_max_compatible": 4,
         "pending": [],
         "checksum_ok": True,
         "mismatched": [],
@@ -309,7 +309,7 @@ async def test_epoch2_on_compressed_epoch1_db(stack: Stack, fresh_database: str)
 
     conn = await asyncpg.connect(stack.dsn(fresh_database), password=stack.password)
     try:
-        assert await migrate.read_epoch(conn) == 2
+        assert await migrate.read_epoch(conn) == migrate.load_catalog(MIGRATIONS).app_expected
         recent_compressed = await conn.fetchval(
             "SELECT count(*) FROM timescaledb_information.chunks "
             "WHERE hypertable_name = 'tag_history' AND is_compressed "
@@ -353,7 +353,8 @@ async def test_epoch2_resumes_after_crash_between_files(
                 cagg.checksum,
             )
         status = json.loads(_cli(env, "migrate", "status", "--json").stdout)
-        pending = ["0007_cagg_1h_policy.sql"]
+        # 0007 + 그 뒤 epoch의 파일(다음 epoch가 생겨도 이 테스트는 epoch 2 경계만 본다)
+        pending = [m.filename for m in catalog.migrations if m.version > cagg.version]
         assert (status["cur"], status["pending"]) == (
             1,
             pending if recorded else ["0006_cagg_1h.sql", *pending],

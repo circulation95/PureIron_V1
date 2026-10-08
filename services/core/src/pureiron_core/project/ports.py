@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Protocol
@@ -48,3 +49,43 @@ class ProjectStatePort(Protocol):
     async def release_edit_lock(self, owner: str) -> None:
         """owner의 잠금을 푼다. 이미 풀려 있으면 아무것도 하지 않는다."""
         ...
+
+
+# --- 장비·태그 정의(M3a, `devices.definition`·`tags.definition`) ----------------------------
+
+
+class DefinitionsUnavailableError(Exception):
+    """site-db·스키마 문제로 정의를 읽지 못했다(호출자는 기다렸다 다시 시도한다)."""
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceDef:
+    """`devices/<id>.yaml` 정규형(스키마 기본값 생략). 기본값은 소비자가 채운다."""
+
+    device_id: str
+    definition: Mapping[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class TagDef:
+    tag_id: int
+    path: str
+    device_id: str
+    definition: Mapping[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class Definitions:
+    """한 시점의 활성(retired 아님) 정의. `rev`가 AcquisitionPlan.plan_rev다."""
+
+    rev: int
+    devices: tuple[DeviceDef, ...] = ()
+    tags: tuple[TagDef, ...] = ()
+
+
+class DefinitionsSource(Protocol):
+    async def rev(self) -> int:
+        """`project_state.definitions_rev`(가벼운 변경 감지용)."""
+        ...
+
+    async def load(self) -> Definitions: ...

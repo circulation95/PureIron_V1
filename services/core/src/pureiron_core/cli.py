@@ -1,4 +1,4 @@
-"""`pureiron-core` 진입점: serve · migrate · project.
+"""`pureiron-core` 진입점: serve · migrate · project · apply-definitions.
 
 종료 코드(plan §6.6): 0 성공, 2 lock, 3 checksum, 4 실패, 5 lint.
 `runtime`/`app`을 import할 수 있는 유일한 모듈이다(import-linter 계약 (a)).
@@ -25,10 +25,12 @@ from pureiron_core.app import create_app
 from pureiron_core.platform import migrate
 from pureiron_core.platform.db import Database, DatabaseUnavailableError, connect_once
 from pureiron_core.platform.migrate_lint import lint_directory
+from pureiron_core.project.definitions import apply_definitions
 from pureiron_core.project.ports import ProjectStateError
 from pureiron_core.project.stub import PgProjectStateStore
 from pureiron_core.runtime import SiteRuntime
 from pureiron_core.settings import Settings, SettingsError, read_secret
+from pureiron_project.project import load_project
 
 _DURATION = re.compile(r"^(\d+(?:\.\d+)?)(ms|s|m)?$")
 
@@ -69,6 +71,13 @@ def _parser() -> argparse.ArgumentParser:
     export.add_argument("--out", type=Path, default=None)
     restore = proj_sub.add_parser("restore")
     restore.add_argument("--from", dest="source", type=Path, required=True)
+
+    defs = sub.add_parser(
+        "apply-definitions",
+        help="프로젝트 트리의 장비·태그 정의를 site-db에 반영(path 기준 upsert·retire, M3a)",
+    )
+    defs.add_argument("project_dir", type=Path)
+    defs.add_argument("--json", action="store_true")
     return parser
 
 
@@ -173,6 +182,29 @@ def _run_project(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def _apply_definitions(args: argparse.Namespace, settings: Settings) -> int:
+    project = load_project(args.project_dir)
+    if not project.ok:
+        for problem in project.problems:
+            print(f"error: {problem}", file=sys.stderr)
+        return migrate.EXIT_FAILED
+
+    async def run(conn: migrate.Connection) -> int:
+        result = await apply_definitions(conn, project)
+        if args.json:
+            print(json.dumps(result.as_json(), sort_keys=True))
+        else:
+            print(
+                f"apply-definitions: rev={result.rev} changed={result.changed} "
+                f"devices +{result.devices_added} ~{result.devices_updated} "
+                f"-{result.devices_retired} tags +{result.tags_added} ~{result.tags_updated} "
+                f"-{result.tags_retired}"
+            )
+        return migrate.EXIT_OK
+
+    return asyncio.run(_with_connection(settings, run))
+
+
 def _utf8_console() -> None:
     """Windows 콘솔(cp949 등)에서도 한국어·기호 출력으로 죽지 않게 한다."""
     for stream in (sys.stdout, sys.stderr):
@@ -192,6 +224,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _serve(settings)
         if args.command == "migrate":
             return asyncio.run(_migrate(args, settings))
+        if args.command == "apply-definitions":
+            return _apply_definitions(args, settings)
         return _run_project(args, settings)
     except migrate.MigrationError as exc:
         print(f"error: {exc}", file=sys.stderr)

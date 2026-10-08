@@ -1,10 +1,18 @@
-"""compose 수직 경로: site-db → migrate up → core·collector·web → readyz 200 (US-005)."""
+"""compose 수직 경로: site-db → migrate up → core·collector·web → readyz 200 (US-005).
+
+M3a-2: 시뮬레이터 100태그 apply → 10s 내 100% GOOD, collector kill → 태그 BAD·장비 DISCONNECTED.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import time
+import urllib.error
 import urllib.request
+from collections.abc import Callable
+from pathlib import Path
+from typing import cast
 
 import asyncpg
 import pytest
@@ -14,7 +22,19 @@ from pureiron_core.platform.db import Database
 from pureiron_core.project.ports import EditLockConflictError
 from pureiron_core.project.stub import PgProjectStateStore
 
-from .conftest import CORE_PORT, MIGRATIONS, WEB_PORT, SiteDb, Stack, wait_http
+from .conftest import (
+    CORE_PORT,
+    MIGRATIONS,
+    WEB_PORT,
+    SiteDb,
+    Stack,
+    compose,
+    core_cli,
+    holding_tag,
+    modbus_device,
+    wait_http,
+    write_project,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -106,3 +126,63 @@ async def test_apply_records_base_site_rev_and_restore_roundtrip(site_db: SiteDb
         assert restored.to_snapshot() == snapshot
     finally:
         await db.close()
+
+
+SIM_TAGS = 100
+GOOD_WITHIN_S = 10.0
+
+
+def _readyz() -> dict[str, object]:
+    """준비 여부와 무관하게(503 포함) readyz 본문."""
+    try:
+        with urllib.request.urlopen(f"{CORE}/readyz", timeout=3) as response:
+            body: bytes = response.read()
+    except urllib.error.HTTPError as exc:
+        body = exc.read()
+    data: dict[str, object] = json.loads(body)
+    return data
+
+
+def _wait_acquisition(
+    predicate: Callable[[dict[str, object]], bool], timeout_s: float
+) -> dict[str, object]:
+    deadline = time.monotonic() + timeout_s
+    last: dict[str, object] = {}
+    while time.monotonic() < deadline:
+        acquisition = _readyz().get("acquisition")
+        if isinstance(acquisition, dict):
+            last = cast("dict[str, object]", acquisition)
+            if predicate(last):
+                return last
+        time.sleep(0.25)
+    raise AssertionError(f"acquisition did not reach the expected state in {timeout_s}s: {last}")
+
+
+@pytest.mark.compose
+def test_sim_100_tags_good_then_collector_kill(stack: Stack, tmp_path: Path) -> None:
+    wait_http(f"{CORE}/readyz", timeout_s=120)
+    root = write_project(
+        tmp_path / "sim-project",
+        {"sim": modbus_device("sim", "simulator", 5020)},
+        {"sim": [holding_tag(f"sim/r{i:03d}", "sim", i) for i in range(SIM_TAGS)]},
+    )
+    applied = core_cli(stack.cli_env("pureiron"), "apply-definitions", str(root), "--json")
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+
+    good = _wait_acquisition(
+        lambda a: a.get("tags_total") == SIM_TAGS and a.get("tags_good") == SIM_TAGS,
+        GOOD_WITHIN_S,
+    )
+    assert good["good_ratio"] == 1.0
+    _wait_acquisition(lambda a: a.get("devices_connected") == 1, 10)
+
+    try:
+        compose(stack.compose_env, "kill", "collector")
+        down = _wait_acquisition(
+            lambda a: a.get("tags_good") == 0 and a.get("devices_connected") == 0, 15
+        )
+        assert down["tags_total"] == SIM_TAGS
+        assert down["good_ratio"] == 0.0
+    finally:
+        compose(stack.compose_env, "up", "-d", "collector")
+        wait_http(f"{CORE}/readyz", timeout_s=60)  # 다른 compose 테스트를 위해 세션 복구

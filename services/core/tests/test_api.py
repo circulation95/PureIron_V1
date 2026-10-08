@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from pureiron_core import __version__
+from pureiron_core.acquisition.ports import AcquisitionSummary
 from pureiron_core.api.health import build_health_router
 from pureiron_core.api.project import build_project_router
 from pureiron_core.platform.db import Connection, DatabaseUnavailableError
@@ -46,6 +47,14 @@ class FakeSchema:
 @dataclass
 class FakeCollector:
     collector_connected: bool = True
+    stats: AcquisitionSummary = field(
+        default_factory=lambda: AcquisitionSummary(
+            plan_rev=None, devices_total=0, devices_connected=0, tags_total=0, tags_good=0
+        )
+    )
+
+    def summary(self) -> AcquisitionSummary:
+        return self.stats
 
 
 def _health_client(db: FakeDb, schema: FakeSchema, collector: FakeCollector) -> TestClient:
@@ -73,6 +82,27 @@ def test_readyz_ready() -> None:
         "app_expected": 1,
         "app_max_compatible": 2,
     }
+
+
+def test_readyz_acquisition_summary_is_informational() -> None:
+    """GOOD 비율은 집계로만 나가고 준비 판정에는 쓰이지 않는다(장비가 꺼진 현장도 ready)."""
+    stats = AcquisitionSummary(
+        plan_rev=4, devices_total=2, devices_connected=1, tags_total=4, tags_good=1
+    )
+    response = _health_client(FakeDb(), FakeSchema(), FakeCollector(stats=stats)).get(
+        "/api/v1/readyz"
+    )
+    assert response.status_code == 200
+    assert response.json()["acquisition"] == {
+        "plan_rev": 4,
+        "devices_total": 2,
+        "devices_connected": 1,
+        "tags_total": 4,
+        "tags_good": 1,
+        "good_ratio": 0.25,
+    }
+    empty = _health_client(FakeDb(), FakeSchema(), FakeCollector()).get("/api/v1/readyz")
+    assert empty.json()["acquisition"]["good_ratio"] is None
 
 
 def test_readyz_db_down() -> None:

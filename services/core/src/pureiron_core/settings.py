@@ -25,6 +25,19 @@ def _int(environ: Mapping[str, str], key: str, default: int) -> int:
         raise SettingsError(f"{key} must be an integer, got {raw!r}") from None
 
 
+def _float(environ: Mapping[str, str], key: str, default: float) -> float:
+    raw = environ.get(key)
+    if raw is None or raw == "":
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        raise SettingsError(f"{key} must be a number, got {raw!r}") from None
+    if value <= 0:
+        raise SettingsError(f"{key} must be positive, got {raw!r}")
+    return value
+
+
 def _path(environ: Mapping[str, str], key: str) -> Path | None:
     raw = environ.get(key)
     return Path(raw) if raw else None
@@ -51,6 +64,15 @@ class Settings:
     release: str
     migrations_dir: Path
     updater_token_file: Path | None
+    # 정의 rev(= plan_rev) 확인 주기. 바뀌면 plan을 다시 만들어 collector 세션에 보낸다.
+    plan_refresh_s: float = 2.0
+    # 샘플 시각이 이보다 오래된 live batch 샘플은 이력에만 기록(현재값·알람 갱신 없음).
+    ingest_live_max_age_s: float = 5.0
+    # 장비 무신호 판정 = max(3 * poll_ms, 이 값).
+    device_silence_min_s: float = 5.0
+    # collector가 이 시간 동안 아무것도(heartbeat 포함) 보내지 않으면 세션을 닫는다(half-open 방지).
+    # collector `PUREIRON_COLLECTOR_HEARTBEAT_S`의 2배 이상이어야 한다.
+    session_silence_s: float = 15.0
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str]) -> Settings:
@@ -64,4 +86,8 @@ class Settings:
             release=environ.get("PUREIRON_RELEASE", __version__),
             migrations_dir=_path(environ, "PUREIRON_MIGRATIONS_DIR") or _SOURCE_MIGRATIONS,
             updater_token_file=_path(environ, "PUREIRON_UPDATER_TOKEN_FILE"),
+            plan_refresh_s=_float(environ, "PUREIRON_PLAN_REFRESH_S", 2.0),
+            ingest_live_max_age_s=_float(environ, "PUREIRON_INGEST_LIVE_MAX_AGE_S", 5.0),
+            device_silence_min_s=_float(environ, "PUREIRON_DEVICE_SILENCE_MIN_S", 5.0),
+            session_silence_s=_float(environ, "PUREIRON_SESSION_SILENCE_S", 15.0),
         )

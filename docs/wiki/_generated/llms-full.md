@@ -2726,10 +2726,11 @@ PureIron 런타임 설정의 정본은 `backend/src/pureiron/config.py`의 `Sett
 - compose 프로젝트명 `pureiron` 고정(`-p pureiron`), 모든 이미지 `pureiron/<svc>:<release>` + `pull_policy: never`, 로드 후 `.Id == config_digest` assert.
 - 비밀값: `pureiron-site secret set <name>`으로 `state/secrets/`에 저장, 프로젝트는 `secret://<name>`만 참조. 중앙 토큰은 `control_api_token`.
 - 현장 CLI(`pureiron-site`): `enroll`, `apply <pib>`, `bundle verify <pib>`, `status`, `secret set`, `report export`, `project export`.
-- Redis 없음(ADR-008 개정). core `/readyz` = DB 연결 + 스키마 호환 범위 + collector 세션.
+- Redis 없음(ADR-008 개정). core `/readyz` = DB 연결 + 스키마 호환 범위 + collector 세션. 응답의 `acquisition`(plan_rev·장비 연결 수·태그 GOOD 수·`good_ratio`)은 집계일 뿐 준비 판정에 쓰지 않으며, Updater `checking` 단계의 GOOD 비율 기준이 이 값을 쓴다(M3a).
+- 장비·태그 정의: `pureiron-core apply-definitions <프로젝트 디렉터리>`가 project-tools로 검증한 뒤 `devices.definition`·`tags.definition`(jsonb)에 path 기준 upsert·retire 하고, 바뀐 것이 있을 때만 `project_state.definitions_rev`(= plan_rev)를 올린다. core는 이 rev를 주기적으로 읽어 collector에 새 plan을 보낸다(정식 project apply는 M5).
 - 관측: core·collector `/metrics`, Updater가 60초마다 `state/metrics/<svc>.prom`·일별 jsonl로 기록, `/var/lib/pureiron` 사용률 경고 ≥ 0.80·위험 ≥ 0.90.
 
-### V1 환경변수 (M1 구현)
+### V1 환경변수 (M1~M3a 구현)
 
 정본은 `services/core/src/pureiron_core/settings.py`, `services/collector/src/pureiron_collector/settings.py`, `deploy/compose/site.compose.yml`. 비밀값은 값이 아니라 **파일 경로**로만 받는다.
 
@@ -2742,6 +2743,10 @@ PureIron 런타임 설정의 정본은 `backend/src/pureiron/config.py`의 `Sett
 | `PUREIRON_RELEASE` | core·compose | `0.1.0-dev` | release 이름(`schema_migrations.release`, 이미지 태그) |
 | `PUREIRON_MIGRATIONS_DIR` | core | 소스 트리 `services/core/migrations` | 이미지에서는 `/opt/pureiron/migrations` |
 | `PUREIRON_UPDATER_TOKEN_FILE` | core | 없음 | 편집 잠금 API용 Updater 토큰 파일. 없으면 잠금 API는 503(기본 거부) |
+| `PUREIRON_PLAN_REFRESH_S` | core | `2.0` | 정의 rev(= plan_rev) 확인 주기. 바뀌면 열린 collector 세션에 새 plan |
+| `PUREIRON_INGEST_LIVE_MAX_AGE_S` | core | `5.0` | 샘플 시각이 이보다 오래된 live 샘플은 이력에만(현재값·알람 갱신 없음) |
+| `PUREIRON_DEVICE_SILENCE_MIN_S` | core | `5.0` | 장비 무신호 판정 `max(3×poll_ms, 이 값)` → 장비 DISCONNECTED·태그 BAD |
+| `PUREIRON_SESSION_SILENCE_S` | core | `15.0` | collector가 이 시간 동안 아무것도 보내지 않으면 세션을 닫음(RST 없는 단절 대비). collector `PUREIRON_COLLECTOR_HEARTBEAT_S`의 2배 이상 |
 | `PUREIRON_CORE_GRPC` | collector | `127.0.0.1:50051` | core gRPC 주소(compose: `core:50051`) |
 | `PUREIRON_COLLECTOR_HEARTBEAT_S` | collector | `1.0` | 빈 batch heartbeat 주기 |
 | `PUREIRON_COLLECTOR_RECONNECT_INITIAL_S` / `_MAX_S` | collector | `0.5` / `30` | 재연결 backoff |

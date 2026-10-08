@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import secrets
 import shutil
@@ -26,6 +27,8 @@ import asyncpg
 import pytest
 
 from pureiron_core.platform import migrate
+
+type JsonObject = dict[str, object]
 
 REPO = Path(__file__).resolve().parents[4]
 COMPOSE_DIR = REPO / "deploy" / "compose"
@@ -201,3 +204,44 @@ async def site_db(request: pytest.FixtureRequest) -> AsyncGenerator[SiteDb]:
     finally:
         await conn.close()
     yield db
+
+
+def write_project(
+    root: Path, devices: Mapping[str, JsonObject], tags: Mapping[str, list[JsonObject]]
+) -> Path:
+    """고객 프로젝트 트리를 만든다(JSON은 YAML이기도 하다 — load_project가 그대로 읽는다).
+
+    core-test 이미지에는 project-tools fixture가 없으므로 테스트가 트리를 직접 쓴다.
+    """
+    if root.exists():
+        shutil.rmtree(root)
+    (root / "devices").mkdir(parents=True)
+    (root / "tags").mkdir()
+    project = {"schema_version": 1, "project_id": "it", "name": "integration"}
+    (root / "project.yaml").write_text(json.dumps(project), encoding="utf-8")
+    for device_id, device in devices.items():
+        (root / "devices" / f"{device_id}.yaml").write_text(json.dumps(device), encoding="utf-8")
+    for device_id, items in tags.items():
+        (root / "tags" / f"{device_id}.yaml").write_text(json.dumps(items), encoding="utf-8")
+    return root
+
+
+def modbus_device(device_id: str, host: str, port: int = 502) -> JsonObject:
+    return {"id": device_id, "protocol": "modbus_tcp", "host": host, "port": port}
+
+
+def holding_tag(path: str, device_id: str, address: int, data_type: str = "uint16") -> JsonObject:
+    return {
+        "path": path,
+        "device": device_id,
+        "modbus": {"register_type": "holding", "address": address, "data_type": data_type},
+    }
+
+
+def core_cli(env: Mapping[str, str], *args: str) -> subprocess.CompletedProcess[str]:
+    """호스트 venv의 `pureiron-core` CLI(dev compose의 site-db 포트로 접속)."""
+    exe = shutil.which("pureiron-core")
+    assert exe is not None
+    return subprocess.run(
+        [exe, *args], env=dict(env), capture_output=True, text=True, encoding="utf-8", check=False
+    )

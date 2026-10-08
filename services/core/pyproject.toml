@@ -10,7 +10,11 @@ dependencies = [
     "grpcio>=1.75",
     "protobuf>=6.32",
     "ruamel.yaml>=0.18.15",
+    "pureiron-project-tools",
 ]
+
+[tool.uv.sources]
+pureiron-project-tools = { workspace = true }
 
 [project.scripts]
 pureiron-core = "pureiron_core.cli:main"
