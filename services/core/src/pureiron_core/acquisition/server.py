@@ -1,74 +1,246 @@
-"""`Acquisition.Session` gRPC 서버(core = 서버). M1 골격: Hello에 빈 plan, batch마다 Ack.
+"""`Acquisition.Session` gRPC 서버(core = 서버)와 plan 배포.
 
-ingest(현재값·historian 버퍼)는 M3a에서 붙는다. 쓰기(`WriteRequest`)는 ADR-013 가드레일
-구현 전까지 보내지 않는다.
+세션 계약(M3a-1 PR #14 리뷰에서 확정, `services/collector/.../stream.py` docstring과 짝):
+- Hello를 받으면 현재 plan을 보낸다 — 같은 rev여도 세션마다. collector는 첫 plan에서 live
+  전송을 켠다. DB가 아직 준비되지 않아 plan이 없으면 보류했다가 처음 읽히는 순간 보낸다.
+- Hello 직후부터(plan 전·DB 준비 전 포함) heartbeat(seq 0)를 포함한 **모든 batch에 Ack** 한다
+  — collector는 core가 `core_silence_s` 동안 조용하면 세션을 끊는다. Ack는 메모리 반영 직후,
+  이벤트 발행 전에 보낸다.
+- plan이 바뀌면(`project_state.definitions_rev`) 열린 세션 전부에 새 plan을 보낸다.
+- 세션이 하나도 남지 않으면 전 장비 DISCONNECTED·전 태그 BAD(스트림 종료 = 신호 없음).
+
+쓰기(`WriteRequest`)는 ADR-013 가드레일 구현 전까지 보내지 않는다.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Sequence
+from dataclasses import dataclass, field
 
 from grpc import aio
 
 from pureiron_core._gen import collector_pb2 as pb
 from pureiron_core._gen import collector_pb2_grpc as pb_grpc
+from pureiron_core.acquisition.devices import DeviceMonitor
+from pureiron_core.acquisition.ingest import Ingestor
+from pureiron_core.acquisition.plan import build_plan
+from pureiron_core.acquisition.ports import AcquisitionSummary
 from pureiron_core.platform.bus import Event, EventBus
+from pureiron_core.project.ports import DefinitionsSource, DefinitionsUnavailableError
+from pureiron_core.tags.ports import TagKey, TagStorePort
 
 log = logging.getLogger(__name__)
 
 SESSION_TOPIC = "collector.session.changed"
-EMPTY_PLAN_REV = 0
-DEFAULT_POLL_MS = 1000
+WATCHDOG_INTERVAL_S = 1.0
+
+type Outgoing = asyncio.Queue[pb.CoreMsg | None]
+
+
+@dataclass(eq=False, slots=True)
+class _Session:
+    outgoing: Outgoing = field(default_factory=asyncio.Queue[pb.CoreMsg | None])
+    hello: bool = False
 
 
 class AcquisitionService(pb_grpc.AcquisitionServicer):
-    def __init__(self, bus: EventBus) -> None:
+    def __init__(
+        self,
+        bus: EventBus,
+        tags: TagStorePort,
+        devices: DeviceMonitor,
+        ingestor: Ingestor,
+    ) -> None:
         self._bus = bus
-        self._sessions = 0
+        self._tags = tags
+        self._devices = devices
+        self._ingestor = ingestor
+        self._sessions: set[_Session] = set()
+        self._plan: pb.AcquisitionPlan | None = None
 
     @property
     def collector_connected(self) -> bool:
-        return self._sessions > 0
+        return bool(self._sessions)
 
-    async def _set_sessions(self, delta: int) -> None:
-        self._sessions += delta
-        await self._bus.publish(Event(SESSION_TOPIC, {"sessions": self._sessions}))
+    @property
+    def plan_rev(self) -> int | None:
+        return self._plan.plan_rev if self._plan is not None else None
+
+    def summary(self) -> AcquisitionSummary:
+        tags = self._tags.summary()
+        devices = self._devices.summary()
+        return AcquisitionSummary(
+            plan_rev=self.plan_rev,
+            devices_total=devices.total,
+            devices_connected=devices.connected,
+            tags_total=tags.total,
+            tags_good=tags.good,
+        )
+
+    async def _publish(self, events: Iterable[Event]) -> None:
+        for event in events:
+            await self._bus.publish(event)
+
+    # --- plan ----------------------------------------------------------------------------
+    async def set_plan(self, plan: pb.AcquisitionPlan, keys: Sequence[TagKey]) -> None:
+        """새 plan을 적용한다: 색인을 먼저 바꾸고(새 tag_id 샘플이 바로 반영되게) 세션에 보낸다."""
+        self._tags.reindex(keys)
+        self._devices.reindex(plan)
+        self._plan = plan
+        for session in self._sessions:
+            if session.hello:
+                session.outgoing.put_nowait(pb.CoreMsg(plan=plan))
+
+    # --- 세션 ----------------------------------------------------------------------------
+    async def _set_sessions(self) -> None:
+        await self._bus.publish(Event(SESSION_TOPIC, {"sessions": len(self._sessions)}))
+
+    async def _handle(self, message: pb.CollectorMsg, session: _Session) -> None:
+        kind = message.WhichOneof("msg")
+        if kind == "batch":
+            events = self._ingestor.ingest(message.batch)
+            session.outgoing.put_nowait(pb.CoreMsg(ack=pb.Ack(seq=message.batch.seq)))
+            await self._publish(events)
+        elif kind == "hello":
+            log.info(
+                "collector connected: version=%s last_plan_rev=%d",
+                message.hello.collector_version,
+                message.hello.last_plan_rev,
+            )
+            session.hello = True
+            if self._plan is not None:
+                session.outgoing.put_nowait(pb.CoreMsg(plan=self._plan))
+        elif kind == "health":
+            await self._publish(self._devices.on_health(message.health))
+        elif kind == "write_result":
+            log.warning(
+                "unexpected write result %s: %s",
+                message.write_result.request_id,
+                message.write_result.error,
+            )
+
+    async def _read(self, requests: AsyncIterator[pb.CollectorMsg], session: _Session) -> None:
+        try:
+            async for message in requests:
+                await self._handle(message, session)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("collector session read failed")
+        finally:
+            session.outgoing.put_nowait(None)
 
     async def Session(
         self,
         request_iterator: AsyncIterator[pb.CollectorMsg],
         context: aio.ServicerContext[pb.CollectorMsg, pb.CoreMsg],
     ) -> AsyncIterator[pb.CoreMsg]:
-        await self._set_sessions(+1)
+        session = _Session()
+        self._sessions.add(session)
+        await self._set_sessions()
+        reader = asyncio.create_task(self._read(request_iterator, session))
         try:
-            async for message in request_iterator:
-                kind = message.WhichOneof("msg")
-                if kind == "hello":
-                    log.info("collector connected: version=%s", message.hello.collector_version)
-                    yield pb.CoreMsg(
-                        plan=pb.AcquisitionPlan(
-                            plan_rev=EMPTY_PLAN_REV, default_poll_ms=DEFAULT_POLL_MS
-                        )
-                    )
-                elif kind == "batch":
-                    yield pb.CoreMsg(ack=pb.Ack(seq=message.batch.seq))
+            while (message := await session.outgoing.get()) is not None:
+                yield message
         finally:
-            await self._set_sessions(-1)
+            reader.cancel()
+            await asyncio.gather(reader, return_exceptions=True)
+            self._sessions.discard(session)
+            await self._set_sessions()
+            if not self._sessions:
+                log.info("no collector session — devices disconnected, tags BAD")
+                await self._publish(self._devices.disconnect_all())
+
+    async def run_watchdog(self, interval_s: float = WATCHDOG_INTERVAL_S) -> None:
+        """장비 무신호 판정을 주기적으로 돌린다."""
+        while True:
+            await asyncio.sleep(interval_s)
+            await self._publish(self._devices.check())
+
+
+type PlanApplier = Callable[[pb.AcquisitionPlan, Sequence[TagKey]], Awaitable[None]]
+
+
+class PlanKeeper:
+    """정의 rev를 주기적으로 보고 바뀌면 plan을 다시 만들어 적용한다.
+
+    DB·스키마 문제는 경고 후 다음 주기에 다시 시도한다(graceful degradation). 마지막 plan은
+    유지된다.
+    """
+
+    def __init__(self, source: DefinitionsSource, apply: PlanApplier, *, refresh_s: float) -> None:
+        self._source = source
+        self._apply = apply
+        self._refresh_s = refresh_s
+        self._rev: int | None = None
+        self._failing = False
+
+    async def refresh(self) -> bool:
+        """한 번 확인한다. plan을 새로 적용했으면 True."""
+        try:
+            rev = await self._source.rev()
+            if rev == self._rev:
+                return False
+            definitions = await self._source.load()
+        except DefinitionsUnavailableError as exc:
+            if not self._failing:
+                log.warning("cannot load definitions (will retry): %s", exc)
+            self._failing = True
+            return False
+        if self._failing:
+            log.info("definitions available again")
+        self._failing = False
+        built = build_plan(definitions)
+        for problem in built.problems:
+            log.warning("plan rev %d: %s", definitions.rev, problem)
+        await self._apply(built.plan, built.keys)
+        self._rev = definitions.rev
+        log.info(
+            "plan rev %d: %d device(s), %d tag(s)",
+            definitions.rev,
+            len(built.plan.devices),
+            len(built.plan.tags),
+        )
+        return True
+
+    async def run(self) -> None:
+        while True:
+            try:
+                await self.refresh()
+            except Exception:
+                log.exception("plan refresh failed")
+            await asyncio.sleep(self._refresh_s)
 
 
 class AcquisitionServer:
-    """gRPC 서버 수명주기. `port=0`이면 임의 포트를 받아 `bound_port`로 알려준다."""
+    """gRPC 서버와 백그라운드 작업(plan 갱신·무신호 판정) 수명주기.
 
-    def __init__(self, service: AcquisitionService, *, host: str, port: int) -> None:
+    `port=0`이면 임의 포트를 받아 `bound_port`로 알려준다.
+    """
+
+    def __init__(
+        self,
+        service: AcquisitionService,
+        keeper: PlanKeeper | None,
+        *,
+        host: str,
+        port: int,
+    ) -> None:
         self._service = service
+        self._keeper = keeper
         self._address = f"{host}:{port}"
         self._server: aio.Server | None = None
+        self._tasks: list[asyncio.Task[None]] = []
         self.bound_port: int | None = None
 
     @property
     def collector_connected(self) -> bool:
         return self._service.collector_connected
+
+    def summary(self) -> AcquisitionSummary:
+        return self._service.summary()
 
     async def start(self) -> None:
         server = aio.server()
@@ -76,8 +248,15 @@ class AcquisitionServer:
         self.bound_port = server.add_insecure_port(self._address)
         await server.start()
         self._server = server
+        self._tasks.append(asyncio.create_task(self._service.run_watchdog(), name="acq-watchdog"))
+        if self._keeper is not None:
+            self._tasks.append(asyncio.create_task(self._keeper.run(), name="acq-plan"))
 
     async def stop(self, grace_s: float = 2.0) -> None:
+        for task in self._tasks:
+            task.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._tasks.clear()
         if self._server is not None:
             await self._server.stop(grace_s)
             self._server = None

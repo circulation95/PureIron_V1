@@ -2,9 +2,29 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol
 
 
 class CollectorSessionStatus(Protocol):
     @property
     def collector_connected(self) -> bool: ...
+
+
+@dataclass(frozen=True, slots=True)
+class AcquisitionSummary:
+    """수집 상태 집계(`/readyz`, Updater `checking`의 GOOD 비율). 태그 값은 담지 않는다."""
+
+    plan_rev: int | None
+    devices_total: int
+    devices_connected: int
+    tags_total: int
+    tags_good: int
+
+    @property
+    def good_ratio(self) -> float | None:
+        return self.tags_good / self.tags_total if self.tags_total else None
+
+
+class AcquisitionStatus(CollectorSessionStatus, Protocol):
+    def summary(self) -> AcquisitionSummary: ...

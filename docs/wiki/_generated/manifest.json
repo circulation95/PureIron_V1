@@ -235,12 +235,12 @@
     },
     {
       "audience": "both",
-      "bytes": 10367,
+      "bytes": 11403,
       "id": "sot-runtime-config",
       "last_verified": "2026-06-26",
       "path": "docs/wiki/sot/runtime-config.md",
       "section_count": 12,
-      "sha256": "39f75165aca8f975de6b9f563fe5603a5c08807bf9af1a55af78eeb3291f6129",
+      "sha256": "d3f9c0efdb48a901d55a8a6976bb0ecce8856c11ab5678a4d9eabdaa64cd1c0e",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/config.py",

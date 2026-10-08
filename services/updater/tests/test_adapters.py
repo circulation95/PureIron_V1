@@ -208,6 +208,23 @@ def test_core_http_lock_project_readiness(tmp_path: Path, server: Server) -> Non
     assert core.project() == (4, 3)
     ready = core.readiness()
     assert (ready.ready, ready.collector, ready.good_ratio) == (False, True, None)
+    # core r2+: /readyz acquisition 집계의 GOOD 비율(r1 core처럼 없으면 None)
+    for acquisition, expected in [
+        (b'{"good_ratio": 0.75}', 0.75),
+        (b'{"good_ratio": 1}', 1.0),
+        (b'{"good_ratio": null}', None),
+        (b'{"good_ratio": true}', None),
+        (b'{"good_ratio": 1.5}', None),
+        (b"[]", None),
+    ]:
+        server.routes[("GET", "/api/v1/readyz")] = (
+            200,
+            b'{"status": "ready", "checks": {"collector": {"ok": true}}, "acquisition": '
+            + acquisition
+            + b"}",
+        )
+        ready = core.readiness()
+        assert (ready.ready, ready.good_ratio) == (True, expected), acquisition
     server.routes[("POST", "/api/v1/project/edit-lock")] = (409, b'{"detail": "held"}')
     with pytest.raises(LockConflictError):
         core.acquire_lock(8)

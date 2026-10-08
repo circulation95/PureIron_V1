@@ -24,6 +24,16 @@ def _read_token(path: Path) -> str:
         raise CoreUnavailableError(f"updater token unreadable: {exc}") from exc
 
 
+def _good_ratio(acquisition: object) -> float | None:
+    """`/readyz`의 `acquisition.good_ratio`(core r2+). 없거나(r1 core) null·범위 밖이면 None."""
+    if not isinstance(acquisition, dict):
+        return None
+    ratio = cast(dict[str, object], acquisition).get("good_ratio")
+    if isinstance(ratio, bool) or not isinstance(ratio, int | float):
+        return None
+    return float(ratio) if 0.0 <= ratio <= 1.0 else None
+
+
 class CoreHttp:
     def __init__(self, base_url: str, token_file: Path) -> None:
         self._base = base_url.rstrip("/")
@@ -89,5 +99,8 @@ class CoreHttp:
         if isinstance(checks, dict):
             entry = cast(dict[str, object], checks).get("collector")
             collector = isinstance(entry, dict) and cast(dict[str, object], entry).get("ok") is True
-        # GOOD 비율은 core가 태그 품질 지표를 내보내는 M3a부터 채운다(그 전엔 baseline도 None).
-        return Readiness(ready=status == 200 and data.get("status") == "ready", collector=collector)
+        return Readiness(
+            ready=status == 200 and data.get("status") == "ready",
+            collector=collector,
+            good_ratio=_good_ratio(data.get("acquisition")),
+        )

@@ -13,6 +13,7 @@ source_modules =
     pureiron_core.api
     pureiron_core.acquisition
     pureiron_core.project
+    pureiron_core.tags
     pureiron_core.platform
 forbidden_modules =
     pureiron_core.runtime
@@ -23,7 +24,7 @@ name = (b) api > domain > platform
 type = layers
 layers =
     pureiron_core.api
-    pureiron_core.acquisition : pureiron_core.project
+    pureiron_core.acquisition : pureiron_core.project : pureiron_core.tags
     pureiron_core.platform
 
 [importlinter:contract:domain-ports]
@@ -32,6 +33,7 @@ type = independence
 modules =
     pureiron_core.acquisition
     pureiron_core.project
+    pureiron_core.tags
 ignore_imports =
     pureiron_core.** -> pureiron_core.*.ports
 unmatched_ignore_imports_alerting = none
