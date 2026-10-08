@@ -9,6 +9,7 @@ core `_gen` stub을 가짜 collector로 쓴다.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
@@ -384,3 +385,21 @@ async def test_plan_keeper_retries_after_apply_error() -> None:
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+def test_clock_skew_drops_are_logged_rate_limited(caplog: pytest.LogCaptureFixture) -> None:
+    """시계 차이로 현재값에서 빠지는 샘플은 원인 단서를 남긴다(간격 제한)."""
+    now = [0.0]
+    tags = TagStore()
+    devices = DeviceMonitor(tags)
+    ingestor = Ingestor(tags, devices, DiscardHistory(), clock=lambda: now[0])
+    future = pb.ValueBatch(seq=1, samples=[_num(1, 1.0, age_s=-60)])
+    with caplog.at_level(logging.WARNING, logger="pureiron_core.acquisition.ingest"):
+        ingestor.ingest(future)
+        ingestor.ingest(future)  # 60s 안 — 다시 찍지 않음
+        now[0] = 61.0
+        ingestor.ingest(pb.ValueBatch(seq=2, samples=[_num(1, 1.0, age_s=30)]))
+    warnings = [r.getMessage() for r in caplog.records]
+    assert len(warnings) == 2
+    assert "clock skew" in warnings[0]
+    assert (ingestor.stats.future, ingestor.stats.stale) == (2, 1)

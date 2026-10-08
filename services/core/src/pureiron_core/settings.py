@@ -70,6 +70,9 @@ class Settings:
     ingest_live_max_age_s: float = 5.0
     # 장비 무신호 판정 = max(3 * poll_ms, 이 값).
     device_silence_min_s: float = 5.0
+    # collector가 이 시간 동안 아무것도(heartbeat 포함) 보내지 않으면 세션을 닫는다(half-open 방지).
+    # collector `PUREIRON_COLLECTOR_HEARTBEAT_S`의 2배 이상이어야 한다.
+    session_silence_s: float = 15.0
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str]) -> Settings:
@@ -86,4 +89,5 @@ class Settings:
             plan_refresh_s=_float(environ, "PUREIRON_PLAN_REFRESH_S", 2.0),
             ingest_live_max_age_s=_float(environ, "PUREIRON_INGEST_LIVE_MAX_AGE_S", 5.0),
             device_silence_min_s=_float(environ, "PUREIRON_DEVICE_SILENCE_MIN_S", 5.0),
+            session_silence_s=_float(environ, "PUREIRON_SESSION_SILENCE_S", 15.0),
         )

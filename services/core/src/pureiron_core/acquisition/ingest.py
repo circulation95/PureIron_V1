@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -27,7 +28,11 @@ from pureiron_core.acquisition.devices import DeviceMonitor
 from pureiron_core.platform.bus import Event
 from pureiron_core.tags.ports import Quality, Reading, TagStorePort
 
+log = logging.getLogger(__name__)
+
 FUTURE_SLACK_S = 2.0
+# 시계 차이로 버려지는 샘플 경고 간격(원인 단서 — 모든 태그가 BAD인데 이유가 안 보이는 것 방지).
+SKEW_WARN_INTERVAL_S = 60.0
 
 
 class HistorySink(Protocol):
@@ -88,13 +93,33 @@ class Ingestor:
         *,
         live_max_age_s: float = 5.0,
         wall_ns: Callable[[], int] = time.time_ns,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._tags = tags
         self._devices = devices
         self._history = history
         self._live_max_age_ns = int(live_max_age_s * 1e9)
         self._wall_ns = wall_ns
+        self._clock = clock
+        self._warned_at: float | None = None
         self.stats = IngestStats()
+
+    def _warn_skew(self, stale: int, future: int) -> None:
+        now = self._clock()
+        if self._warned_at is not None and now - self._warned_at < SKEW_WARN_INTERVAL_S:
+            return
+        self._warned_at = now
+        log.warning(
+            "dropping live samples from current values (history only): %d older than %.0fs, "
+            "%d more than %.0fs in the future — collector/core clock skew or delayed batch? "
+            "(totals stale=%d future=%d)",
+            stale,
+            self._live_max_age_ns / 1e9,
+            future,
+            FUTURE_SLACK_S,
+            self.stats.stale,
+            self.stats.future,
+        )
 
     def ingest(self, batch: pb.ValueBatch) -> list[Event]:
         self.stats.batches += 1
@@ -110,14 +135,19 @@ class Ingestor:
         oldest = now - self._live_max_age_ns
         newest = now + int(FUTURE_SLACK_S * 1e9)
         fresh: list[Reading] = []
+        stale = future = 0
         for sample in samples:
             if sample.ts_unix_ns < oldest:
-                self.stats.stale += 1
+                stale += 1
             elif sample.ts_unix_ns > newest:
-                self.stats.future += 1
+                future += 1
             else:
                 fresh.append(reading(sample))
+        self.stats.stale += stale
+        self.stats.future += future
         self.stats.live += len(fresh)
+        if stale or future:
+            self._warn_skew(stale, future)
         commit = self._tags.commit(fresh, now)
         # 무신호 타이머는 실제로 반영된 샘플만 되돌린다(버려진 샘플로 "살아 있음"이 되지 않게).
         return [*commit.events, *self._devices.seen(commit.accepted)]

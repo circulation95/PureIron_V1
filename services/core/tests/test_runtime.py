@@ -32,7 +32,8 @@ def test_settings_defaults_and_overrides(tmp_path: Path) -> None:
         settings.plan_refresh_s,
         settings.ingest_live_max_age_s,
         settings.device_silence_min_s,
-    ) == (2.0, 5.0, 5.0)
+        settings.session_silence_s,
+    ) == (2.0, 5.0, 5.0, 15.0)
     tuned = Settings.from_env(
         {"PUREIRON_PLAN_REFRESH_S": "0.5", "PUREIRON_DEVICE_SILENCE_MIN_S": "8"}
     )

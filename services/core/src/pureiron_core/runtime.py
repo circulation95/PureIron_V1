@@ -42,7 +42,9 @@ class SiteRuntime:
         ingestor = Ingestor(
             tags, devices, DiscardHistory(), live_max_age_s=settings.ingest_live_max_age_s
         )
-        service = AcquisitionService(bus, tags, devices, ingestor)
+        service = AcquisitionService(
+            bus, tags, devices, ingestor, session_silence_s=settings.session_silence_s
+        )
         keeper = PlanKeeper(
             PgDefinitionsSource(db), service.set_plan, refresh_s=settings.plan_refresh_s
         )
