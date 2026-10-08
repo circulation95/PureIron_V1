@@ -39,7 +39,7 @@ def _health(connected: bool, device: str = "plc-1") -> pb.DeviceHealth:
 
 def _good(tags: TagStore, clock: Clock) -> None:
     ts = clock.ns()
-    tags.commit([Reading(1, 1.0, Quality.GOOD, ts), Reading(2, True, Quality.GOOD, ts)])
+    tags.commit([Reading(1, 1.0, Quality.GOOD, ts), Reading(2, True, Quality.GOOD, ts)], ts)
 
 
 def test_connected_needs_health_and_signal() -> None:
@@ -128,3 +128,19 @@ def test_disconnect_all_drops_health() -> None:
     _good(tags, clock)
     assert monitor.seen([1]) == []
     assert monitor.state("plc-1") is DeviceState.DISCONNECTED
+
+
+def test_reindex_keeps_silence() -> None:
+    """무신호였던 장비가 plan 교체만으로 CONNECTED로 깜빡이지 않는다(회복은 실제 샘플로만)."""
+    monitor, tags, clock = _monitor()
+    monitor.on_health(_health(True))
+    _good(tags, clock)
+    monitor.seen([1, 2])
+    clock.now += 6
+    monitor.check()
+    assert monitor.state("plc-1") is DeviceState.DISCONNECTED
+    monitor.reindex(build_plan(sample_definitions(rev=4)).plan)
+    assert monitor.on_health(_health(True)) == []
+    assert monitor.state("plc-1") is DeviceState.DISCONNECTED
+    _good(tags, clock)
+    assert [e.payload["state"] for e in monitor.seen([1])] == ["connected"]

@@ -8,18 +8,31 @@ core는 단일 이벤트 루프라 await 없는 동기 메서드 하나가 곧 �
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Sequence
 
 from pureiron_core.platform.bus import Event
 from pureiron_core.tags.ports import (
     TAG_CHANGED_PREFIX,
+    Commit,
     Quality,
     Reading,
     TagKey,
     TagSummary,
     TagValue,
+    Value,
     json_value,
 )
+
+# 저장된 시각이 지금보다 이만큼 넘게 미래면(벽시계가 뒤로 보정됨) 역행 검사를 하지 않는다.
+CLOCK_SLACK_NS = 2_000_000_000
+
+
+def _same(a: Value | None, b: Value | None) -> bool:
+    """값 비교(NaN끼리는 같은 값 — 매 poll마다 변경 이벤트가 나가지 않게)."""
+    if isinstance(a, float) and isinstance(b, float) and math.isnan(a) and math.isnan(b):
+        return True
+    return a == b and type(a) is type(b)
 
 
 def _event(tag: TagValue) -> Event:
@@ -58,16 +71,22 @@ class TagStore:
                 )
         self._tags = tags
 
-    def commit(self, readings: Sequence[Reading]) -> list[Event]:
+    def commit(self, readings: Sequence[Reading], now_ns: int) -> Commit:
         """샘플을 반영한다. 모르는 태그·현재값보다 오래된 샘플은 버린다.
 
-        값이나 품질이 바뀐 태그만 이벤트를 만든다.
+        단, 현재값 시각이 `now_ns`보다 미래면(벽시계가 뒤로 보정됨) 그 시각을 믿지 않고 받는다 —
+        그렇지 않으면 시계가 따라잡을 때까지 값이 GOOD인 채로 멈춘다. 값이나 품질이 바뀐 태그만
+        이벤트를 만든다.
         """
         events: list[Event] = []
+        accepted: list[int] = []
         for reading in readings:
             old = self._tags.get(reading.tag_id)
-            if old is None or reading.ts_ns < old.ts_ns:
+            if old is None:
                 continue
+            if reading.ts_ns < old.ts_ns and old.ts_ns <= now_ns + CLOCK_SLACK_NS:
+                continue
+            accepted.append(reading.tag_id)
             value = reading.value
             if value is None and reading.quality is not Quality.GOOD:
                 value = old.value  # 값 없는 BAD는 마지막 값을 지우지 않는다(품질만 바뀜).
@@ -75,9 +94,9 @@ class TagStore:
                 old.tag_id, old.path, old.device_id, value, reading.quality, reading.ts_ns
             )
             self._tags[reading.tag_id] = new
-            if (new.value, new.quality) != (old.value, old.quality):
+            if new.quality is not old.quality or not _same(new.value, old.value):
                 events.append(_event(new))
-        return events
+        return Commit(events, accepted)
 
     def commit_bad(self, tag_ids: Iterable[int], ts_ns: int) -> list[Event]:
         """태그를 BAD로 표시한다(마지막 값 유지). 이미 BAD인 태그는 이벤트 없음."""

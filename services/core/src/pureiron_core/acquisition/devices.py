@@ -70,7 +70,8 @@ class DeviceMonitor:
     def reindex(self, plan: pb.AcquisitionPlan) -> None:
         """plan의 장비 집합으로 맞춘다.
 
-        남는 장비는 상태·health를 유지하고 무신호 타이머는 지금부터 다시 센다.
+        남는 장비는 상태·health·무신호 여부를 유지하고 타이머는 지금부터 다시 센다(무신호였던
+        장비가 plan 교체만으로 CONNECTED로 깜빡이지 않게 — 회복은 실제 샘플로만).
         """
         tag_ids: dict[str, list[int]] = {}
         for tag in plan.tags:
@@ -88,6 +89,7 @@ class DeviceMonitor:
                 last_signal=now,
                 state=old.state if old else DeviceState.DISCONNECTED,
                 health=old.health if old else None,
+                silent=old.silent if old else False,
             )
         self._devices = devices
         self._tag_device = {

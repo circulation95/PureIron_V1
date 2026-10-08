@@ -29,6 +29,8 @@ from pureiron_project.schema import Kind
 
 # apply-definitions끼리 직렬화한다(동시 실행 시 rev 계산·retire가 섞이지 않게). 'PIRD'.
 _APPLY_LOCK_KEY = 0x50495244
+# core 백그라운드 조회 제한 시간(half-open DB 연결에서 plan 갱신이 멈추지 않게).
+_QUERY_TIMEOUT_S = 5.0
 
 _UPSERT_DEVICES = """
 WITH up AS (
@@ -46,6 +48,8 @@ SELECT count(*) FILTER (WHERE inserted) AS added, count(*) FILTER (WHERE NOT ins
   FROM up
 """
 
+# 참고: INSERT … ON CONFLICT는 충돌한 행에도 serial 값을 하나씩 소모한다(id에 빈 번호가 생길 뿐
+# 정확성 문제는 없다). 대규모 반복 apply가 문제가 되면 M5에서 신규 path만 INSERT 하도록 나눈다.
 _UPSERT_TAGS = """
 WITH up AS (
     INSERT INTO tags (path, device_id, definition)
@@ -154,8 +158,8 @@ async def apply_definitions(conn: Connection, project: Project) -> ApplyResult:
             )
         else:
             rev = await conn.fetchval("SELECT definitions_rev FROM project_state WHERE id")
-    if not isinstance(rev, int):
-        raise ProjectStateError("project_state row missing (run `pureiron-core migrate up`)")
+        if not isinstance(rev, int):  # 트랜잭션 안에서 실패시켜 upsert·retire도 되돌린다
+            raise ProjectStateError("project_state row missing (run `pureiron-core migrate up`)")
     return ApplyResult(rev, changed, *counts)
 
 
@@ -175,7 +179,9 @@ class PgDefinitionsSource:
     async def rev(self) -> int:
         try:
             async with self._db.connection() as conn:
-                rev = await conn.fetchval("SELECT definitions_rev FROM project_state WHERE id")
+                rev = await conn.fetchval(
+                    "SELECT definitions_rev FROM project_state WHERE id", timeout=_QUERY_TIMEOUT_S
+                )
         except (DatabaseUnavailableError, asyncpg.PostgresError, OSError, TimeoutError) as exc:
             raise DefinitionsUnavailableError(str(exc)) from exc
         if not isinstance(rev, int):
@@ -193,15 +199,19 @@ class PgDefinitionsSource:
 async def _load(conn: Connection) -> Definitions:
     # rev와 행을 같은 스냅샷에서 읽는다(apply 도중에 섞이지 않게).
     async with conn.transaction(isolation="repeatable_read", readonly=True):
-        rev = await conn.fetchval("SELECT definitions_rev FROM project_state WHERE id")
+        rev = await conn.fetchval(
+            "SELECT definitions_rev FROM project_state WHERE id", timeout=_QUERY_TIMEOUT_S
+        )
         device_rows = await conn.fetch(
             "SELECT id, definition FROM devices"
-            " WHERE retired_at IS NULL AND definition IS NOT NULL ORDER BY id"
+            " WHERE retired_at IS NULL AND definition IS NOT NULL ORDER BY id",
+            timeout=_QUERY_TIMEOUT_S,
         )
         tag_rows = await conn.fetch(
             "SELECT id, path, device_id, definition FROM tags"
             " WHERE retired_at IS NULL AND definition IS NOT NULL AND device_id IS NOT NULL"
-            " ORDER BY id"
+            " ORDER BY id",
+            timeout=_QUERY_TIMEOUT_S,
         )
     if not isinstance(rev, int):
         raise DefinitionsUnavailableError("project_state row missing")

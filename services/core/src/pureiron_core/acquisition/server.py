@@ -35,6 +35,9 @@ log = logging.getLogger(__name__)
 
 SESSION_TOPIC = "collector.session.changed"
 WATCHDOG_INTERVAL_S = 1.0
+# collector는 1s마다 heartbeat를 보낸다. 이 시간 동안 아무것도 오지 않으면 RST 없이 끊긴(half-open)
+# 세션으로 보고 닫는다 — 그렇지 않으면 TCP keepalive(기본 2시간)까지 collector_connected가 거짓 참.
+SESSION_SILENCE_S = 15.0
 
 type Outgoing = asyncio.Queue[pb.CoreMsg | None]
 
@@ -52,11 +55,14 @@ class AcquisitionService(pb_grpc.AcquisitionServicer):
         tags: TagStorePort,
         devices: DeviceMonitor,
         ingestor: Ingestor,
+        *,
+        session_silence_s: float = SESSION_SILENCE_S,
     ) -> None:
         self._bus = bus
         self._tags = tags
         self._devices = devices
         self._ingestor = ingestor
+        self._session_silence_s = session_silence_s
         self._sessions: set[_Session] = set()
         self._plan: pb.AcquisitionPlan | None = None
 
@@ -122,8 +128,18 @@ class AcquisitionService(pb_grpc.AcquisitionServicer):
             )
 
     async def _read(self, requests: AsyncIterator[pb.CollectorMsg], session: _Session) -> None:
+        iterator = aiter(requests)
         try:
-            async for message in requests:
+            while True:
+                try:
+                    message = await asyncio.wait_for(anext(iterator), self._session_silence_s)
+                except StopAsyncIteration:
+                    break
+                except TimeoutError:
+                    log.warning(
+                        "collector silent for %.0fs; closing session", self._session_silence_s
+                    )
+                    break
                 await self._handle(message, session)
         except asyncio.CancelledError:
             raise
@@ -145,9 +161,10 @@ class AcquisitionService(pb_grpc.AcquisitionServicer):
             while (message := await session.outgoing.get()) is not None:
                 yield message
         finally:
+            # 동기 구간에서 먼저 뺀다 — 아래 await 중에 다시 취소돼도 죽은 세션이 남지 않게.
+            self._sessions.discard(session)
             reader.cancel()
             await asyncio.gather(reader, return_exceptions=True)
-            self._sessions.discard(session)
             await self._set_sessions()
             if not self._sessions:
                 log.info("no collector session — devices disconnected, tags BAD")
@@ -157,7 +174,10 @@ class AcquisitionService(pb_grpc.AcquisitionServicer):
         """장비 무신호 판정을 주기적으로 돌린다."""
         while True:
             await asyncio.sleep(interval_s)
-            await self._publish(self._devices.check())
+            try:
+                await self._publish(self._devices.check())
+            except Exception:
+                log.exception("device silence check failed")
 
 
 type PlanApplier = Callable[[pb.AcquisitionPlan, Sequence[TagKey]], Awaitable[None]]
@@ -176,6 +196,7 @@ class PlanKeeper:
         self._refresh_s = refresh_s
         self._rev: int | None = None
         self._failing = False
+        self._last_error: str | None = None
 
     async def refresh(self) -> bool:
         """한 번 확인한다. plan을 새로 적용했으면 True."""
@@ -209,8 +230,12 @@ class PlanKeeper:
         while True:
             try:
                 await self.refresh()
-            except Exception:
-                log.exception("plan refresh failed")
+                self._last_error = None
+            except Exception as exc:
+                # 같은 정의로 같은 오류가 주기마다 반복되므로 바뀔 때만 traceback을 남긴다.
+                if repr(exc) != self._last_error:
+                    log.exception("plan refresh failed (will retry)")
+                self._last_error = repr(exc)
             await asyncio.sleep(self._refresh_s)
 
 
@@ -227,7 +252,9 @@ class AcquisitionServer:
         *,
         host: str,
         port: int,
+        watchdog_interval_s: float = WATCHDOG_INTERVAL_S,
     ) -> None:
+        self._watchdog_interval_s = watchdog_interval_s
         self._service = service
         self._keeper = keeper
         self._address = f"{host}:{port}"
@@ -248,7 +275,11 @@ class AcquisitionServer:
         self.bound_port = server.add_insecure_port(self._address)
         await server.start()
         self._server = server
-        self._tasks.append(asyncio.create_task(self._service.run_watchdog(), name="acq-watchdog"))
+        self._tasks.append(
+            asyncio.create_task(
+                self._service.run_watchdog(self._watchdog_interval_s), name="acq-watchdog"
+            )
+        )
         if self._keeper is not None:
             self._tasks.append(asyncio.create_task(self._keeper.run(), name="acq-plan"))
 

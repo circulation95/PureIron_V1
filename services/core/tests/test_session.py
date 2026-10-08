@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
 import pytest
@@ -28,7 +29,7 @@ from pureiron_core.acquisition.server import (
 )
 from pureiron_core.platform.bus import Event, EventBus
 from pureiron_core.project.ports import Definitions, DefinitionsUnavailableError
-from pureiron_core.tags.ports import Quality
+from pureiron_core.tags.ports import Quality, TagKey
 from pureiron_core.tags.store import TagStore
 
 from .conftest import sample_definitions
@@ -64,17 +65,19 @@ class Core:
         return f"127.0.0.1:{self.server.bound_port}"
 
 
-@pytest.fixture
-async def core() -> AsyncGenerator[Core]:
+@asynccontextmanager
+async def start_core(
+    *, silence_min_s: float = 5.0, session_silence_s: float = 15.0
+) -> AsyncGenerator[Core]:
     bus = EventBus()
     source = FakeSource()
     tags = TagStore()
-    devices = DeviceMonitor(tags)
+    devices = DeviceMonitor(tags, silence_min_s=silence_min_s)
     history = DiscardHistory()
     ingestor = Ingestor(tags, devices, history, live_max_age_s=5.0)
-    service = AcquisitionService(bus, tags, devices, ingestor)
+    service = AcquisitionService(bus, tags, devices, ingestor, session_silence_s=session_silence_s)
     keeper = PlanKeeper(source, service.set_plan, refresh_s=0.05)
-    server = AcquisitionServer(service, keeper, host="127.0.0.1", port=0)
+    server = AcquisitionServer(service, keeper, host="127.0.0.1", port=0, watchdog_interval_s=0.05)
     built = Core(source, tags, devices, history, ingestor, server)
 
     async def record(event: Event) -> None:
@@ -86,6 +89,12 @@ async def core() -> AsyncGenerator[Core]:
         yield built
     finally:
         await server.stop(grace_s=0)
+
+
+@pytest.fixture
+async def core() -> AsyncGenerator[Core]:
+    async with start_core() as built:
+        yield built
 
 
 class FakeCollector:
@@ -114,6 +123,10 @@ class FakeCollector:
         message = await asyncio.wait_for(self._call.read(), READ_TIMEOUT_S)
         assert isinstance(message, pb.CoreMsg)
         return message
+
+    def cancel(self) -> None:
+        """비정상 종료(프로세스 kill과 같은 효과: half-close 없이 RPC 취소)."""
+        self._call.cancel()
 
     async def close(self) -> None:
         self._outgoing.put_nowait(None)
@@ -257,3 +270,117 @@ async def test_session_end_marks_tags_bad_and_devices_disconnected(core: Core) -
         0,
     ]
     assert sessions == [1]
+
+
+async def _connected(core: Core, collector: FakeCollector) -> None:
+    """hello → plan → health(connected) → GOOD 샘플 → 장비 CONNECTED·태그 GOOD 2개."""
+    collector.hello()
+    assert (await collector.read()).WhichOneof("msg") == "plan"
+    collector.send(
+        pb.CollectorMsg(
+            health=pb.DeviceHealth(device_name="plc-1", protocol="modbus_tcp", connected=True)
+        )
+    )
+    collector.batch(1, [_num(1, 20.0), _flag(2, True)])
+    assert (await collector.read()).ack.seq == 1
+    await _eventually(lambda: core.devices.state("plc-1") is DeviceState.CONNECTED)
+    assert core.tags.summary().good == 2
+
+
+async def test_future_timestamp_goes_to_history_only(core: Core) -> None:
+    """시계가 앞선 샘플이 현재값에 미래 시각을 박아 이후 값을 얼리지 않는다(리뷰 HIGH-1)."""
+    core.source.definitions = sample_definitions()
+    await _eventually(lambda: core.server.summary().tags_total == 2)
+    async with aio.insecure_channel(core.target) as channel:
+        collector = FakeCollector(channel)
+        await _connected(core, collector)
+        collector.batch(2, [_num(1, 99.0, age_s=-3600)])  # 1시간 미래
+        assert (await collector.read()).ack.seq == 2
+        assert core.ingestor.stats.future == 1
+        collector.batch(3, [_num(1, 21.0)])
+        assert (await collector.read()).ack.seq == 3
+        temp = core.tags.get(1)
+        assert temp is not None
+        assert temp.value == 21.0
+        await collector.close()
+
+
+async def test_one_of_two_sessions_closing_keeps_tags(core: Core) -> None:
+    core.source.definitions = sample_definitions()
+    await _eventually(lambda: core.server.summary().tags_total == 2)
+    async with aio.insecure_channel(core.target) as channel:
+        first = FakeCollector(channel)
+        await _connected(core, first)
+        second = FakeCollector(channel)
+        second.hello()
+        await second.read()
+        await second.close()
+        await asyncio.sleep(0.1)
+        assert core.server.collector_connected
+        assert core.tags.summary().good == 2
+        assert core.devices.state("plc-1") is DeviceState.CONNECTED
+        await first.close()
+    await _eventually(lambda: core.tags.summary().good == 0)
+
+
+async def test_cancelled_session_is_cleaned_up(core: Core) -> None:
+    core.source.definitions = sample_definitions()
+    await _eventually(lambda: core.server.summary().tags_total == 2)
+    async with aio.insecure_channel(core.target) as channel:
+        collector = FakeCollector(channel)
+        await _connected(core, collector)
+        collector.cancel()
+        await _eventually(lambda: not core.server.collector_connected)
+        await _eventually(lambda: core.tags.summary().good == 0)
+        assert core.devices.state("plc-1") is DeviceState.DISCONNECTED
+
+
+async def test_server_watchdog_marks_silent_device_bad() -> None:
+    """세션은 살아 있는데 장비 샘플만 끊기면 무신호 타이머가 BAD/DISCONNECTED로 둔다."""
+    async with start_core(silence_min_s=0.3) as core:
+        core.source.definitions = sample_definitions()
+        await _eventually(lambda: core.server.summary().tags_total == 2)
+        async with aio.insecure_channel(core.target) as channel:
+            collector = FakeCollector(channel)
+            await _connected(core, collector)
+            collector.batch(0)  # heartbeat만 — 장비 신호가 아니다
+            assert (await collector.read()).ack.seq == 0
+            await _eventually(lambda: core.devices.state("plc-1") is DeviceState.DISCONNECTED)
+            assert core.tags.summary().good == 0
+            assert core.server.collector_connected
+            await collector.close()
+
+
+async def test_silent_session_is_closed_by_core() -> None:
+    """RST 없이 끊긴(half-open) 세션: collector가 아무것도 안 보내면 core가 세션을 닫는다."""
+    async with start_core(session_silence_s=0.3) as core:
+        channel = aio.insecure_channel(core.target)
+        try:
+            collector = FakeCollector(channel)
+            collector.hello()
+            await _eventually(lambda: core.server.collector_connected)
+            await _eventually(lambda: not core.server.collector_connected)
+            collector.cancel()
+        finally:
+            await channel.close()
+
+
+async def test_plan_keeper_retries_after_apply_error() -> None:
+    source = FakeSource(sample_definitions(rev=5))
+    applied: list[int] = []
+
+    async def apply(plan: pb.AcquisitionPlan, keys: Sequence[TagKey]) -> None:
+        if not applied:
+            applied.append(-1)
+            raise RuntimeError("boom")
+        applied.append(plan.plan_rev)
+
+    keeper = PlanKeeper(source, apply, refresh_s=0.01)
+    task = asyncio.create_task(keeper.run())
+    try:
+        await _eventually(lambda: applied[-1:] == [5])
+        await asyncio.sleep(0.05)
+        assert applied == [-1, 5]  # 성공한 뒤에는 같은 rev를 다시 적용하지 않는다
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

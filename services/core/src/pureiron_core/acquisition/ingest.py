@@ -4,7 +4,8 @@
   않는다.
 - live라도 샘플 시각이 `live_max_age_s`보다 오래됐으면 이력에만 넘긴다. collector watchdog이
   끊긴 세션을 알아채기 전(≤ 5s) 커널 버퍼에 남은 batch가 네트워크 복구 뒤 늦게 도착하는 경우의
-  방어다.
+  방어다. 시각이 `FUTURE_SLACK_S`보다 미래인 샘플(시계 오류)도 이력에만 넘긴다 — 현재값에 미래
+  시각이 박히면 이후 정상 샘플이 모두 "역행"으로 버려진다.
 - 중복 제거는 하지 않는다. seq는 collector 프로세스마다 1부터 다시 시작하고 링버퍼 drop으로 빈
   구간도 있다 — 중복은 historian의 `UNIQUE(tag_id, time)`가 흡수한다.
 - replay batch는 원래 plan_rev를 유지한다(지금 rev와 달라도 tag_id로 기록 — id는 재사용되지
@@ -25,6 +26,8 @@ from pureiron_core._gen import collector_pb2 as pb
 from pureiron_core.acquisition.devices import DeviceMonitor
 from pureiron_core.platform.bus import Event
 from pureiron_core.tags.ports import Quality, Reading, TagStorePort
+
+FUTURE_SLACK_S = 2.0
 
 
 class HistorySink(Protocol):
@@ -53,6 +56,7 @@ class IngestStats:
     heartbeats: int = 0
     live: int = 0
     stale: int = 0
+    future: int = 0
     replay: int = 0
 
 
@@ -102,10 +106,18 @@ class Ingestor:
         if batch.replay:
             self.stats.replay += len(samples)
             return []
-        cutoff = self._wall_ns() - self._live_max_age_ns
-        fresh = [reading(s) for s in samples if s.ts_unix_ns >= cutoff]
-        self.stats.stale += len(samples) - len(fresh)
+        now = self._wall_ns()
+        oldest = now - self._live_max_age_ns
+        newest = now + int(FUTURE_SLACK_S * 1e9)
+        fresh: list[Reading] = []
+        for sample in samples:
+            if sample.ts_unix_ns < oldest:
+                self.stats.stale += 1
+            elif sample.ts_unix_ns > newest:
+                self.stats.future += 1
+            else:
+                fresh.append(reading(sample))
         self.stats.live += len(fresh)
-        events = self._tags.commit(fresh)
-        events.extend(self._devices.seen(r.tag_id for r in fresh))
-        return events
+        commit = self._tags.commit(fresh, now)
+        # 무신호 타이머는 실제로 반영된 샘플만 되돌린다(버려진 샘플로 "살아 있음"이 되지 않게).
+        return [*commit.events, *self._devices.seen(commit.accepted)]

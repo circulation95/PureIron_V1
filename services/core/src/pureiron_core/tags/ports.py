@@ -51,6 +51,14 @@ class TagValue:
 
 
 @dataclass(frozen=True, slots=True)
+class Commit:
+    """`commit` 결과: 발행할 이벤트와 실제로 반영된 태그(무신호 타이머 갱신용)."""
+
+    events: list[Event]
+    accepted: list[int]
+
+
+@dataclass(frozen=True, slots=True)
 class TagSummary:
     total: int
     good: int
@@ -71,7 +79,7 @@ class TagStorePort(Protocol):
 
     def reindex(self, keys: Iterable[TagKey]) -> None: ...
 
-    def commit(self, readings: Sequence[Reading]) -> list[Event]: ...
+    def commit(self, readings: Sequence[Reading], now_ns: int) -> Commit: ...
 
     def commit_bad(self, tag_ids: Iterable[int], ts_ns: int) -> list[Event]: ...
 
