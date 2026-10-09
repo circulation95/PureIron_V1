@@ -231,22 +231,23 @@ def _wait(predicate: Callable[[], bool], timeout_s: float, what: str) -> None:
     raise AssertionError(f"timed out after {timeout_s}s waiting for {what}")
 
 
-def _collector_clock(container: str) -> tuple[float, float]:
-    """collector 컨테이너 안의 (realtime, monotonic) 초.
+def _collector_clock(container: str) -> tuple[float, float, float]:
+    """collector 컨테이너 안의 (realtime, monotonic) 초와 이를 읽은 `docker exec` 왕복(호스트 초).
 
     collector는 poll 주기를 monotonic으로 세고 샘플 시각은 realtime이다. Docker Desktop(WSL2)
     VM은 monotonic이 호스트보다 수 % 느리고 Hyper-V TimeSync가 realtime을 몇 초씩 계단 보정할
     수 있어(M3a-3 W1 실측: monotonic -7%, ~32s마다 +2.3s step), 호스트 벽시계로 기대 행 수를
-    세면 실제 poll 수보다 많아진다.
+    세면 실제 poll 수보다 많아진다. 두 값은 같은 프로세스에서 연달아 읽어 서로 대응한다.
     """
     probe = "import time; print(time.time(), time.monotonic())"
+    started = time.monotonic()
     out = subprocess.run(
         ["docker", "exec", container, "python", "-c", probe],
         capture_output=True,
         text=True,
         check=True,
     ).stdout.split()
-    return float(out[0]), float(out[1])
+    return float(out[0]), float(out[1]), time.monotonic() - started
 
 
 async def _gap_rows(dsn: str, password: str, gap: tuple[float, float]) -> list[int]:
@@ -265,21 +266,42 @@ async def _gap_rows(dsn: str, password: str, gap: tuple[float, float]) -> list[i
     return [int(r["n"]) for r in rows]
 
 
+def _stable_replay(timeout_s: float) -> int:
+    """replay 카운터가 1s 간격 두 번 연속 같을 때까지 기다린다(replay는 batch 여러 개로 온다)."""
+    deadline = time.monotonic() + timeout_s
+    last = _int_field(_ingest(), "replay")
+    while time.monotonic() < deadline:
+        time.sleep(1.0)
+        current = _int_field(_ingest(), "replay")
+        if current == last:
+            return current
+        last = current
+    raise AssertionError(f"replay counter still moving after {timeout_s}s: {last}")
+
+
 @pytest.mark.compose
 def test_network_disconnect_replay(stack: Stack, tmp_path: Path) -> None:
     """collector를 core 쪽 네트워크(default)에서 30s 떼었다 붙인다(장비 field 네트워크는 유지).
 
-    ① 분리 구간 [t0+2, t1-2)에 태그별 이력 행 ≥ 기대 poll 수의 0.9배 — 창 경계는 샘플 시각과 같은
-       collector realtime, 기대 poll 수는 collector가 실제로 주기를 세는 monotonic 경과(W1 판정식).
-    ② 중복 0 — 시계와 무관한 상한: 창 안 태그별 행 수 ≤ 분리 동안 실제 poll 수(monotonic) + 1.
-       같은 샘플의 live·replay 중복은 같은 (tag_id, time)이라 UNIQUE가 흡수하고, 다른 시각으로
-       두 번 기록되면 이 상한을 넘는다. 예전의 "같은 태그 행 간격 ≥ 0.5 poll" 판정은 realtime
-       차라서 게스트 시계가 뒤로 step 하는 환경에서 거짓 실패할 수 있어 쓰지 않는다(W1 §4).
+    창은 분리 + EDGE_S 시점(ta, ma)과 재연결 - EDGE_S 시점(tb, mb)에 collector 안에서 직접 읽은
+    (realtime, monotonic) 쌍으로 정한다: 창 [ta, tb)는 샘플 시각과 같은 collector realtime이고,
+    그 안의 poll은 collector가 주기를 세는 monotonic 구간 [ma, mb)에 정확히 대응한다 — 게스트
+    realtime이 창 안팎 어디서 앞으로 계단 보정되든 판정이 흔들리지 않는다. realtime이
+    **뒤로** step 하면 같은 realtime 창에 monotonic이 더 들어가므로 이 대응은 가정 밖이다(W1
+    실측은 앞으로만).
+
+    ① 창 안 태그별 이력 행 ≥ 기대 poll 수 (mb - ma) / POLL_S의 0.9배.
+    ② 대량 중복 없음 — 창 안 태그별 행 ≤ (mb - ma) / POLL_S + 1(창 안에서 실제로 일어난 poll 수).
+       같은 샘플의 live·replay 중복은 같은 (tag_id, time)이라 UNIQUE가 구조적으로 흡수하고, 다른
+       시각으로 두 번 기록되면 이 상한을 넘는다. 예전 "같은 태그 행 간격 ≥ 0.5 poll"은 realtime
+       차라서 역 step에 거짓 실패할 수 있어 쓰지 않는다(W1 §4).
     ③ `/readyz.acquisition.ingest.replay` 증가.
     ④ 분리 구간 시각이 현재값·이벤트에 안 박힘 — 현재값 조회 API가 M3b(D8)라 간접 증명:
-       (a) replay 증가분 ≥ 창 안 이력 행 수 합(창 샘플이 replay 경로로만 들어왔다), (b) 재연결
-       뒤 tags_good == 100, (c) replay는 TagStore·`tag.changed`를 건드리지 않는다는 단위 근거
-       (test_session `test_live_replay_and_stale_samples`·
+       (주) 분리 동안 `/readyz.acquisition.ingest.live`(현재값으로 간 샘플 수)가 늘지 않는다 — 창
+       샘플은 live 경로로 들어올 수 없었다. 재연결 뒤 도착하는 창 샘플은 live_max_age(5s)보다
+       오래돼 live라도 현재값으로 가지 않는다. (a) 보조: replay 증가분 ≥ 창 안 이력 행 수 합.
+       (b) 재연결 뒤 tags_good == 100. (c) replay는 TagStore·`tag.changed`를 건드리지 않는다는
+       단위 근거(test_session `test_live_replay_and_stale_samples`·
        `test_replay_through_recorder_is_raw_and_emits_no_events`).
     """
     _apply_sim_project(stack, tmp_path)
@@ -287,41 +309,57 @@ def test_network_disconnect_replay(stack: Stack, tmp_path: Path) -> None:
     container = compose(stack.compose_env, "ps", "-q", "collector").stdout.strip()
     assert container, "collector container not running"
     network = f"{PROJECT}_default"
-    replay_before = _int_field(_ingest(), "replay")
+    ingest_before = _ingest()
+    replay_before = _int_field(ingest_before, "replay")
+    stale_before = _int_field(ingest_before, "stale")
 
-    t0, mono0 = _collector_clock(container)
     subprocess.run(["docker", "network", "disconnect", network, container], check=True)
     try:
-        time.sleep(DISCONNECT_S)
+        # 기준 시점 = 분리 + EDGE_S. disconnect 뒤 core에 새 패킷은 닿지 않고(core는 default
+        # 네트워크에만 있다), 그 직전에 보낸 batch는 이미 core 소켓 버퍼에 있거나 사라진다 —
+        # 버퍼에 있던 batch는 수 ms 안에 처리되므로 2s 뒤의 live 스냅샷은 그 유입을 포함한다.
+        # core의 세션 끊김 감지(session_silence_s 15s)는 세션 정리일 뿐 새 live 유입이 아니다.
+        time.sleep(EDGE_S)
+        live_a = _int_field(_ingest(), "live")
+        ta, ma, rtt_a = _collector_clock(container)
+        time.sleep(DISCONNECT_S - 2 * EDGE_S)
+        tb, mb, rtt_b = _collector_clock(container)
+        live_b = _int_field(_ingest(), "live")
+        time.sleep(EDGE_S)
     finally:
-        try:
-            t1, mono1 = _collector_clock(container)
-        finally:
-            subprocess.run(["docker", "network", "connect", network, container], check=True)
+        subprocess.run(["docker", "network", "connect", network, container], check=True)
+    print(f"REPLAY docker exec rtt a={rtt_a:.3f}s b={rtt_b:.3f}s")
+    # 왕복이 poll 주기보다 길면 live 스냅샷과 창 경계 사이에 poll이 끼어 판정 근거가 흐려진다.
+    assert max(rtt_a, rtt_b) <= POLL_S, (
+        f"판정 불가(환경): collector clock probe round trip {rtt_a:.3f}s/{rtt_b:.3f}s > {POLL_S}s"
+    )
 
-    # 재연결 → replay(링에 남은 분리 구간) → plan → live. 버퍼가 모두 쓰일 때까지 기다린다.
+    # 재연결 → replay(링에 남은 분리 구간) → plan → live. replay가 다 오고 버퍼가 모두 쓰일 때까지.
     _wait(_collector_ok, 60, "collector session after reconnect")
     _wait_acquisition(lambda a: a.get("tags_good") == SIM_TAGS, 30)  # ④(b)
     _wait(lambda: _int_field(_ingest(), "replay") > replay_before, 30, "replayed samples")
+    replay_after = _stable_replay(30)
     _wait(lambda: _int_field(_section(_readyz(), "historian"), "buffer_rows") == 0, 30, "flush")
-    replayed = _int_field(_ingest(), "replay") - replay_before
+    replayed = replay_after - replay_before
+    stale_delta = _int_field(_ingest(), "stale") - stale_before
 
     historian = _section(_readyz(), "historian")
     assert historian["db_ok"] is True
     assert historian["dropped_total"] == 0
     assert historian["rejected_total"] == 0
 
-    gap = (t0 + EDGE_S, t1 - EDGE_S)
-    counts = asyncio.run(_gap_rows(stack.dsn("pureiron"), stack.password, gap))
-    expected = (mono1 - mono0 - 2 * EDGE_S) / POLL_S
-    polls_upper = (mono1 - mono0) / POLL_S + 1
+    counts = asyncio.run(_gap_rows(stack.dsn("pureiron"), stack.password, (ta, tb)))
+    expected = (mb - ma) / POLL_S
+    upper = expected + 1
     print(
-        f"REPLAY rows/tag min={min(counts)} max={max(counts)} expected={expected:.1f} "
-        f"ratio={min(counts) / expected:.3f} upper={polls_upper:.1f} "
-        f"real_span={t1 - t0:.2f} mono_span={mono1 - mono0:.2f} "
-        f"replayed={replayed} gap_rows={sum(counts)}"
+        f"REPLAY rows/tag min={min(counts)} max={max(counts)} expected={expected:.2f} "
+        f"ratio={min(counts) / expected:.3f} upper={upper:.2f} "
+        f"window_real={tb - ta:.2f} window_mono={mb - ma:.2f} "
+        f"replayed={replayed} gap_rows={sum(counts)} live_delta={live_b - live_a} "
+        f"stale_delta={stale_delta}"
     )
     assert len(counts) == SIM_TAGS
     assert min(counts) >= 0.9 * expected, (min(counts), expected)  # ①
-    assert max(counts) <= polls_upper, (max(counts), polls_upper)  # ②
+    assert max(counts) <= upper, (max(counts), upper)  # ②
+    assert live_b == live_a, (live_a, live_b)  # ④(주)
     assert replayed >= sum(counts), (replayed, sum(counts))  # ③·④(a)
