@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Protocol
 
@@ -81,6 +81,8 @@ class Definitions:
     rev: int
     devices: tuple[DeviceDef, ...] = ()
     tags: tuple[TagDef, ...] = ()
+    # project.yaml `historian` 정규형(스키마 기본값 생략, 없으면 빈 값). 기본값은 소비자가 채운다.
+    historian: Mapping[str, object] = field(default_factory=dict[str, object])
 
 
 class DefinitionsSource(Protocol):

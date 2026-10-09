@@ -207,7 +207,11 @@ async def site_db(request: pytest.FixtureRequest) -> AsyncGenerator[SiteDb]:
 
 
 def write_project(
-    root: Path, devices: Mapping[str, JsonObject], tags: Mapping[str, list[JsonObject]]
+    root: Path,
+    devices: Mapping[str, JsonObject],
+    tags: Mapping[str, list[JsonObject]],
+    *,
+    historian: JsonObject | None = None,
 ) -> Path:
     """고객 프로젝트 트리를 만든다(JSON은 YAML이기도 하다 — load_project가 그대로 읽는다).
 
@@ -217,7 +221,9 @@ def write_project(
         shutil.rmtree(root)
     (root / "devices").mkdir(parents=True)
     (root / "tags").mkdir()
-    project = {"schema_version": 1, "project_id": "it", "name": "integration"}
+    project: JsonObject = {"schema_version": 1, "project_id": "it", "name": "integration"}
+    if historian is not None:
+        project["historian"] = historian
     (root / "project.yaml").write_text(json.dumps(project), encoding="utf-8")
     for device_id, device in devices.items():
         (root / "devices" / f"{device_id}.yaml").write_text(json.dumps(device), encoding="utf-8")

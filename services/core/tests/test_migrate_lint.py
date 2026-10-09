@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -84,6 +85,10 @@ def test_rejected_statements(tmp_path: Path, sql: str, fragment: str) -> None:
         "INSERT INTO t (id) SELECT 1 FROM drop_chunks('h', INTERVAL '1d') ON CONFLICT DO NOTHING;",
         "SELECT set_chunk_time_interval('h', INTERVAL '7 days');",
         "SELECT add_compression_policy('h', INTERVAL '2 days') FROM t;",
+        "ALTER MATERIALIZED VIEW t_1m RENAME TO t_old;",
+        "ALTER MATERIALIZED VIEW t_1m SET (timescaledb.materialized_only = false, x = 1);",
+        "ALTER MATERIALIZED VIEW t_1m SET (timescaledb.compress = true);",
+        "ALTER MATERIALIZED VIEW t_1m OWNER TO someone;",
     ],
 )
 def test_statements_outside_allowlist_are_rejected(tmp_path: Path, sql: str) -> None:
@@ -105,6 +110,8 @@ def test_statements_outside_allowlist_are_rejected(tmp_path: Path, sql: str) -> 
         "ALTER TYPE mood ADD VALUE 'ok';",
         "COMMENT ON COLUMN t.v IS 'drop me, truncate me';",
         "-- DROP TABLE t; (comment only)\nCREATE TABLE w (id int);",
+        "ALTER MATERIALIZED VIEW t_1m SET (timescaledb.materialized_only = false);",
+        "ALTER MATERIALIZED VIEW t_1h SET (timescaledb.materialized_only=TRUE);",
     ],
 )
 def test_additive_statements_pass(tmp_path: Path, sql: str) -> None:
@@ -207,6 +214,95 @@ def test_base_ref_without_directory_is_bootstrap_notice(tmp_path: Path) -> None:
     report = lint_directory(directory, base_ref="master")
     assert report.issues == []
     assert any("skipped" in n for n in report.notices)
+
+
+def _commit_all(repo: Path, message: str) -> None:
+    _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "add", ".")
+    _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", message)
+
+
+def _release(repo: Path, name: str, app_expected: object) -> None:
+    releases = repo / "deploy" / "releases"
+    releases.mkdir(parents=True, exist_ok=True)
+    record = {"release": name, "schema": {"app_expected": app_expected}}
+    (releases / f"{name}.json").write_text(json.dumps(record), encoding="utf-8")
+
+
+EPOCH_FILES = {
+    **BASELINE,
+    "0002_two.sql": "CREATE TABLE two (x int);",
+    "0003_three.sql": "CREATE TABLE three (x int);",
+}
+
+
+def _repo_with_epochs(tmp_path: Path, *, released: object | None) -> Path:
+    """base: epoch 1 = 0001, epoch 2 = 0002. `released`가 있으면 release 기록 r0을 둔다."""
+    repo = tmp_path / "repo"
+    directory = write_migrations(
+        repo / "migrations",
+        {k: v for k, v in EPOCH_FILES.items() if k != "0003_three.sql"},
+        {1: "0001_base.sql", 2: "0002_two.sql"},
+    )
+    _git(repo, "init", "-q", "-b", "master")
+    if released is not None:
+        _release(repo, "r0", released)
+    _commit_all(repo, "base")
+    return directory
+
+
+def test_unreleased_epoch_may_be_extended(tmp_path: Path) -> None:
+    """D12: release 기록(epoch 1)보다 큰 epoch 2는 뒤 파일로 늘릴 수 있다(r2 = epoch 3 유지)."""
+    directory = _repo_with_epochs(tmp_path, released=1)
+    write_migrations(directory, EPOCH_FILES, {1: "0001_base.sql", 2: "0003_three.sql"})
+    report = lint_directory(directory, base_ref="master")
+    assert report.issues == []
+    assert any("unreleased epoch 2 extended" in n for n in report.notices)
+
+
+def test_released_epoch_may_not_change(tmp_path: Path) -> None:
+    """release 기록에 있는 epoch(≤ app_expected)는 늘리는 것도 금지."""
+    directory = _repo_with_epochs(tmp_path, released=2)
+    write_migrations(directory, EPOCH_FILES, {1: "0001_base.sql", 2: "0003_three.sql"})
+    messages = [i.message for i in lint_directory(directory, base_ref="master").issues]
+    assert any("released epoch 2" in m for m in messages), messages
+
+
+def test_without_release_records_every_base_epoch_is_released(tmp_path: Path) -> None:
+    directory = _repo_with_epochs(tmp_path, released=None)
+    write_migrations(directory, EPOCH_FILES, {1: "0001_base.sql", 2: "0003_three.sql"})
+    messages = [i.message for i in lint_directory(directory, base_ref="master").issues]
+    assert any("released epoch 2" in m for m in messages), messages
+
+
+def test_unreleased_epoch_may_not_shrink(tmp_path: Path) -> None:
+    """미release epoch라도 마지막 파일을 앞으로 당기는 것(epoch 쪼개기)은 금지."""
+    repo = tmp_path / "repo"
+    directory = write_migrations(
+        repo / "migrations", EPOCH_FILES, {1: "0001_base.sql", 2: "0003_three.sql"}
+    )
+    _git(repo, "init", "-q", "-b", "master")
+    _release(repo, "r0", 1)
+    _commit_all(repo, "base")
+    write_migrations(directory, {}, {1: "0001_base.sql", 2: "0002_two.sql", 3: "0003_three.sql"})
+    messages = [i.message for i in lint_directory(directory, base_ref="master").issues]
+    assert any("may only be extended" in m for m in messages), messages
+
+
+def test_extension_still_protects_base_sql_files(tmp_path: Path) -> None:
+    """epoch 확장이 허용돼도 base에 있던 SQL 파일 수정은 금지."""
+    directory = _repo_with_epochs(tmp_path, released=1)
+    write_migrations(directory, EPOCH_FILES, {1: "0001_base.sql", 2: "0003_three.sql"})
+    (directory / "0002_two.sql").write_text("CREATE TABLE two (x bigint);", encoding="utf-8")
+    messages = [i.message for i in lint_directory(directory, base_ref="master").issues]
+    assert any("released migration modified" in m for m in messages), messages
+
+
+@pytest.mark.parametrize("app_expected", ["2", True, 1.5])
+def test_unreadable_release_record_is_an_error(tmp_path: Path, app_expected: object) -> None:
+    """기록을 못 읽으면 조용히 미release로 보지 않고 실패한다."""
+    directory = _repo_with_epochs(tmp_path, released=app_expected)
+    messages = [i.message for i in lint_directory(directory, base_ref="master").issues]
+    assert any("schema.app_expected" in m for m in messages), messages
 
 
 def test_cli_exit_codes(tmp_path: Path, migrations_dir: Path) -> None:

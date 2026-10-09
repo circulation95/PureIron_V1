@@ -3,15 +3,24 @@
 baseline(epoch 1)의 파일은 규칙 목록에서 면제되고, 그 뒤 파일은 구 앱(N-1)이 새 스키마(N)에서 계속
 동작하도록 파괴적·제약 추가 구문을 거부한다. `--base-ref`가 주어지면 base에 이미 있는 마이그레이션과
 epoch 항목이 바뀌지 않았는지도 본다(적용된 파일을 고치면 checksum이 깨진다).
+
+epoch 항목의 "release됨" 기준은 base의 release 기록(`deploy/releases/*.json`의
+`schema.app_expected` 최댓값)이다. 그 이하 epoch는 바꿀 수 없고, 그보다 큰(아직 어떤 현장에도
+없는) epoch는 마지막 파일을 뒤 파일로 **늘리는 것만** 허용한다 — 같은 release에 마이그레이션을
+더 싣는 경우(epoch 3 = 0008 → 0009). 롤백 envelope(N-1 앱의 상한 = N)이 release 단위라 r2는
+epoch 하나만 올려야 한다. base에 있는 SQL 파일의 수정·삭제는 epoch와 무관하게 계속 금지한다.
+release 기록이 하나도 없는 base(bootstrap·테스트 저장소)는 모든 epoch를 release된 것으로 본다.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 from pureiron_core.platform.migrate import (
     EPOCHS_FILE,
@@ -25,6 +34,8 @@ from pureiron_core.platform.migrate import (
 from pureiron_core.platform.sqltext import SqlSyntaxError, Statement, split_statements
 
 BASELINE_EPOCH = 1
+# 저장소 루트 기준 release 기록 위치(deploy/build/release_record.py가 쓰는 곳).
+RELEASES_DIR = "deploy/releases"
 
 _CONTRACT = re.compile(
     r"--\s*contract:\s*drops\s+(\S+)\s+deprecated\s+in\s+epoch\s+(\d+)", re.IGNORECASE
@@ -48,6 +59,11 @@ _ALLOWED_STATEMENTS: tuple[re.Pattern[str], ...] = (
         r"^SELECT\s+(CREATE_HYPERTABLE|ADD_COMPRESSION_POLICY|ADD_CONTINUOUS_AGGREGATE_POLICY)\s*\("
     ),
     re.compile(r"^INSERT\s+INTO\b.*\bON\s+CONFLICT\s+DO\s+NOTHING$"),
+    # CAGG 실시간 집계 켜기·끄기만(뷰 정의·데이터는 그대로, 구 앱 조회도 그대로 동작).
+    re.compile(
+        r"^ALTER\s+MATERIALIZED\s+VIEW\s+\S+\s+SET\s*\(\s*TIMESCALEDB\.MATERIALIZED_ONLY\s*="
+        r"\s*(TRUE|FALSE)\s*\)$"
+    ),
 )
 _TIMESCALE_SET = re.compile(r"^SET\s*\(\s*TIMESCALEDB\.")
 # 허용 목록은 구문 첫머리만 보므로, 구문 어디에든 나오면 거부할 파괴적 함수·형태를 따로 찾는다.
@@ -293,7 +309,7 @@ def _lint_against_base(directory: Path, base_ref: str, report: LintReport) -> No
         base_bytes = _git(root, "show", f"{base_ref}:{rel}/{name}").stdout
         current = directory / name
         if name == EPOCHS_FILE:
-            _compare_epochs(directory, base_bytes, report)
+            _compare_epochs(directory, base_bytes, _released_epoch(root, base_ref, report), report)
         elif name.endswith(".sql"):
             if not current.exists():
                 report.add(name, f"released migration deleted (present in {base_ref})")
@@ -303,7 +319,47 @@ def _lint_against_base(directory: Path, base_ref: str, report: LintReport) -> No
                 )
 
 
-def _compare_epochs(directory: Path, base_bytes: bytes, report: LintReport) -> None:
+def _released_epoch(root: Path, base_ref: str, report: LintReport) -> int | None:
+    """base의 release 기록 중 가장 큰 `schema.app_expected`. 기록이 하나도 없으면 None.
+
+    읽을 수 없는 기록은 lint 실패로 본다 — 조용히 건너뛰면 release된 epoch가 미release로 보여
+    바꿀 수 있게 된다.
+    """
+    listing = _git(root, "ls-tree", "--name-only", f"{base_ref}:{RELEASES_DIR}")
+    if listing.returncode != 0:
+        return None
+    epochs: list[int] = []
+    for name in listing.stdout.decode().split():
+        if not name.endswith(".json"):
+            continue
+        record_path = f"{RELEASES_DIR}/{name}"
+        try:
+            record: object = json.loads(_git(root, "show", f"{base_ref}:{record_path}").stdout)
+        except ValueError as exc:
+            report.add(record_path, f"release record unreadable at {base_ref}: {exc}")
+            continue
+        expected = _member(_member(record, "schema"), "app_expected")
+        if not isinstance(expected, int) or isinstance(expected, bool):
+            report.add(
+                record_path, f"release record at {base_ref} has no integer schema.app_expected"
+            )
+            continue
+        epochs.append(expected)
+    return max(epochs) if epochs else None
+
+
+def _member(value: object, key: str) -> object:
+    return cast("dict[str, object]", value).get(key) if isinstance(value, dict) else None
+
+
+def _version(filename: str | None) -> int | None:
+    parsed = parse_migration_name(filename) if filename else None
+    return parsed[0] if parsed else None
+
+
+def _compare_epochs(
+    directory: Path, base_bytes: bytes, released: int | None, report: LintReport
+) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         base_path = Path(tmp) / EPOCHS_FILE
         base_path.write_bytes(base_bytes)
@@ -314,8 +370,24 @@ def _compare_epochs(directory: Path, base_bytes: bytes, report: LintReport) -> N
             return
     current = load_epochs(directory / EPOCHS_FILE)
     for epoch, filename in sorted(base.items()):
-        if current.get(epoch) != filename:
+        now = current.get(epoch)
+        if now == filename:
+            continue
+        if released is None or epoch <= released:
             report.add(EPOCHS_FILE, f"released epoch {epoch} → {filename} must not change")
+            continue
+        old_version, new_version = _version(filename), _version(now)
+        if old_version is None or new_version is None or new_version <= old_version:
+            report.add(
+                EPOCHS_FILE,
+                f"unreleased epoch {epoch} → {filename} may only be extended to a later file "
+                f"(got {now})",
+            )
+            continue
+        report.notices.append(
+            f"unreleased epoch {epoch} extended: {filename} → {now} "
+            f"(newest release record has epoch {released})"
+        )
 
 
 def lint_directory(directory: Path, *, base_ref: str | None = None) -> LintReport:
