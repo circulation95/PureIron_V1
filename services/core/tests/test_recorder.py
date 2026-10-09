@@ -15,6 +15,7 @@ from pureiron_core.project.ports import Definitions, TagDef
 
 S = 1_000_000_000  # ns
 T0 = 1_700_000_000 * S
+NOW = T0 + 10_000 * S  # 테스트 샘플 시각(T0 + 수십 초)보다 뒤 — 평상시 벽시계
 GOOD, BAD, UNCERTAIN = pb.GOOD, pb.BAD, pb.UNCERTAIN
 
 
@@ -56,9 +57,9 @@ def _recorder(
     return recorder, sink
 
 
-def _live(recorder: Recorder, *samples: pb.Sample, plan_rev: int = 3) -> None:
+def _live(recorder: Recorder, *samples: pb.Sample, plan_rev: int = 3, now_ns: int = NOW) -> None:
     for sample in samples:
-        recorder.offer_live([sample], plan_rev=plan_rev)
+        recorder.offer_live([sample], plan_rev=plan_rev, now_ns=now_ns)
 
 
 def _times(sink: ListSink) -> list[float]:
@@ -227,7 +228,7 @@ def test_time_regression_uses_last_seen_not_last_recorded() -> None:
 
 def test_unknown_live_tag_is_rejected_and_counted() -> None:
     recorder, sink = _recorder(_tag(1))
-    recorder.offer_live([num(1, 0, 1.0), num(7, 0, 1.0), num(8, 0, 1.0)], plan_rev=3)
+    recorder.offer_live([num(1, 0, 1.0), num(7, 0, 1.0), num(8, 0, 1.0)], plan_rev=3, now_ns=NOW)
     assert [r.tag_id for r in sink.rows] == [1]
     assert (recorder.stats.rejected_unknown, recorder.stats.rejected) == (2, 2)
 
@@ -246,12 +247,12 @@ def test_batch_from_newer_plan_rev_is_rejected(raw: bool) -> None:
     if raw:
         recorder.offer_raw(samples, plan_rev=4)
     else:
-        recorder.offer_live(samples, plan_rev=4)
+        recorder.offer_live(samples, plan_rev=4, now_ns=NOW)
     assert sink.rows == []
     assert (recorder.stats.rejected_rev, recorder.stats.rejected) == (2, 2)
     # 같은 rev·옛 rev는 받는다
     recorder.offer_raw([num(1, 2, 1.0)], plan_rev=2)
-    recorder.offer_live([num(1, 3, 1.0)], plan_rev=3)
+    recorder.offer_live([num(1, 3, 1.0)], plan_rev=3, now_ns=NOW)
     assert len(sink.rows) == 2
 
 
@@ -263,7 +264,8 @@ def test_samples_before_any_plan_are_kept_raw() -> None:
     sink = ListSink()
     recorder = Recorder(sink)
     recorder.offer_raw([num(1, 0, 1.0)], plan_rev=9)
-    recorder.offer_live([num(1, 1, 1.0), num(1, 2, 1.0)], plan_rev=9)  # deadband 없이 모두
+    # live도 deadband 없이 모두
+    recorder.offer_live([num(1, 1, 1.0), num(1, 2, 1.0)], plan_rev=9, now_ns=NOW)
     assert _times(sink) == [0, 1, 2]
     assert (recorder.stats.raw, recorder.stats.rejected) == (3, 0)
     # plan을 받은 뒤부터는 live 규칙(같은 값 반복 생략, 첫 샘플은 기록)
@@ -280,7 +282,7 @@ def test_tag_id_outside_int4_is_rejected(raw: bool) -> None:
     if raw:
         recorder.offer_raw(samples, plan_rev=3)
     else:
-        recorder.offer_live(samples, plan_rev=3)
+        recorder.offer_live(samples, plan_rev=3, now_ns=NOW)
     assert [r.tag_id for r in sink.rows] == [1]
     assert recorder.stats.rejected == 2
 
@@ -320,8 +322,49 @@ def test_historian_status_rejected_total_sums_both_paths() -> None:
     historian = Historian(recorder, writer)
     recorder.offer_raw([num(1, 0, 1.0)], plan_rev=4)
     assert historian.status().rejected_total == 1
-    recorder.offer_live([num(5, 0, 1.0), num(6, 0, 1.0)], plan_rev=3)
+    recorder.offer_live([num(5, 0, 1.0), num(6, 0, 1.0)], plan_rev=3, now_ns=NOW)
     status = historian.status()
     assert status.rejected_total == 3
     assert (recorder.stats.rejected_rev, recorder.stats.rejected_unknown) == (1, 2)
     assert status.buffer_rows == 0
+
+
+def _at(ts_s: float) -> int:
+    return T0 + int(ts_s * S)
+
+
+def test_clock_stepped_back_resets_state_and_records() -> None:
+    """마지막으로 본 시각이 지금보다 2s 넘게 미래(벽시계 역보정)면 과거 ts live도 기록한다.
+
+    TagStore와 같은 기준 — 현재값만 갱신되고 이력이 비는 불일치를 막는다(W1 진단 §5).
+    """
+    recorder, sink = _recorder(_tag(1, {"deadband": 100, "max_interval_s": 10}))
+    _live(recorder, num(1, 100, 1.0), now_ns=_at(100))
+    # 벽시계가 100s → 50s로 뒤로 보정: 마지막 시각(100)이 now(50)+2s보다 미래
+    _live(recorder, num(1, 50, 1.0), now_ns=_at(50))
+    assert _times(sink) == [100, 50]
+    # 상태가 새 시각으로 리셋됐다: 같은 값은 생략, max_interval은 50s 기준으로 다시 센다
+    _live(recorder, num(1, 51, 1.0), now_ns=_at(51))
+    _live(recorder, num(1, 60, 1.0), now_ns=_at(60))
+    assert _times(sink) == [100, 50, 60]
+
+
+@pytest.mark.parametrize(
+    ("now_s", "recorded"),
+    [(99.0, False), (98.0, False), (97.999, True)],
+    ids=["within-slack", "exact-slack", "beyond-slack"],
+)
+def test_clock_slack_boundary(now_s: float, recorded: bool) -> None:
+    """last_seen ≤ now + 2s면 역행으로 버리고, 넘으면 역보정으로 보고 기록한다(TagStore와 같음)."""
+    recorder, sink = _recorder(_tag(1))
+    _live(recorder, num(1, 100, 1.0), now_ns=_at(100))
+    _live(recorder, num(1, 90, 2.0), now_ns=_at(now_s))
+    assert len(sink.rows) == (2 if recorded else 1)
+
+
+def test_same_timestamp_live_is_not_recorded_twice() -> None:
+    """같은 시각 두 번째 샘플은 버린다(UNIQUE(tag_id,time)로 어차피 저장되지 않음)."""
+    recorder, sink = _recorder(_tag(1))
+    _live(recorder, num(1, 10, 1.0), num(1, 10, 5.0), num(1, 11, 5.0))
+    assert [r.value_num for r in sink.rows] == [1.0, 5.0]
+    assert _times(sink) == [10, 11]

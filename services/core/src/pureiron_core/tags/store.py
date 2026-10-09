@@ -13,6 +13,7 @@ from collections.abc import Iterable, Sequence
 
 from pureiron_core.platform.bus import Event
 from pureiron_core.tags.ports import (
+    CLOCK_SLACK_NS,
     TAG_CHANGED_PREFIX,
     Commit,
     Quality,
@@ -23,9 +24,6 @@ from pureiron_core.tags.ports import (
     Value,
     json_value,
 )
-
-# 저장된 시각이 지금보다 이만큼 넘게 미래면(벽시계가 뒤로 보정됨) 역행 검사를 하지 않는다.
-CLOCK_SLACK_NS = 2_000_000_000
 
 
 def _same(a: Value | None, b: Value | None) -> bool:

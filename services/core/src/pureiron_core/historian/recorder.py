@@ -13,6 +13,9 @@
   기록될 수 있다(한계).
 - `tag_history.tag_id`(int4) 범위 밖 tag_id는 어느 경로든 버린다 — 존재할 수 없는 id이고, 한 행이
   INSERT 전체를 매번 실패시켜 이력을 막지 않게 한다.
+- live 시간 역행(마지막으로 본 시각 이하)은 기록하지 않는다. 단 마지막으로 본 시각이 지금보다
+  `CLOCK_SLACK_NS`(2s) 넘게 미래면(벽시계가 뒤로 보정됨) 그 상태를 믿지 않고 리셋해 첫 샘플처럼
+  기록한다 — TagStore와 같은 기준(현재값만 갱신되고 이력이 비는 불일치 방지, M3a-3 W1 진단).
 - live 샘플의 tag_id가 현재 plan에 없으면 버린다(D7, TagStore와 같은 기준). raw는 옛 rev의
   tag_id(retired 포함)를 그대로 기록한다 — id는 재사용되지 않는다.
 
@@ -31,7 +34,7 @@ from typing import Final, Protocol, cast
 from pureiron_core._gen import collector_pb2 as pb
 from pureiron_core.historian.writer import Row
 from pureiron_core.project.ports import Definitions
-from pureiron_core.tags.ports import Quality
+from pureiron_core.tags.ports import CLOCK_SLACK_NS, Quality
 
 log = logging.getLogger(__name__)
 
@@ -223,10 +226,11 @@ class Recorder:
         if samples:
             self._sink.append([row(s) for s in samples])
 
-    def offer_live(self, samples: Sequence[pb.Sample], *, plan_rev: int) -> None:
+    def offer_live(self, samples: Sequence[pb.Sample], *, plan_rev: int, now_ns: int) -> None:
         """fresh live: deadband·max_interval을 통과한 샘플만 기록한다.
 
-        plan을 아직 모르면(정책 없음) raw로 받아 둔다(D6).
+        `now_ns`는 ingest가 fresh 판정에 쓴 벽시계(시계 역보정 판단용). plan을 아직 모르면(정책
+        없음) raw로 받아 둔다(D6).
         """
         if self._rev is None:
             self.offer_raw(samples, plan_rev=plan_rev)
@@ -239,7 +243,7 @@ class Recorder:
             policy = self._policies.get(sample.tag_id)
             if policy is None:
                 unknown += 1
-            elif self._keep(sample, policy):
+            elif self._keep(sample, policy, now_ns):
                 rows.append(row(sample))
         if unknown:
             self.stats.rejected_unknown += unknown
@@ -249,16 +253,21 @@ class Recorder:
         if rows:
             self._sink.append(rows)
 
-    def _keep(self, sample: pb.Sample, policy: RecordPolicy) -> bool:
+    def _keep(self, sample: pb.Sample, policy: RecordPolicy, now_ns: int) -> bool:
         value = _compare_value(sample)
         quality = _quality(sample.quality)
         ts = sample.ts_unix_ns
         last = self._last.get(sample.tag_id)
-        if last is None:
+        if last is None or last.seen_ns > now_ns + CLOCK_SLACK_NS:
+            # 첫 샘플, 또는 벽시계가 뒤로 보정돼 마지막 시각을 믿을 수 없음 → 상태 리셋 후 기록.
+            # (계속 비교하면 max_interval 강제 기록이 시계가 따라잡을 때까지 멈춘다.)
             self._last[sample.tag_id] = _Last(value, quality, ts, ts)
             return True
         if ts <= last.seen_ns:
-            return False  # 시간 역행·같은 시각 재전송(TagStore와 같은 기준)
+            # 시간 역행은 TagStore처럼 버린다. 같은 시각(==)은 TagStore와 달리 버린다: 같은
+            # (tag_id, time) 두 번째 행은 UNIQUE + ON CONFLICT DO NOTHING으로 어차피 저장되지 않으니
+            # 받으면 deadband 상태만 DB와 어긋난다(현재값은 마지막 값이 이기는 덮어쓰기라 무해).
+            return False
         last.seen_ns = ts
         if (
             last.quality == quality

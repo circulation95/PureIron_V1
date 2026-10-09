@@ -11,6 +11,10 @@ from typing import Protocol
 from pureiron_core.platform.bus import Event
 
 TAG_CHANGED_PREFIX = "tag.changed."
+# 마지막으로 본 샘플 시각이 지금보다 이만큼 넘게 미래면(벽시계가 뒤로 보정됨) 그 시각을 믿지 않고
+# 시간 역행 검사를 하지 않는다. TagStore(현재값)와 historian recorder(이력)가 같은 기준을 쓴다 —
+# 다르면 시계 역보정 때 현재값은 갱신되는데 이력만 비는 불일치가 생긴다.
+CLOCK_SLACK_NS = 2_000_000_000
 
 type Value = float | bool
 

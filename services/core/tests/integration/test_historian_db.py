@@ -66,7 +66,7 @@ async def test_duplicates_absorbed_us_precision_and_nan_is_null(
         pb.Sample(tag_id=2, ts_unix_ns=_ns(base), flag=True, quality=pb.GOOD),
         pb.Sample(tag_id=1, ts_unix_ns=_ns(base + timedelta(seconds=2)), quality=pb.BAD),
     ]
-    recorder.offer_live(samples, plan_rev=1)
+    recorder.offer_live(samples, plan_rev=1, now_ns=_ns(datetime.now(UTC)))
     assert await writer.flush() == 4
     # 같은 샘플이 replay로 다시 와도(Ack 전 끊김) 행은 늘지 않는다 — 같은 flush 안 중복도 흡수.
     recorder.offer_raw([*samples, *samples], plan_rev=1)

@@ -66,7 +66,8 @@ class RecordingHistory:
     def offer_raw(self, samples: Sequence[pb.Sample], *, plan_rev: int) -> None:
         self.calls.append(("raw", plan_rev, [_value(s) for s in samples]))
 
-    def offer_live(self, samples: Sequence[pb.Sample], *, plan_rev: int) -> None:
+    def offer_live(self, samples: Sequence[pb.Sample], *, plan_rev: int, now_ns: int) -> None:
+        assert abs(now_ns - time.time_ns()) < 60 * 10**9  # ingest의 벽시계가 그대로 온다
         self.calls.append(("live", plan_rev, [_value(s) for s in samples]))
 
 

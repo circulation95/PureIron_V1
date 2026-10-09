@@ -45,8 +45,8 @@ class HistorySink(Protocol):
         """replay·오래된 live·미래 시각 live — 걸러내지 않고 기록."""
         ...
 
-    def offer_live(self, samples: Sequence[pb.Sample], *, plan_rev: int) -> None:
-        """fresh live — deadband·max_interval을 거쳐 기록."""
+    def offer_live(self, samples: Sequence[pb.Sample], *, plan_rev: int, now_ns: int) -> None:
+        """fresh live — deadband·max_interval을 거쳐 기록. `now_ns` = fresh 판정에 쓴 벽시계."""
         ...
 
 
@@ -60,7 +60,7 @@ class DiscardHistory:
     def offer_raw(self, samples: Sequence[pb.Sample], *, plan_rev: int) -> None:
         self.raw += len(samples)
 
-    def offer_live(self, samples: Sequence[pb.Sample], *, plan_rev: int) -> None:
+    def offer_live(self, samples: Sequence[pb.Sample], *, plan_rev: int, now_ns: int) -> None:
         self.live += len(samples)
 
 
@@ -158,7 +158,7 @@ class Ingestor:
         if late:
             self._history.offer_raw(late, plan_rev=batch.plan_rev)
         if live:
-            self._history.offer_live(live, plan_rev=batch.plan_rev)
+            self._history.offer_live(live, plan_rev=batch.plan_rev, now_ns=now)
         fresh = [reading(sample) for sample in live]
         self.stats.stale += stale
         self.stats.future += future
