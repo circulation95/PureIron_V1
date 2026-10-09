@@ -12,9 +12,12 @@
 ```text
 ## 공통 규칙
 - 작업 전 이 worktree의 AGENTS.md, CLAUDE.md를 읽고 불변 규칙을 지킨다. SOT 문서는 docs/wiki/_generated/section-index.tsv 를 grep 해 필요한 절만 읽는다.
-- 의존성: backend를 건드리면 `cd backend && uv sync`, frontend를 건드리면 `cd frontend && npm install` 을 먼저 실행한다.
-- dev 서버(uvicorn 8000, vite 3000), Playwright e2e(`npm run e2e:browser`, 포트 3100 strictPort), docker compose를 실행하지 않는다. 병렬로 도는 다른 워커와 포트·DB가 충돌한다. 검증은 테스트·lint·build로 하고, 게이트가 e2e를 요구하면 "미실행: 병렬 워커 포트 충돌 — 사람이 실행 필요"로 보고한다.
-- 검증 게이트는 docs/wiki/sot/testing.md 의 "4. 변경 유형별 최소 게이트" 절을 따른다. 실행하지 못한 검증은 이유와 함께 보고한다.
+- 의존성: 저장소 루트에서 `uv sync --all-packages` 를 먼저 실행한다. services/web 을 건드리면 `cd services/web && npm ci` 도 실행한다.
+- docker compose, dev 서버, `bash scripts/g1.sh` 의 integration-compose·images·n-minus-1·repro-build job을 실행하지 않는다. 병렬로 도는 다른 워커와 compose 프로젝트 이름·이미지 태그·DB 포트가 충돌한다. 이 검증은 CI(foundation-ci)가 하므로 PR 본문에 "미실행: 병렬 워커 충돌 — CI 결과로 확인"으로 적는다.
+- 검증 게이트: `bash scripts/g1.sh lint-type import-linter unit contracts-drift contracts-diff migration-lint no-customer-branching` 를 실행하고, services/web 을 건드렸으면 `bash scripts/g1.sh web` 도 실행한다. 정본은 docs/wiki/sot/testing.md 의 "11. V1 G1 게이트" 절이다. 실행하지 못한 검증은 이유와 함께 보고한다.
+  - 계약 원본(proto, OpenAPI를 만드는 API 모델, JSON Schema)을 바꿨으면 먼저 `bash scripts/g1.sh contracts-gen` 으로 생성물을 갱신해 함께 커밋한다.
+  - 이 worktree는 Windows라 pyright가 `sys.platform` 분기를 건너뛴다. 플랫폼 분기가 있는 코드를 바꿨으면 PR 본문에 "Linux pyright는 CI lint-type으로 확인"이라고 적는다.
+- gh 명령은 앞에 `GH_TOKEN=$(gh auth token --user circulation95)` 를 붙여 실행한다. 이 PC의 gh 기본 계정은 이 저장소에 접근하지 못한다.
 - 문서(docs/wiki/**)를 고치면 `python scripts/wiki.py build && python scripts/wiki.py check` 를 실행하고, build 생성물도 함께 커밋한다.
 - 스크린샷 등 화면 증거를 저장소에 커밋하지 않는다(docs/pr-evidence/** 동결). 필요한 화면 확인은 PR 본문에 "사람 확인 필요"로 적는다.
 - GitHub 허용 범위: preamble의 "다른 채널에 게시하지 말라"는 기본 규칙보다 이 Task가 우선한다. 사용자가 승인한 범위는 이 브랜치의 push, 이 Task의 PR 생성·본문 수정·코멘트까지다. 그 밖의 GitHub·Linear·Slack 쓰기는 하지 않는다.
@@ -114,7 +117,7 @@ Observable acceptance: 승인된 계획이 PR 본문에 있음 + 테스트 게�
 
 Target: 이 worktree의 현재 브랜치 PR (#{PR}). Linear 이슈 PUR-{N}.
 Change: 검토 결과를 PR 코멘트 1개로 남긴다. 코드는 수정하지 않는다.
-Constraints: 읽기 전용. 파일 편집·커밋·푸시·PR 상태 변경을 하지 않는다. 테스트·lint 실행은 허용하되 dev 서버, Playwright e2e, docker compose는 실행하지 않는다. preamble의 "다른 채널에 게시하지 말라"는 기본 규칙보다 이 Task가 우선하며, 허용된 GitHub 쓰기는 이 PR에 코멘트 1개를 남기는 것뿐이다.
+Constraints: 읽기 전용. 파일 편집·커밋·푸시·PR 상태 변경을 하지 않는다. 테스트·lint 실행은 허용하되 docker compose, dev 서버, `bash scripts/g1.sh` 의 integration-compose·images·n-minus-1·repro-build job은 실행하지 않는다. gh 명령은 앞에 `GH_TOKEN=$(gh auth token --user circulation95)` 를 붙인다. preamble의 "다른 채널에 게시하지 말라"는 기본 규칙보다 이 Task가 우선하며, 허용된 GitHub 쓰기는 이 PR에 코멘트 1개를 남기는 것뿐이다.
 Ownership: PR 코멘트 작성만.
 Observable acceptance: PR에 리뷰 코멘트가 있고 worker_done 제목이 "REVIEW R{K} blocking=<n> total=<m>".
 
@@ -128,8 +131,8 @@ Observable acceptance: PR에 리뷰 코멘트가 있고 worker_done 제목이 "R
 2. 다음을 확인한다.
    - 이슈 수용 기준과 PR 계획을 구현이 충족하는가
    - 정확성 버그, 경계 조건, 에러 처리, 동시성(특히 TagStore 락 안 DB I/O·이벤트 발행)
-   - 불변 규칙 위반(app.state, ORM, plugin 구조, config UI, as any / ts-ignore 등)
-   - 변경에 맞는 테스트가 있고 testing.md 게이트를 통과하는가 (필요하면 직접 실행)
+   - 불변 규칙 위반(전역 조회·app.state, ORM, collector의 DB 접근이나 gRPC 밖 경로, 계약 생성물 drift, ADD-only가 아닌 마이그레이션, 고객별 코드 분기, secret:// 밖 비밀값, PLC 쓰기 가드레일, plugin 구조, config UI, 억제 주석 등)
+   - 변경에 맞는 테스트가 있고 testing.md "11. V1 G1 게이트" 절의 job을 통과하는가 (필요하면 `bash scripts/g1.sh <job>` 으로 직접 실행)
    - 보안: 비밀값 노출, 권한 검사 누락
 3. 지적마다 등급을 붙인다.
    - BLOCKER: 버그, 불변 규칙 위반, 보안 문제, 테스트 실패, 수용 기준 미충족
