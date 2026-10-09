@@ -9,9 +9,10 @@
 - 쓰기에 실패하면 꺼낸 행을 버퍼 앞에 순서대로 되돌리고 상한을 다시 적용한다 — DB 장애 동안은 이
   버퍼가 이력을 들고 있고(collector 링버퍼는 core 단절 구간만 담당), 넘치면 오래된 것부터 잃는다.
 - 한 번의 쓰기(연결 획득·INSERT·연결 반환 대기)는 `write_timeout_s`(기본 쿼리 제한 10s + 여유 5s)
-  안에 끝나지 않으면 취소하고 실패로 본다 — half-open DB 연결에서도 flush가 그 시간 넘게 멈추지
-  않고, 행은 버퍼로 돌아가 다음 주기에 다시 쓴다. 취소된 연결의 정리(asyncpg는 반환을 shield한다)는
-  백그라운드에서 계속될 수 있다.
+  가 지나면 취소하고 실패로 본다 — 행은 버퍼로 돌아가 다음 주기에 다시 쓴다. 이 취소는 한 번뿐이라
+  INSERT 도중에 걸리면 이어지는 연결 반환(asyncpg는 shield한다)은 끊지 못한다. 그 반환은
+  `Database`의 획득·반환 제한(기본 5s, 넘으면 연결을 terminate)으로 끝나므로 half-open DB
+  연결에서도 flush 한 번은 최대 `write_timeout_s` + 그 제한(기본 20s) 안에 돌아온다.
 - 문서화된 허용 손실: core 프로세스 crash 시 아직 쓰지 못한 버퍼(정상 시 ≤ 1 주기분, DB 장애 중이면
   상한 내 전체).
 """
@@ -36,7 +37,8 @@ DEFAULT_FLUSH_S = 1.0
 DEFAULT_FLUSH_MAX_ROWS = 20_000
 DEFAULT_STOP_TIMEOUT_S = 5.0
 QUERY_TIMEOUT_S = 10.0
-# flush 한 번의 쓰기 전체 제한: 쿼리 제한 + 연결 획득·반환 여유.
+# flush 한 번의 쓰기 제한: 쿼리 제한 + 연결 획득 여유. 이 제한이 INSERT 도중에 걸린 뒤의 연결 반환은
+# `Database`의 획득·반환 제한이 따로 끝낸다.
 DEFAULT_WRITE_TIMEOUT_S = QUERY_TIMEOUT_S + 5.0
 DROP_WARN_INTERVAL_S = 60.0
 
@@ -83,7 +85,8 @@ def columns(rows: Sequence[Row]) -> Columns:
 class PgRowStore:
     """`tag_history`에 쓴다. 쿼리 제한 시간은 INSERT 실행에만 걸린다.
 
-    연결 획득·반환까지 포함한 전체 제한은 `HistoryWriter`(`write_timeout_s`)가 건다.
+    연결 획득·반환 제한은 `Database`가, 한 번의 쓰기 전체 제한은 `HistoryWriter`
+    (`write_timeout_s`)가 건다.
     """
 
     def __init__(self, db: Database, *, query_timeout_s: float = QUERY_TIMEOUT_S) -> None:
@@ -261,7 +264,8 @@ class HistoryWriter:
         """flush loop를 멈추고 남은 버퍼를 제한 시간 안에서 마지막으로 쓴다.
 
         수집(acquisition)을 먼저 멈춘 뒤 호출한다 — 그 뒤로는 새 행이 들어오지 않는다. 다 쓰지
-        못한 행은 허용 손실로 경고만 남긴다.
+        못한 행은 허용 손실로 경고만 남긴다. half-open DB에서는 진행 중 쓰기의 취소와 최종 flush의
+        `timeout_s` 뒤에 각각 연결 반환 정리(`Database` 획득·반환 제한, 기본 5s)가 더해질 수 있다.
         """
         if self._task is not None:
             self._task.cancel()
