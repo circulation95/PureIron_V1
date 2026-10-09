@@ -7,6 +7,10 @@
   주기에 버퍼가 빌 때까지 계속 쓴다.
 - 쓰기에 실패하면 꺼낸 행을 버퍼 앞에 순서대로 되돌리고 상한을 다시 적용한다 — DB 장애 동안은 이
   버퍼가 이력을 들고 있고(collector 링버퍼는 core 단절 구간만 담당), 넘치면 오래된 것부터 잃는다.
+- 한 번의 쓰기(연결 획득·INSERT·연결 반환 대기)는 `write_timeout_s`(기본 쿼리 제한 10s + 여유 5s)
+  안에 끝나지 않으면 취소하고 실패로 본다 — half-open DB 연결에서도 flush가 그 시간 넘게 멈추지
+  않고, 행은 버퍼로 돌아가 다음 주기에 다시 쓴다. 취소된 연결의 정리(asyncpg는 반환을 shield한다)는
+  백그라운드에서 계속될 수 있다.
 - 문서화된 허용 손실: core 프로세스 crash 시 아직 쓰지 못한 버퍼(정상 시 ≤ 1 주기분, DB 장애 중이면
   상한 내 전체).
 """
@@ -31,6 +35,8 @@ DEFAULT_FLUSH_S = 1.0
 DEFAULT_FLUSH_MAX_ROWS = 20_000
 DEFAULT_STOP_TIMEOUT_S = 5.0
 QUERY_TIMEOUT_S = 10.0
+# flush 한 번의 쓰기 전체 제한: 쿼리 제한 + 연결 획득·반환 여유.
+DEFAULT_WRITE_TIMEOUT_S = QUERY_TIMEOUT_S + 5.0
 DROP_WARN_INTERVAL_S = 60.0
 
 # 시각은 µs 정수로 넘겨 DB에서 timestamptz로 바꾼다(datetime 변환 비용·부동소수 반올림 없음).
@@ -74,7 +80,10 @@ def columns(rows: Sequence[Row]) -> Columns:
 
 
 class PgRowStore:
-    """`tag_history`에 쓴다. 쿼리 제한 시간으로 half-open DB 연결에서 flush가 멈추지 않게 한다."""
+    """`tag_history`에 쓴다. 쿼리 제한 시간은 INSERT 실행에만 걸린다.
+
+    연결 획득·반환까지 포함한 전체 제한은 `HistoryWriter`(`write_timeout_s`)가 건다.
+    """
 
     def __init__(self, db: Database, *, query_timeout_s: float = QUERY_TIMEOUT_S) -> None:
         self._db = db
@@ -108,12 +117,14 @@ class HistoryWriter:
         max_rows: int = DEFAULT_MAX_ROWS,
         flush_s: float = DEFAULT_FLUSH_S,
         flush_max_rows: int = DEFAULT_FLUSH_MAX_ROWS,
+        write_timeout_s: float = DEFAULT_WRITE_TIMEOUT_S,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._store = store
         self._max_rows = max_rows
         self._flush_s = flush_s
         self._flush_max_rows = flush_max_rows
+        self._write_timeout_s = write_timeout_s
         self._clock = clock
         self._chunks: deque[_Chunk] = deque()
         self._rows = 0
@@ -206,7 +217,8 @@ class HistoryWriter:
                 self._inflight_rows = len(rows)
                 self._inflight_since = taken[0].enqueued
                 try:
-                    await self._store.insert(rows)
+                    async with asyncio.timeout(self._write_timeout_s):
+                        await self._store.insert(rows)
                 except asyncio.CancelledError:
                     self._put_back(taken)
                     raise
@@ -216,7 +228,9 @@ class HistoryWriter:
                         log.warning(
                             "historian write failed, keeping %d row(s) in memory: %s",
                             self._rows,
-                            exc,
+                            f"timed out (write limit {self._write_timeout_s:g}s)"
+                            if isinstance(exc, TimeoutError)
+                            else exc,
                         )
                     self._db_ok = False
                     return total

@@ -224,6 +224,45 @@ async def test_stop_gives_up_after_timeout_and_keeps_rows(
     assert "stopped with 3 unwritten" in caplog.text
 
 
+class HangingStore(FakeStore):
+    """응답 없는(half-open) DB: 연결 획득이든 INSERT든 반환이든 끝나지 않는다."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.hang = True
+        self.cancelled = 0
+
+    async def insert(self, rows: Sequence[Row]) -> None:
+        if self.hang:
+            self.calls += 1
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.cancelled += 1
+                raise
+        await super().insert(rows)
+
+
+async def test_hanging_write_times_out_keeps_rows_and_retries(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """R1 M1: 쓰기 전체에 시간 제한 — flush가 제한 안에 실패로 돌아오고 다음 주기에 다시 쓴다."""
+    store = HangingStore()
+    writer = HistoryWriter(store, write_timeout_s=0.05)
+    writer.append(rows(1, 2, 3))
+    assert await asyncio.wait_for(writer.flush(), 2.0) == 0
+    assert store.cancelled == 1  # 멈춘 쓰기는 취소된다
+    status = writer.status()
+    assert (status.buffer_rows, status.db_ok, status.written_total) == (3, False, 0)
+    assert "write failed" in caplog.text
+    assert "timed out (write limit 0.05s)" in caplog.text
+
+    store.hang = False
+    assert await writer.flush() == 3
+    assert store.written == [1, 2, 3]
+    assert writer.status().db_ok is True
+
+
 async def test_stop_with_failing_db_reports_unwritten_rows(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
