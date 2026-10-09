@@ -7,7 +7,9 @@
 # 항상 실행: lint-type import-linter contracts-diff contracts-drift migration-lint unit web
 #            no-customer-branching integration-compose
 # 조건부:    n-minus-1 repro-build  (CI가 경로·라벨·schedule로 판단해 호출)
-# 보조:      contracts-gen(생성물 갱신), images(이미지 빌드)
+# 보조:      contracts-gen(생성물 갱신), images(이미지 빌드),
+#            perf-ingest(2,000태그 1s 부하 → artifacts/perf/<PUREIRON_PERF_RELEASE:-r2>/ingest.json,
+#            기록만 — 합격선 없음)
 #
 # 환경변수: BASE_REF(기본 origin/master) — contracts-diff·migration-lint 비교 기준.
 set -euo pipefail
@@ -182,7 +184,14 @@ job_images() {
 job_integration_compose() {
   log "integration-compose"
   bash deploy/build/build_images.sh
-  uv run pytest services/core/tests/integration -m integration -q
+  uv run pytest services/core/tests/integration -m "integration and not perf" -q
+}
+
+job_perf_ingest() {
+  log "perf-ingest (기록만, 합격선 없음)"
+  bash deploy/build/build_images.sh
+  PUREIRON_SIM_REGISTERS="${PUREIRON_SIM_REGISTERS:-2000}" \
+    uv run pytest services/core/tests/integration -m perf -q -s
 }
 
 job_n_minus_1() {
@@ -209,6 +218,7 @@ run_job() {
     web) job_web ;;
     images) job_images ;;
     integration-compose) job_integration_compose ;;
+    perf-ingest) job_perf_ingest ;;
     n-minus-1) job_n_minus_1 ;;
     repro-build) job_repro_build ;;
     all)

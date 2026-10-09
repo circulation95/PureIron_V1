@@ -118,7 +118,7 @@ def test_readyz_acquisition_summary_is_informational() -> None:
         devices_connected=1,
         tags_total=4,
         tags_good=1,
-        ingest=IngestCounts(live=10, stale=2, future=1, replay=7),
+        ingest=IngestCounts(live=10, stale=2, future=1, replay=7, batches=9, heartbeats=4),
     )
     response = _health_client(FakeDb(), FakeSchema(), FakeCollector(stats=stats)).get(
         "/api/v1/readyz"
@@ -131,7 +131,14 @@ def test_readyz_acquisition_summary_is_informational() -> None:
         "tags_total": 4,
         "tags_good": 1,
         "good_ratio": 0.25,
-        "ingest": {"live": 10, "stale": 2, "future": 1, "replay": 7},
+        "ingest": {
+            "live": 10,
+            "stale": 2,
+            "future": 1,
+            "replay": 7,
+            "batches": 9,
+            "heartbeats": 4,
+        },
     }
     empty = _health_client(FakeDb(), FakeSchema(), FakeCollector()).get("/api/v1/readyz")
     assert empty.json()["acquisition"]["good_ratio"] is None

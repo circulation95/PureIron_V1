@@ -171,8 +171,18 @@ export interface components {
          * @description ingest 누적 샘플 수(core 기동 후). live만 현재값에 반영, 나머지는 이력 전용.
          */
         IngestCounts: {
+            /**
+             * Batches
+             * @description 받은 ValueBatch 수(heartbeat 포함)
+             */
+            batches: number;
             /** Future */
             future: number;
+            /**
+             * Heartbeats
+             * @description 그중 빈 batch(heartbeat) 수
+             */
+            heartbeats: number;
             /** Live */
             live: number;
             /** Replay */

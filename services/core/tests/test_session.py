@@ -259,6 +259,7 @@ async def test_live_replay_and_stale_samples(core: Core) -> None:
         ]
         summary = core.server.summary().ingest
         assert (summary.live, summary.stale, summary.future, summary.replay) == (3, 1, 0, 1)
+        assert (summary.batches, summary.heartbeats) == (3, 0)
 
         # 같은 seq가 다시 와도(다른 collector 프로세스) 중복 제거하지 않고 반영·Ack
         collector.batch(1, [_num(1, 21.0)])

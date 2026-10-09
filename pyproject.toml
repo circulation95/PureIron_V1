@@ -70,4 +70,5 @@ markers = [
     "integration: site-db(TimescaleDB)·compose가 필요한 테스트 — `scripts/g1.sh integration-compose`에서 실행",
     "fresh_db: 테스트마다 새 DB를 만들어 migrate 한다(n-minus-1 기존 DB 모드에서는 건너뜀)",
     "compose: compose 스택 전체(web·collector 포함)가 필요하다(n-minus-1 모드에서는 건너뜀)",
+    "perf: 부하 측정(기록만, 합격선 없음) — `scripts/g1.sh perf-ingest`에서만 실행",
 ]

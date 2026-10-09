@@ -61,6 +61,8 @@ class IngestCounts(BaseModel):
     stale: int
     future: int
     replay: int
+    batches: int = Field(description="받은 ValueBatch 수(heartbeat 포함)")
+    heartbeats: int = Field(description="그중 빈 batch(heartbeat) 수")
 
 
 class Acquisition(BaseModel):
@@ -177,6 +179,8 @@ def build_health_router(
                 stale=summary.ingest.stale,
                 future=summary.ingest.future,
                 replay=summary.ingest.replay,
+                batches=summary.ingest.batches,
+                heartbeats=summary.ingest.heartbeats,
             ),
         )
         history = historian.status()

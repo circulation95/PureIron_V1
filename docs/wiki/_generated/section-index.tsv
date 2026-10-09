@@ -101,7 +101,7 @@ sot-agent-rules	docs/wiki/sot/agent-rules.md	문서-읽기-규율-섹션-단위-
 sot-agent-rules	docs/wiki/sot/agent-rules.md	중복-방지-원칙	188	17	795	h2	중복 방지 원칙
 sot-agent-rules	docs/wiki/sot/agent-rules.md	자동-생성-vs-수기-관리-범위	205	8	773	h2	자동 생성 vs 수기 관리 범위
 sot-agent-rules	docs/wiki/sot/agent-rules.md	기여-흐름-raw--wiki--pr--review	213	15	1614	h2	기여 흐름 (raw → wiki → PR → review)
-sot-api-events	docs/wiki/sot/api-events.md	api--events-sot	15	141	11701	h1	API & Events SOT
+sot-api-events	docs/wiki/sot/api-events.md	api--events-sot	15	141	11810	h1	API & Events SOT
 sot-api-events	docs/wiki/sot/api-events.md	이-문서의-원천	23	8	868	h2	이 문서의 원천
 sot-api-events	docs/wiki/sot/api-events.md	라우터-프리픽스	31	31	2580	h2	라우터 프리픽스
 sot-api-events	docs/wiki/sot/api-events.md	주요-api-계약-요약	62	16	3308	h2	주요 API 계약 요약
@@ -110,7 +110,7 @@ sot-api-events	docs/wiki/sot/api-events.md	연결-직후	82	8	145	h3	연결 직�
 sot-api-events	docs/wiki/sot/api-events.md	클라이언트--서버	90	7	163	h3	클라이언트 → 서버
 sot-api-events	docs/wiki/sot/api-events.md	서버--클라이언트	97	12	967	h3	서버 → 클라이언트
 sot-api-events	docs/wiki/sot/api-events.md	chat-sse-이벤트	109	19	815	h2	Chat SSE 이벤트
-sot-api-events	docs/wiki/sot/api-events.md	v1-core-운영-api-apiv1-m3a-구현	128	10	1198	h2	V1 core 운영 API (`/api/v1`, M3a 구현)
+sot-api-events	docs/wiki/sot/api-events.md	v1-core-운영-api-apiv1-m3a-구현	128	10	1307	h2	V1 core 운영 API (`/api/v1`, M3a 구현)
 sot-api-events	docs/wiki/sot/api-events.md	내부-이벤트-버스	138	18	829	h2	내부 이벤트 버스
 sot-architecture	docs/wiki/sot/architecture.md	architecture-sot	14	229	19036	h1	Architecture SOT
 sot-architecture	docs/wiki/sot/architecture.md	이-문서의-원천	24	6	480	h2	이 문서의 원천
@@ -205,7 +205,7 @@ sot-runtime-config	docs/wiki/sot/runtime-config.md	지원-호스트-adr-027	100	
 sot-runtime-config	docs/wiki/sot/runtime-config.md	호스트-경로	105	11	625	h3	호스트 경로
 sot-runtime-config	docs/wiki/sot/runtime-config.md	실행-규칙	116	9	1751	h3	실행 규칙
 sot-runtime-config	docs/wiki/sot/runtime-config.md	v1-환경변수-m1m3a-구현	125	28	3404	h3	V1 환경변수 (M1~M3a 구현)
-sot-testing	docs/wiki/sot/testing.md	testing-sot	32	343	30937	h1	Testing SOT
+sot-testing	docs/wiki/sot/testing.md	testing-sot	32	344	31389	h1	Testing SOT
 sot-testing	docs/wiki/sot/testing.md	1-문서-경계	40	20	1306	h2	1. 문서 경계
 sot-testing	docs/wiki/sot/testing.md	2-기본-실행-명령	60	35	1204	h2	2. 기본 실행 명령
 sot-testing	docs/wiki/sot/testing.md	3-테스트-계층	95	73	9877	h2	3. 테스트 계층
@@ -222,4 +222,4 @@ sot-testing	docs/wiki/sot/testing.md	7-외부-의존성환경-기준	272	16	777	
 sot-testing	docs/wiki/sot/testing.md	8-테스트-작성-규칙	288	25	1603	h2	8. 테스트 작성 규칙
 sot-testing	docs/wiki/sot/testing.md	9-실패-처리-원칙	313	19	809	h2	9. 실패 처리 원칙
 sot-testing	docs/wiki/sot/testing.md	10-pr작업-완료-보고-형식	332	19	492	h2	10. PR/작업 완료 보고 형식
-sot-testing	docs/wiki/sot/testing.md	11-v1-g1-게이트-pureiron_v1-m1-구현	351	24	3733	h2	11. V1 G1 게이트 (PureIron_V1, M1 구현)
+sot-testing	docs/wiki/sot/testing.md	11-v1-g1-게이트-pureiron_v1-m1-구현	351	25	4185	h2	11. V1 G1 게이트 (PureIron_V1, M1 구현)

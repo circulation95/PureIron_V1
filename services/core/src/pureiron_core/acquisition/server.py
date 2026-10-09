@@ -89,7 +89,12 @@ class AcquisitionService(pb_grpc.AcquisitionServicer):
             tags_total=tags.total,
             tags_good=tags.good,
             ingest=IngestCounts(
-                live=stats.live, stale=stats.stale, future=stats.future, replay=stats.replay
+                live=stats.live,
+                stale=stats.stale,
+                future=stats.future,
+                replay=stats.replay,
+                batches=stats.batches,
+                heartbeats=stats.heartbeats,
             ),
         )
 

@@ -19,6 +19,9 @@ class IngestCounts:
     stale: int = 0
     future: int = 0
     replay: int = 0
+    # 받은 ValueBatch 수(heartbeat 포함)와 그중 heartbeat(빈 batch) 수 — 부하 측정의 batch/s.
+    batches: int = 0
+    heartbeats: int = 0
 
 
 @dataclass(frozen=True, slots=True)
