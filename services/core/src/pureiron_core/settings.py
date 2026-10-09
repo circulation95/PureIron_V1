@@ -25,6 +25,13 @@ def _int(environ: Mapping[str, str], key: str, default: int) -> int:
         raise SettingsError(f"{key} must be an integer, got {raw!r}") from None
 
 
+def _positive_int(environ: Mapping[str, str], key: str, default: int) -> int:
+    value = _int(environ, key, default)
+    if value <= 0:
+        raise SettingsError(f"{key} must be positive, got {value}")
+    return value
+
+
 def _float(environ: Mapping[str, str], key: str, default: float) -> float:
     raw = environ.get(key)
     if raw is None or raw == "":
@@ -73,6 +80,11 @@ class Settings:
     # collector가 이 시간 동안 아무것도(heartbeat 포함) 보내지 않으면 세션을 닫는다(half-open 방지).
     # collector `PUREIRON_COLLECTOR_HEARTBEAT_S`의 2배 이상이어야 한다.
     session_silence_s: float = 15.0
+    # 이력 메모리 버퍼 상한(넘치면 가장 오래된 행부터 버림). DB 장애 동안 이 버퍼가 이력을 든다.
+    historian_buffer_max_rows: int = 600_000
+    # 이력 flush 주기와 INSERT 한 번에 쓰는 최대 행 수.
+    historian_flush_s: float = 1.0
+    historian_flush_max_rows: int = 20_000
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str]) -> Settings:
@@ -90,4 +102,11 @@ class Settings:
             ingest_live_max_age_s=_float(environ, "PUREIRON_INGEST_LIVE_MAX_AGE_S", 5.0),
             device_silence_min_s=_float(environ, "PUREIRON_DEVICE_SILENCE_MIN_S", 5.0),
             session_silence_s=_float(environ, "PUREIRON_SESSION_SILENCE_S", 15.0),
+            historian_buffer_max_rows=_positive_int(
+                environ, "PUREIRON_HISTORIAN_BUFFER_MAX_ROWS", 600_000
+            ),
+            historian_flush_s=_float(environ, "PUREIRON_HISTORIAN_FLUSH_S", 1.0),
+            historian_flush_max_rows=_positive_int(
+                environ, "PUREIRON_HISTORIAN_FLUSH_MAX_ROWS", 20_000
+            ),
         )

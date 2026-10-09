@@ -26,7 +26,10 @@ def create_app(rt: SiteRuntime) -> FastAPI:
 
     app = FastAPI(title="PureIron core", version=__version__, lifespan=lifespan)
     app.include_router(
-        build_health_router(db=rt.db, schema=rt.schema, collector=rt.acquisition), prefix=API_PREFIX
+        build_health_router(
+            db=rt.db, schema=rt.schema, collector=rt.acquisition, historian=rt.historian
+        ),
+        prefix=API_PREFIX,
     )
     app.include_router(
         build_project_router(store=rt.project, updater_token=rt.updater_token), prefix=API_PREFIX

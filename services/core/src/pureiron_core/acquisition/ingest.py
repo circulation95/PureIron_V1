@@ -6,6 +6,9 @@
   끊긴 세션을 알아채기 전(≤ 5s) 커널 버퍼에 남은 batch가 네트워크 복구 뒤 늦게 도착하는 경우의
   방어다. 시각이 `FUTURE_SLACK_S`보다 미래인 샘플(시계 오류)도 이력에만 넘긴다 — 현재값에 미래
   시각이 박히면 이후 정상 샘플이 모두 "역행"으로 버려진다.
+- 이력 sink에는 replay·오래된 live·미래 live를 `offer_raw`(걸러내지 않는 원시 기록)로, fresh live만
+  `offer_live`(deadband·max_interval 적용)로 넘긴다(M3a-3 D2: 이력은 받은 것을 다 남기고 걸러내기는
+  현재값 경로만). 둘 다 batch의 `plan_rev`를 함께 넘긴다(D6: DB 재생성 감지).
 - 중복 제거는 하지 않는다. seq는 collector 프로세스마다 1부터 다시 시작하고 링버퍼 drop으로 빈
   구간도 있다 — 중복은 historian의 `UNIQUE(tag_id, time)`가 흡수한다.
 - replay batch는 원래 plan_rev를 유지한다(지금 rev와 달라도 tag_id로 기록 — id는 재사용되지
@@ -36,23 +39,29 @@ SKEW_WARN_INTERVAL_S = 60.0
 
 
 class HistorySink(Protocol):
-    def offer(self, samples: Sequence[pb.Sample], *, replay: bool) -> None:
-        """메모리 버퍼에 넣기만 한다(블로킹·DB I/O 없음 — Ack가 이 뒤에 나간다)."""
+    """메모리 버퍼에 넣기만 한다(블로킹·DB I/O 없음 — Ack가 이 뒤에 나간다)."""
+
+    def offer_raw(self, samples: Sequence[pb.Sample], *, plan_rev: int) -> None:
+        """replay·오래된 live·미래 시각 live — 걸러내지 않고 기록."""
+        ...
+
+    def offer_live(self, samples: Sequence[pb.Sample], *, plan_rev: int) -> None:
+        """fresh live — deadband·max_interval을 거쳐 기록."""
         ...
 
 
 @dataclass(slots=True)
 class DiscardHistory:
-    """historian(M3a-3) 전까지의 sink: 개수만 센다."""
+    """이력을 쓰지 않는 sink(테스트용): 개수만 센다."""
 
+    raw: int = 0
     live: int = 0
-    replay: int = 0
 
-    def offer(self, samples: Sequence[pb.Sample], *, replay: bool) -> None:
-        if replay:
-            self.replay += len(samples)
-        else:
-            self.live += len(samples)
+    def offer_raw(self, samples: Sequence[pb.Sample], *, plan_rev: int) -> None:
+        self.raw += len(samples)
+
+    def offer_live(self, samples: Sequence[pb.Sample], *, plan_rev: int) -> None:
+        self.live += len(samples)
 
 
 @dataclass(slots=True)
@@ -127,22 +136,30 @@ class Ingestor:
         if not samples:
             self.stats.heartbeats += 1
             return []
-        self._history.offer(samples, replay=batch.replay)
         if batch.replay:
+            self._history.offer_raw(samples, plan_rev=batch.plan_rev)
             self.stats.replay += len(samples)
             return []
         now = self._wall_ns()
         oldest = now - self._live_max_age_ns
         newest = now + int(FUTURE_SLACK_S * 1e9)
-        fresh: list[Reading] = []
+        live: list[pb.Sample] = []
+        late: list[pb.Sample] = []
         stale = future = 0
         for sample in samples:
             if sample.ts_unix_ns < oldest:
                 stale += 1
+                late.append(sample)
             elif sample.ts_unix_ns > newest:
                 future += 1
+                late.append(sample)
             else:
-                fresh.append(reading(sample))
+                live.append(sample)
+        if late:
+            self._history.offer_raw(late, plan_rev=batch.plan_rev)
+        if live:
+            self._history.offer_live(live, plan_rev=batch.plan_rev)
+        fresh = [reading(sample) for sample in live]
         self.stats.stale += stale
         self.stats.future += future
         self.stats.live += len(fresh)

@@ -38,6 +38,23 @@ def test_settings_defaults_and_overrides(tmp_path: Path) -> None:
         {"PUREIRON_PLAN_REFRESH_S": "0.5", "PUREIRON_DEVICE_SILENCE_MIN_S": "8"}
     )
     assert (tuned.plan_refresh_s, tuned.device_silence_min_s) == (0.5, 8.0)
+    assert (
+        settings.historian_buffer_max_rows,
+        settings.historian_flush_s,
+        settings.historian_flush_max_rows,
+    ) == (600_000, 1.0, 20_000)
+    historian = Settings.from_env(
+        {
+            "PUREIRON_HISTORIAN_BUFFER_MAX_ROWS": "1000",
+            "PUREIRON_HISTORIAN_FLUSH_S": "0.25",
+            "PUREIRON_HISTORIAN_FLUSH_MAX_ROWS": "500",
+        }
+    )
+    assert (
+        historian.historian_buffer_max_rows,
+        historian.historian_flush_s,
+        historian.historian_flush_max_rows,
+    ) == (1000, 0.25, 500)
     assert settings.migrations_dir.name == "migrations"
     assert read_secret(settings.updater_token_file) == "abc"
     assert read_secret(None) is None
@@ -50,6 +67,11 @@ def test_settings_errors(tmp_path: Path) -> None:
         Settings.from_env({"PUREIRON_PLAN_REFRESH_S": "0"})
     with pytest.raises(SettingsError, match="PUREIRON_INGEST_LIVE_MAX_AGE_S"):
         Settings.from_env({"PUREIRON_INGEST_LIVE_MAX_AGE_S": "soon"})
+    for key in ("PUREIRON_HISTORIAN_BUFFER_MAX_ROWS", "PUREIRON_HISTORIAN_FLUSH_MAX_ROWS"):
+        with pytest.raises(SettingsError, match=key):
+            Settings.from_env({key: "0"})
+    with pytest.raises(SettingsError, match="PUREIRON_HISTORIAN_FLUSH_S"):
+        Settings.from_env({"PUREIRON_HISTORIAN_FLUSH_S": "-1"})
     with pytest.raises(SettingsError, match="cannot read secret"):
         read_secret(tmp_path / "missing")
 
@@ -84,4 +106,7 @@ def test_create_app_starts_without_site_db(tmp_path: Path) -> None:
         # 정의를 아직 못 읽었다 — plan 없음, 집계는 0
         assert ready.json()["acquisition"]["plan_rev"] is None
         assert ready.json()["acquisition"]["good_ratio"] is None
+        # 이력은 받은 것이 없다(빈 버퍼 — DB가 없어도 정지 시 최종 flush가 막히지 않음)
+        historian = ready.json()["historian"]
+        assert (historian["buffer_rows"], historian["written_total"]) == (0, 0)
         assert client.get("/api/v1/project").status_code == 503

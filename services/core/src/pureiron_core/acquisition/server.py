@@ -26,9 +26,13 @@ from pureiron_core._gen import collector_pb2_grpc as pb_grpc
 from pureiron_core.acquisition.devices import DeviceMonitor
 from pureiron_core.acquisition.ingest import Ingestor
 from pureiron_core.acquisition.plan import build_plan
-from pureiron_core.acquisition.ports import AcquisitionSummary
+from pureiron_core.acquisition.ports import AcquisitionSummary, IngestCounts
 from pureiron_core.platform.bus import Event, EventBus
-from pureiron_core.project.ports import DefinitionsSource, DefinitionsUnavailableError
+from pureiron_core.project.ports import (
+    Definitions,
+    DefinitionsSource,
+    DefinitionsUnavailableError,
+)
 from pureiron_core.tags.ports import TagKey, TagStorePort
 
 log = logging.getLogger(__name__)
@@ -77,12 +81,16 @@ class AcquisitionService(pb_grpc.AcquisitionServicer):
     def summary(self) -> AcquisitionSummary:
         tags = self._tags.summary()
         devices = self._devices.summary()
+        stats = self._ingestor.stats
         return AcquisitionSummary(
             plan_rev=self.plan_rev,
             devices_total=devices.total,
             devices_connected=devices.connected,
             tags_total=tags.total,
             tags_good=tags.good,
+            ingest=IngestCounts(
+                live=stats.live, stale=stats.stale, future=stats.future, replay=stats.replay
+            ),
         )
 
     async def _publish(self, events: Iterable[Event]) -> None:
@@ -181,18 +189,27 @@ class AcquisitionService(pb_grpc.AcquisitionServicer):
 
 
 type PlanApplier = Callable[[pb.AcquisitionPlan, Sequence[TagKey]], Awaitable[None]]
+type DefinitionsListener = Callable[[Definitions], None]
 
 
 class PlanKeeper:
     """정의 rev를 주기적으로 보고 바뀌면 plan을 다시 만들어 적용한다.
 
     DB·스키마 문제는 경고 후 다음 주기에 다시 시도한다(graceful degradation). 마지막 plan은
-    유지된다.
+    유지된다. `on_definitions`(historian recorder)는 plan을 적용하기 전에 같은 정의를 받는다.
     """
 
-    def __init__(self, source: DefinitionsSource, apply: PlanApplier, *, refresh_s: float) -> None:
+    def __init__(
+        self,
+        source: DefinitionsSource,
+        apply: PlanApplier,
+        *,
+        refresh_s: float,
+        on_definitions: DefinitionsListener | None = None,
+    ) -> None:
         self._source = source
         self._apply = apply
+        self._on_definitions = on_definitions
         self._refresh_s = refresh_s
         self._rev: int | None = None
         self._failing = False
@@ -216,6 +233,10 @@ class PlanKeeper:
         built = build_plan(definitions)
         for problem in built.problems:
             log.warning("plan rev %d: %s", definitions.rev, problem)
+        # collector에 plan을 보내기 전에 알린다 — historian이 새 rev·태그를 먼저 알아야 그 rev의
+        # 샘플을 "앞선 rev"(D6)나 "plan에 없는 tag_id"(D7)로 버리지 않는다.
+        if self._on_definitions is not None:
+            self._on_definitions(definitions)
         await self._apply(built.plan, built.keys)
         self._rev = definitions.rev
         log.info(
