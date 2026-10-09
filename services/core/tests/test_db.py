@@ -169,6 +169,9 @@ async def test_stop_cancel_during_execute_is_not_swallowed_by_release_timeout(
 
     assert conn.execute_cancelled
     assert conn.terminated
-    assert elapsed < acquire_s + 0.3  # loop 취소 뒤 반환 정리 ≤ acquire_s
+    # loop 취소 뒤 반환 정리 ≤ acquire_s + 최종 flush의 반환 ≤ acquire_s
+    # (가짜 연결은 terminate 뒤에도 취소 대기 상태로 남는다).
+    # 무한 대기 회귀는 wait_for(3.0)가 잡는다.
+    assert elapsed < 2 * acquire_s + 0.3
     assert writer.status().buffer_rows == 3
     assert "stopped with 3 unwritten" in caplog.text
