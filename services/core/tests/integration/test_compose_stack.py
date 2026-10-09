@@ -267,13 +267,18 @@ async def _gap_rows(dsn: str, password: str, gap: tuple[float, float]) -> list[i
 
 
 def _stable_replay(timeout_s: float) -> int:
-    """replay 카운터가 1s 간격 두 번 연속 같을 때까지 기다린다(replay는 batch 여러 개로 온다)."""
+    """replay 카운터를 1s 간격으로 읽어 세 번 연속(비교 2쌍) 같을 때까지 기다린다.
+
+    replay는 batch 여러 개로 오고, batch 사이가 1s를 넘을 수 있다(재접속이 겹치는 등).
+    """
     deadline = time.monotonic() + timeout_s
     last = _int_field(_ingest(), "replay")
+    same = 0
     while time.monotonic() < deadline:
         time.sleep(1.0)
         current = _int_field(_ingest(), "replay")
-        if current == last:
+        same = same + 1 if current == last else 0
+        if same >= 2:
             return current
         last = current
     raise AssertionError(f"replay counter still moving after {timeout_s}s: {last}")
@@ -297,9 +302,12 @@ def test_network_disconnect_replay(stack: Stack, tmp_path: Path) -> None:
        차라서 역 step에 거짓 실패할 수 있어 쓰지 않는다(W1 §4).
     ③ `/readyz.acquisition.ingest.replay` 증가.
     ④ 분리 구간 시각이 현재값·이벤트에 안 박힘 — 현재값 조회 API가 M3b(D8)라 간접 증명:
-       (주) 분리 동안 `/readyz.acquisition.ingest.live`(현재값으로 간 샘플 수)가 늘지 않는다 — 창
-       샘플은 live 경로로 들어올 수 없었다. 재연결 뒤 도착하는 창 샘플은 live_max_age(5s)보다
-       오래돼 live라도 현재값으로 가지 않는다. (a) 보조: replay 증가분 ≥ 창 안 이력 행 수 합.
+       (주) 분리 동안 `/readyz.acquisition.ingest.live`(현재값으로 간 샘플 수)가 늘지 않는다 —
+       분리 구간 안에서 창 샘플의 live 유입 0.
+       (주2) 분리부터 재연결 뒤 replay 안정까지 `ingest.stale`(live로 왔지만 live_max_age 5s보다
+       오래돼 현재값에서 뺀 샘플)이 늘지 않는다 — 창 샘플 중 5s보다 오래된 것은 live 경로로 오지
+       않았다. 창 끝 EDGE_S 안의 샘플이 재연결 지연까지 합쳐 5s 안에 live로 오면 아직 젊어서
+       이 테스트로는 구별하지 못한다(남은 한계). (a) 보조: replay 증가분 ≥ 창 안 이력 행 수 합.
        (b) 재연결 뒤 tags_good == 100. (c) replay는 TagStore·`tag.changed`를 건드리지 않는다는
        단위 근거(test_session `test_live_replay_and_stale_samples`·
        `test_replay_through_recorder_is_raw_and_emits_no_events`).
@@ -339,6 +347,7 @@ def test_network_disconnect_replay(stack: Stack, tmp_path: Path) -> None:
     _wait_acquisition(lambda a: a.get("tags_good") == SIM_TAGS, 30)  # ④(b)
     _wait(lambda: _int_field(_ingest(), "replay") > replay_before, 30, "replayed samples")
     replay_after = _stable_replay(30)
+    stale_at_replay = _int_field(_ingest(), "stale") - stale_before
     _wait(lambda: _int_field(_section(_readyz(), "historian"), "buffer_rows") == 0, 30, "flush")
     replayed = replay_after - replay_before
     stale_delta = _int_field(_ingest(), "stale") - stale_before
@@ -356,10 +365,11 @@ def test_network_disconnect_replay(stack: Stack, tmp_path: Path) -> None:
         f"ratio={min(counts) / expected:.3f} upper={upper:.2f} "
         f"window_real={tb - ta:.2f} window_mono={mb - ma:.2f} "
         f"replayed={replayed} gap_rows={sum(counts)} live_delta={live_b - live_a} "
-        f"stale_delta={stale_delta}"
+        f"stale_at_replay={stale_at_replay} stale_delta={stale_delta}"
     )
     assert len(counts) == SIM_TAGS
     assert min(counts) >= 0.9 * expected, (min(counts), expected)  # ①
     assert max(counts) <= upper, (max(counts), upper)  # ②
     assert live_b == live_a, (live_a, live_b)  # ④(주)
+    assert stale_at_replay == 0, stale_at_replay  # ④(주2)
     assert replayed >= sum(counts), (replayed, sum(counts))  # ③·④(a)
