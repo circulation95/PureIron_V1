@@ -1,0 +1,299 @@
+"""recorder: deadband·max_interval, raw 기록, NaN/Inf, plan_rev·미지 tag_id 버림(D2·D3·D6·D7)."""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Mapping, Sequence
+
+import pytest
+
+from pureiron_core._gen import collector_pb2 as pb
+from pureiron_core.historian.recorder import Recorder, policies
+from pureiron_core.historian.service import Historian
+from pureiron_core.historian.writer import HistoryWriter, Row
+from pureiron_core.project.ports import Definitions, TagDef
+
+S = 1_000_000_000  # ns
+T0 = 1_700_000_000 * S
+GOOD, BAD, UNCERTAIN = pb.GOOD, pb.BAD, pb.UNCERTAIN
+
+
+class ListSink:
+    def __init__(self) -> None:
+        self.rows: list[Row] = []
+
+    def append(self, rows: Sequence[Row]) -> None:
+        self.rows.extend(rows)
+
+
+def _tag(tag_id: int, record: Mapping[str, object] | None = None) -> TagDef:
+    definition: dict[str, object] = {"path": f"t{tag_id}", "device": "plc-1"}
+    if record is not None:
+        definition["record"] = dict(record)
+    return TagDef(tag_id, f"t{tag_id}", "plc-1", definition)
+
+
+def _defs(
+    *tags: TagDef, rev: int = 3, historian: Mapping[str, object] | None = None
+) -> Definitions:
+    return Definitions(rev=rev, tags=tags, historian=dict(historian or {}))
+
+
+def num(tag_id: int, ts_s: float, value: float, quality: pb.Quality.ValueType = GOOD) -> pb.Sample:
+    return pb.Sample(tag_id=tag_id, ts_unix_ns=T0 + int(ts_s * S), num=value, quality=quality)
+
+
+def flag(tag_id: int, ts_s: float, value: bool, quality: pb.Quality.ValueType = GOOD) -> pb.Sample:
+    return pb.Sample(tag_id=tag_id, ts_unix_ns=T0 + int(ts_s * S), flag=value, quality=quality)
+
+
+def _recorder(
+    *tags: TagDef, rev: int = 3, historian: Mapping[str, object] | None = None
+) -> tuple[Recorder, ListSink]:
+    sink = ListSink()
+    recorder = Recorder(sink)
+    recorder.set_definitions(_defs(*tags, rev=rev, historian=historian))
+    return recorder, sink
+
+
+def _live(recorder: Recorder, *samples: pb.Sample, plan_rev: int = 3) -> None:
+    for sample in samples:
+        recorder.offer_live([sample], plan_rev=plan_rev)
+
+
+def _times(sink: ListSink) -> list[float]:
+    return [(r.ts_ns - T0) / S for r in sink.rows]
+
+
+@pytest.mark.parametrize(
+    ("value", "recorded"),
+    [(10.0, False), (10.3, False), (10.5, False), (10.51, True), (9.49, True), (9.5, False)],
+    ids=["same", "below", "exact-up", "above-up", "above-down", "exact-down"],
+)
+def test_deadband_boundaries(value: float, recorded: bool) -> None:
+    recorder, sink = _recorder(_tag(1, {"deadband": 0.5}))
+    _live(recorder, num(1, 0, 10.0), num(1, 1, value))
+    assert len(sink.rows) == (2 if recorded else 1)
+
+
+def test_deadband_is_measured_from_last_recorded_value() -> None:
+    """작은 변화가 쌓여 deadband를 넘으면 기록한다(직전 샘플이 아니라 마지막 기록 기준)."""
+    recorder, sink = _recorder(_tag(1, {"deadband": 0.5}))
+    _live(recorder, num(1, 0, 10.0), num(1, 1, 10.3), num(1, 2, 10.6), num(1, 3, 10.9))
+    assert [r.value_num for r in sink.rows] == [10.0, 10.6]
+
+
+def test_zero_deadband_skips_repeats_records_changes() -> None:
+    recorder, sink = _recorder(_tag(1))
+    _live(recorder, num(1, 0, 5.0), num(1, 1, 5.0), num(1, 2, 5.0), num(1, 3, 5.000001))
+    assert [r.value_num for r in sink.rows] == [5.0, 5.000001]
+    assert (recorder.stats.live_recorded, recorder.stats.live_skipped) == (2, 2)
+
+
+def test_bool_change_is_recorded() -> None:
+    recorder, sink = _recorder(_tag(2, {"deadband": 100}))
+    _live(recorder, flag(2, 0, False), flag(2, 1, False), flag(2, 2, True), flag(2, 3, True))
+    assert [r.value_bool for r in sink.rows] == [False, True]
+    assert all(r.value_num is None for r in sink.rows)
+
+
+def test_bool_and_number_are_different_values() -> None:
+    """True ↔ 1.0은 같은 값이 아니다(종류 전환은 기록)."""
+    recorder, sink = _recorder(_tag(1, {"deadband": 5}))
+    _live(recorder, num(1, 0, 1.0), flag(1, 1, True), num(1, 2, 1.0))
+    assert len(sink.rows) == 3
+
+
+def test_quality_change_is_recorded_regardless_of_deadband() -> None:
+    recorder, sink = _recorder(_tag(1, {"deadband": 100}))
+    _live(recorder, num(1, 0, 1.0), num(1, 1, 1.0, BAD), num(1, 2, 1.0, BAD), num(1, 3, 1.0))
+    assert [r.quality for r in sink.rows] == [GOOD, BAD, GOOD]
+
+
+def test_value_less_sample_and_back() -> None:
+    """값 없는 샘플(BAD 등) ↔ 값 전환은 기록한다(NULL↔값)."""
+    recorder, sink = _recorder(_tag(1, {"deadband": 100}))
+    empty = pb.Sample(tag_id=1, ts_unix_ns=T0 + S, quality=GOOD)
+    _live(recorder, num(1, 0, 1.0), empty, num(1, 2, 1.0))
+    assert [(r.value_num, r.value_bool) for r in sink.rows] == [
+        (1.0, None),
+        (None, None),
+        (1.0, None),
+    ]
+
+
+@pytest.mark.parametrize(("gap_s", "recorded"), [(9.999, False), (10.0, True), (10.5, True)])
+def test_max_interval_boundary(gap_s: float, recorded: bool) -> None:
+    recorder, sink = _recorder(_tag(1, {"deadband": 100, "max_interval_s": 10}))
+    _live(recorder, num(1, 0, 1.0), num(1, gap_s, 1.0))
+    assert len(sink.rows) == (2 if recorded else 1)
+
+
+def test_max_interval_counts_from_last_recorded_sample() -> None:
+    recorder, sink = _recorder(_tag(1, {"max_interval_s": 10}))
+    _live(recorder, *(num(1, t, 1.0) for t in range(26)))
+    assert _times(sink) == [0, 10, 20]
+
+
+def test_policy_tag_record_overrides_project_default() -> None:
+    defs = _defs(
+        _tag(1, {"deadband": 2.0, "max_interval_s": 5}),
+        _tag(2, {"deadband": 0}),
+        _tag(3),
+        historian={"default_deadband": 0.5, "default_max_interval_s": 30},
+    )
+    result = policies(defs)
+    assert (result[1].deadband, result[1].max_interval_ns) == (2.0, 5 * S)
+    # 태그가 명시한 0은 프로젝트 기본값보다 우선한다(정규형은 태그 record에 기본값이 없음).
+    assert (result[2].deadband, result[2].max_interval_ns) == (0.0, 30 * S)
+    assert (result[3].deadband, result[3].max_interval_ns) == (0.5, 30 * S)
+
+
+def test_policy_schema_defaults_without_project_settings() -> None:
+    result = policies(_defs(_tag(1)))
+    assert (result[1].deadband, result[1].max_interval_ns) == (0.0, 60 * S)
+
+
+def test_project_default_deadband_applies() -> None:
+    recorder, sink = _recorder(_tag(1), historian={"default_deadband": 1.0})
+    _live(recorder, num(1, 0, 1.0), num(1, 1, 1.9), num(1, 2, 2.1))
+    assert [r.value_num for r in sink.rows] == [1.0, 2.1]
+
+
+def test_raw_is_always_recorded_and_leaves_live_state_alone() -> None:
+    """replay·stale·future는 deadband를 우회하고 live 상태를 읽지도 바꾸지도 않는다(D2)."""
+    recorder, sink = _recorder(_tag(1, {"deadband": 100, "max_interval_s": 60}))
+    _live(recorder, num(1, 10, 1.0))
+    # 같은 값·같은 시각·과거 시각·미래 시각 모두 그대로 기록
+    raw = [num(1, 10, 1.0), num(1, 5, 1.0), num(1, 11, 1.0), num(1, 500, 1.0, BAD)]
+    recorder.offer_raw(raw, plan_rev=3)
+    assert len(sink.rows) == 5
+    assert recorder.stats.raw == 4
+    # live 상태는 t=10 기록 그대로: 미래 raw(t=500)가 있어도 t=11 live는 역행이 아니고,
+    # BAD raw로 quality 상태가 바뀌지도 않았으므로 같은 값 live는 생략된다.
+    _live(recorder, num(1, 11, 1.0))
+    assert len(sink.rows) == 5
+    _live(recorder, num(1, 12, 1.0, BAD))
+    assert len(sink.rows) == 6
+
+
+def test_raw_records_tag_ids_outside_the_plan() -> None:
+    """replay는 옛 rev의 tag_id(retired 포함)를 그대로 기록한다(D7은 live만)."""
+    recorder, sink = _recorder(_tag(1), rev=5)
+    recorder.offer_raw([num(99, 0, 1.0)], plan_rev=4)
+    assert [r.tag_id for r in sink.rows] == [99]
+    assert recorder.stats.rejected == 0
+
+
+@pytest.mark.parametrize(
+    ("value", "stored"), [(math.nan, None), (math.inf, None), (-math.inf, None), (1.5, 1.5)]
+)
+def test_non_finite_is_stored_as_null_with_quality(value: float, stored: float | None) -> None:
+    recorder, sink = _recorder(_tag(1))
+    _live(recorder, num(1, 0, value, UNCERTAIN))
+    recorder.offer_raw([num(1, 1, value)], plan_rev=3)
+    assert [(r.value_num, r.value_bool, r.quality) for r in sink.rows] == [
+        (stored, None, UNCERTAIN),
+        (stored, None, GOOD),
+    ]
+
+
+def test_non_finite_values_compare_equal_and_transitions_are_recorded() -> None:
+    recorder, sink = _recorder(_tag(1, {"deadband": 100}))
+    _live(
+        recorder,
+        num(1, 0, 1.0),
+        num(1, 1, math.nan),  # 유한 → 비유한: 기록
+        num(1, 2, math.inf),  # 비유한끼리 같은 값: 생략
+        num(1, 3, math.nan),  # 생략
+        num(1, 4, 1.0),  # 비유한 → 유한: 기록
+    )
+    assert _times(sink) == [0, 1, 4]
+    assert sink.rows[1].value_num is None
+
+
+def test_time_regression_in_live_is_skipped() -> None:
+    recorder, sink = _recorder(_tag(1))
+    _live(recorder, num(1, 10, 1.0), num(1, 10, 2.0), num(1, 9, 3.0), num(1, 11, 4.0))
+    assert [r.value_num for r in sink.rows] == [1.0, 4.0]
+
+
+def test_time_regression_uses_last_seen_not_last_recorded() -> None:
+    """생략된 샘플(t=12)보다 이른 늦은 샘플(t=11)도 역행으로 본다."""
+    recorder, sink = _recorder(_tag(1, {"deadband": 10}))
+    _live(recorder, num(1, 10, 1.0), num(1, 12, 1.0), num(1, 11, 50.0))
+    assert _times(sink) == [10]
+
+
+def test_unknown_live_tag_is_rejected_and_counted() -> None:
+    recorder, sink = _recorder(_tag(1))
+    recorder.offer_live([num(1, 0, 1.0), num(7, 0, 1.0), num(8, 0, 1.0)], plan_rev=3)
+    assert [r.tag_id for r in sink.rows] == [1]
+    assert (recorder.stats.rejected_unknown, recorder.stats.rejected) == (2, 2)
+
+
+def test_unknown_quality_is_stored_as_bad() -> None:
+    recorder, sink = _recorder(_tag(1))
+    recorder.offer_raw([num(1, 0, 1.0, pb.QUALITY_UNSPECIFIED)], plan_rev=3)
+    assert sink.rows[0].quality == BAD
+
+
+@pytest.mark.parametrize("raw", [True, False], ids=["raw", "live"])
+def test_batch_from_newer_plan_rev_is_rejected(raw: bool) -> None:
+    """plan_rev가 현재보다 크면 DB 재생성 신호 — 이력에서 버리고 센다(D6)."""
+    recorder, sink = _recorder(_tag(1), rev=3)
+    samples = [num(1, 0, 1.0), num(1, 1, 2.0)]
+    if raw:
+        recorder.offer_raw(samples, plan_rev=4)
+    else:
+        recorder.offer_live(samples, plan_rev=4)
+    assert sink.rows == []
+    assert (recorder.stats.rejected_rev, recorder.stats.rejected) == (2, 2)
+    # 같은 rev·옛 rev는 받는다
+    recorder.offer_raw([num(1, 2, 1.0)], plan_rev=2)
+    recorder.offer_live([num(1, 3, 1.0)], plan_rev=3)
+    assert len(sink.rows) == 2
+
+
+def test_samples_before_any_plan_are_kept_raw() -> None:
+    """plan을 아직 모르면(DB 미준비) rev를 판단할 수 없어 raw는 받아 둔다(한계로 문서화)."""
+    sink = ListSink()
+    recorder = Recorder(sink)
+    recorder.offer_raw([num(1, 0, 1.0)], plan_rev=9)
+    recorder.offer_live([num(1, 1, 1.0)], plan_rev=9)  # live는 정책이 없으니 미지 tag_id
+    assert [r.tag_id for r in sink.rows] == [1]
+    assert (recorder.stats.rejected_rev, recorder.stats.rejected_unknown) == (0, 1)
+
+
+def test_plan_update_drops_state_of_removed_tags_keeps_others() -> None:
+    recorder, sink = _recorder(_tag(1, {"deadband": 10}), _tag(2, {"deadband": 10}), rev=3)
+    _live(recorder, num(1, 0, 1.0), num(2, 0, 1.0))
+    # rev 4: 태그 2 제거, 태그 1은 정책만 바뀜(상태 유지 → 다음 샘플부터 새 정책)
+    recorder.set_definitions(_defs(_tag(1, {"deadband": 0.1}), rev=4))
+    assert recorder.plan_rev == 4
+    _live(recorder, num(1, 1, 1.05), num(1, 2, 1.2), plan_rev=4)
+    assert [(r.tag_id, r.value_num) for r in sink.rows][2:] == [(1, 1.2)]
+    # 태그 2가 다시 plan에 들어오면 첫 샘플로 본다(이전 상태가 남아 있지 않음).
+    recorder.set_definitions(_defs(_tag(1), _tag(2, {"deadband": 10}), rev=5))
+    _live(recorder, num(2, 3, 1.0), plan_rev=5)
+    assert sink.rows[-1].tag_id == 2
+
+
+def test_historian_status_rejected_total_sums_both_paths() -> None:
+    """`/readyz.historian.rejected_total` = D6(rev 앞섬) + D7(live 미지 tag_id)."""
+
+    class NullStore:
+        async def insert(self, rows: Sequence[Row]) -> None:
+            pass
+
+    writer = HistoryWriter(NullStore())
+    recorder = Recorder(writer)
+    recorder.set_definitions(_defs(_tag(1), rev=3))
+    historian = Historian(recorder, writer)
+    recorder.offer_raw([num(1, 0, 1.0)], plan_rev=4)
+    assert historian.status().rejected_total == 1
+    recorder.offer_live([num(5, 0, 1.0), num(6, 0, 1.0)], plan_rev=3)
+    status = historian.status()
+    assert status.rejected_total == 3
+    assert (recorder.stats.rejected_rev, recorder.stats.rejected_unknown) == (1, 2)
+    assert status.buffer_rows == 0
