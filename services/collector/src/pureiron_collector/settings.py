@@ -41,6 +41,8 @@ class CollectorSettings:
     core_target: str
     heartbeat_s: float
     reconnect_initial_s: float
+    # 재접속 간격 상한. 링 보관 창(60s)보다 훨씬 작아야 한다 — 0.5s부터 두 배씩 30s까지 늘면 35s
+    # 단절 뒤 다음 시도가 ~66s에 와서 링 창 밖으로 밀린 분리 구간 앞부분을 잃는다(M3a-3 실측).
     reconnect_max_s: float
     # ingest 의미론(plan B9): 100ms 또는 500값마다 batch, Ack 전 60s 보관.
     batch_interval_s: float = 0.1
@@ -63,7 +65,7 @@ class CollectorSettings:
             core_target=environ.get("PUREIRON_CORE_GRPC", "127.0.0.1:50051"),
             heartbeat_s=_float(environ, "PUREIRON_COLLECTOR_HEARTBEAT_S", 1.0),
             reconnect_initial_s=_float(environ, "PUREIRON_COLLECTOR_RECONNECT_INITIAL_S", 0.5),
-            reconnect_max_s=_float(environ, "PUREIRON_COLLECTOR_RECONNECT_MAX_S", 30.0),
+            reconnect_max_s=_float(environ, "PUREIRON_COLLECTOR_RECONNECT_MAX_S", 5.0),
             batch_interval_s=_float(environ, "PUREIRON_COLLECTOR_BATCH_INTERVAL_S", 0.1),
             batch_max_samples=_int(environ, "PUREIRON_COLLECTOR_BATCH_MAX_SAMPLES", 500),
             ring_window_s=_float(environ, "PUREIRON_COLLECTOR_RING_WINDOW_S", 60.0),
