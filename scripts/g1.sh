@@ -163,7 +163,8 @@ $hits"
   local name
   while IFS= read -r name; do
     case "$name" in ''|'#'*) continue ;; esac
-    hits="$(grep -rnIiF -- "$name" services/*/src packages/*/src --exclude-dir=_gen --exclude-dir=node_modules || true)"
+    # 옵션은 `--` 앞에 둔다. 뒤에 두면 --exclude-dir가 파일 이름으로 해석돼 제외가 적용되지 않는다.
+    hits="$(grep -rnIiF --exclude-dir=_gen --exclude-dir=node_modules -- "$name" services/*/src packages/*/src || true)"
     [ -z "$hits" ] || fail "customer name literal '$name' in product source:
 $hits"
   done < deploy/lint/customer-names.txt
