@@ -101,7 +101,7 @@ sot-agent-rules	docs/wiki/sot/agent-rules.md	문서-읽기-규율-섹션-단위-
 sot-agent-rules	docs/wiki/sot/agent-rules.md	중복-방지-원칙	188	17	795	h2	중복 방지 원칙
 sot-agent-rules	docs/wiki/sot/agent-rules.md	자동-생성-vs-수기-관리-범위	205	8	773	h2	자동 생성 vs 수기 관리 범위
 sot-agent-rules	docs/wiki/sot/agent-rules.md	기여-흐름-raw--wiki--pr--review	213	15	1614	h2	기여 흐름 (raw → wiki → PR → review)
-sot-api-events	docs/wiki/sot/api-events.md	api--events-sot	15	141	11810	h1	API & Events SOT
+sot-api-events	docs/wiki/sot/api-events.md	api--events-sot	15	141	11936	h1	API & Events SOT
 sot-api-events	docs/wiki/sot/api-events.md	이-문서의-원천	23	8	868	h2	이 문서의 원천
 sot-api-events	docs/wiki/sot/api-events.md	라우터-프리픽스	31	31	2580	h2	라우터 프리픽스
 sot-api-events	docs/wiki/sot/api-events.md	주요-api-계약-요약	62	16	3308	h2	주요 API 계약 요약
@@ -110,7 +110,7 @@ sot-api-events	docs/wiki/sot/api-events.md	연결-직후	82	8	145	h3	연결 직�
 sot-api-events	docs/wiki/sot/api-events.md	클라이언트--서버	90	7	163	h3	클라이언트 → 서버
 sot-api-events	docs/wiki/sot/api-events.md	서버--클라이언트	97	12	967	h3	서버 → 클라이언트
 sot-api-events	docs/wiki/sot/api-events.md	chat-sse-이벤트	109	19	815	h2	Chat SSE 이벤트
-sot-api-events	docs/wiki/sot/api-events.md	v1-core-운영-api-apiv1-m3a-구현	128	10	1307	h2	V1 core 운영 API (`/api/v1`, M3a 구현)
+sot-api-events	docs/wiki/sot/api-events.md	v1-core-운영-api-apiv1-m3a-구현	128	10	1433	h2	V1 core 운영 API (`/api/v1`, M3a 구현)
 sot-api-events	docs/wiki/sot/api-events.md	내부-이벤트-버스	138	18	829	h2	내부 이벤트 버스
 sot-architecture	docs/wiki/sot/architecture.md	architecture-sot	14	229	19066	h1	Architecture SOT
 sot-architecture	docs/wiki/sot/architecture.md	이-문서의-원천	24	6	480	h2	이 문서의 원천

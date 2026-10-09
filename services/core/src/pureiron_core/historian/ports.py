@@ -16,7 +16,8 @@ class HistorianStatus:
     - `write_lag_s`: 버퍼에서 가장 오래 기다린 행의 대기 시간(버퍼가 비면 None).
     - `db_ok`: 마지막 쓰기 성공 여부.
     - `rejected_total`: 이력에서 버린 샘플 = batch `plan_rev`가 현재 rev보다 앞선 것(DB 재생성
-      신호) + 현재 plan에 없는 tag_id의 live 샘플(+ int4 범위 밖 tag_id).
+      신호) + 현재 정의에 없는 tag_id의 live 샘플(정의 기준 — plan에서 문제로 빠진 태그는 기록)
+      + int4 범위 밖 tag_id.
     """
 
     buffer_rows: int

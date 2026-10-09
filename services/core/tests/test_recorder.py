@@ -357,7 +357,7 @@ def test_reject_warnings_are_rate_limited_per_reason(caplog: pytest.LogCaptureFi
     assert len(messages) == 3
     assert "tag_id above" in messages[0]
     assert "plan_rev 4 is ahead" in messages[1]
-    assert "not in the current plan" in messages[2]
+    assert "not in the current definitions" in messages[2]
     now[0] = 70.0
     recorder.offer_raw([num(1, 2, 1.0)], plan_rev=4)  # 같은 사유도 60s 뒤엔 다시 경고
     assert len(caplog.records) == 4

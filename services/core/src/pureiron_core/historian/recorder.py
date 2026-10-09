@@ -83,7 +83,7 @@ class RecorderStats:
     live_recorded: int = 0
     live_skipped: int = 0
     rejected_rev: int = 0  # D6: batch plan_rev가 현재 rev보다 앞섬
-    rejected_unknown: int = 0  # D7: 현재 plan에 없는 tag_id의 live 샘플 + int4 범위 밖 tag_id
+    rejected_unknown: int = 0  # D7: 현재 정의에 없는 tag_id의 live 샘플 + int4 범위 밖 tag_id
 
     @property
     def rejected(self) -> int:
@@ -263,7 +263,7 @@ class Recorder:
                 rows.append(row(sample))
         if unknown:
             self.stats.rejected_unknown += unknown
-            self._warn("unknown_tag", unknown, "live tag_id not in the current plan")
+            self._warn("unknown_tag", unknown, "live tag_id not in the current definitions")
         self.stats.live_recorded += len(rows)
         self.stats.live_skipped += len(samples) - unknown - len(rows)
         if rows:
