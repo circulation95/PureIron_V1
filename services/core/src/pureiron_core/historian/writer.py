@@ -1,7 +1,8 @@
 """상한 메모리 버퍼 → `tag_history`(plan B9 N-buffer).
 
 - `append`는 동기·논블로킹이다(ingest 직후 Ack가 나간다). 버퍼가 상한(기본 600,000행)을 넘으면
-  **가장 오래된 행부터** 버리고 `dropped_total`을 센다.
+  **가장 오래된 행부터** 버리고 `dropped_total`을 센다. 쓰는 중(꺼낸) 행은 상한 밖이라 순간 최대는
+  상한 + `flush_max_rows`(기본 620,000행)다.
 - flush loop가 주기(기본 1s)마다 버퍼를 최대 `flush_max_rows`씩 꺼내
   `INSERT … ON CONFLICT (tag_id, time) DO NOTHING`으로 쓴다(replay 중복 흡수). 밀려 있으면 같은
   주기에 버퍼가 빌 때까지 계속 쓴다.

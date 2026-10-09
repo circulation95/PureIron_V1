@@ -217,7 +217,7 @@ Frontend setTag()
 ### 통신 경계 (ADR-020)
 
 - collector ↔ core: gRPC 양방향 스트림 `Acquisition.Session`(core가 서버). core → `AcquisitionPlan`/`Ack`, collector → `Hello`/`ValueBatch`/`DeviceHealth`.
-- Ack는 core in-memory ingest 직후. collector 링버퍼는 core 다운·단절 구간만, DB 장애는 core historian 상한 버퍼(600,000행)가 담당.
+- Ack는 core in-memory ingest 직후. collector 링버퍼는 core 다운·단절 구간만, DB 장애는 core historian 상한 버퍼(600,000행 + 쓰는 중 최대 20,000행)가 담당.
 - `replay=true` batch는 historian에만 기록(deadband·알람·WS 우회), 중복은 `UNIQUE(tag_id, time)`로 흡수.
 - 무신호 `max(3×poll, 5s)` → 장비 태그 BAD, 장비 DISCONNECTED.
 

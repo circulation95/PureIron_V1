@@ -1682,7 +1682,7 @@ Frontend setTag()
 ### 통신 경계 (ADR-020)
 
 - collector ↔ core: gRPC 양방향 스트림 `Acquisition.Session`(core가 서버). core → `AcquisitionPlan`/`Ack`, collector → `Hello`/`ValueBatch`/`DeviceHealth`.
-- Ack는 core in-memory ingest 직후. collector 링버퍼는 core 다운·단절 구간만, DB 장애는 core historian 상한 버퍼(600,000행)가 담당.
+- Ack는 core in-memory ingest 직후. collector 링버퍼는 core 다운·단절 구간만, DB 장애는 core historian 상한 버퍼(600,000행 + 쓰는 중 최대 20,000행)가 담당.
 - `replay=true` batch는 historian에만 기록(deadband·알람·WS 우회), 중복은 `UNIQUE(tag_id, time)`로 흡수.
 - 무신호 `max(3×poll, 5s)` → 장비 태그 BAD, 장비 DISCONNECTED.
 
@@ -2019,11 +2019,12 @@ window: { recurring: { tz: Asia/Seoul, days: [sat, sun], start: "02:00", end: "0
   - fresh live 샘플만 deadband·max_interval을 거친다. 정책 = 태그 `record.*` → 프로젝트 `historian.default_*` → 스키마 기본값(deadband 0, 60 s). 기록 조건(하나라도 참): 태그 첫 샘플, quality 변경, bool 변경, `|값 − 마지막 기록값| > deadband`(0이면 같은 값 반복만 생략), 값 종류·NULL·유한↔비유한 전환, 마지막 기록 뒤 `max_interval_s` 경과. 시각이 역행한 live(마지막으로 본 시각 이하 — 같은 시각 포함: 같은 `(tag_id, time)` 두 번째 행은 어차피 저장되지 않으므로)는 기록하지 않는다. 단 마지막으로 본 시각이 지금보다 2 s(`CLOCK_SLACK_NS`, `tags.ports` — TagStore와 공용) 넘게 미래면 벽시계가 뒤로 보정된 것으로 보고 태그 상태를 리셋해 그 샘플을 첫 샘플처럼 기록한다 — 시계 역보정 때 현재값만 갱신되고 이력이 비는 불일치를 막는다(Hyper-V 게스트 TimeSync 계단 보정 실측, M3a-3).
   - replay·오래된 live(> `PUREIRON_INGEST_LIVE_MAX_AGE_S`)·미래 시각 live(> now + 2 s)는 **원시 기록**한다 — 걸러내지 않고, live deadband 상태를 읽지도 바꾸지도 않는다(이력은 받은 것을 다 남기고 걸러내기는 현재값 경로만).
   - NaN/Inf는 `value_num = NULL`(quality는 받은 값, 모르는 quality는 BAD) — CAGG avg/min/max 오염 방지. deadband 비교에서 비유한값끼리는 같은 값이다.
-  - batch `plan_rev`가 현재 rev보다 크면 이력에서 버린다(rev는 단조 증가 → site-db 재생성 신호, 옛 tag_id가 다른 태그로 기록되는 것 방지). plan을 아직 모르면(기동 직후 DB 미준비) live까지 원시로 받아 둔다(collector는 Ack된 batch를 다시 보내지 않으므로 버리면 DB 복구 전 이력이 사라진다) — 그 사이 DB 재생성이 겹치면 막지 못한다(한계). 현재 plan에 없는 tag_id의 live 샘플과 `tag_history.tag_id`(int4) 범위 밖 tag_id도 버린다(한 행이 INSERT 전체를 매번 실패시키지 않게). raw는 옛 rev의 tag_id(retired 포함)를 그대로 기록한다(id 재사용 없음). 버린 수는 `/readyz.historian.rejected_total`.
-- **쓰기**(`historian.writer`): 메모리 버퍼 상한 600,000행(넘치면 가장 오래된 행부터 버림, `dropped_total`), 1 s마다 최대 20,000행씩 `INSERT … ON CONFLICT (tag_id, time) DO NOTHING`(replay 중복 흡수, 시각은 µs). 실패하면 꺼낸 행을 순서대로 버퍼 앞에 되돌리고 상한을 다시 적용한다 — DB 장애 동안은 이 버퍼가, core 단절 동안은 collector 링버퍼(60 s)가 이력을 든다. 한 번의 쓰기 전체(연결 획득·INSERT·연결 반환 대기)는 15 s(INSERT 쿼리 제한 10 s + 여유 5 s)를 넘으면 취소해 실패로 본다 — half-open DB 연결에서도 flush가 그 이상 멈추지 않고 행은 다음 주기에 다시 쓴다(`db_ok=false`). 취소된 연결의 정리는 asyncpg가 백그라운드에서 계속할 수 있다. 정지 순서는 수집 정지 → 최종 flush(5 s 제한) → DB close.
+  - batch `plan_rev`가 현재 rev보다 크면 이력에서 버린다(rev는 단조 증가 → site-db 재생성 신호, 옛 tag_id가 다른 태그로 기록되는 것 방지). plan을 아직 모르면(기동 직후 DB 미준비) live까지 원시로 받아 둔다(collector는 Ack된 batch를 다시 보내지 않으므로 버리면 DB 복구 전 이력이 사라진다) — 그 사이 DB 재생성이 겹치면 막지 못한다(한계). 현재 정의에 없는 tag_id의 live 샘플(정의에 있는 tag_id 기준 — plan에서 문제로 빠진 태그도 정책을 유지해 기록한다)과 `tag_history.tag_id`(int4) 범위 밖 tag_id도 버린다(한 행이 INSERT 전체를 매번 실패시키지 않게). raw는 옛 rev의 tag_id(retired 포함)를 그대로 기록한다(id 재사용 없음). 버린 수는 `/readyz.historian.rejected_total`.
+- **쓰기**(`historian.writer`): 메모리 버퍼 상한 600,000행(넘치면 가장 오래된 행부터 버림, `dropped_total`. 쓰는 중 최대 `FLUSH_MAX_ROWS` 추가 — 순간 최대 620,000행), 1 s마다 최대 20,000행씩 `INSERT … ON CONFLICT (tag_id, time) DO NOTHING`(replay 중복 흡수, 시각은 µs). 실패하면 꺼낸 행을 순서대로 버퍼 앞에 되돌리고 상한을 다시 적용한다 — DB 장애 동안은 이 버퍼가, core 단절 동안은 collector 링버퍼(60 s)가 이력을 든다. 한 번의 쓰기 전체(연결 획득·INSERT·연결 반환 대기)는 15 s(INSERT 쿼리 제한 10 s + 여유 5 s)를 넘으면 취소해 실패로 본다 — half-open DB 연결에서도 flush가 그 이상 멈추지 않고 행은 다음 주기에 다시 쓴다(`db_ok=false`). 취소된 연결의 정리는 asyncpg가 백그라운드에서 계속할 수 있다. 정지 순서는 수집 정지 → 최종 flush(5 s 제한) → DB close.
 - **허용 손실(문서화)**: core 프로세스 crash 시 아직 쓰지 못한 버퍼(정상 시 ≤ 1 flush 주기분, DB 장애 중이면 상한 안의 전체), 버퍼 상한 초과분(가장 오래된 것부터), collector 링버퍼 60 s를 넘는 core 단절 구간.
 - **조회**(`historian.reader`): raw(`tag_history`)·1m·1h(CAGG) + 구간 길이로 고르는 `auto_resolution`(≤ 1 h raw, ≤ 24 h 1m, 그 이상 1h). HTTP 이력 API·Trend 화면은 인증과 함께 M3b.
-- **아직 없음**: compose 네트워크 분리 replay 통합 테스트·2,000태그 부하 기록(M3a-3 후속), `GET /history`(M3b), retention 적용(M5).
+- **검증**: compose 네트워크 분리 replay는 통합 테스트 `test_network_disconnect_replay`, 2,000태그 1 s 부하 기록은 `g1.sh perf-ingest` — 판정식은 테스트 docstring(`services/core/tests/integration/test_compose_stack.py`), 실행 job은 [testing](testing.md) `integration-compose`·`perf-ingest`.
+- **아직 없음**: `GET /history`(M3b), retention 적용(M5).
 
 ---
 
@@ -2753,6 +2754,7 @@ PureIron 런타임 설정의 정본은 `backend/src/pureiron/config.py`의 `Sett
 - 현장 CLI(`pureiron-site`): `enroll`, `apply <pib>`, `bundle verify <pib>`, `status`, `secret set`, `report export`, `project export`.
 - Redis 없음(ADR-008 개정). core `/readyz` = DB 연결 + 스키마 호환 범위 + collector 세션. 응답의 `acquisition`(plan_rev·장비 연결 수·태그 GOOD 수·`good_ratio`·ingest 누적 `live`/`stale`/`future`/`replay`)은 집계일 뿐 준비 판정에 쓰지 않으며, Updater `checking` 단계의 GOOD 비율 기준이 이 값을 쓴다(M3a). `historian`(버퍼 행 수·drop·쓰기 지연·`db_ok`·버린 샘플 수)도 정보로만 낸다 — 이력 DB 쓰기가 막혀도 수집·현재값은 계속된다(M3a-3).
 - 장비·태그 정의: `pureiron-core apply-definitions <프로젝트 디렉터리>`가 project-tools로 검증한 뒤 `devices.definition`·`tags.definition`(jsonb)에 path 기준 upsert·retire 하고, `project.yaml`의 `historian`(기록 기본값, 정규형·비면 NULL)은 `project_state.historian`에 같은 트랜잭션으로 저장한다. 바뀐 것이 있을 때만 `project_state.definitions_rev`(= plan_rev)를 올린다. core는 이 rev를 주기적으로 읽어 collector에 새 plan을 보낸다(정식 project apply는 M5).
+- **dev/VM DB 주의(M3a-3 D12)**: D12로 epoch 3 내용이 0008 → 0009로 늘었다(release된 epoch는 2까지라 현장 영향 없음). 0008까지 적용된 dev/VM DB는 새 core를 올리기 전에 `pureiron-core migrate up`이 필수다 — `/readyz`·Updater는 epoch 번호만 보므로, 안 하면 `/readyz`는 ready인데 `project_state.historian` 열이 없어 정의 로드가 실패하고 plan이 적용되지 않아 수집 전체가 멈춘다.
 - 관측: core·collector `/metrics`, Updater가 60초마다 `state/metrics/<svc>.prom`·일별 jsonl로 기록, `/var/lib/pureiron` 사용률 경고 ≥ 0.80·위험 ≥ 0.90.
 
 ### V1 환경변수 (M1~M3a 구현)
@@ -2772,7 +2774,7 @@ PureIron 런타임 설정의 정본은 `backend/src/pureiron/config.py`의 `Sett
 | `PUREIRON_INGEST_LIVE_MAX_AGE_S` | core | `5.0` | 샘플 시각이 이보다 오래된 live 샘플은 이력에만(현재값·알람 갱신 없음) |
 | `PUREIRON_DEVICE_SILENCE_MIN_S` | core | `5.0` | 장비 무신호 판정 `max(3×poll_ms, 이 값)` → 장비 DISCONNECTED·태그 BAD |
 | `PUREIRON_SESSION_SILENCE_S` | core | `15.0` | collector가 이 시간 동안 아무것도 보내지 않으면 세션을 닫음(RST 없는 단절 대비). collector `PUREIRON_COLLECTOR_HEARTBEAT_S`의 2배 이상 |
-| `PUREIRON_HISTORIAN_BUFFER_MAX_ROWS` | core | `600000` | 이력 메모리 버퍼 상한(행). 넘치면 가장 오래된 행부터 버리고 `/readyz.historian.dropped_total`에 센다. DB 장애 동안 이 버퍼가 이력을 든다 |
+| `PUREIRON_HISTORIAN_BUFFER_MAX_ROWS` | core | `600000` | 이력 메모리 버퍼 상한(행). 넘치면 가장 오래된 행부터 버리고 `/readyz.historian.dropped_total`에 센다. DB 장애 동안 이 버퍼가 이력을 든다. 쓰는 중인 행(최대 `FLUSH_MAX_ROWS`)은 상한 밖이라 순간 최대는 이 값 + `FLUSH_MAX_ROWS`(기본 620,000행) |
 | `PUREIRON_HISTORIAN_FLUSH_S` | core | `1.0` | 이력 flush 주기(초). 밀려 있으면 같은 주기에 버퍼가 빌 때까지 계속 쓴다 |
 | `PUREIRON_HISTORIAN_FLUSH_MAX_ROWS` | core | `20000` | `tag_history` INSERT 한 번에 쓰는 최대 행 수 |
 | `PUREIRON_CORE_GRPC` | collector | `127.0.0.1:50051` | core gRPC 주소(compose: `core:50051`) |

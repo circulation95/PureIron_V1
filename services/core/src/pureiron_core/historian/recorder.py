@@ -16,8 +16,9 @@
 - live 시간 역행(마지막으로 본 시각 이하)은 기록하지 않는다. 단 마지막으로 본 시각이 지금보다
   `CLOCK_SLACK_NS`(2s) 넘게 미래면(벽시계가 뒤로 보정됨) 그 상태를 믿지 않고 리셋해 첫 샘플처럼
   기록한다 — TagStore와 같은 기준(현재값만 갱신되고 이력이 비는 불일치 방지, M3a-3 W1 진단).
-- live 샘플의 tag_id가 현재 plan에 없으면 버린다(D7, TagStore와 같은 기준). raw는 옛 rev의
-  tag_id(retired 포함)를 그대로 기록한다 — id는 재사용되지 않는다.
+- live 샘플의 tag_id가 현재 정의에 없으면 버린다(D7). 기준은 정의에 있는 tag_id다 — plan에서
+  문제로 빠진 태그(TagStore에는 없음)도 정책을 유지해 기록한다. raw는 옛 rev의 tag_id(retired
+  포함)를 그대로 기록한다 — id는 재사용되지 않는다.
 
 모든 메서드는 동기(await 없음)다 — ingest 직후 Ack가 나가므로 DB I/O를 하지 않는다.
 """
