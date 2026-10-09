@@ -168,7 +168,8 @@ class Recorder:
         self._rev: int | None = None
         self._policies: dict[int, RecordPolicy] = {}
         self._last: dict[int, _Last] = {}
-        self._warned_at: float | None = None
+        # 버림 경고 rate-limit은 사유별로 — 한 사유의 경고가 다른 사유를 가리지 않게.
+        self._warned_at: dict[str, float] = {}
         self.stats = RecorderStats()
 
     @property
@@ -200,17 +201,19 @@ class Recorder:
             return False
         self.stats.rejected_rev += count
         self._warn(
+            "rev_ahead",
             count,
             f"batch plan_rev {plan_rev} is ahead of current rev {self._rev} "
             "(site-db recreated? tag ids may not match)",
         )
         return True
 
-    def _warn(self, count: int, reason: str) -> None:
+    def _warn(self, kind: str, count: int, reason: str) -> None:
         now = self._clock()
-        if self._warned_at is not None and now - self._warned_at < REJECT_WARN_INTERVAL_S:
+        last = self._warned_at.get(kind)
+        if last is not None and now - last < REJECT_WARN_INTERVAL_S:
             return
-        self._warned_at = now
+        self._warned_at[kind] = now
         log.warning(
             "historian dropped %d sample(s): %s (total rejected=%d)",
             count,
@@ -224,7 +227,9 @@ class Recorder:
             return samples
         dropped = len(samples) - len(valid)
         self.stats.rejected_unknown += dropped
-        self._warn(dropped, f"tag_id above {MAX_TAG_ID} (cannot exist in tag_history)")
+        self._warn(
+            "tag_id_range", dropped, f"tag_id above {MAX_TAG_ID} (cannot exist in tag_history)"
+        )
         return valid
 
     def offer_raw(self, samples: Sequence[pb.Sample], *, plan_rev: int) -> None:
@@ -257,7 +262,7 @@ class Recorder:
                 rows.append(row(sample))
         if unknown:
             self.stats.rejected_unknown += unknown
-            self._warn(unknown, "live tag_id not in the current plan")
+            self._warn("unknown_tag", unknown, "live tag_id not in the current plan")
         self.stats.live_recorded += len(rows)
         self.stats.live_skipped += len(samples) - unknown - len(rows)
         if rows:

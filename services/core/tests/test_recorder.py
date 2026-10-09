@@ -342,6 +342,27 @@ def test_historian_status_rejected_total_sums_both_paths() -> None:
     assert status.buffer_rows == 0
 
 
+def test_reject_warnings_are_rate_limited_per_reason(caplog: pytest.LogCaptureFixture) -> None:
+    """R1 L8: 사유마다 60s에 한 번 — 다른 사유의 경고는 서로 가리지 않는다."""
+    now = [0.0]
+    recorder = Recorder(ListSink(), clock=lambda: now[0])
+    recorder.set_definitions(_defs(_tag(1), rev=3))
+    recorder.offer_raw([num(2**31, 0, 1.0)], plan_rev=3)  # int4 밖 tag_id
+    now[0] = 10.0
+    recorder.offer_raw([num(1, 0, 1.0)], plan_rev=4)  # rev 앞섬(D6)
+    recorder.offer_live([num(9, 0, 1.0)], plan_rev=3, now_ns=NOW)  # plan에 없는 tag_id(D7)
+    now[0] = 20.0
+    recorder.offer_raw([num(1, 1, 1.0)], plan_rev=4)  # 같은 사유 60s 안 → 경고 없음
+    messages = [r.getMessage() for r in caplog.records]
+    assert len(messages) == 3
+    assert "tag_id above" in messages[0]
+    assert "plan_rev 4 is ahead" in messages[1]
+    assert "not in the current plan" in messages[2]
+    now[0] = 70.0
+    recorder.offer_raw([num(1, 2, 1.0)], plan_rev=4)  # 같은 사유도 60s 뒤엔 다시 경고
+    assert len(caplog.records) == 4
+
+
 def _at(ts_s: float) -> int:
     return T0 + int(ts_s * S)
 
