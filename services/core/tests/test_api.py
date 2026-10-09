@@ -9,9 +9,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from pureiron_core import __version__
-from pureiron_core.acquisition.ports import AcquisitionSummary
+from pureiron_core.acquisition.ports import AcquisitionSummary, IngestCounts
 from pureiron_core.api.health import build_health_router
 from pureiron_core.api.project import build_project_router
+from pureiron_core.historian.ports import HistorianStatus
 from pureiron_core.platform.db import Connection, DatabaseUnavailableError
 from pureiron_core.platform.migrate import (
     Envelope,
@@ -57,10 +58,35 @@ class FakeCollector:
         return self.stats
 
 
-def _health_client(db: FakeDb, schema: FakeSchema, collector: FakeCollector) -> TestClient:
+@dataclass
+class FakeHistorian:
+    current: HistorianStatus = field(
+        default_factory=lambda: HistorianStatus(
+            buffer_rows=0,
+            dropped_total=0,
+            written_total=0,
+            write_lag_s=None,
+            db_ok=True,
+            rejected_total=0,
+        )
+    )
+
+    def status(self) -> HistorianStatus:
+        return self.current
+
+
+def _health_client(
+    db: FakeDb,
+    schema: FakeSchema,
+    collector: FakeCollector,
+    historian: FakeHistorian | None = None,
+) -> TestClient:
     app = FastAPI()
     app.include_router(
-        build_health_router(db=db, schema=schema, collector=collector), prefix="/api/v1"
+        build_health_router(
+            db=db, schema=schema, collector=collector, historian=historian or FakeHistorian()
+        ),
+        prefix="/api/v1",
     )
     return TestClient(app)
 
@@ -87,7 +113,12 @@ def test_readyz_ready() -> None:
 def test_readyz_acquisition_summary_is_informational() -> None:
     """GOOD 비율은 집계로만 나가고 준비 판정에는 쓰이지 않는다(장비가 꺼진 현장도 ready)."""
     stats = AcquisitionSummary(
-        plan_rev=4, devices_total=2, devices_connected=1, tags_total=4, tags_good=1
+        plan_rev=4,
+        devices_total=2,
+        devices_connected=1,
+        tags_total=4,
+        tags_good=1,
+        ingest=IngestCounts(live=10, stale=2, future=1, replay=7, batches=9, heartbeats=4),
     )
     response = _health_client(FakeDb(), FakeSchema(), FakeCollector(stats=stats)).get(
         "/api/v1/readyz"
@@ -100,9 +131,42 @@ def test_readyz_acquisition_summary_is_informational() -> None:
         "tags_total": 4,
         "tags_good": 1,
         "good_ratio": 0.25,
+        "ingest": {
+            "live": 10,
+            "stale": 2,
+            "future": 1,
+            "replay": 7,
+            "batches": 9,
+            "heartbeats": 4,
+        },
     }
     empty = _health_client(FakeDb(), FakeSchema(), FakeCollector()).get("/api/v1/readyz")
     assert empty.json()["acquisition"]["good_ratio"] is None
+
+
+def test_readyz_historian_status_is_informational() -> None:
+    """이력 쓰기가 막혀도(DB 장애·drop) 준비 판정은 그대로다 — 정보로만 낸다."""
+    historian = FakeHistorian(
+        HistorianStatus(
+            buffer_rows=1200,
+            dropped_total=5,
+            written_total=900,
+            write_lag_s=12.5,
+            db_ok=False,
+            rejected_total=3,
+        )
+    )
+    client = _health_client(FakeDb(), FakeSchema(), FakeCollector(), historian)
+    response = client.get("/api/v1/readyz")
+    assert response.status_code == 200
+    assert response.json()["historian"] == {
+        "buffer_rows": 1200,
+        "dropped_total": 5,
+        "written_total": 900,
+        "write_lag_s": 12.5,
+        "db_ok": False,
+        "rejected_total": 3,
+    }
 
 
 def test_readyz_db_down() -> None:

@@ -3,7 +3,9 @@
 `apply_definitions`는 검증된 프로젝트 트리(`pureiron_project.load_project`)의 장비·태그를
 path 기준으로 upsert 하고, 빠진 것은 `retired_at`만 표시한다(ADR-021: 같은 path는 같은 id로
 되살아나고, 다른 path에 id를 재사용하지 않는다). 실제로 바뀐 것이 있을 때만
-`definitions_rev`(= plan_rev)를 올린다.
+`definitions_rev`(= plan_rev)를 올린다. `project.yaml`의 `historian`(기록 기본값)도 같은
+트랜잭션에서 `project_state.historian`에 저장하고, 바뀌면 rev를 올린다 — recorder가 plan과 같은
+rev·같은 스냅샷으로 정책을 읽게.
 정식 project apply(edit lock·site_rev, M5)가 이 함수를 감싼다.
 """
 
@@ -76,6 +78,11 @@ UPDATE devices SET retired_at = now()
  WHERE retired_at IS NULL AND NOT (id = ANY($1::text[]))
 """
 
+_SET_HISTORIAN = """
+UPDATE project_state SET historian = $1::jsonb
+ WHERE id AND historian IS DISTINCT FROM $1::jsonb
+"""
+
 
 @dataclass(frozen=True, slots=True)
 class ApplyResult:
@@ -87,12 +94,13 @@ class ApplyResult:
     tags_added: int
     tags_updated: int
     tags_retired: int
+    historian_changed: bool = False
 
     def as_json(self) -> dict[str, object]:
         return asdict(self)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class _Rows:
     device_ids: list[str]
     device_protocols: list[str]
@@ -100,6 +108,8 @@ class _Rows:
     tag_paths: list[str]
     tag_devices: list[str]
     tag_defs: list[str]
+    # project.yaml `historian` 정규형 JSON. 비어 있으면(전부 기본값) None = NULL.
+    historian: str | None = None
 
 
 def _encode(value: object) -> str:
@@ -111,7 +121,11 @@ def _rows(project: Project) -> _Rows:
         raise ProjectStateError("project has problems: " + "; ".join(project.problems))
     rows = _Rows([], [], [], [], [], [])
     for f in sorted(project.files, key=lambda f: f.relpath):
-        if f.kind is Kind.DEVICE and isinstance(f.data, dict):
+        if f.kind is Kind.PROJECT and isinstance(f.data, dict):
+            historian = f.data.get("historian")
+            # "설정 없음"의 표현을 NULL 하나로 둔다(빈 객체와 NULL이 rev를 바꾸지 않게).
+            rows.historian = _encode(historian) if historian else None
+        elif f.kind is Kind.DEVICE and isinstance(f.data, dict):
             rows.device_ids.append(str(f.data["id"]))
             rows.device_protocols.append(str(f.data["protocol"]))
             rows.device_defs.append(_encode(f.data))
@@ -140,6 +154,7 @@ async def apply_definitions(conn: Connection, project: Project) -> ApplyResult:
         tags = await conn.fetchrow(_UPSERT_TAGS, rows.tag_paths, rows.tag_devices, rows.tag_defs)
         tags_retired = _count(await conn.execute(_RETIRE_TAGS, rows.tag_paths))
         devices_retired = _count(await conn.execute(_RETIRE_DEVICES, rows.device_ids))
+        historian_changed = _count(await conn.execute(_SET_HISTORIAN, rows.historian)) > 0
         if devices is None or tags is None:  # 집계 SELECT는 항상 한 행
             raise ProjectStateError("definition upsert returned no summary row")
         counts = (
@@ -150,7 +165,7 @@ async def apply_definitions(conn: Connection, project: Project) -> ApplyResult:
             int(tags["updated"]),
             tags_retired,
         )
-        changed = any(counts)
+        changed = any(counts) or historian_changed
         if changed:
             rev = await conn.fetchval(
                 "UPDATE project_state SET definitions_rev = definitions_rev + 1, updated_at = now()"
@@ -160,7 +175,7 @@ async def apply_definitions(conn: Connection, project: Project) -> ApplyResult:
             rev = await conn.fetchval("SELECT definitions_rev FROM project_state WHERE id")
         if not isinstance(rev, int):  # 트랜잭션 안에서 실패시켜 upsert·retire도 되돌린다
             raise ProjectStateError("project_state row missing (run `pureiron-core migrate up`)")
-    return ApplyResult(rev, changed, *counts)
+    return ApplyResult(rev, changed, *counts, historian_changed=historian_changed)
 
 
 def _decode(raw: object) -> Mapping[str, object]:
@@ -199,8 +214,9 @@ class PgDefinitionsSource:
 async def _load(conn: Connection) -> Definitions:
     # rev와 행을 같은 스냅샷에서 읽는다(apply 도중에 섞이지 않게).
     async with conn.transaction(isolation="repeatable_read", readonly=True):
-        rev = await conn.fetchval(
-            "SELECT definitions_rev FROM project_state WHERE id", timeout=_QUERY_TIMEOUT_S
+        state = await conn.fetchrow(
+            "SELECT definitions_rev, historian FROM project_state WHERE id",
+            timeout=_QUERY_TIMEOUT_S,
         )
         device_rows = await conn.fetch(
             "SELECT id, definition FROM devices"
@@ -213,10 +229,12 @@ async def _load(conn: Connection) -> Definitions:
             " ORDER BY id",
             timeout=_QUERY_TIMEOUT_S,
         )
-    if not isinstance(rev, int):
+    if state is None or not isinstance(rev := state["definitions_rev"], int):
         raise DefinitionsUnavailableError("project_state row missing")
+    historian: object = state["historian"]
     return Definitions(
         rev=rev,
+        historian=_decode(historian) if historian is not None else {},
         devices=tuple(DeviceDef(str(r["id"]), _decode(r["definition"])) for r in device_rows),
         tags=tuple(
             TagDef(int(r["id"]), str(r["path"]), str(r["device_id"]), _decode(r["definition"]))

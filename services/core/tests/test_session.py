@@ -4,6 +4,7 @@ core `_gen` stub을 가짜 collector로 쓴다.
 ① Hello 직후부터(plan·DB 준비 전 포함) heartbeat를 포함한 모든 batch에 Ack, plan은 정의가
 읽히는 순간 ② 세션마다 같은 rev여도 plan ③ rev 변경 시 세션 중 plan push ④ replay는 이력만
 ⑤ 오래된 live 샘플은 이력만 ⑥ 세션이 모두 끊기면 전 태그 BAD·장비 DISCONNECTED.
+이력 sink: replay·오래된·미래 live는 raw, fresh live만 live로 batch plan_rev와 함께(M3a-3).
 """
 
 from __future__ import annotations
@@ -22,12 +23,15 @@ from pureiron_core._gen import collector_pb2 as pb
 from pureiron_core._gen import collector_pb2_grpc as pb_grpc
 from pureiron_core.acquisition.devices import DeviceMonitor, DeviceState
 from pureiron_core.acquisition.ingest import DiscardHistory, Ingestor
+from pureiron_core.acquisition.plan import build_plan
 from pureiron_core.acquisition.server import (
     SESSION_TOPIC,
     AcquisitionServer,
     AcquisitionService,
     PlanKeeper,
 )
+from pureiron_core.historian.recorder import Recorder
+from pureiron_core.historian.writer import Row
 from pureiron_core.platform.bus import Event, EventBus
 from pureiron_core.project.ports import Definitions, DefinitionsUnavailableError
 from pureiron_core.tags.ports import Quality, TagKey
@@ -52,11 +56,31 @@ class FakeSource:
 
 
 @dataclass
+class RecordingHistory:
+    """이력 sink 호출을 (경로, plan_rev, 샘플 값) 순서대로 남긴다."""
+
+    calls: list[tuple[str, int, list[float | bool]]] = field(
+        default_factory=list[tuple[str, int, list[float | bool]]]
+    )
+
+    def offer_raw(self, samples: Sequence[pb.Sample], *, plan_rev: int) -> None:
+        self.calls.append(("raw", plan_rev, [_value(s) for s in samples]))
+
+    def offer_live(self, samples: Sequence[pb.Sample], *, plan_rev: int, now_ns: int) -> None:
+        assert abs(now_ns - time.time_ns()) < 60 * 10**9  # ingest의 벽시계가 그대로 온다
+        self.calls.append(("live", plan_rev, [_value(s) for s in samples]))
+
+
+def _value(sample: pb.Sample) -> float | bool:
+    return sample.flag if sample.WhichOneof("v") == "flag" else sample.num
+
+
+@dataclass
 class Core:
     source: FakeSource
     tags: TagStore
     devices: DeviceMonitor
-    history: DiscardHistory
+    history: RecordingHistory
     ingestor: Ingestor
     server: AcquisitionServer
     events: list[Event] = field(default_factory=list[Event])
@@ -74,7 +98,7 @@ async def start_core(
     source = FakeSource()
     tags = TagStore()
     devices = DeviceMonitor(tags, silence_min_s=silence_min_s)
-    history = DiscardHistory()
+    history = RecordingHistory()
     ingestor = Ingestor(tags, devices, history, live_max_age_s=5.0)
     service = AcquisitionService(bus, tags, devices, ingestor, session_silence_s=session_silence_s)
     keeper = PlanKeeper(source, service.set_plan, refresh_s=0.05)
@@ -114,11 +138,15 @@ class FakeCollector:
         self.send(pb.CollectorMsg(hello=pb.Hello(collector_version="test")))
 
     def batch(
-        self, seq: int, samples: list[pb.Sample] | None = None, *, replay: bool = False
+        self,
+        seq: int,
+        samples: list[pb.Sample] | None = None,
+        *,
+        replay: bool = False,
+        plan_rev: int = 3,
     ) -> None:
-        self.send(
-            pb.CollectorMsg(batch=pb.ValueBatch(seq=seq, replay=replay, samples=samples or []))
-        )
+        batch = pb.ValueBatch(seq=seq, plan_rev=plan_rev, replay=replay, samples=samples or [])
+        self.send(pb.CollectorMsg(batch=batch))
 
     async def read(self) -> pb.CoreMsg:
         message = await asyncio.wait_for(self._call.read(), READ_TIMEOUT_S)
@@ -206,24 +234,32 @@ async def test_live_replay_and_stale_samples(core: Core) -> None:
             "tag.changed.line1/running",
         ]
 
-        # replay: 이력에만 — 현재값·이벤트 불변
+        # replay: 이력에만(raw, 옛 plan_rev 그대로) — 현재값·이벤트 불변
         before = len(core.events)
-        collector.batch(7, [_num(1, 99.0)], replay=True)
+        collector.batch(7, [_num(1, 99.0)], replay=True, plan_rev=2)
         assert (await collector.read()).ack.seq == 7
         temp = core.tags.get(1)
         assert temp is not None
         assert temp.value == 20.0
-        assert core.history.replay == 1
+        assert core.ingestor.stats.replay == 1
         assert len(core.events) == before
 
-        # 늦게 도착한 live(샘플 시각이 5s보다 오래됨): 이력에만
-        collector.batch(2, [_num(1, 55.0, age_s=30)])
+        # 늦게 도착한 live(샘플 시각이 5s보다 오래됨): 이력에만(raw). 같은 batch의 fresh는 live로.
+        collector.batch(2, [_num(1, 55.0, age_s=30), _num(1, 22.0)])
         assert (await collector.read()).ack.seq == 2
         temp = core.tags.get(1)
         assert temp is not None
-        assert temp.value == 20.0
+        assert temp.value == 22.0
         assert core.ingestor.stats.stale == 1
-        assert core.history.live == 3
+        assert core.history.calls == [
+            ("live", 3, [20.0, True]),
+            ("raw", 2, [99.0]),
+            ("raw", 3, [55.0]),
+            ("live", 3, [22.0]),
+        ]
+        summary = core.server.summary().ingest
+        assert (summary.live, summary.stale, summary.future, summary.replay) == (3, 1, 0, 1)
+        assert (summary.batches, summary.heartbeats) == (3, 0)
 
         # 같은 seq가 다시 와도(다른 collector 프로세스) 중복 제거하지 않고 반영·Ack
         collector.batch(1, [_num(1, 21.0)])
@@ -232,6 +268,38 @@ async def test_live_replay_and_stale_samples(core: Core) -> None:
         assert temp is not None
         assert temp.value == 21.0
         await collector.close()
+
+
+def test_replay_through_recorder_is_raw_and_emits_no_events() -> None:
+    """실제 recorder를 sink로: replay는 deadband 없이 기록되고 tag.changed는 0건(④)."""
+    recorded: list[Row] = []
+
+    class Sink:
+        def append(self, rows: Sequence[Row]) -> None:
+            recorded.extend(rows)
+
+    definitions = sample_definitions(rev=3)
+    built = build_plan(definitions)
+    tags = TagStore()
+    tags.reindex(built.keys)
+    devices = DeviceMonitor(tags, silence_min_s=5.0)
+    devices.reindex(built.plan)
+    recorder = Recorder(Sink())
+    recorder.set_definitions(definitions)  # plan 전이면 live도 raw가 된다(D6)
+    ingestor = Ingestor(tags, devices, recorder, live_max_age_s=5.0)
+    first, second = _num(1, 20.0), _num(1, 20.0)
+    second.ts_unix_ns = first.ts_unix_ns + 1_000
+    live_events = ingestor.ingest(pb.ValueBatch(seq=1, plan_rev=3, samples=[first, second]))
+    assert [e.topic for e in live_events if e.topic.startswith("tag.")] == [
+        "tag.changed.line1/temp"
+    ]
+    replay_events = ingestor.ingest(
+        pb.ValueBatch(seq=2, plan_rev=3, replay=True, samples=[first, second])
+    )
+    assert replay_events == []
+    # live: 같은 값 반복은 deadband 0으로 생략(첫 샘플만), replay 두 개는 그대로
+    assert [r.value_num for r in recorded] == [20.0, 20.0, 20.0]
+    assert (recorder.stats.live_recorded, recorder.stats.raw) == (1, 2)
 
 
 async def test_session_end_marks_tags_bad_and_devices_disconnected(core: Core) -> None:
@@ -298,6 +366,7 @@ async def test_future_timestamp_goes_to_history_only(core: Core) -> None:
         collector.batch(2, [_num(1, 99.0, age_s=-3600)])  # 1시간 미래
         assert (await collector.read()).ack.seq == 2
         assert core.ingestor.stats.future == 1
+        assert core.history.calls[-1] == ("raw", 3, [99.0])
         collector.batch(3, [_num(1, 21.0)])
         assert (await collector.read()).ack.seq == 3
         temp = core.tags.get(1)
@@ -364,6 +433,25 @@ async def test_silent_session_is_closed_by_core() -> None:
             collector.cancel()
         finally:
             await channel.close()
+
+
+async def test_plan_keeper_notifies_definitions_before_apply() -> None:
+    """recorder(on_definitions)는 collector에 plan이 가기 전에 같은 정의를 받는다(D6·D7)."""
+    source = FakeSource(sample_definitions(rev=5))
+    order: list[str] = []
+
+    async def apply(plan: pb.AcquisitionPlan, keys: Sequence[TagKey]) -> None:
+        order.append(f"apply {plan.plan_rev}")
+
+    def notify(definitions: Definitions) -> None:
+        order.append(f"defs {definitions.rev}")
+
+    keeper = PlanKeeper(source, apply, refresh_s=0.01, on_definitions=notify)
+    assert await keeper.refresh()
+    assert not await keeper.refresh()  # 같은 rev는 다시 알리지 않는다
+    source.definitions = sample_definitions(rev=6)
+    assert await keeper.refresh()
+    assert order == ["defs 5", "apply 5", "defs 6", "apply 6"]
 
 
 async def test_plan_keeper_retries_after_apply_error() -> None:

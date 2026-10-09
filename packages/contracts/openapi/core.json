@@ -23,6 +23,9 @@
             ],
             "title": "Good Ratio"
           },
+          "ingest": {
+            "$ref": "#/components/schemas/IngestCounts"
+          },
           "plan_rev": {
             "anyOf": [
               {
@@ -49,7 +52,8 @@
           "devices_connected",
           "tags_total",
           "tags_good",
-          "good_ratio"
+          "good_ratio",
+          "ingest"
         ],
         "title": "Acquisition",
         "type": "object"
@@ -142,6 +146,99 @@
           "version"
         ],
         "title": "Health",
+        "type": "object"
+      },
+      "Historian": {
+        "description": "이력 기록 상태(준비 판정에는 쓰지 않음). 누적 값은 core 기동 후 기준.",
+        "properties": {
+          "buffer_rows": {
+            "description": "아직 DB에 쓰지 못한 메모리 버퍼 행 수(쓰는 중 포함)",
+            "title": "Buffer Rows",
+            "type": "integer"
+          },
+          "db_ok": {
+            "description": "마지막 이력 쓰기 성공 여부",
+            "title": "Db Ok",
+            "type": "boolean"
+          },
+          "dropped_total": {
+            "description": "버퍼 상한을 넘어 버린(가장 오래된) 행 수",
+            "title": "Dropped Total",
+            "type": "integer"
+          },
+          "rejected_total": {
+            "description": "이력에서 버린 샘플 수 = batch plan_rev가 현재 rev보다 앞선 것(site-db 재생성 신호) + 현재 정의에 없는 tag_id의 live 샘플(정의 기준 — plan에서 문제로 빠진 태그는 기록) + int4 범위 밖 tag_id",
+            "title": "Rejected Total",
+            "type": "integer"
+          },
+          "write_lag_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "버퍼에서 가장 오래 기다린 행의 대기 시간",
+            "title": "Write Lag S"
+          },
+          "written_total": {
+            "description": "INSERT에 넘긴 행 수(중복으로 무시된 행 포함)",
+            "title": "Written Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "buffer_rows",
+          "dropped_total",
+          "written_total",
+          "write_lag_s",
+          "db_ok",
+          "rejected_total"
+        ],
+        "title": "Historian",
+        "type": "object"
+      },
+      "IngestCounts": {
+        "description": "ingest 누적 샘플 수(core 기동 후). live만 현재값에 반영, 나머지는 이력 전용.",
+        "properties": {
+          "batches": {
+            "description": "받은 ValueBatch 수(heartbeat 포함)",
+            "title": "Batches",
+            "type": "integer"
+          },
+          "future": {
+            "title": "Future",
+            "type": "integer"
+          },
+          "heartbeats": {
+            "description": "그중 빈 batch(heartbeat) 수",
+            "title": "Heartbeats",
+            "type": "integer"
+          },
+          "live": {
+            "title": "Live",
+            "type": "integer"
+          },
+          "replay": {
+            "title": "Replay",
+            "type": "integer"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "live",
+          "stale",
+          "future",
+          "replay",
+          "batches",
+          "heartbeats"
+        ],
+        "title": "IngestCounts",
         "type": "object"
       },
       "ProjectStateOut": {
@@ -248,6 +345,9 @@
           "checks": {
             "$ref": "#/components/schemas/ReadinessChecks"
           },
+          "historian": {
+            "$ref": "#/components/schemas/Historian"
+          },
           "status": {
             "enum": [
               "ready",
@@ -265,7 +365,8 @@
           "status",
           "version",
           "checks",
-          "acquisition"
+          "acquisition",
+          "historian"
         ],
         "title": "Readiness",
         "type": "object"

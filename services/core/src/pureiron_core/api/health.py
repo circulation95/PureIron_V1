@@ -1,7 +1,8 @@
 """`/healthz`(프로세스 생존)·`/readyz`(DB + 스키마 epoch envelope + collector 세션), plan §6.5.
 
 `/readyz`는 수집 집계(`acquisition`: 장비 연결 수·태그 GOOD 비율)도 함께 낸다 — Updater `checking`
-단계의 GOOD 비율 기준(baseline - 2%p)이 이 값을 쓴다.
+단계의 GOOD 비율 기준(baseline - 2%p)이 이 값을 쓴다. `historian`(버퍼·쓰기 지연·drop)도 정보로만
+낸다 — DB 장애 중에도 수집·현재값은 계속되므로 준비 판정에 넣지 않는다.
 """
 
 from __future__ import annotations
@@ -9,10 +10,11 @@ from __future__ import annotations
 from typing import Literal, Protocol
 
 from fastapi import APIRouter, Response, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from pureiron_core import __version__
 from pureiron_core.acquisition.ports import AcquisitionStatus
+from pureiron_core.historian.ports import HistorianStatusSource
 from pureiron_core.platform.migrate import Envelope, SchemaUnavailableError
 
 
@@ -52,6 +54,17 @@ class ReadinessChecks(BaseModel):
     collector: Check
 
 
+class IngestCounts(BaseModel):
+    """ingest 누적 샘플 수(core 기동 후). live만 현재값에 반영, 나머지는 이력 전용."""
+
+    live: int
+    stale: int
+    future: int
+    replay: int
+    batches: int = Field(description="받은 ValueBatch 수(heartbeat 포함)")
+    heartbeats: int = Field(description="그중 빈 batch(heartbeat) 수")
+
+
 class Acquisition(BaseModel):
     """수집 상태 집계(준비 판정에는 쓰지 않음 — 장비가 꺼진 현장도 ready). 태그 값은 담지 않는다."""
 
@@ -61,6 +74,22 @@ class Acquisition(BaseModel):
     tags_total: int
     tags_good: int
     good_ratio: float | None
+    ingest: IngestCounts
+
+
+class Historian(BaseModel):
+    """이력 기록 상태(준비 판정에는 쓰지 않음). 누적 값은 core 기동 후 기준."""
+
+    buffer_rows: int = Field(description="아직 DB에 쓰지 못한 메모리 버퍼 행 수(쓰는 중 포함)")
+    dropped_total: int = Field(description="버퍼 상한을 넘어 버린(가장 오래된) 행 수")
+    written_total: int = Field(description="INSERT에 넘긴 행 수(중복으로 무시된 행 포함)")
+    write_lag_s: float | None = Field(description="버퍼에서 가장 오래 기다린 행의 대기 시간")
+    db_ok: bool = Field(description="마지막 이력 쓰기 성공 여부")
+    rejected_total: int = Field(
+        description="이력에서 버린 샘플 수 = batch plan_rev가 현재 rev보다 앞선 것(site-db 재생성 "
+        "신호) + 현재 정의에 없는 tag_id의 live 샘플(정의 기준 — plan에서 문제로 빠진 태그는 "
+        "기록) + int4 범위 밖 tag_id"
+    )
 
 
 class Readiness(BaseModel):
@@ -68,6 +97,7 @@ class Readiness(BaseModel):
     version: str
     checks: ReadinessChecks
     acquisition: Acquisition
+    historian: Historian
 
 
 async def _schema_check(db_ok: bool, schema: SchemaProbe) -> SchemaEnvelopeCheck:
@@ -107,7 +137,11 @@ async def _schema_check(db_ok: bool, schema: SchemaProbe) -> SchemaEnvelopeCheck
 
 
 def build_health_router(
-    *, db: DatabaseProbe, schema: SchemaProbe, collector: AcquisitionStatus
+    *,
+    db: DatabaseProbe,
+    schema: SchemaProbe,
+    collector: AcquisitionStatus,
+    historian: HistorianStatusSource,
 ) -> APIRouter:
     router = APIRouter(tags=["ops"])
 
@@ -141,12 +175,29 @@ def build_health_router(
             tags_total=summary.tags_total,
             tags_good=summary.tags_good,
             good_ratio=summary.good_ratio,
+            ingest=IngestCounts(
+                live=summary.ingest.live,
+                stale=summary.ingest.stale,
+                future=summary.ingest.future,
+                replay=summary.ingest.replay,
+                batches=summary.ingest.batches,
+                heartbeats=summary.ingest.heartbeats,
+            ),
         )
+        history = historian.status()
         return Readiness(
             status="ready" if ready else "not_ready",
             version=__version__,
             checks=checks,
             acquisition=acquisition,
+            historian=Historian(
+                buffer_rows=history.buffer_rows,
+                dropped_total=history.dropped_total,
+                written_total=history.written_total,
+                write_lag_s=history.write_lag_s,
+                db_ok=history.db_ok,
+                rejected_total=history.rejected_total,
+            ),
         )
 
     return router

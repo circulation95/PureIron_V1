@@ -111,6 +111,43 @@ async def test_apply_upsert_retire_and_revive_keeps_ids(
         await db.close()
 
 
+async def test_historian_settings_stored_with_rev(
+    conn: asyncpg.Connection[asyncpg.Record], site_db: SiteDb, tmp_path: Path
+) -> None:
+    """project.yaml `historian`은 project_state.historian에 저장되고 바뀔 때만 rev+1(D1)."""
+    root = tmp_path / "project"
+    plc = {"plc-1": modbus_device("plc-1", "10.0.0.5")}
+    tags = {"plc-1": _tags("plc-1", 1)}
+
+    def tree(historian: JsonObject | None) -> Path:
+        return write_project(root, plc, tags, historian=historian)
+
+    first = await apply_definitions(conn, load_project(tree(None)))
+    assert (first.rev, first.historian_changed) == (1, False)
+    assert await conn.fetchval("SELECT historian FROM project_state") is None
+
+    settings: JsonObject = {"default_deadband": 0.5, "default_max_interval_s": 30}
+    second = await apply_definitions(conn, load_project(tree(settings)))
+    assert (second.rev, second.changed, second.historian_changed) == (2, True, True)
+    same = await apply_definitions(conn, load_project(tree(settings)))
+    assert (same.rev, same.changed, same.historian_changed) == (2, False, False)
+    # 스키마 기본값만 적은 설정은 정규형에서 빠진다 → 위 설정과 같은 값으로 저장된다.
+    with_defaults: JsonObject = {**settings, "retention_days": 365}
+    assert (await apply_definitions(conn, load_project(tree(with_defaults)))).changed is False
+
+    db = Database(site_db.dsn, password=site_db.password, max_size=1)
+    try:
+        loaded = await PgDefinitionsSource(db).load()
+        assert (loaded.rev, dict(loaded.historian)) == (2, settings)
+        # 설정을 지우면(전부 기본값) NULL로 돌아가고 rev+1
+        cleared = await apply_definitions(conn, load_project(tree({})))
+        assert (cleared.rev, cleared.historian_changed) == (3, True)
+        assert await conn.fetchval("SELECT historian FROM project_state") is None
+        assert dict((await PgDefinitionsSource(db).load()).historian) == {}
+    finally:
+        await db.close()
+
+
 async def test_rows_without_definition_are_not_planned(
     conn: asyncpg.Connection[asyncpg.Record], site_db: SiteDb
 ) -> None:

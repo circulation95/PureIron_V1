@@ -88,6 +88,7 @@ export interface components {
             devices_total: number;
             /** Good Ratio */
             good_ratio: number | null;
+            ingest: components["schemas"]["IngestCounts"];
             /** Plan Rev */
             plan_rev: number | null;
             /** Tags Good */
@@ -129,6 +130,66 @@ export interface components {
             /** Version */
             version: string;
         };
+        /**
+         * Historian
+         * @description 이력 기록 상태(준비 판정에는 쓰지 않음). 누적 값은 core 기동 후 기준.
+         */
+        Historian: {
+            /**
+             * Buffer Rows
+             * @description 아직 DB에 쓰지 못한 메모리 버퍼 행 수(쓰는 중 포함)
+             */
+            buffer_rows: number;
+            /**
+             * Db Ok
+             * @description 마지막 이력 쓰기 성공 여부
+             */
+            db_ok: boolean;
+            /**
+             * Dropped Total
+             * @description 버퍼 상한을 넘어 버린(가장 오래된) 행 수
+             */
+            dropped_total: number;
+            /**
+             * Rejected Total
+             * @description 이력에서 버린 샘플 수 = batch plan_rev가 현재 rev보다 앞선 것(site-db 재생성 신호) + 현재 정의에 없는 tag_id의 live 샘플(정의 기준 — plan에서 문제로 빠진 태그는 기록) + int4 범위 밖 tag_id
+             */
+            rejected_total: number;
+            /**
+             * Write Lag S
+             * @description 버퍼에서 가장 오래 기다린 행의 대기 시간
+             */
+            write_lag_s: number | null;
+            /**
+             * Written Total
+             * @description INSERT에 넘긴 행 수(중복으로 무시된 행 포함)
+             */
+            written_total: number;
+        };
+        /**
+         * IngestCounts
+         * @description ingest 누적 샘플 수(core 기동 후). live만 현재값에 반영, 나머지는 이력 전용.
+         */
+        IngestCounts: {
+            /**
+             * Batches
+             * @description 받은 ValueBatch 수(heartbeat 포함)
+             */
+            batches: number;
+            /** Future */
+            future: number;
+            /**
+             * Heartbeats
+             * @description 그중 빈 batch(heartbeat) 수
+             */
+            heartbeats: number;
+            /** Live */
+            live: number;
+            /** Replay */
+            replay: number;
+            /** Stale */
+            stale: number;
+        };
         /** ProjectStateOut */
         ProjectStateOut: {
             /** Applied At */
@@ -154,6 +215,7 @@ export interface components {
         Readiness: {
             acquisition: components["schemas"]["Acquisition"];
             checks: components["schemas"]["ReadinessChecks"];
+            historian: components["schemas"]["Historian"];
             /**
              * Status
              * @enum {string}

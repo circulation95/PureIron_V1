@@ -2,6 +2,10 @@
 #   docker compose -p pureiron -f site.compose.yml -f site.dev.yml --profile dev up -d
 # 기본 포트는 Windows 동적 범위(49152-65535) 밖에 둔다: Docker Desktop은 호스트 Windows에 포트를
 # 열고, Hyper-V/WinNAT가 그 범위에서 블록을 예약하면 "ports are not available"로 실패한다.
+#
+# 장비 쪽 네트워크(field)를 따로 둔다: simulator는 field에만, collector는 default(core)와 field
+# 양쪽에 붙는다. 통합 테스트는 collector를 default에서만 떼어 "core와는 끊겼지만 장비 수집은
+# 계속되는" 구간을 만든다(replay 검사, M3a-3). 한 네트워크였다면 장비와도 함께 끊긴다.
 services:
   site-db:
     ports:
@@ -9,3 +13,13 @@ services:
   core:
     ports:
       - 127.0.0.1:${PUREIRON_DEV_CORE_PORT:-18000}:8000
+  collector:
+    networks: [default, field]
+  simulator:
+    networks: [field]
+    environment:
+      # holding 레지스터 수(사인파 0..N-1). 2,000태그 부하 측정은 PUREIRON_SIM_REGISTERS=2000.
+      SIM_REGISTERS: ${PUREIRON_SIM_REGISTERS:-100}
+
+networks:
+  field: {}
