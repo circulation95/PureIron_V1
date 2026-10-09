@@ -4,25 +4,29 @@
     uv run python tests/e2e/m2d/run.py all --from crash   # 앞 단계 결과(context)를 이어서
     uv run python tests/e2e/m2d/run.py destroy            # VM·차분 디스크 삭제(golden은 둔다)
 
+release 쌍은 `release_pair.py`(`BASE`→`NEXT`, 헬스 실패 `FAULT`)가 정한다 — S3: r1(epoch 2)→r2
+(epoch 3), fault r2'(`r2f`). 아래의 BASE·NEXT·FAULT는 그 값이다.
+
 단계(`STEPS`):
-1. `prepare` — WSL runner의 저장소 사본에서 r1'(`r1f`) 기록, 설치 번들(실빌드: deb 수집·Updater
-   venv), g1(r0) 현장 번들.
+1. `prepare` — WSL runner의 저장소 사본에서 FAULT 기록, 설치 번들(실빌드: deb 수집·Updater
+   venv), g1(BASE) 현장 번들. release 기록의 epoch가 `EPOCHS`와 다르면 멈춘다.
 2. `vm` — golden VHDX 위 차분 디스크 + seed ISO로 `pureiron-site-a`(2 vCPU/4 GiB, 내부 전용 망).
 3. `install` — runbook 2단계(전용 디렉터리에 메타데이터만 추출 → 지문·sha256 대조 →
    `bootstrap-verify.sh`) → `install.sh --offline-time-confirmed` → enroll → g1 apply → 서비스 시작.
-   `/readyz` 200, classic image store(overlay2), 이미지 `.Id` == r0 config digest. 압축 chunk가 있는
-   이력을 넣고 체크포인트 `c0`(epoch 1)를 만든다.
+   `/readyz` 200, classic image store(overlay2), 이미지 `.Id` == BASE config digest. 압축 chunk가
+   있는 이력을 넣고(DB epoch == BASE epoch 확인) 체크포인트 `c0`를 만든다.
 4. `scenarios` — `c0`에서 거부(다른 현장 `E_SITE`·변조 `E_DIGEST`) exit 1과 같은 gen 재빌드 no-op
-   exit 0(R-7 멱등), 모두 core `StartedAt`·실행 이미지 불변. `c0`에서 r0→r1(압축 DB 위 epoch 2
-   migrate) 성공 → 그 위에서 낮은 gen `E_GEN` 거부. `c0`에서 r1' → 5분 안에 r0 digest 복귀 +
-   `failed`.
+   exit 0(R-7 멱등), 모두 core `StartedAt`·실행 이미지 불변. `c0`에서 BASE→NEXT(압축 DB 위 NEXT
+   epoch migrate) 성공 + NEXT 스키마 확인 → 그 위에서 낮은 gen `E_GEN` 거부. `c0`에서 FAULT →
+   5분 안에 BASE digest 복귀 + `failed`.
 5. `crash` — phase마다 `systemctl kill -s KILL pureiron-updater`와 `Restart-VM -Force`를 1회씩.
    서비스가 그 시도를 실행하도록 창이 조금 뒤에 열리는 번들을 CLI로 스테이징하고(`verified` 대기),
    VM 쪽 `crash_at.py`가 해당 phase 진입 순간 프로세스를 얼린 뒤 kill/리셋한다. `migrating`은
-   실제 마이그레이션이 일어나도록 `c0`에서, `rolling_back`은 r1'로, `fetched`(번들 검증)는 CLI를
-   대상으로. 매번 10분 안에 `succeeded`(rolling_back은 `failed`) + 실행 이미지 == 기대 release +
-   편집 잠금 해제로 수렴해야 한다.
-6. `report` — nftables 외부 접속 카운터 0 확인, `bundle-metrics.json`, `results.json`.
+   실제 마이그레이션이 일어나도록 `c0`에서 BASE→NEXT, `rolling_back`은 FAULT로, 나머지는
+   NEXT↔BASE를 오간다. `fetched`(번들 검증)는 CLI를 대상으로. 매번 10분 안에 `succeeded`
+   (rolling_back은 `failed`) + 실행 이미지 == 기대 release + 편집 잠금 해제로 수렴해야 한다.
+6. `report` — nftables 외부 접속 카운터 0 확인, `bundle-metrics.json`, `results.json`(빠진 항목은
+   `missing`).
 
 결과: `artifacts/e2e/m2d-<시각>/`(gitignore). 진행 상태는 `C:\\PureIron_e2e\\state.json`.
 """
@@ -47,6 +51,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "infra"))
 
 import golden
 import hyperv
+from release_pair import BASE, EPOCHS, FAULT, NEXT, RELEASES
 from vm import Vm, VmError
 
 REPO = Path(__file__).resolve().parents[3]
@@ -60,8 +65,8 @@ VM_NAME, VM_IP = "pureiron-site-a", "10.77.0.10"
 SWITCH = os.environ.get("PUREIRON_E2E_SWITCH", "pureiron-int")
 SITE = "site-a"
 WSL_HOME = "$HOME/m2d-e2e"
-INSTALL_RELEASE = "2026.10.1"
-RELEASES = {"r0": "2026.10.0", "r1": "2026.10.1", "r1f": "2026.10.1-fault1"}
+INSTALL_RELEASE = RELEASES[BASE]
+"""설치 번들 manifest `release`(이미지는 싣지 않는다 — 실행 release는 g1 현장 번들이 정한다)."""
 APP_SERVICES = ("core", "collector", "web", "site-db")
 REMOTE = "/home/pureiron/e2e"
 INCOMING = "/home/pureiron/incoming"
@@ -81,9 +86,75 @@ CRASH_PHASES = (
 )
 STEPS = ("prepare", "vm", "install", "scenarios", "crash", "report")
 
+# 결과 항목 이름 — release가 들어가는 것은 쌍에서 만든다. 전체 목록은 `expected_items()`.
+ITEM_VM_BOOT = "vm boot (cloud-init, internal-only switch)"
+ITEM_OS_QUIET = "OS quiet before install (nftables baseline)"
+ITEM_INSTALL = f"install bundle bootstrap + g1({BASE}) on offline VM"
+ITEM_REJECT_SITE, ITEM_REJECT_TAMPERED = "reject site", "reject tampered"
+ITEM_SAME_GEN = "same gen rebuild → no-op"
+ITEM_UPGRADE = f"{BASE}→{NEXT} on compressed epoch-{EPOCHS[BASE]} DB"
+ITEM_SCHEMA = f"{NEXT} schema after upgrade"
+ITEM_LOWER_GEN = "reject lower gen"
+ITEM_FAULT = f"{NEXT}' health failure → rollback"
+ITEM_ROLLBACK_TIME = f"rollback within 5 min to {BASE} digests"
+ITEM_NO_EXTERNAL = "no external connection attempts since install (nftables, accumulated)"
+
 
 class E2EError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class CrashCase:
+    phase: str
+    mode: str
+    """`kill`(서비스 SIGKILL) 또는 `reset`(VM 전원 리셋)."""
+    release: str
+    prev: str
+    """주입 전 실행 중인 release — 실패(FAULT)면 이것으로 돌아가야 한다."""
+    from_c0: bool = False
+    """`c0`(BASE epoch, 압축 이력)로 복원한 뒤 주입한다 — 실제 마이그레이션이 일어나는 migrating."""
+
+    @property
+    def name(self) -> str:
+        return f"crash {self.mode} @ {self.phase}"
+
+
+def crash_plan() -> list[CrashCase]:
+    """crash 주입 순서. migrating은 c0에서 BASE→NEXT(두 번 모두 복원 후), rolling_back은 FAULT,
+    나머지 phase는 직전 결과에서 NEXT↔BASE를 번갈아 간다(c0 이후 첫 대상 = NEXT 위에서 BASE)."""
+    cases = [CrashCase("migrating", mode, NEXT, BASE, from_c0=True) for mode in ("kill", "reset")]
+    current = NEXT
+    for phase in CRASH_PHASES:
+        if phase == "migrating":
+            continue
+        for mode in ("kill", "reset"):
+            if phase == "rolling_back":
+                cases.append(CrashCase(phase, mode, FAULT, current))
+            else:
+                target = BASE if current == NEXT else NEXT
+                cases.append(CrashCase(phase, mode, target, current))
+                current = target
+    return cases
+
+
+def expected_items() -> list[str]:
+    """`all` 한 번이 남기는 결과 항목 이름(30개, 순서대로) — 실측끼리 30/30으로 비교한다."""
+    return [
+        ITEM_VM_BOOT,
+        ITEM_OS_QUIET,
+        ITEM_INSTALL,
+        ITEM_REJECT_SITE,
+        ITEM_REJECT_TAMPERED,
+        ITEM_SAME_GEN,
+        ITEM_UPGRADE,
+        ITEM_SCHEMA,
+        ITEM_LOWER_GEN,
+        ITEM_FAULT,
+        ITEM_ROLLBACK_TIME,
+        *(case.name for case in crash_plan()),
+        ITEM_NO_EXTERNAL,
+    ]
 
 
 @dataclass
@@ -95,7 +166,7 @@ class Context:
     runbook_bootstrap: str = ""
     digests: dict[str, dict[str, str]] = field(default_factory=dict[str, dict[str, str]])
     next_gen: int = 2
-    current: str = "r0"
+    current: str = BASE
     results: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
     bundles: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
     nft_before: dict[str, int] = field(default_factory=dict[str, int])
@@ -181,7 +252,7 @@ def build_site_bundle(ctx: Context, gen: int, release: str, window_open_at: date
     )
     built = out / f"pureiron-{SITE}-g{gen}.pib"
     metrics = json.loads(built.with_name(built.stem + ".bundle-metrics.json").read_text("utf-8"))
-    # 같은 gen의 다른 release(설치 g1=r0, 시나리오 g1=r1)가 서로 덮어쓰지 않게
+    # 같은 gen의 다른 release(설치 g1=BASE, 시나리오 g1=NEXT)가 서로 덮어쓰지 않게
     # 이름에 release를 둔다.
     pib = built.replace(out / f"pureiron-{SITE}-g{gen}-{release}.pib")
     entry: dict[str, object] = {"gen": gen, "release": release, "file": pib.name, **metrics}
@@ -199,13 +270,24 @@ def digests_of(release_json: dict[str, object]) -> dict[str, str]:
     return {svc: images[svc]["config_digest"] for svc in APP_SERVICES}
 
 
+def check_record(name: str, record: dict[str, object]) -> None:
+    """release 기록이 쌍의 기대(달력 버전·스키마 epoch)와 같은지 — 다르면 잘못된 기반에서
+    30개를 돌리게 되므로 prepare에서 멈춘다."""
+    schema = cast(dict[str, object], record.get("schema") or {})
+    got = (record.get("version"), schema.get("epoch"))
+    if got != (RELEASES[name], EPOCHS[name]):
+        raise E2EError(f"{name}.json: (version, epoch) {got} != {(RELEASES[name], EPOCHS[name])}")
+
+
 def step_prepare(ctx: Context) -> None:
     log("prepare: WSL repo sync")
     sync_repo()
-    log("prepare: fault release r1f")
+    log(f"prepare: fault release {FAULT} (from {NEXT})")
     wsl(f"uv run --no-sync python tests/e2e/m2d/bundles.py fault-release --work {WSL_HOME}/work")
+    ctx.digests = {}
     for name in RELEASES:
         record = json.loads(wsl(f"cat {WSL_HOME}/work/releases/{name}.json"))
+        check_record(name, record)
         ctx.digests[name] = digests_of(record)
     log("prepare: install bundle (fetch_debs, build_updater, build_install_bundle)")
     out = BUNDLES / ctx.run_id
@@ -222,8 +304,8 @@ def step_prepare(ctx: Context) -> None:
         raise E2EError(f"runbook values not found in {pib.name}.runbook.txt")
     ctx.install_pib, ctx.runbook_fpr, ctx.runbook_bootstrap = str(pib), fpr[1], boot[1]
     ctx.bundles.append({"kind": "install", "file": pib.name, "size_bytes": pib.stat().st_size})
-    log("prepare: g1 (r0) site bundle")
-    build_site_bundle(ctx, 1, "r0", datetime.now(UTC) - timedelta(days=1))
+    log(f"prepare: g1 ({BASE}) site bundle")
+    build_site_bundle(ctx, 1, BASE, datetime.now(UTC) - timedelta(days=1))
     ctx.save()
 
 
@@ -256,9 +338,9 @@ def step_vm(ctx: Context) -> None:
     ctx.nft_total = dict.fromkeys(ctx.nft_before, 0)
     ctx.nft_mark_at, boot_lookups = resolved_lookups(host, 0)
     ctx.dns_lookups = {}
-    ctx.record("vm boot (cloud-init, internal-only switch)", True, ssh_after_s=round(waited, 1))
+    ctx.record(ITEM_VM_BOOT, True, ssh_after_s=round(waited, 1))
     ctx.record(
-        "OS quiet before install (nftables baseline)",
+        ITEM_OS_QUIET,
         not any(ctx.nft_before.values()),
         baseline=ctx.nft_before,
         dns_lookups=boot_lookups,
@@ -410,7 +492,7 @@ def judge_attempt(
 def step_install(ctx: Context) -> None:
     host = vm()
     install = Path(ctx.install_pib)
-    g1 = site_bundle(ctx, 1, "r0")
+    g1 = site_bundle(ctx, 1, BASE)
     for bundle in (install, g1):
         host.put(bundle, f"{INCOMING}/{bundle.name}")
     remote_install = f"{INCOMING}/{install.name}"
@@ -451,29 +533,62 @@ def step_install(ctx: Context) -> None:
     snap = wait_ready(host, 300)
     docker = cast(dict[str, object], snap.get("docker") or {})
     classic = "containerd" not in json.dumps(docker.get("driver_status"))
-    digests_ok = running_digests(snap) == ctx.digests["r0"]
+    digests_ok = running_digests(snap) == ctx.digests[BASE]
     installed = ready(snap) and digests_ok and docker.get("driver") == "overlay2" and classic
+    c0: dict[str, object] = {}
+    if installed:  # 이력 시드 → c0 기반(BASE epoch + 압축 chunk 이력) 확인
+        seed_history(host)
+        c0 = db_of(probe(host))
+        ctx.seed_rows = as_int(c0.get("tag_history_rows"))
+    c0_checks = judge_c0(c0)
+    ok = installed and all(c0_checks.values())
     ctx.record(
-        "install bundle bootstrap + g1(r0) on offline VM",
-        installed,
+        ITEM_INSTALL,
+        ok,
         install_s=round(install_s, 1),
         storage_driver=docker.get("driver"),
         classic_store=classic,
-        images_match_r0=digests_ok,
+        release=BASE,
+        images_match=digests_ok,
         readyz=cast(dict[str, object], snap.get("readyz") or {}).get("status"),
+        c0_checks=c0_checks,
+        c0_db=c0,
     )
-    if not installed:  # 잘못된 기반 위에 c0를 찍고 이어 가지 않는다
+    if not ok:  # 잘못된 기반 위에 c0를 찍고 이어 가지 않는다
         raise E2EError("install failed — see results")
-    seed_history(host)
-    ctx.seed_rows = as_int(
-        cast(dict[str, object], probe(host).get("db") or {}).get("tag_history_rows")
-    )
     host.run("sudo rm -f " + f"{INCOMING}/{install.name} {INCOMING}/{g1.name}")
     nft_mark(ctx, host)
     ctx.nft_c0 = dict(ctx.nft_last)
     hyperv.checkpoint(VM_NAME, "c0")
-    ctx.current = "r0"
+    ctx.current = BASE
     ctx.save()
+
+
+def db_of(snap: dict[str, object]) -> dict[str, object]:
+    return cast(dict[str, object], snap.get("db") or {})
+
+
+def judge_c0(db: dict[str, object]) -> dict[str, bool]:
+    """체크포인트 c0 기반: BASE epoch, 압축 chunk가 있는 이력 — 업그레이드가 압축 DB 위에서
+    실제 마이그레이션을 하고 이력 보존(`rows_kept`)을 잴 수 있어야 한다."""
+    return {
+        "epoch": db.get("epoch") == str(EPOCHS[BASE]),
+        "compressed_chunks": as_int(db.get("compressed_chunks")) > 0,
+        "seed_rows": as_int(db.get("tag_history_rows")) > 0,
+    }
+
+
+def judge_next_schema(db: dict[str, object]) -> dict[str, bool]:
+    """업그레이드 뒤 NEXT(r2) 스키마: epoch, 1h CAGG·압축 chunk 유지, 0009 산출물(1m·1h CAGG
+    실시간 집계 `materialized_only = false`, `project_state.historian` 열)."""
+    realtime = set(str(db.get("realtime_caggs") or "").split(","))
+    return {
+        "epoch": db.get("epoch") == str(EPOCHS[NEXT]),
+        "cagg_1h": "tag_history_1h" in str(db.get("caggs")),
+        "compressed_chunks": as_int(db.get("compressed_chunks")) > 0,
+        "realtime_caggs": {"tag_history_1m", "tag_history_1h"} <= realtime,
+        "historian_column": db.get("historian_column") == "1",
+    }
 
 
 SEED_SQL = (
@@ -589,7 +704,7 @@ def apply_and_check(
         want_digests=want,
         want_applied=gen if expect == "succeeded" else cast(int | None, applied_before),
     )
-    rows = as_int(cast(dict[str, object], snap.get("db") or {}).get("tag_history_rows"))
+    rows = as_int(db_of(snap).get("tag_history_rows"))
     checks["rows_kept"] = rows >= ctx.seed_rows > 0
     ok = all(checks.values())
     detail: dict[str, object] = {
@@ -601,7 +716,7 @@ def apply_and_check(
         "checks": checks,
         "alarm": state.get("alarm"),
         "images_match": checks["images_match"],
-        "epoch": cast(dict[str, object], snap.get("db") or {}).get("epoch"),
+        "epoch": db_of(snap).get("epoch"),
         "verify_s": report.get("verify_s"),
         "load_s": report.get("load_s"),
         "phase_durations_s": report.get("phase_durations_s"),
@@ -650,51 +765,43 @@ def restore_c0(ctx: Context) -> None:
 
 def step_scenarios(ctx: Context) -> None:
     gen = ctx.next_gen
-    # 거부 코드(VM 수동 1회): 다른 현장, 변조 — c0(applied g1 = r0) 위에서
+    # 거부 코드(VM 수동 1회): 다른 현장, 변조 — c0(applied g1 = BASE) 위에서
     other = BUNDLES / ctx.run_id / f"pureiron-site-b-g{gen}.pib"
     wsl(
         f"uv run --no-sync python tests/e2e/m2d/bundles.py site --work {WSL_HOME}/work "
-        f"--out '{golden.wsl_path(other.parent)}' --gen {gen} --product {RELEASES['r1']} "
+        f"--out '{golden.wsl_path(other.parent)}' --gen {gen} --product {RELEASES[NEXT]} "
         "--window-start 2026-01-01T00:00:00Z --window-end 2027-01-01T00:00:00Z --site site-b"
     )
-    # 같은 gen(1) 재빌드 — 내용이 달라도 gen 규칙상 멱등 no-op(R-7).
-    same = build_site_bundle(ctx, 1, "r1", datetime.now(UTC) - timedelta(days=1))
+    # 같은 gen(1) 재빌드(NEXT) — 내용이 달라도 gen 규칙상 멱등 no-op(R-7).
+    same = build_site_bundle(ctx, 1, NEXT, datetime.now(UTC) - timedelta(days=1))
     tampered = same.with_name(f"pureiron-{SITE}-g{gen}-tampered.pib")
-    data = bytearray(build_site_bundle(ctx, gen, "r1", datetime.now(UTC)).read_bytes())
+    data = bytearray(build_site_bundle(ctx, gen, NEXT, datetime.now(UTC)).read_bytes())
     data[len(data) // 2] ^= 0xFF
     tampered.write_bytes(bytes(data))
     restore_c0(ctx)
     host = vm()
-    for label, pib, code in (("site", other, "E_SITE"), ("tampered", tampered, "E_DIGEST")):
-        stage_untouched(ctx, f"reject {label}", host, pib, want_exit=1, want_code=code, want="r0")
-    stage_untouched(
-        ctx, "same gen rebuild → no-op", host, same, want_exit=0, want_code=None, want="r0"
-    )
+    for name, pib, code in (
+        (ITEM_REJECT_SITE, other, "E_SITE"),
+        (ITEM_REJECT_TAMPERED, tampered, "E_DIGEST"),
+    ):
+        stage_untouched(ctx, name, host, pib, want_exit=1, want_code=code, want=BASE)
+    stage_untouched(ctx, ITEM_SAME_GEN, host, same, want_exit=0, want_code=None, want=BASE)
 
-    # c0(epoch 1, 압축 chunk)에서 r0→r1
+    # c0(BASE epoch, 압축 chunk)에서 BASE→NEXT — 압축 DB 위에서 NEXT 마이그레이션이 실제로 돈다
     restore_c0(ctx)
-    up = apply_and_check(
-        ctx, "r0→r1 on compressed epoch-1 DB", gen, "r1", expect="succeeded", prev="r0"
-    )
-    db = cast(dict[str, object], cast(dict[str, object], up["snapshot"]).get("db") or {})
-    ctx.record(
-        "r1 schema after upgrade",
-        db.get("epoch") == "2"
-        and "tag_history_1h" in str(db.get("caggs"))
-        and as_int(db.get("compressed_chunks")) > 0,
-        db=db,
-    )
+    up = apply_and_check(ctx, ITEM_UPGRADE, gen, NEXT, expect="succeeded", prev=BASE)
+    db = db_of(cast(dict[str, object], up["snapshot"]))
+    schema_checks = judge_next_schema(db)
+    ctx.record(ITEM_SCHEMA, all(schema_checks.values()), checks=schema_checks, db=db)
     # applied g2 위에서 g1 → E_GEN(낮은 gen). g2보다 뒤에 빌드해야 한다 — 먼저 만든 번들은
     # cert 단계의 `max_seen_created_at` 역행(E_CERT)에 먼저 걸린다(첫 실측).
-    lower = build_site_bundle(ctx, 1, "r1", datetime.now(UTC) - timedelta(days=1))
-    stage_untouched(ctx, "reject lower gen", vm(), lower, want_exit=1, want_code="E_GEN", want="r1")
-    # c0에서 r1' → 5분 안에 r0 복귀 + failed
+    lower = build_site_bundle(ctx, 1, NEXT, datetime.now(UTC) - timedelta(days=1))
+    stage_untouched(ctx, ITEM_LOWER_GEN, vm(), lower, want_exit=1, want_code="E_GEN", want=NEXT)
+    # c0에서 FAULT → 5분 안에 BASE 복귀 + failed
     restore_c0(ctx)
-    rb = apply_and_check(
-        ctx, "r1' health failure → rollback", gen, "r1f", expect="failed", prev="r0"
-    )
+    rb = apply_and_check(ctx, ITEM_FAULT, gen, FAULT, expect="failed", prev=BASE)
     ctx.record(
-        "rollback within 5 min to r0 digests",
+        ITEM_ROLLBACK_TIME,
         bool(rb["images_match"]) and float(str(rb["seconds"])) <= ROLLBACK_LIMIT_S,
         seconds=rb["seconds"],
         code=rb["code"],
@@ -715,9 +822,10 @@ def service_restarts(host: Vm) -> int:
     return as_int(out.strip())
 
 
-def crash_once(ctx: Context, phase: str, mode: str, *, gen: int, release: str, prev: str) -> None:
+def crash_once(ctx: Context, case: CrashCase, *, gen: int) -> None:
     host = vm()
-    expect = "failed" if release == "r1f" else "succeeded"
+    phase, mode, release = case.phase, case.mode, case.release
+    expect = "failed" if release == FAULT else "succeeded"
     # 창은 번들에 서명되므로 빌드 전에 정한다. service 대상이면 CLI 스테이징이 창 전에 끝났는지
     # 확인한다 — 아니면 CLI가 phase를 직접 실행해 쉬고 있는 서비스를 죽이는 거짓 통과가 된다.
     open_at = datetime.now(UTC) + timedelta(seconds=WINDOW_LEAD_S)
@@ -758,7 +866,7 @@ def crash_once(ctx: Context, phase: str, mode: str, *, gen: int, release: str, p
         stage_proc.wait(timeout=1800)
     snap, waited = converge(vm(), gen)
     report = report_for(vm(), pib)
-    want = ctx.digests[release if expect == "succeeded" else prev]
+    want = ctx.digests[release if expect == "succeeded" else case.prev]
     checks = judge_attempt(
         snap,
         report,
@@ -774,10 +882,10 @@ def crash_once(ctx: Context, phase: str, mode: str, *, gen: int, release: str, p
         checks["rebooted"] = boot_id(vm()) != boot_before
     elif target == "service":
         checks["service_restarted"] = service_restarts(vm()) > restarts_before
-    rows = as_int(cast(dict[str, object], snap.get("db") or {}).get("tag_history_rows"))
+    rows = as_int(db_of(snap).get("tag_history_rows"))
     checks["rows_kept"] = rows >= ctx.seed_rows > 0
     ctx.record(
-        f"crash {mode} @ {phase}",
+        case.name,
         all(checks.values()),
         gen=gen,
         release=release,
@@ -793,25 +901,19 @@ def crash_once(ctx: Context, phase: str, mode: str, *, gen: int, release: str, p
 
 
 def step_crash(ctx: Context) -> None:
-    gen = ctx.next_gen
-    # migrating: 실제 마이그레이션이 일어나도록 c0(epoch 1)에서 r0→r1
-    for mode in ("kill", "reset"):
-        restore_c0(ctx)
-        crash_once(ctx, "migrating", mode, gen=gen, release="r1", prev="r0")
-    gen += 1
-    current = "r1"
-    for phase in CRASH_PHASES:
-        if phase == "migrating":
-            continue
-        for mode in ("kill", "reset"):
-            if phase == "rolling_back":
-                crash_once(ctx, phase, mode, gen=gen, release="r1f", prev=current)
-            else:
-                target = "r0" if current == "r1" else "r1"
-                crash_once(ctx, phase, mode, gen=gen, release=target, prev=current)
-                current = target
+    # migrating은 c0(BASE epoch)로 복원해 같은 gen으로 두 번, 나머지는 하나씩 gen을 올린다.
+    c0_gen = ctx.next_gen
+    gen = c0_gen + 1
+    plan = crash_plan()
+    for case in plan:
+        if case.from_c0:
+            restore_c0(ctx)
+            crash_once(ctx, case, gen=c0_gen)
+        else:
+            crash_once(ctx, case, gen=gen)
             gen += 1
-    ctx.next_gen, ctx.current = gen, current
+    last = plan[-1]
+    ctx.next_gen, ctx.current = gen, last.prev if last.release == FAULT else last.release
     ctx.save()
 
 
@@ -821,7 +923,7 @@ def step_crash(ctx: Context) -> None:
 def step_report(ctx: Context) -> None:
     nft_mark(ctx, vm())
     ctx.record(
-        "no external connection attempts since install (nftables, accumulated)",
+        ITEM_NO_EXTERNAL,
         not any(ctx.nft_total.values()),
         baseline=ctx.nft_before,
         total=ctx.nft_total,
@@ -831,7 +933,15 @@ def step_report(ctx: Context) -> None:
     metrics = ctx.out / "bundle-metrics.json"
     metrics.write_text(json.dumps(ctx.bundles, indent=2, ensure_ascii=False) + "\n", "utf-8")
     failed = [r["name"] for r in ctx.results if not r["ok"]]
-    summary = {"run_id": ctx.run_id, "passed": len(ctx.results) - len(failed), "failed": failed}
+    seen = {r["name"] for r in ctx.results}
+    summary = {
+        "run_id": ctx.run_id,
+        "pair": f"{BASE}→{NEXT} (fault {FAULT})",
+        "passed": len(ctx.results) - len(failed),
+        "expected": len(expected_items()),
+        "failed": failed,
+        "missing": [name for name in expected_items() if name not in seen],
+    }
     (ctx.out / "results.json").write_text(
         json.dumps({**summary, "results": ctx.results}, indent=2, ensure_ascii=False) + "\n",
         "utf-8",
