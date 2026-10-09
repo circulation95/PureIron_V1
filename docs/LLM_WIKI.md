@@ -7,13 +7,13 @@
 
 ## SOT 요약
 - **sot-agent-rules** (18KB/14절) — LLM 에이전트가 PureIron에서 작업할 때 따르는 규칙의 **정본**이다. ([docs/wiki/sot/agent-rules.md](wiki/sot/agent-rules.md))
-- **sot-api-events** (11KB/10절) — PureIron의 REST prefix, WebSocket wire protocol, Chat SSE event, 내부 event bus topic 계약이다. ([docs/wiki/sot/api-events.md](wiki/sot/api-events.md))
+- **sot-api-events** (12KB/11절) — PureIron의 REST prefix, WebSocket wire protocol, Chat SSE event, 내부 event bus topic 계약이다. ([docs/wiki/sot/api-events.md](wiki/sot/api-events.md))
 - **sot-architecture** (19KB/19절) — PureIron은 단일 FastAPI 백엔드 + 단일 React 프론트엔드 + PostgreSQL(TimescaleDB + pgvector) + Redis로 구성된 모놀리식 Web HMI/SCADA 서버다. ([docs/wiki/sot/architecture.md](wiki/sot/architecture.md))
-- **sot-data-contracts** (38KB/21절) — PureIron의 DB 스키마와 YAML/JSON 설정 파일 계약이다. ([docs/wiki/sot/data-contracts.md](wiki/sot/data-contracts.md))
+- **sot-data-contracts** (42KB/22절) — PureIron의 DB 스키마와 YAML/JSON 설정 파일 계약이다. ([docs/wiki/sot/data-contracts.md](wiki/sot/data-contracts.md))
 - **sot-frontend** (18KB/15절) — 이 문서는 PureIron frontend의 **구조·상태·실시간·UI 작업 규칙**에 대한 정본이다. 상세 구현은 `frontend/src/**`가 정본이고, `frontend/AGENTS.md`와 `frontend/CLAUDE.md`는 도구별 operational cheat sheet다. ([docs/wiki/sot/frontend.md](wiki/sot/frontend.md))
 - **sot-mes-schedule** (9KB/7절) — 이 문서는 PureIron의 **MES-lite / Schedule 기능의 v1 고객 노출 용어와 사용자 플로우 계약의 정본**이다. ([docs/wiki/sot/mes-schedule.md](wiki/sot/mes-schedule.md))
 - **sot-product** (14KB/18절) — PureIron은 중소 제조업과 산업시설을 위한 경량 Web HMI/SCADA 플랫폼이다. ([docs/wiki/sot/product.md](wiki/sot/product.md))
-- **sot-runtime-config** (11KB/12절) — PureIron 런타임 설정의 정본은 `backend/src/pureiron/config.py`의 `Settings(BaseSettings)` 클래스다. ([docs/wiki/sot/runtime-config.md](wiki/sot/runtime-config.md))
+- **sot-runtime-config** (12KB/12절) — PureIron 런타임 설정의 정본은 `backend/src/pureiron/config.py`의 `Settings(BaseSettings)` 클래스다. ([docs/wiki/sot/runtime-config.md](wiki/sot/runtime-config.md))
 - **sot-testing** (32KB/18절) — 이 문서는 PureIron의 **검증 계층, 실행 명령, 변경 유형별 최소 게이트**에 대한 정본이다. 개별 테스트의 상세 assertion은 `backend/tests/**`, `backend/tests/e2e/**`, `tests/e2e/**`가 정본이다. ([docs/wiki/sot/testing.md](wiki/sot/testing.md))
 
 ## SOT 외 구획 (필요할 때만 열기)
