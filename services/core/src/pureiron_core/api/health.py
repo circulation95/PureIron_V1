@@ -85,7 +85,7 @@ class Historian(BaseModel):
     db_ok: bool = Field(description="마지막 이력 쓰기 성공 여부")
     rejected_total: int = Field(
         description="이력에서 버린 샘플 수 = batch plan_rev가 현재 rev보다 앞선 것(site-db 재생성 "
-        "신호) + 현재 plan에 없는 tag_id의 live 샘플"
+        "신호) + 현재 plan에 없는 tag_id의 live 샘플(+ int4 범위 밖 tag_id)"
     )
 
 

@@ -297,6 +297,18 @@ def test_extension_still_protects_base_sql_files(tmp_path: Path) -> None:
     assert any("released migration modified" in m for m in messages), messages
 
 
+def test_release_records_may_not_be_deleted_or_modified(tmp_path: Path) -> None:
+    """기록을 지우거나 고쳐 epoch를 미release로 보이게 하는 우회를 막는다."""
+    directory = _repo_with_epochs(tmp_path, released=1)
+    record = tmp_path / "repo" / "deploy" / "releases" / "r0.json"
+    record.write_text(json.dumps({"schema": {"app_expected": 0}}), encoding="utf-8")
+    messages = [i.message for i in lint_directory(directory, base_ref="master").issues]
+    assert any("release record modified" in m for m in messages), messages
+    record.unlink()
+    messages = [i.message for i in lint_directory(directory, base_ref="master").issues]
+    assert any("release record deleted" in m for m in messages), messages
+
+
 @pytest.mark.parametrize("app_expected", ["2", True, 1.5])
 def test_unreadable_release_record_is_an_error(tmp_path: Path, app_expected: object) -> None:
     """기록을 못 읽으면 조용히 미release로 보지 않고 실패한다."""

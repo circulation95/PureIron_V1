@@ -10,6 +10,8 @@ epoch 항목의 "release됨" 기준은 base의 release 기록(`deploy/releases/*
 더 싣는 경우(epoch 3 = 0008 → 0009). 롤백 envelope(N-1 앱의 상한 = N)이 release 단위라 r2는
 epoch 하나만 올려야 한다. base에 있는 SQL 파일의 수정·삭제는 epoch와 무관하게 계속 금지한다.
 release 기록이 하나도 없는 base(bootstrap·테스트 저장소)는 모든 epoch를 release된 것으로 본다.
+기준이 되는 base의 release 기록 자체도 지우거나 고칠 수 없다(기록을 먼저 지워 epoch를 풀어 주는
+우회를 막는다).
 """
 
 from __future__ import annotations
@@ -317,6 +319,24 @@ def _lint_against_base(directory: Path, base_ref: str, report: LintReport) -> No
                 report.add(
                     name, f"released migration modified (differs from {base_ref}); add a new file"
                 )
+    _check_release_records(root, base_ref, report)
+
+
+def _check_release_records(root: Path, base_ref: str, report: LintReport) -> None:
+    listing = _git(root, "ls-tree", "--name-only", f"{base_ref}:{RELEASES_DIR}")
+    if listing.returncode != 0:
+        return
+    for name in listing.stdout.decode().split():
+        if not name.endswith(".json"):
+            continue
+        record_path = f"{RELEASES_DIR}/{name}"
+        current = root / RELEASES_DIR / name
+        if not current.exists():
+            report.add(record_path, f"release record deleted (present in {base_ref})")
+            continue
+        base_bytes = _git(root, "show", f"{base_ref}:{record_path}").stdout
+        if _normalized(current.read_bytes()) != _normalized(base_bytes):
+            report.add(record_path, f"release record modified (differs from {base_ref})")
 
 
 def _released_epoch(root: Path, base_ref: str, report: LintReport) -> int | None:

@@ -283,7 +283,7 @@ def test_replay_through_recorder_is_raw_and_emits_no_events() -> None:
     devices = DeviceMonitor(tags, silence_min_s=5.0)
     devices.reindex(built.plan)
     recorder = Recorder(Sink())
-    recorder.set_definitions(definitions)
+    recorder.set_definitions(definitions)  # plan 전이면 live도 raw가 된다(D6)
     ingestor = Ingestor(tags, devices, recorder, live_max_age_s=5.0)
     first, second = _num(1, 20.0), _num(1, 20.0)
     second.ts_unix_ns = first.ts_unix_ns + 1_000

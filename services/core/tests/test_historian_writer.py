@@ -181,6 +181,24 @@ async def test_stop_does_final_flush() -> None:
     assert writer.status().buffer_rows == 0
 
 
+async def test_stop_cancels_in_flight_write_then_final_flush_writes_it() -> None:
+    """flush loop가 쓰는 도중 stop: 취소된 행은 버퍼로 되돌아와 마지막 flush가 다시 쓴다."""
+    store = FakeStore()
+    store.gate = asyncio.Event()
+    writer = HistoryWriter(store, flush_s=0.01)
+    writer.start()
+    writer.append(rows(1, 2))
+    for _ in range(100):
+        if store.calls:
+            break
+        await asyncio.sleep(0.01)
+    assert store.calls == 1  # loop의 insert가 gate에서 멈춰 있다
+    asyncio.get_running_loop().call_later(0.05, store.gate.set)
+    await writer.stop(timeout_s=2.0)
+    assert store.written == [1, 2]
+    assert (writer.status().buffer_rows, writer.status().written_total) == (0, 2)
+
+
 async def test_flush_loop_writes_periodically() -> None:
     store = FakeStore()
     writer = HistoryWriter(store, flush_s=0.01)

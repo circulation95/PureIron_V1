@@ -256,13 +256,41 @@ def test_batch_from_newer_plan_rev_is_rejected(raw: bool) -> None:
 
 
 def test_samples_before_any_plan_are_kept_raw() -> None:
-    """plan을 아직 모르면(DB 미준비) rev를 판단할 수 없어 raw는 받아 둔다(한계로 문서화)."""
+    """plan을 아직 모르면(DB 미준비) rev·정책을 판단할 수 없어 live까지 raw로 받아 둔다(D6).
+
+    collector는 Ack된 batch를 다시 보내지 않으므로 버리면 DB 복구 전 이력이 사라진다.
+    """
     sink = ListSink()
     recorder = Recorder(sink)
     recorder.offer_raw([num(1, 0, 1.0)], plan_rev=9)
-    recorder.offer_live([num(1, 1, 1.0)], plan_rev=9)  # live는 정책이 없으니 미지 tag_id
+    recorder.offer_live([num(1, 1, 1.0), num(1, 2, 1.0)], plan_rev=9)  # deadband 없이 모두
+    assert _times(sink) == [0, 1, 2]
+    assert (recorder.stats.raw, recorder.stats.rejected) == (3, 0)
+    # plan을 받은 뒤부터는 live 규칙(같은 값 반복 생략, 첫 샘플은 기록)
+    recorder.set_definitions(_defs(_tag(1), rev=9))
+    _live(recorder, num(1, 3, 1.0), num(1, 4, 1.0), plan_rev=9)
+    assert _times(sink) == [0, 1, 2, 3]
+
+
+@pytest.mark.parametrize("raw", [True, False], ids=["raw", "live"])
+def test_tag_id_outside_int4_is_rejected(raw: bool) -> None:
+    """int4 범위 밖 tag_id 한 행이 INSERT 전체를 매번 실패시키지 않게 미리 버린다."""
+    recorder, sink = _recorder(_tag(1))
+    samples = [num(1, 0, 1.0), num(2**31, 0, 1.0), num(2**32 - 1, 0, 1.0)]
+    if raw:
+        recorder.offer_raw(samples, plan_rev=3)
+    else:
+        recorder.offer_live(samples, plan_rev=3)
     assert [r.tag_id for r in sink.rows] == [1]
-    assert (recorder.stats.rejected_rev, recorder.stats.rejected_unknown) == (0, 1)
+    assert recorder.stats.rejected == 2
+
+
+def test_huge_max_interval_is_clamped() -> None:
+    """스키마에 상한이 없는 max_interval_s가 커도 정책 계산이 실패하지 않는다(plan 적용 보호)."""
+    result = policies(
+        _defs(_tag(1, {"max_interval_s": 10**400}), _tag(2, {"max_interval_s": 10**12}))
+    )
+    assert result[1].max_interval_ns == result[2].max_interval_ns == 365 * 86_400 * S
 
 
 def test_plan_update_drops_state_of_removed_tags_keeps_others() -> None:

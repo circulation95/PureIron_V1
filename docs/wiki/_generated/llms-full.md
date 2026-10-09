@@ -1449,7 +1449,7 @@ PureIron_V1 core의 정본은 `services/core/src/pureiron_core/api/` 와 생성�
 - `GET /api/v1/healthz` — 프로세스 생존(`status`, `version`).
 - `GET /api/v1/readyz` — 준비 = site-db 연결 + 스키마 epoch envelope + collector 세션(아니면 503). 준비 판정에 쓰지 않는 정보 필드:
   - `acquisition`: `plan_rev`, 장비 수·연결 수, 태그 수·GOOD 수, `good_ratio`, `ingest{live, stale, future, replay}`(core 기동 후 누적 샘플 수 — live만 현재값에 반영, 나머지는 이력 전용).
-  - `historian`: `buffer_rows`(쓰지 못한 버퍼 행, 쓰는 중 포함), `dropped_total`(상한 초과로 버린 행), `written_total`(INSERT에 넘긴 행, 중복 포함), `write_lag_s`(버퍼 최고령 행 대기 시간, 비면 null), `db_ok`(마지막 쓰기 성공), `rejected_total`(이력에서 버린 샘플 = batch `plan_rev`가 현재 rev보다 앞선 것 + 현재 plan에 없는 tag_id의 live 샘플).
+  - `historian`: `buffer_rows`(쓰지 못한 버퍼 행, 쓰는 중 포함), `dropped_total`(상한 초과로 버린 행), `written_total`(INSERT에 넘긴 행, 중복 포함), `write_lag_s`(버퍼 최고령 행 대기 시간, 비면 null), `db_ok`(마지막 쓰기 성공), `rejected_total`(이력에서 버린 샘플 = batch `plan_rev`가 현재 rev보다 앞선 것 + 현재 plan에 없는 tag_id의 live 샘플 + int4 범위 밖 tag_id).
 - replay batch는 이력에만 기록되고 `tag.changed.*`를 발행하지 않는다. 이력 조회 HTTP API는 M3b.
 
 ## 내부 이벤트 버스
@@ -1900,7 +1900,7 @@ uv run python scripts/project_package.py import \
 
 - 부팅 시 자동 실행 없음. `pureiron-core migrate status|up|verify|lint`, 이력 `schema_migrations(version, name, checksum, applied_at, release)`, `pg_advisory_lock`, 파일 단위 트랜잭션, 실패 즉시 중단.
 - ADD-only lint 거부 목록: DROP/RENAME/`ALTER … TYPE`/TRUNCATE, `ADD CONSTRAINT`, NOT NULL 무기본값, `CREATE UNIQUE INDEX`, `CREATE TRIGGER`, `refresh_continuous_aggregate` 호출, `WITH NO DATA` 없는 CAGG.
-- `migrate lint --base-ref`의 epoch 항목 불변 기준은 base의 release 기록(`deploy/releases/*.json` `schema.app_expected` 최댓값)이다. 그 이하 epoch는 바꿀 수 없고, 아직 release되지 않은 epoch는 마지막 파일을 뒤 파일로 늘리는 것만 허용한다(r2 = epoch 3 = `0008` → `0009`: r1 앱 envelope 상한이 3이라 r2는 epoch 하나만 올려야 롤백 가능). base에 있는 SQL 파일 수정·삭제는 epoch와 무관하게 금지, release 기록이 없는 base는 모든 epoch를 release된 것으로 본다. CAGG 실시간 집계 토글(`ALTER MATERIALIZED VIEW … SET (timescaledb.materialized_only = …)`) 한 형태만 ALTER MATERIALIZED VIEW로 허용한다.
+- `migrate lint --base-ref`의 epoch 항목 불변 기준은 base의 release 기록(`deploy/releases/*.json` `schema.app_expected` 최댓값)이다. 그 이하 epoch는 바꿀 수 없고, 아직 release되지 않은 epoch는 마지막 파일을 뒤 파일로 늘리는 것만 허용한다(r2 = epoch 3 = `0008` → `0009`: r1 앱 envelope 상한이 3이라 r2는 epoch 하나만 올려야 롤백 가능). base에 있는 SQL 파일과 release 기록(`deploy/releases/*.json`)의 수정·삭제는 epoch와 무관하게 금지, 읽을 수 없는 기록은 lint 실패, release 기록이 없는 base는 모든 epoch를 release된 것으로 본다. CAGG 실시간 집계 토글(`ALTER MATERIALIZED VIEW … SET (timescaledb.materialized_only = …)`) 한 형태만 ALTER MATERIALIZED VIEW로 허용한다.
 - epoch: 마이그레이션을 포함한 release만 +1. 앱 ready 조건 `app_expected ≤ 현재 epoch ≤ app_max_compatible(= expected + 1)`. 1 epoch 초과 점프는 `E_SCHEMA`(단계 적용).
 - baseline 스키마: `schema_meta`, `tags`(`id`, `path unique` — path 기준 안정 id), `tag_history`(1일 chunk hypertable, `UNIQUE(tag_id, time)`, 2일 후 압축), 1분 CAGG, `project_state`(`project_id, version, content_hash, base_site_rev, site_rev, edit_lock_owner, edit_lock_gen`). epoch 2(r1)에서 1시간 CAGG `tag_history_1h`를 더했다(아래 CAGG 조회 계약).
 
@@ -2019,7 +2019,7 @@ window: { recurring: { tz: Asia/Seoul, days: [sat, sun], start: "02:00", end: "0
   - fresh live 샘플만 deadband·max_interval을 거친다. 정책 = 태그 `record.*` → 프로젝트 `historian.default_*` → 스키마 기본값(deadband 0, 60 s). 기록 조건(하나라도 참): 태그 첫 샘플, quality 변경, bool 변경, `|값 − 마지막 기록값| > deadband`(0이면 같은 값 반복만 생략), 값 종류·NULL·유한↔비유한 전환, 마지막 기록 뒤 `max_interval_s` 경과. 시각이 역행한 live(마지막으로 본 시각 이하)는 기록하지 않는다.
   - replay·오래된 live(> `PUREIRON_INGEST_LIVE_MAX_AGE_S`)·미래 시각 live(> now + 2 s)는 **원시 기록**한다 — 걸러내지 않고, live deadband 상태를 읽지도 바꾸지도 않는다(이력은 받은 것을 다 남기고 걸러내기는 현재값 경로만).
   - NaN/Inf는 `value_num = NULL`(quality는 받은 값, 모르는 quality는 BAD) — CAGG avg/min/max 오염 방지. deadband 비교에서 비유한값끼리는 같은 값이다.
-  - batch `plan_rev`가 현재 rev보다 크면 이력에서 버린다(rev는 단조 증가 → site-db 재생성 신호, 옛 tag_id가 다른 태그로 기록되는 것 방지). plan을 아직 모르면(기동 직후 DB 미준비) 받아 둔다 — 그 사이 DB 재생성이 겹치면 막지 못한다(한계). 현재 plan에 없는 tag_id의 live 샘플도 버린다. raw는 옛 rev의 tag_id(retired 포함)를 그대로 기록한다(id 재사용 없음). 버린 수는 `/readyz.historian.rejected_total`.
+  - batch `plan_rev`가 현재 rev보다 크면 이력에서 버린다(rev는 단조 증가 → site-db 재생성 신호, 옛 tag_id가 다른 태그로 기록되는 것 방지). plan을 아직 모르면(기동 직후 DB 미준비) live까지 원시로 받아 둔다(collector는 Ack된 batch를 다시 보내지 않으므로 버리면 DB 복구 전 이력이 사라진다) — 그 사이 DB 재생성이 겹치면 막지 못한다(한계). 현재 plan에 없는 tag_id의 live 샘플과 `tag_history.tag_id`(int4) 범위 밖 tag_id도 버린다(한 행이 INSERT 전체를 매번 실패시키지 않게). raw는 옛 rev의 tag_id(retired 포함)를 그대로 기록한다(id 재사용 없음). 버린 수는 `/readyz.historian.rejected_total`.
 - **쓰기**(`historian.writer`): 메모리 버퍼 상한 600,000행(넘치면 가장 오래된 행부터 버림, `dropped_total`), 1 s마다 최대 20,000행씩 `INSERT … ON CONFLICT (tag_id, time) DO NOTHING`(replay 중복 흡수, 시각은 µs). 실패하면 꺼낸 행을 순서대로 버퍼 앞에 되돌리고 상한을 다시 적용한다 — DB 장애 동안은 이 버퍼가, core 단절 동안은 collector 링버퍼(60 s)가 이력을 든다. 정지 순서는 수집 정지 → 최종 flush(5 s 제한) → DB close.
 - **허용 손실(문서화)**: core 프로세스 crash 시 아직 쓰지 못한 버퍼(정상 시 ≤ 1 flush 주기분, DB 장애 중이면 상한 안의 전체), 버퍼 상한 초과분(가장 오래된 것부터), collector 링버퍼 60 s를 넘는 core 단절 구간.
 - **조회**(`historian.reader`): raw(`tag_history`)·1m·1h(CAGG) + 구간 길이로 고르는 `auto_resolution`(≤ 1 h raw, ≤ 24 h 1m, 그 이상 1h). HTTP 이력 API·Trend 화면은 인증과 함께 M3b.

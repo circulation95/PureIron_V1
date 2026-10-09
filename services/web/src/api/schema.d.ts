@@ -152,7 +152,7 @@ export interface components {
             dropped_total: number;
             /**
              * Rejected Total
-             * @description 이력에서 버린 샘플 수 = batch plan_rev가 현재 rev보다 앞선 것(site-db 재생성 신호) + 현재 plan에 없는 tag_id의 live 샘플
+             * @description 이력에서 버린 샘플 수 = batch plan_rev가 현재 rev보다 앞선 것(site-db 재생성 신호) + 현재 plan에 없는 tag_id의 live 샘플(+ int4 범위 밖 tag_id)
              */
             rejected_total: number;
             /**

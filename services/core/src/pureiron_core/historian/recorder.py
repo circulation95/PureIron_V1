@@ -8,7 +8,11 @@
   deadband 비교에서 비유한값끼리는 같은 값이고, 유한↔비유한 전환은 기록한다.
 - batch `plan_rev`가 현재 rev보다 크면 버린다(D6): rev는 리셋 없이 단조 증가하므로 DB가 새로
   만들어져 tag_id가 1부터 다시 매겨졌다는 신호다. plan을 아직 모르면(기동 직후 DB 미준비) 판단할
-  수 없으므로 받아 둔다 — 그 사이 DB 재생성이 겹치면 잘못된 tag_id로 기록될 수 있다(한계).
+  수 없으므로 live까지 raw로 받아 둔다(정책도 아직 없음) — collector는 Ack된 batch를 다시 보내지
+  않으므로 버리면 DB가 돌아올 때까지의 이력이 사라진다. 그 사이 DB 재생성이 겹치면 잘못된 tag_id로
+  기록될 수 있다(한계).
+- `tag_history.tag_id`(int4) 범위 밖 tag_id는 어느 경로든 버린다 — 존재할 수 없는 id이고, 한 행이
+  INSERT 전체를 매번 실패시켜 이력을 막지 않게 한다.
 - live 샘플의 tag_id가 현재 plan에 없으면 버린다(D7, TagStore와 같은 기준). raw는 옛 rev의
   tag_id(retired 포함)를 그대로 기록한다 — id는 재사용되지 않는다.
 
@@ -35,6 +39,9 @@ log = logging.getLogger(__name__)
 SCHEMA_DEFAULT_DEADBAND = 0.0
 SCHEMA_DEFAULT_MAX_INTERVAL_S = 60.0
 REJECT_WARN_INTERVAL_S = 60.0
+# 스키마는 max_interval_s 상한이 없다 — ns 정수 변환이 넘치지 않게 자른다(1년).
+MAX_INTERVAL_S = 365 * 86_400.0
+MAX_TAG_ID = 2**31 - 1  # tag_history.tag_id int4
 
 
 class RowSink(Protocol):
@@ -72,7 +79,7 @@ class RecorderStats:
     live_recorded: int = 0
     live_skipped: int = 0
     rejected_rev: int = 0  # D6: batch plan_rev가 현재 rev보다 앞섬
-    rejected_unknown: int = 0  # D7: 현재 plan에 없는 tag_id의 live 샘플
+    rejected_unknown: int = 0  # D7: 현재 plan에 없는 tag_id의 live 샘플 + int4 범위 밖 tag_id
 
     @property
     def rejected(self) -> int:
@@ -83,7 +90,10 @@ def _number(data: Mapping[str, object], key: str) -> float | None:
     value = data.get(key)
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
-    return float(value)
+    try:
+        return float(value)
+    except OverflowError:  # float로 표현할 수 없는 큰 정수
+        return math.inf
 
 
 def _mapping(value: object) -> Mapping[str, object]:
@@ -104,9 +114,10 @@ def policies(definitions: Definitions) -> dict[int, RecordPolicy]:
         record = _mapping(tag.definition.get("record"))
         deadband = _number(record, "deadband")
         interval = _number(record, "max_interval_s")
+        interval_s = default_interval if interval is None else interval
         result[tag.tag_id] = RecordPolicy(
             deadband=max(default_deadband if deadband is None else deadband, 0.0),
-            max_interval_ns=int((default_interval if interval is None else interval) * 1e9),
+            max_interval_ns=int(min(interval_s, MAX_INTERVAL_S) * 1e9),
         )
     return result
 
@@ -194,15 +205,32 @@ class Recorder:
             self.stats.rejected,
         )
 
+    def _invalid_ids(self, samples: Sequence[pb.Sample]) -> Sequence[pb.Sample]:
+        valid = [s for s in samples if s.tag_id <= MAX_TAG_ID]
+        if len(valid) == len(samples):
+            return samples
+        dropped = len(samples) - len(valid)
+        self.stats.rejected_unknown += dropped
+        self._warn(dropped, f"tag_id above {MAX_TAG_ID} (cannot exist in tag_history)")
+        return valid
+
     def offer_raw(self, samples: Sequence[pb.Sample], *, plan_rev: int) -> None:
         """replay·오래된 live·미래 시각 live: 걸러내지 않고 모두 기록한다(live 상태 불변)."""
         if not samples or self._rev_ahead(plan_rev, len(samples)):
             return
+        samples = self._invalid_ids(samples)
         self.stats.raw += len(samples)
-        self._sink.append([row(s) for s in samples])
+        if samples:
+            self._sink.append([row(s) for s in samples])
 
     def offer_live(self, samples: Sequence[pb.Sample], *, plan_rev: int) -> None:
-        """fresh live: deadband·max_interval을 통과한 샘플만 기록한다."""
+        """fresh live: deadband·max_interval을 통과한 샘플만 기록한다.
+
+        plan을 아직 모르면(정책 없음) raw로 받아 둔다(D6).
+        """
+        if self._rev is None:
+            self.offer_raw(samples, plan_rev=plan_rev)
+            return
         if not samples or self._rev_ahead(plan_rev, len(samples)):
             return
         rows: list[Row] = []
