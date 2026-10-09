@@ -178,8 +178,18 @@ class Recorder:
     def set_definitions(self, definitions: Definitions) -> None:
         """새 정의의 정책을 적용한다. plan에서 빠진 태그의 live 상태는 지운다.
 
-        정책만 바뀐 태그는 상태를 유지한다(다음 샘플부터 새 정책).
+        정책만 바뀐 태그는 상태를 유지한다(다음 샘플부터 새 정책). rev가 줄면(site-db 재생성 —
+        같은 tag_id가 이제 다른 태그일 수 있다) live 상태를 모두 지운다.
         """
+        if self._rev is not None and definitions.rev < self._rev:
+            log.warning(
+                "definitions rev went back %d -> %d (site-db recreated?): "
+                "resetting historian live state of %d tag(s)",
+                self._rev,
+                definitions.rev,
+                len(self._last),
+            )
+            self._last.clear()
         self._policies = policies(definitions)
         self._rev = definitions.rev
         for tag_id in [t for t in self._last if t not in self._policies]:

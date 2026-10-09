@@ -309,6 +309,19 @@ def test_plan_update_drops_state_of_removed_tags_keeps_others() -> None:
     assert sink.rows[-1].tag_id == 2
 
 
+def test_rev_going_back_resets_live_state(caplog: pytest.LogCaptureFixture) -> None:
+    """R1 L6: rev 감소(site-db 재생성)면 같은 tag_id라도 다른 태그 — 옛 deadband 상태를 지운다."""
+    recorder, sink = _recorder(_tag(1, {"deadband": 0.5}), rev=5)  # 옛 DB의 tag 1 = 온도
+    _live(recorder, num(1, 0, 50.0), plan_rev=5)
+    recorder.set_definitions(_defs(_tag(1, {"deadband": 0.5}), rev=2))  # 새 DB의 tag 1 = 압력
+    assert "definitions rev went back 5 -> 2" in caplog.text
+    _live(recorder, num(1, 1, 50.0), plan_rev=2)  # 새 태그의 첫 샘플 — 값이 같아도 기록
+    assert [(t, r.value_num) for t, r in zip(_times(sink), sink.rows, strict=True)] == [
+        (0, 50.0),
+        (1, 50.0),
+    ]
+
+
 def test_historian_status_rejected_total_sums_both_paths() -> None:
     """`/readyz.historian.rejected_total` = D6(rev 앞섬) + D7(live 미지 tag_id)."""
 
