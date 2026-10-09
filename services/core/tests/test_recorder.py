@@ -322,6 +322,16 @@ def test_rev_going_back_resets_live_state(caplog: pytest.LogCaptureFixture) -> N
     ]
 
 
+def test_same_rev_definitions_keep_live_state(caplog: pytest.LogCaptureFixture) -> None:
+    """V1 N6: 같은 rev로 정의를 다시 적용하면 live 상태를 유지한다(감소만 초기화)."""
+    recorder, sink = _recorder(_tag(1, {"deadband": 0.5}), rev=5)
+    _live(recorder, num(1, 0, 50.0), plan_rev=5)
+    recorder.set_definitions(_defs(_tag(1, {"deadband": 0.5}), rev=5))
+    assert "went back" not in caplog.text
+    _live(recorder, num(1, 1, 50.0), plan_rev=5)  # deadband 안 — 상태가 남아 있으면 건너뛴다
+    assert [(t, r.value_num) for t, r in zip(_times(sink), sink.rows, strict=True)] == [(0, 50.0)]
+
+
 def test_historian_status_rejected_total_sums_both_paths() -> None:
     """`/readyz.historian.rejected_total` = D6(rev 앞섬) + D7(live 미지 tag_id)."""
 
