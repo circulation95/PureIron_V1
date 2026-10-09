@@ -6,6 +6,8 @@
 - `PUREIRON_TEST_EXISTING_DSN`: 이미 migrate된 DB를 그대로 쓴다(n-minus-1: N-1 앱 테스트를
   N 스키마에서 실행). 새 DB가 필요한 테스트(`fresh_db`)와 compose 테스트는 건너뛴다.
 - `PUREIRON_IT_KEEP=1`: 끝나도 compose를 내리지 않는다(디버깅).
+- `PUREIRON_IT_PROJECT`·`PUREIRON_DEV_DB_PORT`·`PUREIRON_DEV_CORE_PORT`·`PUREIRON_IT_WEB_PORT`:
+  compose 프로젝트 이름·호스트 포트(기본 `pureiron-it`·25432·18000·18080).
 """
 
 from __future__ import annotations
@@ -33,7 +35,9 @@ type JsonObject = dict[str, object]
 REPO = Path(__file__).resolve().parents[4]
 COMPOSE_DIR = REPO / "deploy" / "compose"
 MIGRATIONS = REPO / "services" / "core" / "migrations"
-PROJECT = "pureiron-it"
+# 같은 Docker 데몬을 여러 작업 트리가 함께 쓸 때 스택이 서로 내리지 않게 이름·포트를 바꿀 수 있다
+# (이미지 태그는 PUREIRON_RELEASE).
+PROJECT = os.environ.get("PUREIRON_IT_PROJECT", "pureiron-it")
 DB_PORT = int(os.environ.get("PUREIRON_DEV_DB_PORT", "25432"))
 CORE_PORT = int(os.environ.get("PUREIRON_DEV_CORE_PORT", "18000"))
 WEB_PORT = int(os.environ.get("PUREIRON_IT_WEB_PORT", "18080"))
