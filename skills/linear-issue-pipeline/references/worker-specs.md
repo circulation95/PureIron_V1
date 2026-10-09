@@ -59,17 +59,19 @@ Target: Linear 이슈 PUR-{N} "{TITLE}". 예상 범위: {SCOPE_HINT}
 Change: 계획을 세운 뒤 구현하고 draft PR을 연다.
 Constraints: 아래 공통 규칙. 계획 단계에서 사용자 인터뷰를 하지 않는다. 모호한 점은 ask로 코디네이터에게 묻는다.
 Ownership: 이 worktree 전체.
-Observable acceptance: 계획이 PR 본문에 있음 + 테스트 게이트 통과 + draft PR + worker_done 본문에 PR URL.
+Observable acceptance: 계획과 Codex 계획 비판 처리 결과가 PR 본문에 있음 + 테스트 게이트 통과 + draft PR + worker_done 본문에 PR URL.
 
 ## 절차
 1. `orca linear issue PUR-{N} --full --json` 으로 이슈와 코멘트를 읽는다.
 2. Skill 도구로 `oh-my-claudecode:plan` 을 인자 `--direct` 와 함께 실행해 구현 계획을 세운다. 인터뷰 없이 이슈·코드 근거로 계획하고, 계획에는 변경 파일, 단계, 수용 기준, 검증 명령을 넣는다.
+   - 계획 파일이 나오면 `omc ask codex --agent-prompt critic "<계획 파일 경로>의 계획을 Linear 이슈 PUR-{N} 수용 기준과 AGENTS.md 불변 규칙 기준으로 비판하라. 지적마다 근거와 제안을 붙여라"` 를 1회만 실행한다. 명령은 결과 파일 경로를 출력하므로 그 파일을 읽는다. 타당한 지적은 계획에 반영하고, 반영하지 않은 지적은 사유를 남긴다. 다시 요청하지 않는다.
+   - Codex 호출이 실패하면(CLI 없음, 버전 오류 등) Claude critic으로 대체하지 말고 비판 없이 진행하되, PR 계획 절에 "Codex 비판 미실행: <오류 요약>"이라고 적는다.
    - 이 프롬프트 자체가 계획에 대한 실행 승인이다. 계획 스킬이 승인 대기나 실행 방식 선택을 제시해도 멈추거나 다른 실행 스킬을 호출하지 말고, 같은 턴에서 3번으로 넘어가 직접 구현한다.
 3. 계획대로 작은 단위로 구현하고 단계마다 관련 테스트를 돌린다.
 4. 테스트 게이트를 실행한다.
 5. 커밋(저장소 관례, 끝에 `Refs: PUR-{N}`) → 푸시 → `gh pr create --draft`.
    - 제목: `<type>: <요약> (PUR-{N})`
-   - 본문 순서: Linear 링크 / **## 계획** (요약: 변경 파일·단계·수용 기준) / 변경 요약 / 검증(명령 → 결과) / 실행하지 못한 검증 / 남은 risk.
+   - 본문 순서: Linear 링크 / **## 계획** (요약: 변경 파일·단계·수용 기준 + "Codex 계획 비판" 하위 목록: 반영한 지적 / 반영하지 않은 지적과 사유) / 변경 요약 / 검증(명령 → 결과) / 실행하지 못한 검증 / 남은 risk.
    - 리뷰어가 "계획 대비 구현"을 확인하므로 계획 절을 빠뜨리지 않는다.
 6. worker_done 본문 3문장: 무엇을 바꿨는지, PR URL과 검증 결과, 남은 항목.
 
@@ -89,7 +91,8 @@ Observable acceptance: 승인된 계획이 PR 본문에 있음 + 테스트 게�
 
 ## 절차
 1. `orca linear issue PUR-{N} --full --json` 으로 이슈와 코멘트를 읽는다.
-2. Skill 도구로 `oh-my-claudecode:ralplan` 을 실행해 합의 계획을 만든다. 사용자 인터뷰는 하지 않고, 사용자 판단이 필요한 질문은 ask로 코디네이터에게 보낸다.
+2. Skill 도구로 `oh-my-claudecode:ralplan` 을 인자 `--critic codex` 와 함께 실행해 합의 계획을 만든다(Critic 단계만 Codex가 맡는다). 사용자 인터뷰는 하지 않고, 사용자 판단이 필요한 질문은 ask로 코디네이터에게 보낸다.
+   - Critic 단계가 Codex가 아닌 Claude로 대체됐으면, 3번 승인 요청 요약과 PR 계획 절에 "비판: Claude (Codex fallback: <사유>)"라고 적는다.
    - 계획 스킬이 끝에 승인 대기나 실행 방식 선택을 제시해도 고르지 않는다. 승인은 아래 3번의 ask 답으로만 받고, 구현은 이 워커가 직접 한다(다른 실행 스킬 호출 금지).
 3. 계획 승인 요청: preamble의 ask 명령으로 다음을 보낸다.
    - question: "PUR-{N} 계획 승인 요청 — <계획 파일 경로>\n<계획 요약 10줄 이내: 접근, 변경 파일, 위험, 수용 기준>"
