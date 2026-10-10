@@ -8,12 +8,14 @@ import re
 from pathlib import Path, PureWindowsPath
 from typing import cast
 
+import bundles
 import crash_at
 import golden
 import hyperv
 import pycdlib
 import pytest
 import run
+from release_pair import BASE, EPOCHS, FAULT, NEXT, RELEASES
 
 
 def test_passed_follows_phase_order() -> None:
@@ -181,3 +183,115 @@ def test_seed_enables_resolved_debug_for_dns_evidence() -> None:
     text = user_data.decode()
     assert "systemd-resolved.service.d/e2e-debug.conf" in text
     assert "SYSTEMD_LOG_LEVEL=debug" in text
+
+
+RELEASE_RECORDS = Path(__file__).resolve().parents[3] / "deploy" / "releases"
+
+
+def test_release_pair_is_one_epoch_step_with_derived_fault() -> None:
+    assert EPOCHS[NEXT] == EPOCHS[BASE] + 1
+    assert RELEASES[FAULT].startswith(RELEASES[NEXT] + "-")
+    assert EPOCHS[FAULT] == EPOCHS[NEXT]
+    assert (
+        FAULT,
+        RELEASES[FAULT],
+        NEXT,
+    ) == (bundles.FAULT_NAME, bundles.FAULT_VERSION, bundles.FAULT_BASE)
+    assert RELEASES[BASE] == run.INSTALL_RELEASE
+
+
+def test_release_pair_matches_repo_records() -> None:
+    """저장소 release 기록이 쌍의 달력 버전·epoch와 같다(prepare가 VM 전에 같은 대조를 한다).
+    NEXT 기록은 release_record.py로 만든 뒤에만 있다."""
+    checked: list[str] = []
+    for name in (BASE, NEXT):
+        path = RELEASE_RECORDS / f"{name}.json"
+        if path.is_file():
+            run.check_record(name, json.loads(path.read_text(encoding="utf-8")))
+            checked.append(name)
+    assert BASE in checked
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        {"version": RELEASES[NEXT], "schema": {"epoch": EPOCHS[NEXT] - 1}},
+        {"version": "2026.10.0", "schema": {"epoch": EPOCHS[NEXT]}},
+        {"version": RELEASES[NEXT]},
+    ],
+)
+def test_check_record_rejects_other_release(record: dict[str, object]) -> None:
+    with pytest.raises(run.E2EError):
+        run.check_record(NEXT, record)
+
+
+def test_crash_plan_covers_every_phase_and_mode_once() -> None:
+    plan = run.crash_plan()
+    assert len(plan) == 2 * len(run.CRASH_PHASES)
+    pairs = {(c.phase, c.mode) for c in plan}
+    assert pairs == {(p, m) for p in run.CRASH_PHASES for m in ("kill", "reset")}
+    assert len({c.name for c in plan}) == len(plan)
+
+
+def test_crash_plan_releases() -> None:
+    plan = run.crash_plan()
+    # migrating: c0(BASE epoch)에서 BASE→NEXT — 실제 마이그레이션이 일어나는 유일한 경로
+    migrating = [c for c in plan if c.phase == "migrating"]
+    assert all(c.from_c0 and (c.prev, c.release) == (BASE, NEXT) for c in migrating)
+    assert [c.from_c0 for c in plan] == [True, True] + [False] * (len(plan) - 2)
+    current = NEXT  # c0 뒤 첫 비-c0 시도는 migrating 결과(NEXT) 위에서
+    for case in plan[2:]:
+        assert case.prev == current
+        if case.phase == "rolling_back":
+            assert case.release == FAULT
+        else:
+            assert {case.prev, case.release} == {BASE, NEXT}
+            current = case.release
+
+
+def test_expected_items_are_thirty_and_follow_pair() -> None:
+    items = run.expected_items()
+    assert len(items) == len(set(items)) == 30
+    assert items[2] == "install bundle bootstrap + g1(r1) on offline VM"
+    assert items[6:11] == [
+        "r1→r2 on compressed epoch-2 DB",
+        "r2 schema after upgrade",
+        "reject lower gen",
+        "r2' health failure → rollback",
+        "rollback within 5 min to r1 digests",
+    ]
+    assert items[11] == "crash kill @ migrating"
+    assert items[-1] == run.ITEM_NO_EXTERNAL
+
+
+# 로컬 TimescaleDB(site-db 2.30.2-pg16)에서 0001~0007 → 시드 → 0008·0009로 확인한 probe 값.
+C0_DB: dict[str, object] = {
+    "epoch": "2",
+    "caggs": "tag_history_1h,tag_history_1m",
+    "compressed_chunks": "3",
+    "tag_history_rows": "7141",
+    "realtime_caggs": "",
+    "historian_column": "0",
+}
+NEXT_DB: dict[str, object] = {
+    **C0_DB,
+    "epoch": "3",
+    "realtime_caggs": "tag_history_1h,tag_history_1m",
+    "historian_column": "1",
+}
+
+
+def test_judge_c0() -> None:
+    assert all(run.judge_c0(C0_DB).values())
+    assert not run.judge_c0({**C0_DB, "epoch": "1"})["epoch"]
+    assert not run.judge_c0({**C0_DB, "compressed_chunks": "0"})["compressed_chunks"]
+    assert not any(run.judge_c0({"error": "site-db not running"}).values())
+
+
+def test_judge_next_schema() -> None:
+    assert all(run.judge_next_schema(NEXT_DB).values())
+    # 업그레이드 전(BASE) 스키마는 epoch·0009 산출물에서 걸린다
+    failing = {k for k, ok in run.judge_next_schema(C0_DB).items() if not ok}
+    assert failing == {"epoch", "realtime_caggs", "historian_column"}
+    partial = {**NEXT_DB, "realtime_caggs": "tag_history_1m"}
+    assert not run.judge_next_schema(partial)["realtime_caggs"]

@@ -22,8 +22,26 @@ powershell -ExecutionPolicy Bypass -File tests\e2e\infra\setup-host.ps1
 - 한국어 등 지역화된 Windows: Hyper-V 통합 서비스 이름이 번역되므로 하네스는 서비스 ID로 고른다.
 
 빌드 호스트(WSL runner)에는 `~/pureiron/keys/test`(test root·release key, `deploy/keys/README.md`),
-image store의 `r0`·`r1` tar, `~/m2d-tools/qemu-img`(sudo 없이 `apt-get download qemu-utils liburing2
-libaio1t64` → `dpkg -x`)가 있어야 한다.
+image store(`~/pureiron/images`, `PUREIRON_IMAGE_STORE`)의 BASE·NEXT tar(`<이름>/{core,collector,web,site-db}.tar`),
+`~/m2d-tools/qemu-img`(sudo 없이 `apt-get download qemu-utils liburing2 libaio1t64` → `dpkg -x`)가 있어야
+한다. 저장소에는 `deploy/releases/<BASE·NEXT>.json`이 있어야 한다(`prepare`가 WSL 사본으로 동기화해
+`version`·`schema.epoch`를 `release_pair.py`와 대조한다). `pureiron/<svc>:<NEXT>` 이미지가 WSL Docker에
+없으면 `fault-release`가 store tar에서 `docker load`한다.
+
+## release 쌍
+
+실측할 release 쌍은 `m2d/release_pair.py` 한 곳에 있다 — 설치 g1 = `BASE`, 업그레이드 `BASE`→`NEXT`,
+헬스 실패 롤백 `FAULT`(`NEXT` 파생), 기대 epoch `EPOCHS`. 결과 항목 30개(`run.expected_items()`) 이름도
+여기서 나온다.
+
+| 실측 | BASE | NEXT | FAULT | c0 | 업그레이드 마이그레이션 |
+|---|---|---|---|---|---|
+| M2(run 20261005T055523Z, 30/30) | r0 `2026.10.0` (epoch 1) | r1 `2026.10.1` (epoch 2) | `r1f` `2026.10.1-fault1` | epoch 1 + 압축 chunk | 0006·0007(1h CAGG) |
+| **S3(현재)** | r1 `2026.10.1` (epoch 2) | r2 `2026.10.2` (epoch 3) | `r2f` `2026.10.2-fault1` | epoch 2(1h CAGG 있음) + 압축 chunk | 0008·0009(정의 jsonb, CAGG 실시간 집계, `project_state.historian`) |
+
+항목 이름 중 release가 들어가는 5개는 쌍을 따라간다: `install bundle bootstrap + g1(r1) on offline VM`,
+`r1→r2 on compressed epoch-2 DB`, `r2 schema after upgrade`, `r2' health failure → rollback`,
+`rollback within 5 min to r1 digests`(M2에서는 `g1(r0)`·`r0→r1 … epoch-1`·`r1 schema`·`r1'`·`to r0`).
 
 ## 실행
 
@@ -45,12 +63,12 @@ uv run python tests/e2e/m2d/run.py destroy         # VM·차분 디스크 삭제
 
 | 단계 | 확인 |
 |---|---|
-| `prepare` | WSL 사본에서 r1′(`r1f`: collector가 세션을 맺지 않는 파생 이미지 → `/readyz` 503), 설치 번들 **실빌드**(`fetch_debs.sh`·`build_updater.sh`), g1(r0) |
+| `prepare` | WSL 사본에서 FAULT(`r2f`: NEXT 이미지에 collector가 세션을 맺지 않는 파생 → `/readyz` 503), release 기록 version·epoch 대조, 설치 번들 **실빌드**(`fetch_debs.sh`·`build_updater.sh`, manifest release = BASE), g1(BASE) |
 | `vm` | golden(클라우드 이미지 → 64 GiB 동적 VHDX, 읽기 전용) 위 차분 디스크, seed ISO(cloud-init: 사용자·고정 IP·OS phone-home 끄기·nftables 감시 테이블) |
-| `install` | runbook 2단계(메타데이터만 전용 디렉터리에 추출 → `bootstrap-verify.sh` sha256·root 지문 대조) → `install.sh --offline-time-confirmed` → enroll → g1 → 서비스 시작. `/readyz` 200, overlay2 + classic store, 실행 이미지 `.Id` == r0 config digest. 압축 chunk 이력 시드 후 체크포인트 `c0` |
-| `scenarios` | `c0`에서 거부(다른 현장 `E_SITE`·변조 `E_DIGEST`) exit 1, 같은 gen 재빌드는 no-op exit 0(R-7 멱등) — 모두 core `StartedAt`·실행 이미지 불변 / `c0`에서 r0→r1(압축 DB 위 epoch 2) 성공 → 낮은 gen `E_GEN` 거부 / `c0`에서 r1′ → 5분 안에 r0 digest + `failed` |
+| `install` | runbook 2단계(메타데이터만 전용 디렉터리에 추출 → `bootstrap-verify.sh` sha256·root 지문 대조) → `install.sh --offline-time-confirmed` → enroll → g1 → 서비스 시작. `/readyz` 200, overlay2 + classic store, 실행 이미지 `.Id` == BASE config digest. 압축 chunk 이력 시드, c0 기반(DB epoch == BASE epoch·압축 chunk·이력 행) 확인 후 체크포인트 `c0` |
+| `scenarios` | `c0`에서 거부(다른 현장 `E_SITE`·변조 `E_DIGEST`) exit 1, 같은 gen 재빌드는 no-op exit 0(R-7 멱등) — 모두 core `StartedAt`·실행 이미지 불변 / `c0`에서 BASE→NEXT(압축 DB 위 NEXT epoch migrate) 성공 + NEXT 스키마(epoch·1h CAGG·압축 chunk 유지·0009 실시간 집계 CAGG·`project_state.historian`) → 낮은 gen `E_GEN` 거부 / `c0`에서 FAULT → 5분 안에 BASE digest + `failed` |
 | `crash` | phase(`fetched`~`rolling_back`)마다 `systemctl kill -s KILL pureiron-updater`와 `Restart-VM -Type Reset -Force` 각 1회 → 10분 안에 수렴(결과·실행 이미지·편집 잠금 해제) |
-| `report` | nftables 외부 접속 카운터(`ext_out_v4`·`dns_out`·`ext_out_v6`·`ext_fwd`)의 **누적** 합 0 (`vm` 단계 기준값도 따로 0이어야 한다) |
+| `report` | nftables 외부 접속 카운터(`ext_out_v4`·`dns_out`·`ext_out_v6`·`ext_fwd`)의 **누적** 합 0 (`vm` 단계 기준값도 따로 0이어야 한다). `results.json`의 `missing`은 30개 중 기록되지 않은 항목 |
 
 거부 보고는 번들 sha256 12자로 찾는다(`reports/<started>-g<gen>-<sha12>.json`) — 커밋 전 거부는 서명을
 믿기 전이라 gen이 `unknown`이다. 낮은 gen 번들은 적용된 gen보다 **뒤에** 빌드한다 — 먼저 만든 번들은
@@ -63,7 +81,8 @@ cert 단계의 `max_seen_created_at` 역행(`E_CERT`)에 먼저 걸린다.
 VM 쪽 `site/crash_at.py`가 상태 파일(원자적 rename)을 inotify로 보다가 목표 phase에 들어간 순간 실행 중인
 프로세스를 `SIGSTOP`으로 얼려 그 phase에 붙잡아 두고, `kill`이면 `systemctl kill -s KILL`, `reset`이면
 호스트가 `Restart-VM -Type Reset -Force`(전원 리셋)를 건다. `fetched`(번들 검증)는 CLI가 실행하므로 CLI를 대상으로 한다.
-`migrating`은 실제 마이그레이션이 일어나도록 `c0`(epoch 1)에서, `rolling_back`은 r1′로 일으킨다.
+`migrating`은 실제 마이그레이션이 일어나도록 `c0`(BASE epoch)에서 BASE→NEXT로, `rolling_back`은 FAULT로 일으키고,
+나머지 phase는 NEXT↔BASE를 번갈아 간다(순서는 `run.crash_plan()`).
 
 서비스 tick 주기는 e2e에서 `PUREIRON_POLL_INTERVAL_S=10`(기본 60)으로 줄인다.
 
@@ -87,4 +106,4 @@ systemd-resolved가 보내므로(컨테이너 질의도 Docker 내장 DNS → re
 
 ## 단위 테스트
 
-`tests/e2e/tests/` — phase 순서·상태 읽기·nft 규칙·seed ISO 왕복·PowerShell 인용·수렴 판정. G1 `unit`에 포함된다.
+`tests/e2e/tests/` — phase 순서·상태 읽기·nft 규칙·seed ISO 왕복·PowerShell 인용·수렴 판정·release 쌍(기록 대조·crash 순서·항목 30개·c0/NEXT 스키마 판정). G1 `unit`에 포함된다.
