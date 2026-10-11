@@ -201,7 +201,8 @@ class PlanKeeper:
     """정의 rev를 주기적으로 보고 바뀌면 plan을 다시 만들어 적용한다.
 
     DB·스키마 문제는 경고 후 다음 주기에 다시 시도한다(graceful degradation). 마지막 plan은
-    유지된다. `on_definitions`(historian recorder)는 plan을 적용하기 전에 같은 정의를 받는다.
+    유지된다. `on_definitions`(historian recorder·알람 엔진)는 plan을 적용하기 전에 같은 정의를
+    순서대로 받는다(동기 — 이벤트 발행이 필요한 쪽은 자기 task로 한다).
     """
 
     def __init__(
@@ -210,11 +211,11 @@ class PlanKeeper:
         apply: PlanApplier,
         *,
         refresh_s: float,
-        on_definitions: DefinitionsListener | None = None,
+        on_definitions: Sequence[DefinitionsListener] = (),
     ) -> None:
         self._source = source
         self._apply = apply
-        self._on_definitions = on_definitions
+        self._on_definitions = tuple(on_definitions)
         self._refresh_s = refresh_s
         self._rev: int | None = None
         self._failing = False
@@ -240,8 +241,8 @@ class PlanKeeper:
             log.warning("plan rev %d: %s", definitions.rev, problem)
         # collector에 plan을 보내기 전에 알린다 — historian이 새 rev·태그를 먼저 알아야 그 rev의
         # 샘플을 "앞선 rev"(D6)나 "plan에 없는 tag_id"(D7)로 버리지 않는다.
-        if self._on_definitions is not None:
-            self._on_definitions(definitions)
+        for listener in self._on_definitions:
+            listener(definitions)
         await self._apply(built.plan, built.keys)
         self._rev = definitions.rev
         log.info(

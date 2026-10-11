@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pureiron_core.acquisition.devices import DeviceMonitor
 from pureiron_core.acquisition.ingest import Ingestor
 from pureiron_core.acquisition.server import AcquisitionServer, AcquisitionService, PlanKeeper
+from pureiron_core.alarms.journal import PgAlarmStore
+from pureiron_core.alarms.service import AlarmService
 from pureiron_core.audit.store import PgAuditStore
 from pureiron_core.auth.service import AuthService
 from pureiron_core.auth.sessions import PgSessionStore
@@ -40,6 +42,7 @@ class SiteRuntime:
     updater_token: str | None
     auth: AuthService
     audit: PgAuditStore
+    alarms: AlarmService
 
     @classmethod
     def build(cls, settings: Settings) -> SiteRuntime:
@@ -55,6 +58,8 @@ class SiteRuntime:
             flush_max_rows=settings.historian_flush_max_rows,
         )
         recorder = Recorder(writer)
+        audit = PgAuditStore(db)
+        alarms = AlarmService(bus, tags, PgAlarmStore(db, audit))
         ingestor = Ingestor(tags, devices, recorder, live_max_age_s=settings.ingest_live_max_age_s)
         service = AcquisitionService(
             bus, tags, devices, ingestor, session_silence_s=settings.session_silence_s
@@ -63,7 +68,7 @@ class SiteRuntime:
             PgDefinitionsSource(db),
             service.set_plan,
             refresh_s=settings.plan_refresh_s,
-            on_definitions=recorder.set_definitions,
+            on_definitions=(recorder.set_definitions, alarms.set_definitions),
         )
         return cls(
             settings=settings,
@@ -84,16 +89,21 @@ class SiteRuntime:
                 idle_s=settings.auth_session_idle_s,
                 absolute_s=settings.auth_session_absolute_s,
             ),
-            audit=PgAuditStore(db),
+            audit=audit,
+            alarms=alarms,
         )
 
     async def start(self) -> None:
+        # 알람은 수집보다 먼저: 저널 복원·tag.changed 구독이 첫 샘플보다 앞서야 한다.
         await self.db.start()
         self.historian.start()
+        await self.alarms.start()
         await self.acquisition.start()
 
     async def stop(self) -> None:
-        # 수집을 먼저 멈춰 새 행이 들어오지 않게 한 뒤 남은 이력을 쓰고(제한 시간) DB를 닫는다.
+        # 수집을 먼저 멈춰 새 행·이벤트가 들어오지 않게 한 뒤 남은 알람 저널·이력을 쓰고(각각 제한
+        # 시간) DB를 닫는다.
         await self.acquisition.stop()
+        await self.alarms.stop()
         await self.historian.stop()
         await self.db.close()

@@ -446,7 +446,7 @@ async def test_plan_keeper_notifies_definitions_before_apply() -> None:
     def notify(definitions: Definitions) -> None:
         order.append(f"defs {definitions.rev}")
 
-    keeper = PlanKeeper(source, apply, refresh_s=0.01, on_definitions=notify)
+    keeper = PlanKeeper(source, apply, refresh_s=0.01, on_definitions=(notify,))
     assert await keeper.refresh()
     assert not await keeper.refresh()  # 같은 rev는 다시 알리지 않는다
     source.definitions = sample_definitions(rev=6)

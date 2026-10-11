@@ -129,6 +129,29 @@ async def test_bus_pattern_isolation_and_unsubscribe() -> None:
     assert seen == ["tag.changed.a"]
 
 
+async def test_bus_publishes_returned_follow_ups_after_current_event() -> None:
+    """핸들러가 돌려준 이벤트는 지금 이벤트가 모든 구독자에게 간 뒤 이어서 발행된다(D8)."""
+    bus = EventBus()
+    seen: list[str] = []
+
+    async def derive(event: Event) -> list[Event]:
+        seen.append(f"derive {event.topic}")
+        return [Event("alarm.changed.x"), Event("alarm.changed.y")]
+
+    async def record(event: Event) -> None:
+        seen.append(f"record {event.topic}")
+
+    bus.subscribe("tag.changed.*", derive)
+    bus.subscribe("*", record)
+    await bus.publish(Event("tag.changed.a"))
+    assert seen == [
+        "derive tag.changed.a",
+        "record tag.changed.a",
+        "record alarm.changed.x",
+        "record alarm.changed.y",
+    ]
+
+
 def test_create_app_starts_without_site_db(tmp_path: Path) -> None:
     """site-db가 없어도 core는 기동하고 readyz로 미준비를 알린다(graceful degradation)."""
     app = create_app(SiteRuntime.build(_settings(tmp_path)))
