@@ -151,6 +151,11 @@ export interface components {
              */
             dropped_total: number;
             /**
+             * Poisoned Total
+             * @description site-db가 행 내용 때문에 거부해 버린 행 수(batch를 반으로 나눠 그 행만 격리)
+             */
+            poisoned_total: number;
+            /**
              * Rejected Total
              * @description 이력에서 버린 샘플 수 = batch plan_rev가 현재 rev보다 앞선 것(site-db 재생성 신호) + 현재 정의에 없는 tag_id의 live 샘플(정의 기준 — plan에서 문제로 빠진 태그는 기록) + int4 범위 밖 tag_id
              */
