@@ -137,6 +137,7 @@ PureIron_V1 core의 정본은 `services/core/src/pureiron_core/api/` 와 생성�
   - `historian`: `buffer_rows`(쓰지 못한 버퍼 행, 쓰는 중 포함), `dropped_total`(상한 초과로 버린 행), `written_total`(INSERT에 넘긴 행, 중복 포함), `poisoned_total`(site-db가 행 내용 때문에 거부해 반분 격리 끝에 버린 행, M3b-0), `write_lag_s`(버퍼 최고령 행 대기 시간, 비면 null), `db_ok`(마지막 쓰기 성공), `rejected_total`(이력에서 버린 샘플 = batch `plan_rev`가 현재 rev보다 앞선 것 + 현재 정의에 없는 tag_id의 live 샘플(정의 기준 — plan에서 문제로 빠진 태그는 기록, [data-contracts](data-contracts.md) M3a-3 historian 현황) + int4 범위 밖 tag_id).
 - replay batch는 이력에만 기록되고 `tag.changed.*`를 발행하지 않는다(알람·WS에도 가지 않는다). 이력 조회는 `GET /history`(M3b-2, 아래 절).
   - `alarms`(M3b-2): `active_total`(ACTIVE_UNACKED + ACTIVE_ACKED), `unacked_total`(ACTIVE_UNACKED + CLEARED_UNACKED), `journal_queue_rows`(DB에 아직 못 쓴 저널 행), `dropped_total`(저널 큐 상한 초과로 버린 행). `realtime`: `connections`(인증된 WS 연결 수).
+  - **무인증 노출 정보**: `/readyz`는 인증 없이 열린다. 위 필드는 모두 집계 수(개수·비율·지연)뿐이고 태그 path·값, 알람 id·내용, 사용자 이름은 싣지 않는다 — 활성·미확인 알람 수의 변화 정도는 LAN에서 보인다는 것을 감수한 설계다(PR #26 리뷰 L-A3).
 
 ## V1 인증·감사 API (`/api/v1`, M3b-1 구현)
 
@@ -165,7 +166,7 @@ PureIron_V1 core의 정본은 `services/core/src/pureiron_core/api/` 와 생성�
 | `GET /tags` | viewer+ | `{tags:[{tag_id, path, device_id, value, quality, ts}]}` 현재값 스냅샷(tag_id 순). `quality` = `GOOD`·`BAD`·`UNCERTAIN`, NaN/Inf·값 없음은 `value: null`, 샘플이 없으면 `ts: null` |
 | `GET /alarms` | viewer+ | `{alarms:[AlarmOut]}` NORMAL이 아닌 알람(활성 + 해제됐지만 미확인), 우선순위 → 최근 전이 순 |
 | `GET /alarms/journal` | viewer+ | `?alarm_id&start&end&limit` → `{entries}` 최신순, `[start, end)`, `limit` 1~1000(기본 100) |
-| `POST /alarms/{alarm_id}/ack` | operator+ | 전이 행 + 감사 `alarm.ack`를 한 트랜잭션으로 쓴 뒤 상태 반영 → `AlarmOut`. 모르는 알람 404, **NORMAL·ACTIVE_ACKED는 409**(다른 사용자가 먼저 ACK했거나 화면이 오래됨 — no-op 200이면 감사 없는 확인이 성공처럼 보인다), site-db 장애 503 |
+| `POST /alarms/{alarm_id}/ack` | operator+ | 전이 행 + 감사 `alarm.ack`를 한 트랜잭션으로 쓴 뒤 상태 반영 → `AlarmOut`. 모르는 알람 404, **NORMAL·ACTIVE_ACKED는 409**(다른 사용자가 먼저 ACK했거나 화면이 오래됨 — no-op 200이면 감사 없는 확인이 성공처럼 보인다), site-db 장애 503. 기록하는 사이 해제만 됐으면 CLEARED_UNACKED → NORMAL로 반영(그 행을 더 쓴다), **새로 발생했으면 반영하지 않고 지금 상태(ACTIVE_UNACKED)로 200** — 운전원이 보지 못한 발생이므로 다시 ACK한다 |
 | `POST /alarms/ack-all` | operator+ | ACK할 수 있는 알람 전부를 한 트랜잭션(저널 행들 + 감사 `alarm.ack_all` 한 건, `detail{alarm_ids, count}`) → `{acknowledged:[AlarmOut]}`. 0건이면 기록 없이 200 |
 | `GET /devices` | viewer+ | `{devices:[DeviceOut]}`: `device_id, protocol, state(CONNECTED·DISCONNECTED — core 판정), silent(core 무신호), tag_count` + collector `DeviceHealth` 필드(`connected, status, last_success_at, last_error, last_error_at, consecutive_failures, poll_latency_ms, read_success_rate, poll_total, timeout_count, bad_quality_tag_count, reconnect_count` — health를 아직 못 받았으면 null) |
 | `GET /history` | viewer+ | `?tag_id=…(반복, 1~20개, 1~2^31-1)&start&end(시간대 필수)&resolution=auto\|raw\|1m\|1h&limit_rows(태그별, 1~20,000)` → `{resolution, series:[{tag_id, truncated, raw:[{time, value, quality}], buckets:[{time, avg, min, max, last, samples}]}]}`. auto = ≤1h raw · ≤24h 1m · 그 이상 1h. 구간 상한 raw 1h · 1m 7d · 1h 400d(넘으면 422). 1m·1h 첫 bucket은 start를 품은 `time_bucket` 경계부터 |
@@ -175,9 +176,11 @@ PureIron_V1 core의 정본은 `services/core/src/pureiron_core/api/` 와 생성�
 ### WebSocket `/api/v1/ws` (V1, M3b-2)
 
 - **인증**: 업그레이드 요청의 세션 쿠키 `pureiron_session`, 쿠키가 없으면 연결 후 5s 안의 첫 메시지 `{"type":"auth","token"}`. 실패 close **4401**, site-db 장애로 검증 불가 **1013**. 60s마다 세션을 다시 검증해 로그아웃·만료·비활성화면 4401(검증 자체가 DB 장애로 안 되면 연결 유지).
+- **Origin**: 업그레이드 요청에 `Origin`이 있고(브라우저) 그 host:port가 요청 `Host`와 다르면 **4403**(포트가 없으면 각자 scheme의 기본 포트). 같은 PC의 다른 포트 웹앱은 same-site라 Strict 쿠키가 실리므로(CSWSH) 막는다. `Origin`이 없는 비브라우저 클라이언트는 허용한다. 그래서 프록시는 브라우저의 Host를 그대로 넘겨야 한다: web nginx `proxy_set_header Host $http_host`(`$host`는 포트를 버린다), vite dev proxy는 `changeOrigin`을 켜지 않는다. 다른 이름으로 프록시하는 배치를 위한 허용 목록 env는 아직 없다.
+- **자원 상한**: 프레임 256 KiB(`WS_MAX_MESSAGE_BYTES`, 가장 큰 정상 메시지 subscribe 10,000개 ≈ 110 KB — 넘으면 uvicorn이 1009), 인증 중인 연결 동시 32개(`MAX_PENDING_AUTH`, 넘으면 1013).
 - **서버 → 클라이언트**(JSON 텍스트 프레임, `type`으로 구분): `hello{username, role}` · `tag_update{values:[TagValueOut]}`(구독한 태그만, `PUREIRON_REALTIME_BATCH_MS`(기본 250ms)마다 태그별 최신값만 합쳐서, 구독 직후 현재값은 곧바로 한 번) · `alarm_event{…AlarmOut}` · `device_update{…DeviceOut}`(알람·장비는 인증된 모든 연결에 방송, 깨어나는 즉시) · `ping`(20s마다).
 - **클라이언트 → 서버**: `subscribe{tag_ids}`·`unsubscribe{tag_ids}`(연결당 최대 10,000개) · `pong`. 형식이 어긋난 메시지는 무시한다.
-- **close code**: 1000 정상, 1001 core 정지, 1013 연결별 이벤트 큐(1,000) 초과·인증 시 site-db 장애, 4401 인증 실패·세션 무효, 4408 pong이 60s 없음.
+- **close code**: 1000 정상, 1001 core 정지, 1009 프레임 상한 초과, 1013 연결별 이벤트 큐(1,000) 초과·인증 시 site-db 장애·인증 대기 연결 상한 초과, 4401 인증 실패·세션 무효, 4403 Origin ≠ Host, 4408 pong이 60s 없음.
 - legacy WS와 달리 무인증 연결·`connection_status`·태그 path 구독은 없다(구독은 tag_id).
 
 ## 내부 이벤트 버스
