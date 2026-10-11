@@ -1,6 +1,7 @@
 // 실시간 WS 클라이언트(plan M3b D10). 로그인한 레이아웃이 연결 하나를 만들고 화면들이 나눠 쓴다.
 //
 // - 인증은 세션 쿠키(같은 origin `/api/v1/ws`). close 4401 = 세션 무효 → 재연결하지 않고 onUnauthorized.
+//   4403 = Origin이 Host와 다름(프록시 설정 문제) → 다시 연결해도 같으므로 멈춘다.
 // - 그 밖의 끊김은 0.5s부터 두 배씩 최대 10s 간격으로 다시 연결하고, `hello`를 받으면 구독을 다시 보낸다.
 // - 서버 `ping`에는 곧바로 `pong`(60s 동안 pong이 없으면 서버가 끊는다).
 // - 메시지 타입은 schema.d.ts components(WsServerMessage·WsClientMessage)가 정본이다.
@@ -26,6 +27,7 @@ const BACKOFF_START_MS = 500;
 const BACKOFF_MAX_MS = 10_000;
 const CLOSE_NORMAL = 1000;
 const CLOSE_UNAUTHORIZED = 4401;
+const CLOSE_FORBIDDEN_ORIGIN = 4403;
 const SERVER_TYPES: ReadonlySet<string> = new Set(["hello", "tag_update", "alarm_event", "device_update", "ping"]);
 
 function isServerMessage(value: unknown): value is ServerMessage {
@@ -133,6 +135,10 @@ export class RealtimeClient {
       if (event.code === CLOSE_UNAUTHORIZED) {
         this.running = false;
         this.onUnauthorized();
+        return;
+      }
+      if (event.code === CLOSE_FORBIDDEN_ORIGIN) {
+        this.running = false;
         return;
       }
       this.scheduleReconnect();

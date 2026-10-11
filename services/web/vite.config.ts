@@ -8,6 +8,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 3000,
+    // changeOrigin을 켜지 않는다: Host를 보존해야 core WS의 Origin 검사(host:port 비교)를 통과한다.
     proxy: { "/api": { target: coreUrl, ws: true } },
   },
   build: { sourcemap: false },
