@@ -127,9 +127,9 @@ class RealtimeService:
             await self._send(transport, HelloMessage.of(principal))
             await self._loop(transport, client)
         except TransportClosedError:
-            client.close(CloseCode.NORMAL)
+            self.manager.close(client, CloseCode.NORMAL)
         finally:
-            self.manager.close(client)
+            self.manager.release(client)
             receiver.cancel()
             await asyncio.gather(receiver, return_exceptions=True)
             with contextlib.suppress(TimeoutError, TransportClosedError):
@@ -149,7 +149,7 @@ class RealtimeService:
             wait_s = max(0.0, min(next_flush, next_ping, next_check) - self._clock())
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(client.wake.wait(), wait_s)
-            client.wake.clear()
+            self.manager.woken(client)
             if client.close_code is not None:
                 break
             now = self._clock()
@@ -161,7 +161,7 @@ class RealtimeService:
             if now >= next_ping:
                 next_ping = now + self._ping_s
                 if self.manager.pong_overdue(client, self._pong_timeout_s):
-                    client.close(CloseCode.PONG_TIMEOUT)
+                    self.manager.close(client, CloseCode.PONG_TIMEOUT)
                     break
                 await self._send(transport, PingMessage(type="ping"))
             if now >= next_check:
@@ -173,7 +173,7 @@ class RealtimeService:
             await self._auth.authenticate(client.token)
         except SessionInvalidError:
             log.info("ws session of %s no longer valid; closing", client.principal.username)
-            client.close(CloseCode.UNAUTHORIZED)
+            self.manager.close(client, CloseCode.UNAUTHORIZED)
         except AuthUnavailableError as exc:
             log.warning("ws session revalidation skipped (site-db unavailable): %s", exc)
 
@@ -200,4 +200,4 @@ class RealtimeService:
                 elif isinstance(message, PongMessage):
                     self.manager.pong(client)
         except TransportClosedError:
-            client.close(CloseCode.NORMAL)
+            self.manager.close(client, CloseCode.NORMAL)

@@ -49,6 +49,9 @@ class CloseCode(IntEnum):
 
 @dataclass(eq=False, slots=True)
 class Client:
+    """연결 하나의 상태. 소유자는 `ConnectionManager`다: 상태를 바꾸는 일(구독·보낼 것·close·wake)은
+    manager 메서드로만 하고, `service.py`는 `close_code`·`wake.wait()`를 읽기만 한다."""
+
     principal: Principal
     token: str
     last_pong_s: float
@@ -59,13 +62,6 @@ class Client:
     flush_now: bool = False
     close_code: CloseCode | None = None
     wake: asyncio.Event = field(default_factory=asyncio.Event)
-
-    def close(self, code: CloseCode) -> None:
-        if self.close_code is None:
-            self.close_code = code
-        self.events.clear()
-        self.pending.clear()
-        self.wake.set()
 
 
 def _tag_value(data: Mapping[str, object]) -> TagValue | None:
@@ -108,12 +104,25 @@ class ConnectionManager:
         self._clients.add(client)
         return client
 
-    def close(self, client: Client) -> None:
+    def release(self, client: Client) -> None:
+        """연결이 끝났다(목록에서 뺀다)."""
         self._clients.discard(client)
+
+    def close(self, client: Client, code: CloseCode) -> None:
+        """닫기로 표시한다: 처음 code를 남기고 보낼 것을 버린 뒤 송신 루프를 깨운다."""
+        if client.close_code is None:
+            client.close_code = code
+        client.events.clear()
+        client.pending.clear()
+        client.wake.set()
+
+    def woken(self, client: Client) -> None:
+        """송신 루프가 깨어난 것을 받았다(다음 wake를 기다린다)."""
+        client.wake.clear()
 
     def shutdown(self) -> None:
         for client in self._clients:
-            client.close(CloseCode.GOING_AWAY)
+            self.close(client, CloseCode.GOING_AWAY)
 
     # --- 클라이언트 요청 ------------------------------------------------------------------
     def subscribe(self, client: Client, tag_ids: Iterable[int]) -> None:
@@ -164,7 +173,7 @@ class ConnectionManager:
             if client.close_code is not None:
                 continue
             if len(client.events) >= self._queue_max:
-                client.close(CloseCode.TRY_AGAIN_LATER)
+                self.close(client, CloseCode.TRY_AGAIN_LATER)
                 continue
             client.events.append(message)
             client.wake.set()
