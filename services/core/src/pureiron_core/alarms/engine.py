@@ -18,7 +18,8 @@
 
 발행·저널 쓰기는 호출자(`service.py`)가 한다(Lock discipline과 같은 모양, D8). ACK는 DB
 기록이 성공한 뒤에만 메모리에 반영해야 하므로 `plan_ack`(미리보기) → 기록 → `apply_ack` 두
-단계로 나뉜다.
+단계로 나뉜다. 기록하는 사이 새로 발생(ACTIVE_UNACKED 진입)했으면 그 ACK는 반영하지 않는다 —
+운전원이 보지 못한 발생을 확인 처리하지 않기 위해서다(ISA-18.2).
 """
 
 from __future__ import annotations
@@ -60,6 +61,14 @@ _ACTIVATABLE = frozenset({AlarmState.NORMAL, AlarmState.CLEARED_UNACKED})
 _PRIORITY_RANK = {Priority.CRITICAL: 0, Priority.HIGH: 1, Priority.MEDIUM: 2, Priority.LOW: 3}
 
 
+@dataclass(frozen=True, slots=True)
+class PlannedAck:
+    """`plan_ack`의 결과: 기록할 ACK 전이와 계획 시점의 발생 번호(`apply_ack`가 대조한다)."""
+
+    transition: AlarmTransition
+    activations: int
+
+
 class Timer(Protocol):
     """`asyncio.TimerHandle`의 쓰는 부분(테스트는 가짜 루프 타이머를 넣는다)."""
 
@@ -92,6 +101,8 @@ class _Alarm:
     changed_at: datetime | None = None
     changed_by: str | None = None
     timer: Timer | None = None
+    # ACTIVE_UNACKED에 들어간 횟수(발생 번호). ACK 계획 뒤 바뀌었으면 새 발생이다.
+    activations: int = 0
 
     def snapshot(self) -> AlarmSnapshot:
         d = self.definition
@@ -274,6 +285,8 @@ class AlarmEngine:
     ) -> AlarmTransition:
         from_state = alarm.state
         alarm.state = to_state
+        if to_state is AlarmState.ACTIVE_UNACKED:
+            alarm.activations += 1
         alarm.value, alarm.value_ts_ns = value, value_ts_ns
         alarm.changed_at = time or self._clock()
         alarm.changed_by = username
@@ -289,7 +302,7 @@ class AlarmEngine:
         )
 
     # --- ACK ------------------------------------------------------------------------------
-    def plan_ack(self, alarm_id: str, username: str) -> AlarmTransition:
+    def plan_ack(self, alarm_id: str, username: str) -> PlannedAck:
         """ACK 전이를 미리 계산한다(상태는 바꾸지 않는다 — DB 기록이 성공한 뒤 `apply_ack`)."""
         alarm = self._alarms.get(alarm_id)
         if alarm is None:
@@ -297,30 +310,36 @@ class AlarmEngine:
         target = _ACK_TARGET.get(alarm.state)
         if target is None:
             raise AlarmNotAckableError(alarm_id, alarm.state)
-        return self._preview(alarm, target, username)
+        return PlannedAck(self._preview(alarm, target, username), alarm.activations)
 
-    def plan_ack_all(self, username: str) -> list[AlarmTransition]:
+    def plan_ack_all(self, username: str) -> list[PlannedAck]:
         return [
-            self._preview(alarm, target, username)
+            PlannedAck(self._preview(alarm, target, username), alarm.activations)
             for alarm in self._alarms.values()
             if (target := _ACK_TARGET.get(alarm.state)) is not None
         ]
 
-    def apply_ack(self, planned: AlarmTransition) -> AlarmTransition | None:
-        """기록된 ACK를 지금 상태에 반영한다. 기록하는 사이 상태가 바뀌었으면(해제·재발생) 지금
-        상태 기준의 ACK 전이를 돌려준다 — 호출자는 `planned`와 다르면 그 전이를 저널에 더한다.
-        그 사이 ACK할 것이 없어졌거나 알람이 빠졌으면 None."""
-        alarm = self._alarms.get(planned.alarm_id)
-        target = _ACK_TARGET.get(alarm.state) if alarm is not None else None
-        if alarm is None or target is None:
+    def apply_ack(self, planned: PlannedAck) -> AlarmTransition | None:
+        """기록된 ACK를 지금 상태에 반영한다. None이면 반영하지 않았다: 그 사이 알람이 빠졌거나,
+        ACK할 것이 없어졌거나, 새로 발생했다(운전원이 보지 못한 발생 — 다시 ACK해야 한다).
+        기록하는 사이 해제만 됐으면 지금 상태 기준의 ACK 전이를 돌려준다 — 호출자는 계획과
+        다르면 그 전이를 저널에 더한다. 그 전이 시각은 해제 행보다 앞서지 않게 지금 시각이다
+        (저널의 마지막 행 = 메모리 상태, 재기동 복원과 같게)."""
+        recorded = planned.transition
+        alarm = self._alarms.get(recorded.alarm_id)
+        if alarm is None or alarm.activations != planned.activations:
             return None
+        target = _ACK_TARGET.get(alarm.state)
+        if target is None:
+            return None
+        unchanged = alarm.state is recorded.from_state
         return self._transition(
             alarm,
             target,
             alarm.value,
             alarm.value_ts_ns,
-            username=planned.username,
-            time=planned.time,
+            username=recorded.username,
+            time=recorded.time if unchanged else max(recorded.time, self._clock()),
         )
 
     def _preview(self, alarm: _Alarm, target: AlarmState, username: str) -> AlarmTransition:

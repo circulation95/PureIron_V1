@@ -18,7 +18,7 @@ import logging
 from collections.abc import Callable, Coroutine, Sequence
 from datetime import datetime
 
-from pureiron_core.alarms.engine import AlarmEngine, Scheduler, Timer, utc_now
+from pureiron_core.alarms.engine import AlarmEngine, PlannedAck, Scheduler, Timer, utc_now
 from pureiron_core.alarms.journal import (
     DEFAULT_FLUSH_S,
     DEFAULT_MAX_ROWS,
@@ -179,21 +179,22 @@ class AlarmService:
         self._require_restored()
         async with self._ack_lock:
             planned = self._engine.plan_ack(alarm_id, username)
+            recorded = planned.transition
             entry = AuditEntry(
                 action=AuditAction.ALARM_ACK,
                 source=AuditSource.API,
                 username=username,
                 target=alarm_id,
                 detail={
-                    "tag_path": planned.tag_path,
-                    "from_state": planned.from_state.value,
-                    "to_state": planned.to_state.value,
+                    "tag_path": recorded.tag_path,
+                    "from_state": recorded.from_state.value,
+                    "to_state": recorded.to_state.value,
                 },
             )
-            await self._store.append_acked([JournalRow.of(planned)], entry)
+            await self._store.append_acked([JournalRow.of(recorded)], entry)
             events = self._settle([planned])
         await self._publish(events)
-        return self._engine.get(alarm_id) or planned.snapshot
+        return self._engine.get(alarm_id) or recorded.snapshot
 
     async def ack_all(self, username: str) -> tuple[AlarmSnapshot, ...]:
         self._require_restored()
@@ -201,26 +202,34 @@ class AlarmService:
             planned = self._engine.plan_ack_all(username)
             if not planned:
                 return ()
+            recorded = [p.transition for p in planned]
             entry = AuditEntry(
                 action=AuditAction.ALARM_ACK_ALL,
                 source=AuditSource.API,
                 username=username,
-                detail={"alarm_ids": [t.alarm_id for t in planned], "count": len(planned)},
+                detail={"alarm_ids": [t.alarm_id for t in recorded], "count": len(recorded)},
             )
-            await self._store.append_acked([JournalRow.of(t) for t in planned], entry)
+            await self._store.append_acked([JournalRow.of(t) for t in recorded], entry)
             events = self._settle(planned)
         await self._publish(events)
-        return tuple(self._engine.get(t.alarm_id) or t.snapshot for t in planned)
+        return tuple(self._engine.get(t.alarm_id) or t.snapshot for t in recorded)
 
-    def _settle(self, planned: Sequence[AlarmTransition]) -> list[Event]:
-        """기록된 ACK를 엔진에 반영한다. 기록하는 사이 상태가 바뀌어 실제 전이가 다르면 그
-        전이를 저널 큐에 더한다(기록된 ACK 행은 사용자의 확인 행위로 남는다)."""
+    def _settle(self, planned: Sequence[PlannedAck]) -> list[Event]:
+        """기록된 ACK를 엔진에 반영한다.
+
+        - 기록하는 사이 해제돼 실제 전이가 다르면 그 전이를 저널 큐에 더한다(기록된 ACK 행은
+          사용자의 확인 행위로 남는다).
+        - 새로 발생했으면 반영하지 않는다. 그 발생 행이 저널의 마지막 행이라 메모리 상태와
+          같고, 응답은 지금 상태(ACTIVE_UNACKED)라 운전원이 다시 ACK한다.
+        """
         events: list[Event] = []
-        for transition in planned:
-            actual = self._engine.apply_ack(transition)
+        for ack in planned:
+            recorded = ack.transition
+            actual = self._engine.apply_ack(ack)
             if actual is None:
+                log.info("alarm %s ack not applied (changed while recording)", recorded.alarm_id)
                 continue
-            if (actual.from_state, actual.to_state) != (transition.from_state, transition.to_state):
+            if (actual.from_state, actual.to_state) != (recorded.from_state, recorded.to_state):
                 events.extend(self._emit([actual]))
             else:
                 events.append(_event(actual))

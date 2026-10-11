@@ -45,6 +45,7 @@ class Env:
     tags: TagStore
     store: FakeAlarmStore
     scheduler: FakeScheduler
+    clock: Clock
     service: AlarmService
     published: list[AlarmSnapshot] = field(default_factory=list[AlarmSnapshot])
 
@@ -76,6 +77,7 @@ async def env() -> AsyncGenerator[Env]:
     tags = tag_store()
     store = FakeAlarmStore()
     scheduler = FakeScheduler()
+    clock = Clock()
     service = AlarmService(
         bus,
         tags,
@@ -83,9 +85,9 @@ async def env() -> AsyncGenerator[Env]:
         journal_flush_s=60.0,
         restore_retry_s=0.01,
         schedule=scheduler,
-        clock=Clock(),
+        clock=clock,
     )
-    built = Env(bus, tags, store, scheduler, service)
+    built = Env(bus, tags, store, scheduler, clock, service)
 
     async def collect(event: Event) -> None:
         alarm = event.payload.get("alarm")
@@ -183,21 +185,58 @@ async def test_ack_failure_leaves_state_and_publishes_nothing(env: Env) -> None:
 
 
 async def test_ack_follows_clear_that_happened_while_recording(env: Env) -> None:
+    """리뷰 M-1: 해제 행 뒤에 오는 NORMAL 행이 시각으로도 마지막이다(재기동 복원 = 메모리)."""
     await _ready(env)
     await env.tag(9.0)
 
     async def clear_now() -> None:
+        env.clock.advance(0.05)
         await env.tag(1.0)  # 트랜잭션 도중 해제(tag.changed 핸들러는 ACK 직렬화와 무관하게 돈다)
+        env.clock.advance(0.05)
 
+    env.clock.advance(1.0)
     env.store.during_ack = clear_now
     acked = await env.service.ack("tank-high", "kim")
     assert acked.state is S.NORMAL  # CLEARED_UNACKED에 ACK → NORMAL
     await env.service.stop(timeout_s=1.0)
-    assert [(r.from_state, r.to_state, r.username) for r in env.store.rows][-1] == (
+    by_time = sorted(env.store.journal, key=lambda r: r.time)  # 시각이 모두 다르다
+    assert [(r.from_state, r.to_state, r.username) for r in by_time] == [
+        ("NORMAL", "ACTIVE_UNACKED", None),
+        ("ACTIVE_UNACKED", "ACTIVE_ACKED", "kim"),  # 기록된 확인 행위
+        ("ACTIVE_UNACKED", "CLEARED_UNACKED", None),
+        ("CLEARED_UNACKED", "NORMAL", "kim"),
+    ]
+    last = env.store.last_row("tank-high")
+    assert (last.to_state, last.time) == ("NORMAL", acked.changed_at)
+
+
+async def test_ack_is_not_applied_to_occurrence_raised_while_recording(env: Env) -> None:
+    """리뷰 L-A1: 기록하는 사이 해제 → 재발생하면 그 ACK는 반영하지 않는다. 응답은 지금 상태
+    (ACTIVE_UNACKED)라 운전원이 다시 ACK하고, 저널의 마지막 행도 ACTIVE_UNACKED다."""
+    await _ready(env)
+    await env.tag(9.0)
+
+    async def clear_and_raise() -> None:
+        env.clock.advance(0.05)
+        await env.tag(7.0)
+        env.clock.advance(0.05)
+        await env.tag(9.5)
+
+    env.clock.advance(1.0)
+    env.store.during_ack = clear_and_raise
+    env.published.clear()
+    acked = await env.service.ack("tank-high", "kim")
+    assert (acked.state, acked.value, acked.changed_by) == (S.ACTIVE_UNACKED, 9.5, None)
+    assert [a.state for a in env.published] == [S.CLEARED_UNACKED, S.ACTIVE_UNACKED]
+    env.store.during_ack = None
+    await env.service.stop(timeout_s=1.0)
+    last = env.store.last_row("tank-high")
+    assert (last.from_state, last.to_state, last.value) == (
         "CLEARED_UNACKED",
-        "NORMAL",
-        "kim",
+        "ACTIVE_UNACKED",
+        9.5,
     )
+    assert env.state() is S.ACTIVE_UNACKED
 
 
 async def test_ack_all_is_one_transaction_with_one_audit_entry(env: Env) -> None:

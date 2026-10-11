@@ -263,19 +263,24 @@ def test_plan_ack_does_not_change_state_until_applied() -> None:
     h = _harness()
     h.value(9.0)
     planned = h.engine.plan_ack("tank-high", "op")
-    assert planned.snapshot.state is S.ACTIVE_ACKED
+    assert planned.transition.snapshot.state is S.ACTIVE_ACKED
     assert h.state() is S.ACTIVE_UNACKED
+    h.clock.advance(1.0)
     applied = h.engine.apply_ack(planned)
     assert applied is not None
-    assert (applied.time, h.state()) == (planned.time, S.ACTIVE_ACKED)
+    assert (applied.time, h.state()) == (planned.transition.time, S.ACTIVE_ACKED)
 
 
-def test_apply_ack_follows_state_changed_while_recording() -> None:
-    """ACK를 기록하는 사이 해제됐으면 지금 상태 기준(CLEARED_UNACKED → NORMAL)으로 반영한다."""
+def test_apply_ack_follows_clear_while_recording_at_a_later_time() -> None:
+    """ACK를 기록하는 사이 해제됐으면 지금 상태 기준(CLEARED_UNACKED → NORMAL)으로 반영하고,
+    그 전이 시각은 해제 시각보다 앞서지 않는다(리뷰 M-1: 재기동 시 CLEARED_UNACKED 복원 방지)."""
     h = _harness()
     h.value(9.0)
     planned = h.engine.plan_ack("tank-high", "op")
+    h.clock.advance(0.05)
     h.value(7.0)
+    cleared_at = h.clock.now
+    h.clock.advance(0.05)
     applied = h.engine.apply_ack(planned)
     assert applied is not None
     assert (applied.from_state, applied.to_state, applied.username) == (
@@ -283,8 +288,23 @@ def test_apply_ack_follows_state_changed_while_recording() -> None:
         S.NORMAL,
         "op",
     )
+    assert planned.transition.time < cleared_at < applied.time == h.clock.now
     h.engine.set_definitions(definitions())
     assert h.engine.apply_ack(planned) is None  # 그 사이 알람이 빠졌다
+
+
+def test_apply_ack_skips_new_occurrence_raised_while_recording() -> None:
+    """기록하는 사이 해제 → 재발생했으면 ACK를 반영하지 않는다 — 운전원이 보지 못한 발생이다
+    (리뷰 L-A1). 상태는 ACTIVE_UNACKED로 남아 다시 ACK해야 한다."""
+    h = _harness()
+    h.value(9.0)
+    planned = h.engine.plan_ack("tank-high", "op")
+    h.value(7.0)
+    h.value(9.5)
+    assert h.engine.apply_ack(planned) is None
+    assert h.state() is S.ACTIVE_UNACKED
+    assert h.ack() is not None  # 새 계획으로는 ACK된다
+    assert h.state() is S.ACTIVE_ACKED
 
 
 def test_plan_ack_all_covers_only_ackable_alarms() -> None:
@@ -297,7 +317,9 @@ def test_plan_ack_all_covers_only_ackable_alarms() -> None:
     h.value(9.0)  # a·b 활성
     h.ack("a")
     planned = h.engine.plan_ack_all("op")
-    assert [(t.alarm_id, t.to_state) for t in planned] == [("b", S.ACTIVE_ACKED)]
+    assert [(p.transition.alarm_id, p.transition.to_state) for p in planned] == [
+        ("b", S.ACTIVE_ACKED)
+    ]
 
 
 def test_new_definition_evaluates_current_value_immediately() -> None:

@@ -72,6 +72,8 @@ class FakeAlarmStore:
     available: bool = True
     # ACK 트랜잭션 도중 부를 함수(기록하는 사이 상태가 바뀌는 경합 재현용).
     during_ack: Callable[[], Awaitable[None]] | None = None
+    # INSERT 순서(= DB id 순서)의 모든 저널 행. ACK 행은 트랜잭션 시작에 INSERT된다.
+    journal: list[JournalRow] = field(default_factory=list[JournalRow])
 
     def _check(self) -> None:
         if not self.available:
@@ -80,12 +82,19 @@ class FakeAlarmStore:
     async def append(self, rows: Sequence[JournalRow]) -> None:
         self._check()
         self.rows.extend(rows)
+        self.journal.extend(rows)
 
     async def append_acked(self, rows: Sequence[JournalRow], entry: AuditEntry) -> None:
         self._check()
+        self.journal.extend(rows)
         if self.during_ack is not None:
             await self.during_ack()
         self.acked.append((list(rows), entry))
+
+    def last_row(self, alarm_id: str) -> JournalRow:
+        """재기동 복원이 고를 행(`LAST_STATES_SQL`과 같은 `ORDER BY time DESC, id DESC`)."""
+        ordered = [(r.time, i, r) for i, r in enumerate(self.journal) if r.alarm_id == alarm_id]
+        return max(ordered, key=lambda item: (item[0], item[1]))[2]
 
     async def last_states(self) -> dict[str, JournalRecord]:
         self._check()
