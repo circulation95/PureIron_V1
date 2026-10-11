@@ -28,7 +28,7 @@ V1 새 코드(`services/`·`packages/`·`deploy/`)에 적용한다. 구현 전�
 
 legacy [`PureIron_ignition@legacy-final`](https://github.com/circulation95/PureIron_ignition/tree/legacy-final) 코드를 읽을 때의 규칙(`gateway.*`, Redis 등)은 [agent-rules](docs/wiki/sot/agent-rules.md)의 `legacy 코드 참고 규칙` 절에만 있다. 새 코드에 적용하지 않는다.
 
-결정 근거는 [ADR](docs/wiki/adr/index.md). 도메인 세부는 위키 SOT([architecture](docs/wiki/sot/architecture.md) · [data-contracts](docs/wiki/sot/data-contracts.md) · [runtime-config](docs/wiki/sot/runtime-config.md) · [api-events](docs/wiki/sot/api-events.md) · [frontend](docs/wiki/sot/frontend.md)) 참조.
+코드 구조·이름·주석·테스트 규약과 리뷰 체크리스트는 [coding-style](docs/wiki/sot/coding-style.md). 결정 근거는 [ADR](docs/wiki/adr/index.md). 도메인 세부는 위키 SOT([architecture](docs/wiki/sot/architecture.md) · [data-contracts](docs/wiki/sot/data-contracts.md) · [runtime-config](docs/wiki/sot/runtime-config.md) · [api-events](docs/wiki/sot/api-events.md) · [frontend](docs/wiki/sot/frontend.md)) 참조.
 
 ## Commands
 

@@ -19,6 +19,7 @@
    - API·이벤트: `docs/wiki/sot/api-events.md`
    - 프론트엔드: `docs/wiki/sot/frontend.md`
    - 런타임 설정/env: `docs/wiki/sot/runtime-config.md`
+   - V1 코드 스타일·리뷰 기준: `docs/wiki/sot/coding-style.md`
    - 테스트: `docs/wiki/sot/testing.md`
    - 결정 근거: `docs/wiki/adr/index.md`
    - 첫 계약/사업 결정: `docs/wiki/gtm/first-contract.md`

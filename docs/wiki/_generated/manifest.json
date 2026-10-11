@@ -1,5 +1,5 @@
 {
-  "doc_count": 14,
+  "doc_count": 15,
   "docs": [
     {
       "audience": "both",
@@ -57,12 +57,12 @@
     },
     {
       "audience": "both",
-      "bytes": 3942,
+      "bytes": 4095,
       "id": "wiki-index",
       "last_verified": "2026-06-30",
       "path": "docs/wiki/index.md",
       "section_count": 6,
-      "sha256": "e2555e65ff6f12d5256c79e39a07c21407498aa7bf826f04806c86ea707da93e",
+      "sha256": "589816ade436f2eed8aac48612a8c18cf1e8b77fa18497e2c1523a1a772cba5c",
       "source_globs": [],
       "sources": [
         "README.md"
@@ -97,12 +97,12 @@
     },
     {
       "audience": "agent",
-      "bytes": 17933,
+      "bytes": 18108,
       "id": "sot-agent-rules",
       "last_verified": "2026-08-17",
       "path": "docs/wiki/sot/agent-rules.md",
       "section_count": 14,
-      "sha256": "aa1082108433bbabbf244a994680466ff88d1a162c9201c99cf03904704ffbfb",
+      "sha256": "c39770523b6f2b0bf686ee9d2740518c9b9c6928ad452344c3afb08ee81a7e40",
       "source_globs": [],
       "sources": [
         "AGENTS.md",
@@ -147,6 +147,35 @@
       ],
       "status": "canonical",
       "title": "Architecture SOT — 시스템 구조"
+    },
+    {
+      "audience": "both",
+      "bytes": 14989,
+      "id": "sot-coding-style",
+      "last_verified": "2026-10-11",
+      "path": "docs/wiki/sot/coding-style.md",
+      "section_count": 13,
+      "sha256": "0f7b7264d281cdd901b2b11c92ece28db657da2a7f602f6bbb30b3f6e067f0c6",
+      "source_globs": [],
+      "sources": [
+        "pyproject.toml",
+        "services/core/.importlinter",
+        "services/core/src/pureiron_core/runtime.py",
+        "services/core/src/pureiron_core/app.py",
+        "services/core/src/pureiron_core/historian/ports.py",
+        "services/core/src/pureiron_core/historian/service.py",
+        "services/core/src/pureiron_core/historian/writer.py",
+        "services/core/src/pureiron_core/tags/store.py",
+        "services/core/src/pureiron_core/api/health.py",
+        "services/core/src/pureiron_core/settings.py",
+        "services/core/tests/test_historian_writer.py",
+        "services/web/tsconfig.json",
+        "services/web/eslint.config.js",
+        "services/web/src/App.tsx",
+        "services/web/src/api/client.ts"
+      ],
+      "status": "canonical",
+      "title": "Coding Style SOT — V1 코드 구조·추상화·이름·주석·테스트 규약"
     },
     {
       "audience": "both",
