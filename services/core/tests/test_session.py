@@ -22,7 +22,7 @@ from grpc import aio
 from pureiron_core._gen import collector_pb2 as pb
 from pureiron_core._gen import collector_pb2_grpc as pb_grpc
 from pureiron_core.acquisition.devices import DeviceMonitor, DeviceState
-from pureiron_core.acquisition.ingest import DiscardHistory, Ingestor
+from pureiron_core.acquisition.ingest import Ingestor
 from pureiron_core.acquisition.plan import build_plan
 from pureiron_core.acquisition.server import (
     SESSION_TOPIC,
@@ -299,7 +299,7 @@ def test_replay_through_recorder_is_raw_and_emits_no_events() -> None:
     assert replay_events == []
     # live: 같은 값 반복은 deadband 0으로 생략(첫 샘플만), replay 두 개는 그대로
     assert [r.value_num for r in recorded] == [20.0, 20.0, 20.0]
-    assert (recorder.stats.live_recorded, recorder.stats.raw) == (1, 2)
+    assert [r.ts_ns - first.ts_unix_ns for r in recorded] == [0, 0, 1_000]
 
 
 async def test_session_end_marks_tags_bad_and_devices_disconnected(core: Core) -> None:
@@ -480,7 +480,7 @@ def test_clock_skew_drops_are_logged_rate_limited(caplog: pytest.LogCaptureFixtu
     now = [0.0]
     tags = TagStore()
     devices = DeviceMonitor(tags)
-    ingestor = Ingestor(tags, devices, DiscardHistory(), clock=lambda: now[0])
+    ingestor = Ingestor(tags, devices, RecordingHistory(), clock=lambda: now[0])
     future = pb.ValueBatch(seq=1, samples=[_num(1, 1.0, age_s=-60)])
     with caplog.at_level(logging.WARNING, logger="pureiron_core.acquisition.ingest"):
         ingestor.ingest(future)

@@ -79,9 +79,9 @@ class _Last:
 
 @dataclass(slots=True)
 class RecorderStats:
-    raw: int = 0
-    live_recorded: int = 0
-    live_skipped: int = 0
+    """버린 샘플 수(`/readyz.historian.rejected_total`). 기록·생략 수는 세지 않는다 — 기록은
+    writer `written_total`, 경로별 수신은 `/readyz.acquisition.ingest`가 이미 낸다(R1 L11)."""
+
     rejected_rev: int = 0  # D6: batch plan_rev가 현재 rev보다 앞섬
     rejected_unknown: int = 0  # D7: 현재 정의에 없는 tag_id의 live 샘플 + int4 범위 밖 tag_id
 
@@ -238,7 +238,6 @@ class Recorder:
         if not samples or self._rev_ahead(plan_rev, len(samples)):
             return
         samples = self._invalid_ids(samples)
-        self.stats.raw += len(samples)
         if samples:
             self._sink.append([row(s) for s in samples])
 
@@ -264,8 +263,6 @@ class Recorder:
         if unknown:
             self.stats.rejected_unknown += unknown
             self._warn("unknown_tag", unknown, "live tag_id not in the current definitions")
-        self.stats.live_recorded += len(rows)
-        self.stats.live_skipped += len(samples) - unknown - len(rows)
         if rows:
             self._sink.append(rows)
 
