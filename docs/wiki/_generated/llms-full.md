@@ -974,7 +974,7 @@ PureIron 문서의 **단일 정본(Source of Truth) 허브**. 사람과 LLM 에�
 | 주제 | 문서 | 원천(SOT) |
 |------|------|-----------|
 | 제품 의도 | [product](sot/product.md) | Wiki SOT |
-| 아키텍처 | [architecture](sot/architecture.md) | `gateway.py`, backend/frontend source |
+| 아키텍처 | [architecture](sot/architecture.md) | `services/core/src/pureiron_core/runtime.py`, `collector.proto`, V1 `services/**` |
 | 런타임 설정·환경변수 | [runtime-config](sot/runtime-config.md) | `config.py`, `.env.example` |
 | 데이터 계약(DB·설정) | [data-contracts](sot/data-contracts.md) | `db/migrations/*.sql`, `configs/**` |
 | API·이벤트 | [api-events](sot/api-events.md) | `*/router.py`, `events/` |
@@ -1505,7 +1505,8 @@ PureIron V1은 현장 한 곳에 설치되는 **서비스 4개(collector·core·
   경로는 M3c).
 - PureIron은 관제·알람·이력·트렌드·감사와 Agent 보조 계층을 제공한다. 사람 승인 없는 자동 조치는 v1 범위가 아니다.
 - **graceful degradation**: `ai` 서비스와 중앙(control-api)은 선택이다. 없어도 현장은 동작한다. collector가
-  죽으면 태그는 BAD/DISCONNECTED가 되고, site-db는 필수다(core readiness 조건).
+  죽으면 태그는 BAD/DISCONNECTED가 되고, site-db는 필수다. core `/readyz`는 DB 연결 + schema epoch envelope +
+  collector 세션이 모두 있을 때만 ready다(수집·이력 상태는 정보로만 낸다).
 - 현장 변경 경로는 서명 번들 하나뿐이다. 검증에 실패하면 서비스를 멈추기 전에 거부한다. registry pull은 하지 않는다.
 
 ## 시스템 구성 (ADR-019)
@@ -1518,9 +1519,12 @@ PureIron V1은 현장 한 곳에 설치되는 **서비스 4개(collector·core·
 | `site-db` | TimescaleDB PG16(`pureiron/site-db:2.30.2-pg16`) | 마이그레이션 `0001~0009`, epoch 3 |
 | `ai` | core read-only API 소비 | 계약만, 첫 완료 범위 제외 |
 | Updater | 호스트 systemd 서비스(컨테이너 아님): 번들 검증·백업·마이그레이션·전환·롤백 | 완료(M2), VM 실측 30/30(r0→r1, r1→r2) |
-| control-api / control-web | 벤더 내부 중앙: 등록·heartbeat·desired·reports·drafts·fleet | `GET /api/v1/healthz` 골격만(M4) |
+| control-api | 벤더 내부 중앙 API: 등록·heartbeat·desired·reports·drafts·fleet | `GET /api/v1/healthz` 골격만(M4) |
+| control-web | 중앙 읽기 전용 표(basic auth) | 미착수(M4) |
+| `simulator` | 개발용 Modbus 시뮬레이터(compose profile `dev`) | `deploy/simulator/` |
 
-포트(compose): core HTTP `:8000`(`/api/v1`), core gRPC `:50051`(collector가 `PUREIRON_CORE_GRPC=core:50051`로 접속).
+포트: 호스트에 노출되는 것은 web `${PUREIRON_WEB_PORT:-80}` → 컨테이너 `8080`뿐이고, nginx가 `/api/`를 `core:8000`으로
+프록시한다. core HTTP `:8000`과 gRPC `:50051`(collector가 `PUREIRON_CORE_GRPC=core:50051`로 접속)은 compose 내부 포트다.
 
 저장소 레이아웃(ADR-026): `services/{core,collector,web,updater,control-api,ai}` · `packages/{contracts,bundle-tools,project-tools}`(계약·공용 도구) · `deploy/`(compose·install·build·bundle·release 기록) · `tests/e2e/`(Hyper-V VM 실측). 고객 프로젝트는 고객별 repo에 둔다.
 
@@ -1530,14 +1534,15 @@ PureIron V1은 현장 한 곳에 설치되는 **서비스 4개(collector·core·
 |---|---|---|---|
 | gRPC 양방향 스트림 | `Acquisition.Session`(core가 서버) | collector → `Hello`·`ValueBatch`·`DeviceHealth`, core → `AcquisitionPlan`·`Ack` | M3a |
 | REST | `/api/v1/*` | `healthz`·`readyz`, `project`(edit lock) → M3b에서 history·alarms·auth·audit·devices | 일부 |
-| WebSocket | `/api/v1/ws` | 태그 값·`alarm_event`·`device_status` 푸시(PD-10, 배치 250ms) | M3b |
+| WebSocket | `/api/v1/ws` | 태그 값·알람·장비 상태 푸시(PD-10, 메시지 계약은 M3b에서 확정) | M3b |
 | 현장 → 중앙 | HTTPS polling(현장이 먼저 연결) | desired 조회·보고·드래프트 업로드 | M4 |
 
 - **Ack 의미론**: core는 batch를 in-memory ingest(현재값 반영 + historian 버퍼 적재) 직후 Ack 한다. collector 링버퍼는
   core 다운·단절 구간만, DB 장애는 core historian 상한 버퍼(600,000행 + 쓰는 중 최대 20,000행)가 담당한다.
 - **replay**: 재연결 뒤 링버퍼에서 다시 보낸 `replay=true` batch는 이력에만 기록한다(현재값·알람·WS 갱신 없음, deadband 우회).
   중복은 `UNIQUE(tag_id, time)`로 흡수한다.
-- **무신호**: 장비별 `max(3×poll_ms, 5s)` 동안 신호가 없으면 그 장비 태그는 BAD, 장비는 DISCONNECTED.
+- **단절·무신호**: collector 세션이 모두 끊기면 전 장비 DISCONNECTED·전 태그 BAD. 세션이 있어도 장비별
+  `max(3×poll_ms, 5s)` 동안 신호가 없으면 그 장비 태그는 BAD, 장비는 DISCONNECTED.
 - 프로토콜 추가는 proto `TagPoint.address` oneof 확장으로만 한다(호환성 diff 게이트, ADR-028).
 
 ## core 구조
@@ -1547,9 +1552,11 @@ cli.py ──▶ runtime.SiteRuntime.build(settings) ──▶ app.create_app(rt
               │ 생성자 주입
               ├─ platform: Database · EventBus · migrate(Catalog, SchemaGuard)
               ├─ tags: TagStore
-              ├─ acquisition: AcquisitionServer(gRPC) ─ AcquisitionService ─ Ingestor · DeviceMonitor · PlanKeeper
+              ├─ acquisition: AcquisitionServer(gRPC)
+              │     ├─ AcquisitionService ─ Ingestor · DeviceMonitor
+              │     └─ PlanKeeper ─ PgDefinitionsSource(정의 → plan)
               ├─ historian: Historian ─ Recorder ─ HistoryWriter ─ PgRowStore
-              └─ project: PgProjectStateStore · PgDefinitionsSource
+              └─ project: PgProjectStateStore(project_state·edit lock)
 ```
 
 - 전역 싱글톤·`app.state`·service locator가 없다. 모든 객체는 `SiteRuntime.build`에서 만들어 생성자로 넘긴다.
@@ -1586,20 +1593,24 @@ cli.py ──▶ runtime.SiteRuntime.build(settings) ──▶ app.create_app(rt
 
 ```text
 PLC ─Modbus TCP─▶ collector poller ─▶ ValueBatch(100ms 또는 500값) ─▶ 링버퍼(Ack 전 보관)
-   ─gRPC Session─▶ core Ingestor
-        ├─ fresh live ─▶ TagStore.commit() (동기, 바뀐 태그의 이벤트 목록 반환)
-        │                  └─ 락 밖에서 EventBus.publish("tag.changed.<path>") ─▶ (M3b) 알람·WS
-        ├─ 모든 샘플 ─▶ Recorder(deadband·max_interval; replay·오래된 live는 원시 기록) ─▶ HistoryWriter 버퍼
-        └─ Ack(seq) ─▶ collector 링버퍼에서 제거
+   ─gRPC Session─▶ core AcquisitionService
+        ① Ingestor
+           ├─ 이력: Recorder(fresh live는 deadband·max_interval, replay·오래된/미래 live는 원시 기록) ─▶ HistoryWriter 버퍼
+           └─ 현재값: fresh live만 TagStore.commit() + DeviceMonitor.seen() (동기, 이벤트 목록 반환)
+        ② Ack(seq) ─▶ collector 링버퍼에서 제거          ← 메모리 반영 직후, 발행 전
+        ③ 락 밖에서 EventBus.publish(tag.changed.<path>, device.changed.<id>) ─▶ (M3b) 알람·WS
 HistoryWriter ─1s flush, INSERT … ON CONFLICT DO NOTHING─▶ site-db tag_history ─▶ CAGG 1m/1h
 ```
 
+- Recorder는 일부 샘플을 거부한다(plan_rev가 앞선 batch, 현재 정의에 없는 tag_id의 live 샘플, int4 범위 밖 tag_id → `rejected_total`).
+  상세 규칙은 [data-contracts](data-contracts.md)의 M3a 절.
 - 이력 기록은 `tag.changed` 구독이 아니라 Ingestor가 직접 넘기는 sink다(이벤트 루프의 reader 경로에 DB I/O가 없다).
   느린 구독자(알람 DB·WS)가 생기는 M3b에서 별도 publisher task 여부를 결정한다(m3a3 plan D5).
 
 ## 이벤트 버스 · 잠금 규율
 
-core 내부 `platform/bus.py` `EventBus`(in-process, ADR-010 개정 범위)만 있다. 서비스 간 pub/sub은 없다.
+core 내부 `platform/bus.py` `EventBus`(ADR-010 유지 — core 프로세스 내부 범위)만 있다. 서비스 간 pub/sub은 없다.
+legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이벤트를 구독하지 않는다(위 데이터 흐름의 sink).
 
 | 토픽 | 발행 | 내용 |
 |---|---|---|
@@ -1637,6 +1648,7 @@ core 내부 `platform/bus.py` `EventBus`(in-process, ADR-010 개정 범위)만 �
   `.pib` 게시(M4).
 - 현장 Updater 상태기계: `fetched` → `verified` →(적용 창)→ `committed` → `locked` → `backed_up` → `migrating` →
   `switching` → `checking` → `succeeded`, 실패 시 `rolling_back` → `failed`(수동 개입 필요 시 `failed_manual`).
+  서명·검증 실패는 커밋 전에 `rejected`로 끝난다(서비스 영향 없음, generation을 기록하지 않음).
   각 단계는 멱등이라 crash·전원 리셋 뒤 다시 실행해 수렴한다.
 - 폐쇄망 현장도 같은 `.pib`를 USB 등으로 반입해 같은 검증을 거친다. 설치는 install 번들(`deploy/install/`)로 오프라인 부트스트랩.
 - 이미지 신원 = config digest(release 기록 `deploy/releases/<r>.json`). 현장 이미지는 번들에서 `docker load`만 한다.

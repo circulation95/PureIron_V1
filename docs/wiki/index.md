@@ -32,7 +32,7 @@ PureIron 문서의 **단일 정본(Source of Truth) 허브**. 사람과 LLM 에�
 | 주제 | 문서 | 원천(SOT) |
 |------|------|-----------|
 | 제품 의도 | [product](sot/product.md) | Wiki SOT |
-| 아키텍처 | [architecture](sot/architecture.md) | `gateway.py`, backend/frontend source |
+| 아키텍처 | [architecture](sot/architecture.md) | `services/core/src/pureiron_core/runtime.py`, `collector.proto`, V1 `services/**` |
 | 런타임 설정·환경변수 | [runtime-config](sot/runtime-config.md) | `config.py`, `.env.example` |
 | 데이터 계약(DB·설정) | [data-contracts](sot/data-contracts.md) | `db/migrations/*.sql`, `configs/**` |
 | API·이벤트 | [api-events](sot/api-events.md) | `*/router.py`, `events/` |

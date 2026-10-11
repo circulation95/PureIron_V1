@@ -55,12 +55,12 @@
     },
     {
       "audience": "both",
-      "bytes": 4095,
+      "bytes": 4139,
       "id": "wiki-index",
       "last_verified": "2026-06-30",
       "path": "docs/wiki/index.md",
       "section_count": 6,
-      "sha256": "589816ade436f2eed8aac48612a8c18cf1e8b77fa18497e2c1523a1a772cba5c",
+      "sha256": "5a43ca40032b7495e83014fdbbe079bbd2285da578485904466a3d24d7ef0f61",
       "source_globs": [],
       "sources": [
         "README.md"
@@ -131,12 +131,12 @@
     },
     {
       "audience": "both",
-      "bytes": 16366,
+      "bytes": 17643,
       "id": "sot-architecture",
       "last_verified": "2026-10-11",
       "path": "docs/wiki/sot/architecture.md",
       "section_count": 17,
-      "sha256": "cc9d63338606e2e869a0ae124d85beef498713cc63880b1e24792bbe3b096e57",
+      "sha256": "b4e9c6eb01c0466deadb3897d28aedd84ab1d1b66ffd7b6906ff259de01dba1c",
       "source_globs": [],
       "sources": [
         "services/core/src/pureiron_core/runtime.py",

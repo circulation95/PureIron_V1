@@ -73,9 +73,9 @@ gtm-first-contract	docs/wiki/gtm/first-contract.md	유료-전환-신호-후보-�
 gtm-first-contract	docs/wiki/gtm/first-contract.md	유료-전환-조건-tbd--needs-founder-input	256	6	501	h3	유료 전환 조건 (`TBD` / `needs-founder-input`)
 gtm-first-contract	docs/wiki/gtm/first-contract.md	창업자-딥인터뷰-질문	262	13	2178	h2	창업자 딥인터뷰 질문
 gtm-first-contract	docs/wiki/gtm/first-contract.md	backlog--다음-단계	275	10	1479	h2	Backlog / 다음 단계
-wiki-index	docs/wiki/index.md	pureiron-wiki	12	63	3926	h1	PureIron Wiki
+wiki-index	docs/wiki/index.md	pureiron-wiki	12	63	3970	h1	PureIron Wiki
 wiki-index	docs/wiki/index.md	구획-문서-수명-기준	18	12	631	h2	구획 (문서 수명 기준)
-wiki-index	docs/wiki/index.md	sot-지도	30	23	1443	h2	SOT 지도
+wiki-index	docs/wiki/index.md	sot-지도	30	23	1487	h2	SOT 지도
 wiki-index	docs/wiki/index.md	sot-외-구획	46	7	252	h3	SOT 외 구획
 wiki-index	docs/wiki/index.md	생성물-수기-편집-금지	53	11	900	h2	생성물 (수기 편집 금지)
 wiki-index	docs/wiki/index.md	도구	64	11	511	h2	도구
@@ -112,23 +112,23 @@ sot-api-events	docs/wiki/sot/api-events.md	서버--클라이언트	97	12	967	h3	
 sot-api-events	docs/wiki/sot/api-events.md	chat-sse-이벤트	109	19	815	h2	Chat SSE 이벤트
 sot-api-events	docs/wiki/sot/api-events.md	v1-core-운영-api-apiv1-m3a-구현	128	10	1433	h2	V1 core 운영 API (`/api/v1`, M3a 구현)
 sot-api-events	docs/wiki/sot/api-events.md	내부-이벤트-버스	138	18	829	h2	내부 이벤트 버스
-sot-architecture	docs/wiki/sot/architecture.md	architecture-sot	25	205	15497	h1	Architecture SOT
+sot-architecture	docs/wiki/sot/architecture.md	architecture-sot	25	217	16774	h1	Architecture SOT
 sot-architecture	docs/wiki/sot/architecture.md	이-문서의-원천	39	8	449	h2	이 문서의 원천
-sot-architecture	docs/wiki/sot/architecture.md	아키텍처-경계	47	9	734	h2	아키텍처 경계
-sot-architecture	docs/wiki/sot/architecture.md	시스템-구성-adr-019	56	16	1602	h2	시스템 구성 (ADR-019)
-sot-architecture	docs/wiki/sot/architecture.md	통신-경계-adr-020	72	16	1333	h2	통신 경계 (ADR-020)
-sot-architecture	docs/wiki/sot/architecture.md	core-구조	88	28	1930	h2	core 구조
-sot-architecture	docs/wiki/sot/architecture.md	core-domain-model-boundary-sot	116	14	1245	h2	Core Domain Model Boundary (SoT)
-sot-architecture	docs/wiki/sot/architecture.md	데이터-흐름-수집--현재값이력	130	15	1002	h2	데이터 흐름: 수집 → 현재값·이력
-sot-architecture	docs/wiki/sot/architecture.md	이벤트-버스--잠금-규율	145	14	821	h2	이벤트 버스 · 잠금 규율
-sot-architecture	docs/wiki/sot/architecture.md	지원-디바이스-프로토콜-v1	159	11	796	h2	지원 디바이스 프로토콜 (v1)
-sot-architecture	docs/wiki/sot/architecture.md	db--마이그레이션-adr-021-adr-024	170	9	700	h2	DB · 마이그레이션 (ADR-021, ADR-024)
-sot-architecture	docs/wiki/sot/architecture.md	배포--중앙-adr-022-adr-023	179	10	859	h2	배포 · 중앙 (ADR-022, ADR-023)
-sot-architecture	docs/wiki/sot/architecture.md	v1-구현-현황-2026-10-11	189	14	819	h2	V1 구현 현황 (2026-10-11)
-sot-architecture	docs/wiki/sot/architecture.md	프론트엔드-경계	203	6	417	h2	프론트엔드 경계
-sot-architecture	docs/wiki/sot/architecture.md	legacy-참고-pureiron_ignition	209	21	1696	h2	legacy 참고 (PureIron_ignition)
-sot-architecture	docs/wiki/sot/architecture.md	tagsourcekind-taxonomy	220	6	521	h3	TagSourceKind Taxonomy
-sot-architecture	docs/wiki/sot/architecture.md	온톨로지-투영	226	4	327	h3	온톨로지 투영
+sot-architecture	docs/wiki/sot/architecture.md	아키텍처-경계	47	10	864	h2	아키텍처 경계
+sot-architecture	docs/wiki/sot/architecture.md	시스템-구성-adr-019	57	19	1917	h2	시스템 구성 (ADR-019)
+sot-architecture	docs/wiki/sot/architecture.md	통신-경계-adr-020	76	17	1456	h2	통신 경계 (ADR-020)
+sot-architecture	docs/wiki/sot/architecture.md	core-구조	93	30	2025	h2	core 구조
+sot-architecture	docs/wiki/sot/architecture.md	core-domain-model-boundary-sot	123	14	1245	h2	Core Domain Model Boundary (SoT)
+sot-architecture	docs/wiki/sot/architecture.md	데이터-흐름-수집--현재값이력	137	18	1331	h2	데이터 흐름: 수집 → 현재값·이력
+sot-architecture	docs/wiki/sot/architecture.md	이벤트-버스--잠금-규율	155	15	980	h2	이벤트 버스 · 잠금 규율
+sot-architecture	docs/wiki/sot/architecture.md	지원-디바이스-프로토콜-v1	170	11	796	h2	지원 디바이스 프로토콜 (v1)
+sot-architecture	docs/wiki/sot/architecture.md	db--마이그레이션-adr-021-adr-024	181	9	700	h2	DB · 마이그레이션 (ADR-021, ADR-024)
+sot-architecture	docs/wiki/sot/architecture.md	배포--중앙-adr-022-adr-023	190	11	985	h2	배포 · 중앙 (ADR-022, ADR-023)
+sot-architecture	docs/wiki/sot/architecture.md	v1-구현-현황-2026-10-11	201	14	819	h2	V1 구현 현황 (2026-10-11)
+sot-architecture	docs/wiki/sot/architecture.md	프론트엔드-경계	215	6	417	h2	프론트엔드 경계
+sot-architecture	docs/wiki/sot/architecture.md	legacy-참고-pureiron_ignition	221	21	1696	h2	legacy 참고 (PureIron_ignition)
+sot-architecture	docs/wiki/sot/architecture.md	tagsourcekind-taxonomy	232	6	521	h3	TagSourceKind Taxonomy
+sot-architecture	docs/wiki/sot/architecture.md	온톨로지-투영	238	4	327	h3	온톨로지 투영
 sot-coding-style	docs/wiki/sot/coding-style.md	coding-style-sot	32	230	20217	h1	Coding Style SOT
 sot-coding-style	docs/wiki/sot/coding-style.md	1-우선순위	40	10	618	h2	1. 우선순위
 sot-coding-style	docs/wiki/sot/coding-style.md	2-기계-게이트-어기면-ci-실패	50	19	1918	h2	2. 기계 게이트 (어기면 CI 실패)
