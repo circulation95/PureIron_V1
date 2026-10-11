@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from pureiron_core.api.errors import site_db_unavailable
 from pureiron_core.audit.ports import AuditAction, AuditEntry, AuditSink, AuditSource
-from pureiron_core.auth.passwords import username_problem
+from pureiron_core.auth.passwords import PASSWORD_MAX_CHARS, PASSWORD_MIN_CHARS, username_problem
 from pureiron_core.auth.ports import (
     AuthPort,
     AuthUnavailableError,
@@ -36,10 +36,8 @@ log = logging.getLogger(__name__)
 SESSION_COOKIE = "pureiron_session"
 # 쿠키는 API 경로에만 보낸다(웹 정적 파일 요청에는 실리지 않게). WS(`/api/v1/ws`)도 이 아래다.
 SESSION_COOKIE_PATH = "/api"
-# 입력 상한(그보다 긴 비밀번호는 정책상 존재할 수 없다 — passwords.PASSWORD_MAX_CHARS).
+# username 입력 상한(규칙은 3~32자 — 그보다 조금 넉넉히 받아 401로 끝낸다).
 _USERNAME_MAX_CHARS = 64
-_PASSWORD_MAX_CHARS = 128
-_PASSWORD_MIN_CHARS = 8
 
 _session_cookie = APIKeyCookie(
     name=SESSION_COOKIE,
@@ -69,7 +67,7 @@ class LoginRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     username: str = Field(min_length=1, max_length=_USERNAME_MAX_CHARS)
-    password: str = Field(min_length=1, max_length=_PASSWORD_MAX_CHARS)
+    password: str = Field(min_length=1, max_length=PASSWORD_MAX_CHARS)
 
 
 class MeOut(BaseModel):
@@ -90,8 +88,8 @@ class LoginOut(BaseModel):
 class PasswordChangeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    current_password: str = Field(min_length=1, max_length=_PASSWORD_MAX_CHARS)
-    new_password: str = Field(min_length=_PASSWORD_MIN_CHARS, max_length=_PASSWORD_MAX_CHARS)
+    current_password: str = Field(min_length=1, max_length=PASSWORD_MAX_CHARS)
+    new_password: str = Field(min_length=PASSWORD_MIN_CHARS, max_length=PASSWORD_MAX_CHARS)
 
     @field_validator("current_password")
     @classmethod

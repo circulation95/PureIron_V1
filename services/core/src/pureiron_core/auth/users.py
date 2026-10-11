@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
 
 import asyncpg
 
+from pureiron_core.auth._db import auth_connection
 from pureiron_core.auth.ports import (
     AuthUnavailableError,
     Principal,
@@ -17,7 +16,7 @@ from pureiron_core.auth.ports import (
     UserExistsError,
     UserNotFoundError,
 )
-from pureiron_core.platform.db import Connection, Database, DatabaseUnavailableError
+from pureiron_core.platform.db import Database
 
 # 로그인·세션 검증 경로의 조회 제한 시간(half-open DB 연결에서 요청이 멈추지 않게).
 _QUERY_TIMEOUT_S = 5.0
@@ -80,28 +79,20 @@ class PgUserStore:
     def __init__(self, db: Database) -> None:
         self._db = db
 
-    @asynccontextmanager
-    async def _connection(self) -> AsyncGenerator[Connection]:
-        try:
-            async with self._db.connection() as conn:
-                yield conn
-        except (DatabaseUnavailableError, asyncpg.PostgresError) as exc:
-            raise AuthUnavailableError(f"site-db error: {exc}") from exc
-
     async def get(self, username: str) -> UserRecord | None:
-        async with self._connection() as conn:
+        async with auth_connection(self._db) as conn:
             row = await conn.fetchrow(SELECT_BY_NAME_SQL, username, timeout=_QUERY_TIMEOUT_S)
         return None if row is None else _record(row)
 
     async def list_all(self) -> tuple[UserRecord, ...]:
-        async with self._connection() as conn:
+        async with auth_connection(self._db) as conn:
             rows = await conn.fetch(SELECT_ALL_SQL, timeout=_QUERY_TIMEOUT_S)
         return tuple(_record(row) for row in rows)
 
     async def add(
         self, *, username: str, display_name: str | None, role: Role, password_hash: str
     ) -> UserRecord:
-        async with self._connection() as conn:
+        async with auth_connection(self._db) as conn:
             try:
                 row = await conn.fetchrow(
                     INSERT_SQL,
@@ -124,7 +115,7 @@ class PgUserStore:
         return await self._update(UPDATE_ENABLED_SQL, username, enabled)
 
     async def _update(self, sql: str, username: str, value: object) -> UserRecord:
-        async with self._connection() as conn:
+        async with auth_connection(self._db) as conn:
             row = await conn.fetchrow(sql, username, value, timeout=_QUERY_TIMEOUT_S)
         if row is None:
             raise UserNotFoundError(username)

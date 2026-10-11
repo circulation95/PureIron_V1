@@ -5,15 +5,12 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
 
-import asyncpg
-
-from pureiron_core.auth.ports import AuthUnavailableError, Principal, Role
-from pureiron_core.platform.db import Connection, Database, DatabaseUnavailableError
+from pureiron_core.auth._db import auth_connection
+from pureiron_core.auth.ports import Principal, Role
+from pureiron_core.platform.db import Database
 
 # 매 요청의 세션 검증 경로라 짧게 둔다(half-open DB 연결에서 요청이 멈추지 않게).
 _QUERY_TIMEOUT_S = 5.0
@@ -61,25 +58,17 @@ class PgSessionStore:
     def __init__(self, db: Database) -> None:
         self._db = db
 
-    @asynccontextmanager
-    async def _connection(self) -> AsyncGenerator[Connection]:
-        try:
-            async with self._db.connection() as conn:
-                yield conn
-        except (DatabaseUnavailableError, asyncpg.PostgresError) as exc:
-            raise AuthUnavailableError(f"site-db error: {exc}") from exc
-
     async def create(
         self, token_sha256: bytes, user_id: int, *, now: datetime, expires_at: datetime
     ) -> None:
-        async with self._connection() as conn, conn.transaction():
+        async with auth_connection(self._db) as conn, conn.transaction():
             await conn.execute(PURGE_SQL, user_id, now, timeout=_QUERY_TIMEOUT_S)
             await conn.execute(
                 INSERT_SQL, token_sha256, user_id, now, expires_at, timeout=_QUERY_TIMEOUT_S
             )
 
     async def lookup(self, token_sha256: bytes) -> SessionRecord | None:
-        async with self._connection() as conn:
+        async with auth_connection(self._db) as conn:
             row = await conn.fetchrow(LOOKUP_SQL, token_sha256, timeout=_QUERY_TIMEOUT_S)
         if row is None:
             return None
@@ -95,14 +84,14 @@ class PgSessionStore:
         )
 
     async def touch(self, token_sha256: bytes, at: datetime) -> None:
-        async with self._connection() as conn:
+        async with auth_connection(self._db) as conn:
             await conn.execute(TOUCH_SQL, token_sha256, at, timeout=_QUERY_TIMEOUT_S)
 
     async def revoke(self, token_sha256: bytes, at: datetime) -> None:
-        async with self._connection() as conn:
+        async with auth_connection(self._db) as conn:
             await conn.execute(REVOKE_SQL, token_sha256, at, timeout=_QUERY_TIMEOUT_S)
 
     async def revoke_user(self, user_id: int, at: datetime, *, keep: bytes | None = None) -> None:
         """사용자의 열린 세션을 모두 폐기한다(`keep` 세션은 남긴다 — 본인 비밀번호 변경)."""
-        async with self._connection() as conn:
+        async with auth_connection(self._db) as conn:
             await conn.execute(REVOKE_USER_SQL, user_id, at, keep, timeout=_QUERY_TIMEOUT_S)

@@ -72,8 +72,8 @@ def _derive(password: str, salt: bytes, *, n: int, r: int, p: int, size: int) ->
     )
 
 
-def hash_password(password: str, *, salt: bytes | None = None) -> str:
-    salt = secrets.token_bytes(SALT_BYTES) if salt is None else salt
+def hash_password(password: str) -> str:
+    salt = secrets.token_bytes(SALT_BYTES)
     digest = _derive(password, salt, n=DEFAULT_N, r=DEFAULT_R, p=DEFAULT_P, size=HASH_BYTES)
     return f"{SCHEME}${DEFAULT_N}${DEFAULT_R}${DEFAULT_P}${_b64(salt)}${_b64(digest)}"
 
