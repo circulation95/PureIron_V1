@@ -14,6 +14,7 @@ import asyncpg
 import pytest
 
 from pureiron_core.platform import migrate
+from pureiron_core.platform.sqltext import split_statements
 
 from .conftest import MIGRATIONS, SiteDb, Stack
 
@@ -370,5 +371,76 @@ async def test_epoch2_resumes_after_crash_between_files(
         assert await migrate.read_epoch(conn) == 2
         assert await conn.fetchval(CAGG_COUNT_SQL, "tag_history_1h") == 1
         assert await conn.fetchval(REFRESH_POLICY_COUNT_SQL, "tag_history_1h") == 1
+    finally:
+        await conn.close()
+
+
+EPOCH3_COLUMNS_SQL = (
+    "SELECT count(*) FROM information_schema.columns WHERE (table_name, column_name) IN "
+    "(('devices', 'definition'), ('tags', 'definition'), "
+    "('project_state', 'definitions_rev'), ('project_state', 'historian'))"
+)
+REALTIME_CAGG_SQL = (
+    "SELECT bool_and(NOT materialized_only) FROM timescaledb_information.continuous_aggregates"
+    " WHERE view_name IN ('tag_history_1m', 'tag_history_1h')"
+)
+
+
+@pytest.mark.fresh_db
+@pytest.mark.parametrize(
+    ("done", "partial"),
+    [
+        ((), "0008_definitions.sql"),
+        (("0008_definitions.sql",), None),
+        (("0008_definitions.sql",), "0009_historian.sql"),
+    ],
+    ids=["0008-mid-file", "0008-recorded", "0009-mid-file"],
+)
+async def test_epoch3_resumes_after_crash_in_or_between_files(
+    stack: Stack, fresh_database: str, done: tuple[str, ...], partial: str | None
+) -> None:
+    """S3: epoch 3의 두 파일(0008·0009, 파일 단위 트랜잭션) 도중·사이에서 끊긴 상태에서 `up` → 수렴.
+
+    - `*-mid-file`: 첫 구문만 실행되고 커밋 전에 연결이 끊김 → 그 파일 전체가 롤백되고 기록도 없다.
+      재실행은 그 파일부터 다시 한다(ADD COLUMN이 "이미 있음"으로 실패하지 않는다).
+    - `0008-recorded`: 0008까지 기록되고 0009 전에 죽음 → epoch는 2에 머문다(r1 앱 ready).
+    """
+    catalog = migrate.load_catalog(MIGRATIONS)
+    by_name = {m.filename: m for m in catalog.migrations}
+    env = stack.cli_env(fresh_database)
+    assert _cli(env, "migrate", "up", "--to", "2").returncode == 0
+    conn = await asyncpg.connect(stack.dsn(fresh_database), password=stack.password)
+    try:
+        for name in done:
+            async with conn.transaction():
+                await conn.execute(by_name[name].sql)
+                await conn.execute(
+                    "INSERT INTO schema_migrations (version, name, checksum, release) "
+                    "VALUES ($1, $2, $3, 'test')",
+                    by_name[name].version,
+                    by_name[name].name,
+                    by_name[name].checksum,
+                )
+    finally:
+        await conn.close()
+    if partial is not None:
+        crashed = await asyncpg.connect(stack.dsn(fresh_database), password=stack.password)
+        await crashed.execute("BEGIN")
+        await crashed.execute(split_statements(by_name[partial].sql)[0].sql)
+        crashed.terminate()  # 커밋 전 프로세스 crash
+
+    last_done = max((by_name[name].version for name in done), default=catalog.last_version_of(2))
+    pending = [m.filename for m in catalog.migrations if m.version > last_done]
+    status = json.loads(_cli(env, "migrate", "status", "--json").stdout)
+    assert (status["cur"], status["pending"]) == (2, pending)
+
+    up = _cli(env, "migrate", "up", "--to", "3")
+    assert up.returncode == 0, up.stderr
+    assert f"applied {2 - len(done)}" in up.stdout
+    conn = await asyncpg.connect(stack.dsn(fresh_database), password=stack.password)
+    try:
+        assert await migrate.read_epoch(conn) == 3
+        assert await conn.fetchval(EPOCH3_COLUMNS_SQL) == 4
+        assert await conn.fetchval(REALTIME_CAGG_SQL) is True
     finally:
         await conn.close()
