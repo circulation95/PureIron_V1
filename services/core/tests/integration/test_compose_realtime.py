@@ -6,7 +6,7 @@
 ≤ 2s 판정 근거: 알람 이벤트의 `value_ts`는 전이를 만든 샘플 시각(collector가 poll한 순간,
 Docker VM 벽시계) = 조건이 성립한 시각이다. 수신 시각은 호스트 벽시계라, 같은 순간의 core
 컨테이너 벽시계를 `docker exec`로 읽어 차이(offset)를 더해 VM 시계로 옮긴다. 지연 = 수신(VM
-시계) − value_ts. offset을 읽은 왕복 시간의 절반을 측정 불확실성으로 더 허용한다(왕복이 1s를
+시계) - value_ts. offset을 읽은 왕복 시간의 절반을 측정 불확실성으로 더 허용한다(왕복이 1s를
 넘으면 판정 불가로 실패).
 """
 
@@ -50,7 +50,7 @@ type Json = dict[str, object]
 
 
 def _vm_offset_s(stack: Stack) -> tuple[float, float]:
-    """(core 컨테이너 벽시계 − 호스트 벽시계, 왕복 초)."""
+    """(core 컨테이너 벽시계 - 호스트 벽시계, 왕복 초)."""
     container = compose(stack.compose_env, "ps", "-q", "core").stdout.strip()
     started = time.time()
     out = subprocess.run(
