@@ -120,6 +120,17 @@ async def test_me_works_with_cookie_and_with_bearer() -> None:
     assert fresh.get(ME, headers=_bearer(token)).json()["role"] == "operator"
 
 
+async def test_cookie_wins_over_bearer_when_both_are_sent() -> None:
+    """문서 계약(api-events): 쿠키와 Bearer가 둘 다 오면 쿠키를 쓴다."""
+    api = _api()
+    await _user(api)
+    token = _login(api)  # api.client는 유효한 쿠키를 가진다
+    both = api.client.get(ME, headers=_bearer("not-a-session"))
+    assert (both.status_code, both.json()["username"]) == (200, "alice")
+    dead_cookie = TestClient(api.app, cookies={SESSION_COOKIE: "not-a-session"})
+    assert dead_cookie.get(ME, headers=_bearer(token)).status_code == 401
+
+
 @pytest.mark.parametrize("headers", [{}, {"Authorization": "Bearer nope"}, {"Authorization": "x"}])
 async def test_me_without_valid_session_is_401(headers: dict[str, str]) -> None:
     api = _api()

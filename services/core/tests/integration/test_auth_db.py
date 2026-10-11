@@ -142,6 +142,28 @@ async def test_sessions_store_only_digest_and_revoke_immediately(
 
 
 @pytest.mark.fresh_db
+async def test_change_password_keeps_only_the_calling_session(
+    site_db: SiteDb, db: Database
+) -> None:
+    """`REVOKE_USER_SQL`의 `keep`(`token_sha256 IS DISTINCT FROM $3`)이 실제 DB에서 맞게 묶인다."""
+    service = AuthService(PgUserStore(db), PgSessionStore(db), clock=Clock())
+    await service.add_user("alice", PASSWORD, Role.OPERATOR)
+    first = await service.login("alice", PASSWORD)
+    second = await service.login("alice", PASSWORD)
+    principal = await service.authenticate(first.token)
+    await service.change_password(principal, first.token, PASSWORD, "second-pass-2")
+    assert (await service.authenticate(first.token)).username == "alice"
+    with pytest.raises(SessionInvalidError, match="revoked"):
+        await service.authenticate(second.token)
+    rows = await _fetch(site_db, "SELECT token_sha256, revoked_at FROM sessions")
+    revoked = {bytes(r["token_sha256"]): r["revoked_at"] is not None for r in rows}
+    assert revoked == {
+        hashlib.sha256(first.token.encode()).digest(): False,
+        hashlib.sha256(second.token.encode()).digest(): True,
+    }
+
+
+@pytest.mark.fresh_db
 async def test_concurrent_add_of_same_username_has_one_winner(db: Database) -> None:
     service = AuthService(PgUserStore(db), PgSessionStore(db))
     results = await asyncio.gather(
