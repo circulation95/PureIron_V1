@@ -194,12 +194,12 @@
     },
     {
       "audience": "both",
-      "bytes": 47538,
+      "bytes": 47628,
       "id": "sot-data-contracts",
       "last_verified": "2026-08-22",
       "path": "docs/wiki/sot/data-contracts.md",
       "section_count": 22,
-      "sha256": "29010d660ee4e0a79edbd6adf2f424191363b403edb90fe222f4fb6452cd6877",
+      "sha256": "7be35d7fc78240eb2989db66ac47984563e723d2723a0ffe9e6cf6530e33f4d9",
       "source_globs": [
         "projects/demo-coffee/**/*.yaml",
         "projects/demo-coffee/**/*.json"
@@ -283,7 +283,7 @@
       "last_verified": "2026-06-26",
       "path": "docs/wiki/sot/runtime-config.md",
       "section_count": 12,
-      "sha256": "fd634bc3b6e4e5260d175df1289ccc973d1aa2033870855592f78b069a7aefd0",
+      "sha256": "4f0005bfb4966ba861e80903e539eccdb5013b4536ffc1c64f530e5dab451e76",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/config.py",

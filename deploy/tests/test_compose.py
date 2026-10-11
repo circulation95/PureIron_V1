@@ -9,6 +9,8 @@ from typing import Protocol, cast
 from images import read_lock
 from ruamel.yaml import YAML
 
+from pureiron_core.cli import HTTP_GRACEFUL_SHUTDOWN_S
+
 DEPLOY = Path(__file__).resolve().parents[1]
 COMPOSE = DEPLOY / "compose" / "site.compose.yml"
 LOCK = DEPLOY / "releases" / "site-db.lock"
@@ -77,10 +79,14 @@ def test_site_db_telemetry_off() -> None:
     assert "timescaledb.telemetry_level=off" in command
 
 
+# half-open DB에서 HTTP 유예 뒤 종료 최악(초): uvicorn 0.2 + plan keeper 반환 정리 5 + gRPC grace 2
+# + historian 15(`pureiron_core/cli.py` HTTP_GRACEFUL_SHUTDOWN_S 주석).
+RUNTIME_STOP_WORST_S = 0.2 + 5 + 2 + 15
+
+
 def test_core_stop_grace_covers_worst_case_shutdown() -> None:
-    """W5: SIGKILL 전에 최종 이력 flush가 끝나야 한다. 최악 = uvicorn 0.1s + HTTP 유예 2s +
-    gRPC grace 2s + historian 15s(half-open DB) = 19.1s(`pureiron_core/cli.py` 주석)."""
+    """W5: SIGKILL 전에 최종 이력 flush가 끝나야 한다."""
     grace = str(_services()["core"]["stop_grace_period"])
     match = re.fullmatch(r"(\d+)s", grace)
     assert match is not None, grace
-    assert int(match.group(1)) > 0.1 + 2 + 2 + 15
+    assert int(match.group(1)) > HTTP_GRACEFUL_SHUTDOWN_S + RUNTIME_STOP_WORST_S
