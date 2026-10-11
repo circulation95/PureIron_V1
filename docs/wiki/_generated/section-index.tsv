@@ -132,20 +132,20 @@ sot-architecture	docs/wiki/sot/architecture.md	프론트엔드-경계	226	6	417	
 sot-architecture	docs/wiki/sot/architecture.md	legacy-참고-pureiron_ignition	232	21	1696	h2	legacy 참고 (PureIron_ignition)
 sot-architecture	docs/wiki/sot/architecture.md	tagsourcekind-taxonomy	243	6	521	h3	TagSourceKind Taxonomy
 sot-architecture	docs/wiki/sot/architecture.md	온톨로지-투영	249	4	327	h3	온톨로지 투영
-sot-coding-style	docs/wiki/sot/coding-style.md	coding-style-sot	32	233	20635	h1	Coding Style SOT
+sot-coding-style	docs/wiki/sot/coding-style.md	coding-style-sot	32	235	20847	h1	Coding Style SOT
 sot-coding-style	docs/wiki/sot/coding-style.md	1-우선순위	40	10	618	h2	1. 우선순위
 sot-coding-style	docs/wiki/sot/coding-style.md	2-기계-게이트-어기면-ci-실패	50	19	1918	h2	2. 기계 게이트 (어기면 CI 실패)
-sot-coding-style	docs/wiki/sot/coding-style.md	3-core-모듈-구조	69	31	2497	h2	3. core 모듈 구조
-sot-coding-style	docs/wiki/sot/coding-style.md	4-추상화-기준	100	24	1747	h2	4. 추상화 기준
-sot-coding-style	docs/wiki/sot/coding-style.md	5-이름	124	24	2260	h2	5. 이름
-sot-coding-style	docs/wiki/sot/coding-style.md	6-함수와-파일-크기	148	12	1057	h2	6. 함수와 파일 크기
-sot-coding-style	docs/wiki/sot/coding-style.md	7-주석docstring메시지-언어	160	20	1728	h2	7. 주석·docstring·메시지 언어
-sot-coding-style	docs/wiki/sot/coding-style.md	8-에러-처리로깅비동기	180	26	2650	h2	8. 에러 처리·로깅·비동기
-sot-coding-style	docs/wiki/sot/coding-style.md	9-테스트	206	12	1086	h2	9. 테스트
-sot-coding-style	docs/wiki/sot/coding-style.md	10-프론트엔드-servicesweb-처방--m3b부터-적용	218	12	1091	h2	10. 프론트엔드 (`services/web`, 처방 — M3b부터 적용)
-sot-coding-style	docs/wiki/sot/coding-style.md	11-리뷰-체크리스트-가독성구조	230	17	1522	h2	11. 리뷰 체크리스트 (가독성·구조)
-sot-coding-style	docs/wiki/sot/coding-style.md	12-현재-코드와의-차이-백로그-2026-10-11-검토-기준	247	14	1558	h2	12. 현재 코드와의 차이 (백로그, 2026-10-11 검토 기준)
-sot-coding-style	docs/wiki/sot/coding-style.md	13-이-문서를-바꾸는-법	261	4	281	h2	13. 이 문서를 바꾸는 법
+sot-coding-style	docs/wiki/sot/coding-style.md	3-core-모듈-구조	69	33	2767	h2	3. core 모듈 구조
+sot-coding-style	docs/wiki/sot/coding-style.md	4-추상화-기준	102	24	1747	h2	4. 추상화 기준
+sot-coding-style	docs/wiki/sot/coding-style.md	5-이름	126	24	2260	h2	5. 이름
+sot-coding-style	docs/wiki/sot/coding-style.md	6-함수와-파일-크기	150	12	1057	h2	6. 함수와 파일 크기
+sot-coding-style	docs/wiki/sot/coding-style.md	7-주석docstring메시지-언어	162	20	1728	h2	7. 주석·docstring·메시지 언어
+sot-coding-style	docs/wiki/sot/coding-style.md	8-에러-처리로깅비동기	182	26	2650	h2	8. 에러 처리·로깅·비동기
+sot-coding-style	docs/wiki/sot/coding-style.md	9-테스트	208	12	1086	h2	9. 테스트
+sot-coding-style	docs/wiki/sot/coding-style.md	10-프론트엔드-servicesweb-처방--m3b부터-적용	220	12	1091	h2	10. 프론트엔드 (`services/web`, 처방 — M3b부터 적용)
+sot-coding-style	docs/wiki/sot/coding-style.md	11-리뷰-체크리스트-가독성구조	232	17	1522	h2	11. 리뷰 체크리스트 (가독성·구조)
+sot-coding-style	docs/wiki/sot/coding-style.md	12-현재-코드와의-차이-백로그-2026-10-11-검토-기준	249	14	1500	h2	12. 현재 코드와의 차이 (백로그, 2026-10-11 검토 기준)
+sot-coding-style	docs/wiki/sot/coding-style.md	13-이-문서를-바꾸는-법	263	4	281	h2	13. 이 문서를 바꾸는 법
 sot-data-contracts	docs/wiki/sot/data-contracts.md	data-contracts-sot	20	336	52583	h1	Data Contracts SOT
 sot-data-contracts	docs/wiki/sot/data-contracts.md	이-문서의-원천	28	8	847	h2	이 문서의 원천
 sot-data-contracts	docs/wiki/sot/data-contracts.md	마이그레이션-규율	36	17	1446	h2	마이그레이션 규율

@@ -159,12 +159,12 @@
     },
     {
       "audience": "both",
-      "bytes": 21737,
+      "bytes": 21949,
       "id": "sot-coding-style",
       "last_verified": "2026-10-11",
       "path": "docs/wiki/sot/coding-style.md",
       "section_count": 14,
-      "sha256": "04edcc569c57b78072f731e9eca6db756064759750f5fb6a03049e6d56f146e1",
+      "sha256": "173a95a4813b20e39500757efba8b2c99433bc6a0116e9b3c506e14f62b956f4",
       "source_globs": [],
       "sources": [
         "pyproject.toml",
