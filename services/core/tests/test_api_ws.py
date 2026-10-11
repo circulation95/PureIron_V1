@@ -1,5 +1,6 @@
 """WS `/ws` 인증(D10): 쿠키 또는 첫 메시지 `auth`(제한 시간) → hello, 실패는 close 4401, site-db
-장애는 1013. 연결 뒤 구독하면 현재값이 곧바로 온다. WS 메시지 모델이 OpenAPI components에 실린다."""
+장애는 1013, 브라우저 Origin이 Host와 다르면 4403. 연결 뒤 구독하면 현재값이 곧바로 온다. WS
+메시지 모델이 OpenAPI components에 실린다."""
 
 from __future__ import annotations
 
@@ -66,6 +67,31 @@ async def test_auth_failures_close_with_4401(first: dict[str, str] | None) -> No
         with pytest.raises(WebSocketDisconnect) as excinfo:
             ws.receive_json()  # 첫 메시지가 없으면 제한 시간(0.2s) 뒤 닫힌다
     assert excinfo.value.code == 4401
+
+
+@pytest.mark.parametrize(
+    ("origin", "accepted"),
+    [
+        ("http://testserver", True),  # TestClient의 Host: testserver
+        ("http://testserver:80", True),
+        ("HTTP://TestServer", True),
+        ("https://testserver", False),  # 기본 포트 443 ≠ Host의 80
+        ("http://testserver:8080", False),  # 같은 호스트의 다른 포트 웹앱(same-site)
+        ("http://evil.example", False),
+        ("null", False),
+    ],
+)
+async def test_browser_origin_must_match_host(origin: str, accepted: bool) -> None:
+    """리뷰 L-A2: Origin이 있으면 host:port가 Host와 같아야 한다(없으면 허용 — 위 테스트들)."""
+    client, token = await _app(auth_fixture())
+    client.cookies.set("pureiron_session", token)
+    with client.websocket_connect(URL, headers={"origin": origin}) as ws:
+        if accepted:
+            assert ws.receive_json()["type"] == "hello"
+            return
+        with pytest.raises(WebSocketDisconnect) as excinfo:
+            ws.receive_json()
+    assert excinfo.value.code == 4403
 
 
 async def test_site_db_down_closes_with_1013() -> None:

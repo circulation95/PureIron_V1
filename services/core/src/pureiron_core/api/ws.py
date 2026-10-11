@@ -3,6 +3,9 @@
 인증: 업그레이드 요청의 세션 쿠키(`pureiron_session`, 브라우저 — SameSite=Strict라 다른 사이트의
 페이지는 이 쿠키로 연결하지 못한다) 또는 쿠키가 없으면 `AUTH_TIMEOUT_S` 안에 오는 첫 메시지
 `{"type":"auth","token"}`. 실패는 close 4401, site-db 장애로 검증하지 못하면 1013.
+Origin: 헤더가 있고(브라우저) 그 host:port가 요청 `Host`와 다르면 4403 — 같은 PC의 다른 포트
+웹앱은 same-site라 Strict 쿠키가 실린다(CSWSH). Origin이 없으면(비브라우저 클라이언트) 허용한다.
+프록시는 브라우저의 Host를 그대로 넘겨야 한다(nginx `$http_host`, vite `changeOrigin` 끔).
 자원: 프레임은 `WS_MAX_MESSAGE_BYTES`까지(넘으면 uvicorn이 1009로 닫는다, 설정은 `cli.http_config`),
 인증을 마치지 않은 연결은 동시에 `MAX_PENDING_AUTH`개까지(넘으면 1013).
 WS는 OpenAPI 경로에 나오지 않으므로 메시지 모델을 `ws_schema_components()`로 components에 싣는다.
@@ -13,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Protocol, cast
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
@@ -69,6 +73,21 @@ class _Socket:
             raise TransportClosedError(str(exc)) from exc
 
 
+def _same_origin(origin: str, host: str, *, secure: bool) -> bool:
+    """Origin의 host:port가 요청 Host와 같은가. 포트가 없으면 각자 scheme의 기본 포트다(Origin은
+    http/https, Host는 이 요청의 ws/wss)."""
+    parsed = urlsplit(origin)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return False  # "null"(sandbox·file) 등
+    requested = urlsplit("//" + host)
+    try:
+        origin_port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        host_port = requested.port or (443 if secure else 80)
+    except ValueError:
+        return False
+    return (parsed.hostname, origin_port) == (requested.hostname, host_port)
+
+
 async def _first_message_token(socket: _Socket, timeout_s: float) -> str | None:
     try:
         async with asyncio.timeout(timeout_s):
@@ -112,6 +131,13 @@ def build_ws_router(
         nonlocal pending
         await websocket.accept()  # 앱 close code(4401)를 보내려면 먼저 수락해야 한다
         socket = _Socket(websocket)
+        origin = websocket.headers.get("origin")
+        host = websocket.headers.get("host", "")
+        secure = websocket.url.scheme == "wss"
+        if origin is not None and not _same_origin(origin, host, secure=secure):
+            log.warning("ws rejected: origin %r does not match host", origin)
+            await socket.close(CloseCode.FORBIDDEN_ORIGIN)
+            return
         if pending >= max_pending_auth:
             log.warning("ws rejected: %d connections already authenticating", pending)
             await socket.close(CloseCode.TRY_AGAIN_LATER)

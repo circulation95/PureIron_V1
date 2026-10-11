@@ -43,6 +43,7 @@ class CloseCode(IntEnum):
     GOING_AWAY = 1001  # core 정지
     TRY_AGAIN_LATER = 1013  # 이벤트 큐 초과·site-db 장애로 인증 불가·인증 대기 연결 초과
     UNAUTHORIZED = 4401  # 인증 실패·세션 만료/폐기
+    FORBIDDEN_ORIGIN = 4403  # 브라우저 Origin이 요청 Host와 다름(CSWSH 방지)
     PONG_TIMEOUT = 4408  # pong이 pong_timeout_s 동안 없음
 
 
