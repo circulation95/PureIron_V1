@@ -8,7 +8,7 @@ sources:
   - https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/package.json
   - https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/AGENTS.md
   - https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/CLAUDE.md
-  - docs/UI_GUIDE.md
+  - https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/UI_GUIDE.md
   - https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/src/atoms/tags.ts
   - https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/src/ws/client.ts
   - https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/src/types/processes.ts
@@ -36,7 +36,7 @@ Frontend는 v1에서 “운영자가 매일 보는 경량 Web HMI/SCADA 화면�
 | `docs/wiki/sot/frontend.md` | frontend 아키텍처와 변경 규칙의 정본 |
 | `frontend/AGENTS.md` | frontend 작업 전 읽는 짧은 guardrail |
 | `frontend/CLAUDE.md` | Claude Code용 atom/API/화면 cheat sheet |
-| `docs/UI_GUIDE.md` | 운영자 중심 UI 디자인 가이드 |
+| [legacy `docs/UI_GUIDE.md`](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/UI_GUIDE.md) | 운영자 중심 UI 디자인 가이드(legacy-final) |
 | `frontend/src/**` | 실제 구현과 타입의 최종 정본 |
 
 이 문서는 코드 전체를 복붙하지 않는다. 신규 기능을 추가할 때 어떤 경계를 지켜야 하는지, 어떤 파일군을 같이 봐야 하는지만 고정한다.
@@ -214,7 +214,7 @@ ProcessLayout
 
 ## 11. Operator UI 규칙
 
-PureIron frontend는 운영자 중심 SCADA UI다. `docs/UI_GUIDE.md`가 상세 디자인 가이드다.
+PureIron frontend는 운영자 중심 SCADA UI다. [legacy `docs/UI_GUIDE.md`](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/UI_GUIDE.md)가 상세 디자인 가이드다.
 
 우선순위:
 
@@ -268,7 +268,7 @@ Frontend 작업은 화면이 크고 회귀 위험이 높다. 다음 원칙을 �
 | `Tabs`, `TabList`, `Tab`, `TabPanel` | 같은 영역의 peer view 콘텐츠 전환을 통일한다. controlled `value`/`onValueChange`, `role="tablist"`/`"tab"`/`"tabpanel"`, `aria-selected`, `aria-controls`/`aria-labelledby`, roving tabIndex, Left/Right·Home/End 이동, disabled tab skip, overflow 시 tablist만 가로 스크롤. active 색상·focus는 `--accent`/`--border-focus` token으로만 표현한다. |
 | `SegmentedControl`, `Segment` | 한 view의 표시 범위/모드를 바꾸는 compact single-select를 통일한다(예: 생산 일정 Month/Week/Day). controlled `value`/`onValueChange`, `role="radiogroup"`+접근 가능한 이름, `role="radio"`/`aria-checked`/disabled, roving tabIndex, Left/Right·Up/Down·Home/End 이동, disabled option skip, 컨트롤 자체 overflow 흡수로 페이지 가로 overflow 방지. 선택 상태는 raw fill이 아니라 `--surface-card`/`--text-accent`/`--border-focus` token으로 표현한다. |
 | `SideNav`, `SideNavItem` | 사이드바 계층 이동을 통일한다(예: 설정 화면 Profile/System/Security/Notifications/Accounts/RAG Lab). controlled `value`/`onValueChange`, `nav` landmark + 접근 가능한 이름, 활성 항목 `aria-current="page"`, disabled 항목 계약, 공통 `focus-visible`. 각 항목은 실제 `<button>`이라 roving tabIndex가 아니라 Tab 키로 순차 이동한다. 활성 상태는 raw indigo fill이 아니라 `--accent-dim` 배경, `--accent` border, AA 대비를 유지하는 `--text-1` label, `--border-focus` focus token으로 표현하고, full-width 항목은 데스크톱/모바일 모두 페이지 가로 overflow를 만들지 않는다. |
-| `StatusBadge` | 장비·통신·알람의 운영 상태를 `normal/info/warning/critical/offline/unknown` tone으로 통일한다. backend raw status는 화면 경계에서 tone으로 매핑하고, 모든 상태는 색상뿐 아니라 보이는 text+tone별 icon을 함께 제공한다. 지속 정상 상태에 pulse/glow를 쓰지 않으며 semantic status/surface token만 사용하고 393px 페이지 가로 overflow를 만들지 않는다. Alarm severity(priority)·lifecycle state 매핑 단일 소스는 `frontend/src/lib/alarmHelpers.ts`이고, Alarm Summary/History와 전역 Alarm drawer가 이를 공유한다(매핑 표는 `docs/UI_GUIDE.md`). |
+| `StatusBadge` | 장비·통신·알람의 운영 상태를 `normal/info/warning/critical/offline/unknown` tone으로 통일한다. backend raw status는 화면 경계에서 tone으로 매핑하고, 모든 상태는 색상뿐 아니라 보이는 text+tone별 icon을 함께 제공한다. 지속 정상 상태에 pulse/glow를 쓰지 않으며 semantic status/surface token만 사용하고 393px 페이지 가로 overflow를 만들지 않는다. Alarm severity(priority)·lifecycle state 매핑 단일 소스는 `frontend/src/lib/alarmHelpers.ts`이고, Alarm Summary/History와 전역 Alarm drawer가 이를 공유한다(매핑 표는 [legacy `docs/UI_GUIDE.md`](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/UI_GUIDE.md)). |
 
 **Tabs vs SegmentedControl vs SideNav 경계** — `Tabs`는 한 영역의 콘텐츠를 peer view로 교체할 때(예: 시스템 기록 3분류, 공정 Overview/SCADA/3D). 같은 콘텐츠의 표시 범위/모드만 상호배타적으로 토글하면 `SegmentedControl`(예: 생산 일정 Month/Week/Day), 사이드바 계층을 이동하며 콘텐츠 영역 전체를 교체하면 `SideNav`(예: 설정 화면 하위 카테고리)가 담당한다. 화면을 바꾸지 않고 콘텐츠 자체를 바꾸면 `Tabs`, 콘텐츠는 그대로 두고 범위/모드만 바꾸면 `SegmentedControl`, 목적지(콘텐츠 영역 전체)를 바꾸는 사이드 navigation이면 `SideNav`가 정답이다.
 

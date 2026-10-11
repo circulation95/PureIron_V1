@@ -27,7 +27,6 @@
 | `docs/wiki/sot/api-events.md` | REST/WebSocket/SSE/event 계약 |
 | `docs/wiki/sot/frontend.md` | frontend 구조와 제약 |
 | `docs/wiki/sot/testing.md` | 검증 계층과 게이트 |
-| `docs/ADR.md` | 초기 ADR 원문. 현재는 이 문서가 Wiki 정본 |
 
 새 결정은 기능 설명이 아니라 **결정 / 이유 / 트레이드오프 / 관련 SOT** 형식으로 추가한다.
 
@@ -685,7 +684,6 @@ PoC 무료 모드(첫 유료 계약 전): GitHub Free private repo라 branch pro
 ## 이 문서의 원천
 
 - [product](../sot/product.md) — 제품 의도, 초기 고객, v1 가치, 첫 계약 전략의 상위 방향
-- [docs/PRD.md](../../PRD.md) — 제품 목표·사용자·MVP 제외
 - [USER.md](../../../USER.md) — 팀 역할, 2인 팀 감당 범위, 작업 성향
 
 ## 결정 상태 표기
@@ -765,7 +763,7 @@ PoC 제안서(고객 제출용)는 다음 골격을 따른다. 내용 채움은 
 2. Simulator + 3D Digital Twin으로 실제 공정처럼 동작하는 라인을 보여준다.
 3. 알람을 발생시키고 모바일에서 확인 → 조치 이력 남김.
 4. Agent가 알람 원인 후보와 조치 시나리오를 설명한다(자동 제어 아님, 사람 판단 보조).
-5. 알람 ack·조치 note·이력 위에서 사람이 기존 작업 지시/CMMS 프로세스로 넘기는 **수동 Work Order handoff**를 보여준다(backend Work Order 기능 아님, 사람 판단·수동 handoff까지만). 반복 가능한 스크립트는 [work-order-demo-handoff 런북](../../runbooks/work-order-demo-handoff.md).
+5. 알람 ack·조치 note·이력 위에서 사람이 기존 작업 지시/CMMS 프로세스로 넘기는 **수동 Work Order handoff**를 보여준다(backend Work Order 기능 아님, 사람 판단·수동 handoff까지만). 반복 가능한 스크립트는 [work-order-demo-handoff 런북](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/runbooks/work-order-demo-handoff.md).
 
 데모는 "기존 설비를 유지한 채 시작 가능"하다는 메시지를 짧고 명확하게 전달하는 것을 목표로 한다.
 
@@ -943,7 +941,7 @@ PoC 제안서(고객 제출용)는 다음 골격을 따른다. 내용 채움은 
 - [x] 추가 창업자 인터뷰(Q9~Q13) 반영 → 1순위 고객 페인 한 문장, 첫 PoC PLC/프로토콜/네트워크 원칙, 데이터 저장/배포 방식, PoC 기간/투입, 가격 anchor 확정(2026-06-30).
 - [ ] 남은 `needs-founder-input` 확정: 구체 고객사명, 현장별 실측 PLC/네트워크 구성.
 - [ ] 타깃 확정 후 표준 read-only PoC 제안서 1종 실제 작성(가격 anchor를 현장 조건으로 산정해 반영). 표준 제안서 초안: [docs/sales/read-only-poc-proposal.md](../../sales/read-only-poc-proposal.md)(고객/영업용 초안, SOT 아님).
-- [x] Work Order 데모 경로를 수동 handoff로 명확화 + 반복 가능한 스크립트/체크리스트 고정([work-order-demo-handoff 런북](../../runbooks/work-order-demo-handoff.md), 2026-07-03).
+- [x] Work Order 데모 경로를 수동 handoff로 명확화 + 반복 가능한 스크립트/체크리스트 고정([work-order-demo-handoff 런북](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/runbooks/work-order-demo-handoff.md), 2026-07-03).
 - [ ] 나머지 데모 시나리오(1~4단계)를 실제 데모 스크립트/체크리스트로 구체화([testing](../sot/testing.md)의 데모/E2E 기준과 연결).
 
 이 문서는 "GTM 전략이 끝났다"가 아니라 "첫 계약 결정을 모으는 정본 위치가 생겼고, 1차+추가 인터뷰로 핵심 방향·범위·가격 anchor가 확정됐다"는 상태를 나타낸다.
@@ -1052,31 +1050,31 @@ read-only PoC 핵심 흐름 8개([read-only-poc-proposal](../../sales/read-only-
 | 1 | Device/driver 연결(read-only) | `partial` | 6개 드라이버(`drivers/{opcua,modbus,s7,ls,ab,melsec}_client.py`) poll 루프·`DriverHealth`·`/api/devices` CRUD, `gateway._setup_drivers`가 DB devices 행으로 `driver.start()`. 전역 read-only latch `safety.py`(`PUREIRON_POC_READ_ONLY_MODE`)가 `DeviceTagProvider.write`에서 드라이버 write를 하드 차단. tests: `test_opcua_driver`·`test_modbus_driver`·`test_driver_health*`·`test_poc_read_only_mode` | 실드라이버는 `db_pool` 있을 때만 기동(무DB → 현장 수집 없음). s7/ls/ab/melsec는 현장 read 검증 근거 얕음 |
 | 2 | 승인 태그 수집 + historian/trend | `partial` | `HistorianWriter`가 `tag.changed.*` 구독→`tag_history` batch insert, `historian/reader.py`+`/api/historian`, `TrendManagement.tsx`, `test_historian`. 승인 수집 계약: [approved tag collection contract](../sot/data-contracts.md#approved-tag-collection-contract) + `tags/collection_policy.py`(excluded>approved>default-deny, authored vs driver-derived), gateway 배선 `_setup_drivers`가 `configs/tags/approved_paths.json`→모든 드라이버 `approved_tag_paths`, tests `test_collection_policy_contract`·`test_approved_tag_collection_harness`·`test_gateway_approved_paths_wiring`·`test_driver_approved_collection`. DB-present pre-field gate는 `test_db_poc_smoke.py`가 historian 기록/조회 + alarm journal 영속을 한 smoke로 고정(`PUREIRON_DATABASE_URL` 없으면 skip) | DB(Timescale) 없으면 503·미영속(AC-7). gateway/driver allowlist 배선은 OPC-UA·Modbus·S7·LS·AB·MELSEC 모두 완료. 2주 PoC retention/조회창은 `027_add_tag_history_retention.sql`(30일 drop-after)+downsample 조회로 고정([data-contracts](../sot/data-contracts.md#historian-retention--query-window)); Trend 화면 CSV export로 리뷰용 산출물은 생성 가능. 현장 전 DB-present smoke는 고정됐고, 남은 격차는 실제 고객 DB+다중 드라이버 e2e |
 | 3 | 대시보드 주요 상태 확인 | `implemented` | `dashboard/router.py`+`DashboardGrid`/widgets, WS 250ms batch, process/SCADA 화면, `AlarmSummary.tsx` 모바일 ack/note card, `test_user_dashboard`·`test_alarm_summary_ui_contract` | 모바일 알람 확인의 실제 브라우저 스크린샷/현장 증거는 PoC 전 수동 smoke 실행 시점에 남김 |
-| 4 | 알람 발생/확인/조치 이력 | `partial` | `alarms/engine.py`(발생), ack 전이(AC-5/AC-6), `alarms/journal.py`가 operator·note 포함 전이를 `alarm_journal`에 영속, `AlarmSummary` active row의 조치 note 저장 UI와 History의 operator/note 표시, tests `test_alarm_ack_note_history_contract`·`test_alarm_summary_ui_contract`, PoC 전 수동 증거 절차는 [PoC browser smoke runbook](../../runbooks/poc-browser-smoke.md) | journal은 `db_pool` 없으면 조용히 no-op(무DB → 조치 이력 미영속). 실제 고객/PoC 브라우저 스크린샷은 PoC 전 실행 시점에 남겨야 함 |
-| 5 | Agent troubleshooting | `partial` | `agents/`(supervisor + tag/alarm/history/health/logs agent), tools `read_tag`/`get_active_alarms`/`query_history`, 구조 검증 AC-12·AC-18c. read-only smoke `test_agent_troubleshooting_smoke.py`가 결정론적 chat model seam(외부 키 불필요)으로 읽기 grounding + write 도구 하드 차단을 고정 | 실제 provider/키에서의 답변 품질은 [agent troubleshooting answer quality runbook](../../runbooks/agent-troubleshooting-answer-quality.md)으로 수동 평가 경로를 고정했다. 실제 고객/PoC 환경에서 AQ-1~AQ-6 실행과 sanitization 증거 확보는 여전히 PoC 실행 시점 작업이다. 온프레미스 provider/키 취급은 [runtime-config](../sot/runtime-config.md)에 문서화됨 |
+| 4 | 알람 발생/확인/조치 이력 | `partial` | `alarms/engine.py`(발생), ack 전이(AC-5/AC-6), `alarms/journal.py`가 operator·note 포함 전이를 `alarm_journal`에 영속, `AlarmSummary` active row의 조치 note 저장 UI와 History의 operator/note 표시, tests `test_alarm_ack_note_history_contract`·`test_alarm_summary_ui_contract`, PoC 전 수동 증거 절차는 [PoC browser smoke runbook](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/runbooks/poc-browser-smoke.md) | journal은 `db_pool` 없으면 조용히 no-op(무DB → 조치 이력 미영속). 실제 고객/PoC 브라우저 스크린샷은 PoC 전 실행 시점에 남겨야 함 |
+| 5 | Agent troubleshooting | `partial` | `agents/`(supervisor + tag/alarm/history/health/logs agent), tools `read_tag`/`get_active_alarms`/`query_history`, 구조 검증 AC-12·AC-18c. read-only smoke `test_agent_troubleshooting_smoke.py`가 결정론적 chat model seam(외부 키 불필요)으로 읽기 grounding + write 도구 하드 차단을 고정 | 실제 provider/키에서의 답변 품질은 [agent troubleshooting answer quality runbook](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/runbooks/agent-troubleshooting-answer-quality.md)으로 수동 평가 경로를 고정했다. 실제 고객/PoC 환경에서 AQ-1~AQ-6 실행과 sanitization 증거 확보는 여전히 PoC 실행 시점 작업이다. 온프레미스 provider/키 취급은 [runtime-config](../sot/runtime-config.md)에 문서화됨 |
 | 6 | 사용자/권한/감사 최소 구성 | `implemented` | JWT+refresh(AC-1), 보호 401(AC-2), RBAC 4역할+write RBAC(AC-10), `auth/audit.py`·`auth/audit_utils.py`·`user_repository.py`, `AccountsTab`/`SecurityTab`. `test_auth.py`가 login/profile/password/admin 계정 변경의 감사 로그 기록·비밀번호 평문 비노출·audit sink 실패 격리를 고정하고, `test_logs_router.py`·`test_log_triage.py`·`test_user_dashboard.py`·`test_user_settings.py`가 로그/triage/dashboard/settings 운영 경로의 safe audit 경계를 고정 | 최소 구성 충족. 감사 sink 장애는 핵심 auth/profile/password 및 운영 보조 요청을 실패시키지 않는 warn-and-continue 경계로 격리된다. v1은 서버 session store/token blacklist 없이 JWT 만료 기반 active session policy를 명시한다 |
-| 7 | 온프레미스 우선 배포/환경 | `partial` | `docker/docker-compose.yml`·`docker-compose.dev.yml`·`Dockerfile.*`·`nginx.conf`, `config.py` env. PoC 전용 `docker/docker-compose.poc.yml`(timescaledb+redis+backend+frontend, simulator 없음·DB/Redis host port 미공개)+`.env.poc.example`+[on-prem read-only PoC runbook](../../runbooks/on-prem-read-only-poc.md)(구성/배포/검증/백업/롤백/handoff·수집망 분리·retention §8) | 오프라인 설치 번들 자동화는 runbook non-goal로 post-P0 유보(§2). 실제 고객 호스트 현장 검증은 유료 PoC 착수 시 |
-| 8 | demo/simulator + 3D Twin + Work Order | `partial` | Simulator(`CoffeeTankProcessSimulator`/`TagSimulator`) 자동 기동, 3D Twin(`components/twin/*`·`models/router.py`·tag binding AC-16/17), 데모 spine AC-18 | **Work Order는 backend 기능 아님**(`missing`, v1 제외 유지) — [work-order-demo-handoff 런북](../../runbooks/work-order-demo-handoff.md) + [testing](../sot/testing.md) §5 AC-18로 **수동 handoff 데모 경로/체크리스트 고정**(알람 ack·note·이력 → 수동 작업 지시 handoff). `mes/`는 recipe/plan/task이지 work order 아님. 3D Twin 시각 highlight·Agent 답변 품질은 수동 검증 |
+| 7 | 온프레미스 우선 배포/환경 | `partial` | `docker/docker-compose.yml`·`docker-compose.dev.yml`·`Dockerfile.*`·`nginx.conf`, `config.py` env. PoC 전용 `docker/docker-compose.poc.yml`(timescaledb+redis+backend+frontend, simulator 없음·DB/Redis host port 미공개)+`.env.poc.example`+[on-prem read-only PoC runbook](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/runbooks/on-prem-read-only-poc.md)(구성/배포/검증/백업/롤백/handoff·수집망 분리·retention §8) | 오프라인 설치 번들 자동화는 runbook non-goal로 post-P0 유보(§2). 실제 고객 호스트 현장 검증은 유료 PoC 착수 시 |
+| 8 | demo/simulator + 3D Twin + Work Order | `partial` | Simulator(`CoffeeTankProcessSimulator`/`TagSimulator`) 자동 기동, 3D Twin(`components/twin/*`·`models/router.py`·tag binding AC-16/17), 데모 spine AC-18 | **Work Order는 backend 기능 아님**(`missing`, v1 제외 유지) — [work-order-demo-handoff 런북](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/runbooks/work-order-demo-handoff.md) + [testing](../sot/testing.md) §5 AC-18로 **수동 handoff 데모 경로/체크리스트 고정**(알람 ack·note·이력 → 수동 작업 지시 handoff). `mes/`는 recipe/plan/task이지 work order 아님. 3D Twin 시각 highlight·Agent 답변 품질은 수동 검증 |
 
 ## 교차(cross-cutting) 격차
 
 흐름 여러 개를 동시에 막던 항목. **read-only PoC-safe 모드 부재는 해결**(아래 1)됐고, 남은 무거운 잔여는 DB 존재 경로의 현장 검증과 실 LLM 답변 품질이다.
 
 1. ✅ **read-only PoC-safe 모드 — 해결(2026-07-04).** 제안서의 "쓰기/제어 명령 미포함"([read-only-poc-proposal](../../sales/read-only-poc-proposal.md) §5·§7)이 이제 관례가 아니라 정책 강제다. 전역 latch `PUREIRON_POC_READ_ONLY_MODE`(`config.py`→`safety.py`)가 드라이버 write(`DeviceTagProvider.write`)·REST tag write(403)·agent control/schedule tool·approved-action executor를 하드 차단하고 `/api/health`가 `poc_read_only_mode`를 노출한다. 내부 수집(driver poll/simulator `write_value`)·읽기 경로는 그대로 동작한다. `test_poc_read_only_mode.py`가 회귀를 고정한다.
-2. **DB 존재 경로 현장 검증(잔여).** 실드라이버 기동·historian 영속·alarm journal이 `db_pool` 없으면 조용히 축소된다. [on-prem runbook](../../runbooks/on-prem-read-only-poc.md)+`docker-compose.poc.yml`이 timescaledb 포함 경로를 문서화·검증 가능하게 만들었고, `test_db_poc_smoke.py`가 `PUREIRON_DATABASE_URL`이 있는 환경에서 historian 기록/조회와 alarm journal operator/note 영속을 한 pre-field smoke로 고정한다. 남은 것은 실제 고객 DB+다중 드라이버 end-to-end 현장 검증이다(CI는 DB env 없으면 skip).
-3. ✅ **실 LLM 답변 품질 평가 경로 — runbook 고정(2026-07-07).** troubleshooting 읽기 grounding·write 차단은 키 없는 결정론 seam(`test_agent_troubleshooting_smoke.py`)으로 검증되고, 실제 provider/키가 있을 때의 답변 품질은 [agent troubleshooting answer quality runbook](../../runbooks/agent-troubleshooting-answer-quality.md)의 AQ-1~AQ-6 질문 세트·pass/fail rubric·증거 sanitization으로 수동 검증한다. 온프레미스 provider/키 취급은 [runtime-config](../sot/runtime-config.md)에 문서화됐다. 남은 일은 실제 고객/PoC 환경에서 runbook을 실행하고 sanitized evidence를 남기는 것이다.
+2. **DB 존재 경로 현장 검증(잔여).** 실드라이버 기동·historian 영속·alarm journal이 `db_pool` 없으면 조용히 축소된다. [on-prem runbook](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/runbooks/on-prem-read-only-poc.md)+`docker-compose.poc.yml`이 timescaledb 포함 경로를 문서화·검증 가능하게 만들었고, `test_db_poc_smoke.py`가 `PUREIRON_DATABASE_URL`이 있는 환경에서 historian 기록/조회와 alarm journal operator/note 영속을 한 pre-field smoke로 고정한다. 남은 것은 실제 고객 DB+다중 드라이버 end-to-end 현장 검증이다(CI는 DB env 없으면 skip).
+3. ✅ **실 LLM 답변 품질 평가 경로 — runbook 고정(2026-07-07).** troubleshooting 읽기 grounding·write 차단은 키 없는 결정론 seam(`test_agent_troubleshooting_smoke.py`)으로 검증되고, 실제 provider/키가 있을 때의 답변 품질은 [agent troubleshooting answer quality runbook](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/runbooks/agent-troubleshooting-answer-quality.md)의 AQ-1~AQ-6 질문 세트·pass/fail rubric·증거 sanitization으로 수동 검증한다. 온프레미스 provider/키 취급은 [runtime-config](../sot/runtime-config.md)에 문서화됐다. 남은 일은 실제 고객/PoC 환경에서 runbook을 실행하고 sanitized evidence를 남기는 것이다.
 
 ## 다음 구현 우선순위 (issue 후보)
 
 첫 계약 가능성·설비 안정성 기준으로 정렬. `[P0]`가 PoC 착수를 직접 막는다. 완료 항목은 traceability를 위해 ✅로 남긴다.
 
 1. ✅ **[P0] read-only PoC-safe 모드 flag — 완료(2026-07-04).** `PUREIRON_POC_READ_ONLY_MODE` 전역 latch(`config.py`→`safety.py`)가 드라이버 write·REST tag write(403)·agent control/schedule tool·approved-action executor를 하드 차단하고 `/api/health`가 `poc_read_only_mode`를 노출한다. 제안서의 "쓰기/제어 미포함"이 관례가 아니라 정책 강제가 됐다. `test_poc_read_only_mode.py`가 회귀를 고정. env 계약은 [runtime-config](../sot/runtime-config.md).
-2. ✅ **[P0] 온프레미스 PoC 배포 runbook — 완료(2026-07-04).** read-only PoC용 검증 가능한 compose 프로파일 `docker/docker-compose.poc.yml`(timescaledb+redis+backend+frontend, simulator 없음·DB/Redis host port 미공개), `.env.poc.example`, 수집망 분리·검증·백업·롤백·handoff를 [on-prem read-only PoC runbook](../../runbooks/on-prem-read-only-poc.md)에 고정. 남은 격차: 오프라인 설치 번들 자동화는 runbook non-goal로 post-P0 유보(§2), 실제 고객 호스트 현장 검증은 유료 PoC 착수 시.
+2. ✅ **[P0] 온프레미스 PoC 배포 runbook — 완료(2026-07-04).** read-only PoC용 검증 가능한 compose 프로파일 `docker/docker-compose.poc.yml`(timescaledb+redis+backend+frontend, simulator 없음·DB/Redis host port 미공개), `.env.poc.example`, 수집망 분리·검증·백업·롤백·handoff를 [on-prem read-only PoC runbook](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/runbooks/on-prem-read-only-poc.md)에 고정. 남은 격차: 오프라인 설치 번들 자동화는 runbook non-goal로 post-P0 유보(§2), 실제 고객 호스트 현장 검증은 유료 PoC 착수 시.
 3. **[P1] 승인 태그 현장 수집 검증 harness — 계약/harness/전체 드라이버 allowlist 배선 + DB-present pre-field smoke 완료(2026-07-10).** 수집 대상 whitelist/승인 개념을 제외목록 위에 얹는 [approved tag collection contract](../sot/data-contracts.md#approved-tag-collection-contract)를 SOT에 고정하고, 코드 정본 `tags/collection_policy.py`(excluded>approved>default-deny, authored vs driver-derived)와 순수 계약 test(`test_collection_policy_contract`) + modbus simulator→store→historian harness(`test_approved_tag_collection_harness`)를 추가했다. `ScadaGateway._setup_drivers()`가 startup에서 `configs/tags/approved_paths.json`를 한 번 읽어 OPC-UA·Modbus·S7·LS·AB·MELSEC driver `approved_tag_paths`로 전달하며(파일 없음→`None`, 빈 list→deny-all), `test_gateway_approved_paths_wiring`·`test_driver_approved_collection`이 gateway 배선과 각 드라이버 materialize/poll fallback 필터를 고정한다. `test_db_poc_smoke.py`는 `PUREIRON_DATABASE_URL`이 있는 환경에서 historian 기록/조회와 alarm journal 영속을 한 smoke로 검증한다. 남은 격차: 실제 고객 DB+다중 드라이버 end-to-end 현장 검증.
-4. ✅ **[P1] 알람→ack→조치 note→이력 end-to-end — 계약/수동 smoke 경로 완료(2026-07-07).** backend `AlarmEngine.acknowledge`/`add_note`/`alarm_journal` 계약은 `test_alarm_ack_note_history_contract`가 고정하고, frontend `AlarmSummary` active row에서 조치 note를 `/api/alarms/{name}/notes`로 저장하며 History 화면에서 operator/note를 드러내도록 보강했다. `test_alarm_summary_ui_contract`가 UI/API 문자열 계약을 회귀 방지한다. PoC 전 브라우저 수동 smoke와 sanitized screenshot/CSV/notes 증거 절차는 [PoC browser smoke runbook](../../runbooks/poc-browser-smoke.md)에 고정했다. 남은 것은 실제 고객/PoC 환경에서 해당 런북을 실행해 증거를 남기는 일이다.
-5. ✅ **[P1] Agent troubleshooting PoC 검증 경로 — smoke + 수동 품질 runbook 완료(2026-07-07).** 외부 키 없는 결정론적 chat model seam으로 알람 상황에서 read-only 도구(device health)로 답을 grounding하고 write/control 도구는 하드 차단됨을 `test_agent_troubleshooting_smoke.py`가 고정한다. 실제 provider/키에서의 답변 품질은 [agent troubleshooting answer quality runbook](../../runbooks/agent-troubleshooting-answer-quality.md)으로 질문 세트(AQ-1~AQ-6), pass/fail rubric, secret/customer-data sanitization 증거 기준을 고정했다. 필요한 provider/키의 온프레미스 취급은 [runtime-config](../sot/runtime-config.md)에 문서화. 남은 일은 실제 고객/PoC 환경에서 runbook을 실행하는 것이다.
-6. ✅ **[P2] Historian retention/query window + Trend export — 완료(2026-07-07).** 2주 PoC에 맞는 retention/조회창을 `027_add_tag_history_retention.sql`(30일 drop-after, 멱등)+요청 창별 downsample(`historian/reader.query_aggregated`)로 고정하고 [data-contracts](../sot/data-contracts.md#historian-retention--query-window)에 계약화, 조정 SQL은 [runbook](../../runbooks/on-prem-read-only-poc.md) §8. Trend Management의 Download Data가 현재 선택 태그·조회 기간·시계열 값·pen statistics를 UTF-8 BOM CSV로 내보내 PoC 결과 리뷰 산출물로 쓸 수 있다.
-7. ✅ **[P2] Work Order 데모 경로 명확화(backend는 v1 제외 유지) — 완료(2026-07-03).** backend Work Order는 v1 밖으로 유지([testing](../sot/testing.md))하고, 영업 데모가 반복 가능하도록 [work-order-demo-handoff 런북](../../runbooks/work-order-demo-handoff.md)에 수동 handoff 스크립트·검증 체크리스트를 고정했다(알람 ack·조치 note·이력 → Agent troubleshooting → 수동 작업 지시 handoff). SOT/testing/product 문구를 "backend 기능"이 아니라 "demo/manual handoff"로 정렬. 다음 단계: backend Work Order API가 생기면 AC-18 자동화 표로 승격(현재는 v1 제외 유지). 범위 확대 아님.
+4. ✅ **[P1] 알람→ack→조치 note→이력 end-to-end — 계약/수동 smoke 경로 완료(2026-07-07).** backend `AlarmEngine.acknowledge`/`add_note`/`alarm_journal` 계약은 `test_alarm_ack_note_history_contract`가 고정하고, frontend `AlarmSummary` active row에서 조치 note를 `/api/alarms/{name}/notes`로 저장하며 History 화면에서 operator/note를 드러내도록 보강했다. `test_alarm_summary_ui_contract`가 UI/API 문자열 계약을 회귀 방지한다. PoC 전 브라우저 수동 smoke와 sanitized screenshot/CSV/notes 증거 절차는 [PoC browser smoke runbook](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/runbooks/poc-browser-smoke.md)에 고정했다. 남은 것은 실제 고객/PoC 환경에서 해당 런북을 실행해 증거를 남기는 일이다.
+5. ✅ **[P1] Agent troubleshooting PoC 검증 경로 — smoke + 수동 품질 runbook 완료(2026-07-07).** 외부 키 없는 결정론적 chat model seam으로 알람 상황에서 read-only 도구(device health)로 답을 grounding하고 write/control 도구는 하드 차단됨을 `test_agent_troubleshooting_smoke.py`가 고정한다. 실제 provider/키에서의 답변 품질은 [agent troubleshooting answer quality runbook](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/runbooks/agent-troubleshooting-answer-quality.md)으로 질문 세트(AQ-1~AQ-6), pass/fail rubric, secret/customer-data sanitization 증거 기준을 고정했다. 필요한 provider/키의 온프레미스 취급은 [runtime-config](../sot/runtime-config.md)에 문서화. 남은 일은 실제 고객/PoC 환경에서 runbook을 실행하는 것이다.
+6. ✅ **[P2] Historian retention/query window + Trend export — 완료(2026-07-07).** 2주 PoC에 맞는 retention/조회창을 `027_add_tag_history_retention.sql`(30일 drop-after, 멱등)+요청 창별 downsample(`historian/reader.query_aggregated`)로 고정하고 [data-contracts](../sot/data-contracts.md#historian-retention--query-window)에 계약화, 조정 SQL은 [runbook](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/runbooks/on-prem-read-only-poc.md) §8. Trend Management의 Download Data가 현재 선택 태그·조회 기간·시계열 값·pen statistics를 UTF-8 BOM CSV로 내보내 PoC 결과 리뷰 산출물로 쓸 수 있다.
+7. ✅ **[P2] Work Order 데모 경로 명확화(backend는 v1 제외 유지) — 완료(2026-07-03).** backend Work Order는 v1 밖으로 유지([testing](../sot/testing.md))하고, 영업 데모가 반복 가능하도록 [work-order-demo-handoff 런북](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/runbooks/work-order-demo-handoff.md)에 수동 handoff 스크립트·검증 체크리스트를 고정했다(알람 ack·조치 note·이력 → Agent troubleshooting → 수동 작업 지시 handoff). SOT/testing/product 문구를 "backend 기능"이 아니라 "demo/manual handoff"로 정렬. 다음 단계: backend Work Order API가 생기면 AC-18 자동화 표로 승격(현재는 v1 제외 유지). 범위 확대 아님.
 8. **[P3] 멀티 드라이버 현장 준비도.** s7/ls/ab/melsec 통합 검증 확대는 실제 고객 PLC가 정해진 뒤로 미룬다(`needs-founder-input`).
 9. ✅ **[베이스 강화] Core domain model boundary 고정 — 완료(2026-07-04).** 단기 영업 흐름에 코어 모델이 흐려지지 않도록 Tag(정의≠런타임 값)·Device/DriverHealth·Alarm/AlarmJournal·Historian(append/query)·Agent(read-only projection)·Work Order/MES-lite 경계를 [architecture](../sot/architecture.md#core-domain-model-boundary-sot) 한 절에 SoT로 고정하고, `backend/tests/test_core_domain_boundary_contract.py`가 문구·금지 패턴(agent read-only, device health가 태그로 새지 않음)으로 silent drift를 막는다. 새 기능/스키마 추가가 아니라 기존 경계 명문화다.
 
@@ -1315,7 +1313,7 @@ SOT 문서는 서로 링크하고, 같은 내용을 복사하지 않는다.
 
 PureIron 문서는 **3계층**으로 나뉘며, 계층마다 역할과 편집 권한이 다르다.
 
-- **raw source (보존 계층)** — `backend/**`, `frontend/**`, `configs/**`, DB 마이그레이션, `config.py`·`.env.example` 등 런타임/설정 파일. 시스템의 정본(system of record). LLM은 문서나 `check`를 통과시키려고 raw source를 임의로 고치지 않는다(drift는 경고일 뿐). 루트 레거시 문서(`docs/PRD.md`·`docs/ADR.md`·`MANUAL.md`)는 위키가 요약하는 **source input**일 뿐 canonical SOT가 아니다(ADR 정본은 [adr](../adr/index.md)).
+- **raw source (보존 계층)** — `backend/**`, `frontend/**`, `configs/**`, DB 마이그레이션, `config.py`·`.env.example` 등 런타임/설정 파일. 시스템의 정본(system of record). LLM은 문서나 `check`를 통과시키려고 raw source를 임의로 고치지 않는다(drift는 경고일 뿐). legacy 루트 문서(`PureIron_ignition@legacy-final`의 `docs/PRD.md`·`docs/ADR.md`·`MANUAL.md`)는 위키가 요약하는 **source input**일 뿐 canonical SOT가 아니다(ADR 정본은 [adr](../adr/index.md)).
 - **wiki SOT (통합 계층)** — `docs/wiki/**`(`_generated/` 제외). LLM이 raw source를 통합·요약·교차참조하는 곳이며 문서의 canonical.
 - **generated projection (생성물)** — `docs/wiki/_generated/**`·`docs/LLM_WIKI.md`. `python scripts/wiki.py build` 출력 전용, 수기 편집 금지.
 
@@ -1491,7 +1489,6 @@ PureIron은 단일 FastAPI 백엔드 + 단일 React 프론트엔드 + PostgreSQL
 
 ## 이 문서의 원천
 
-- [docs/ARCHITECTURE.md](../../ARCHITECTURE.md) — 통신 레이어, 모듈 책임, 데이터 흐름
 - [backend/src/pureiron/gateway.py](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/gateway.py) — ScadaGateway 싱글톤(런타임 정본)
 - [backend/CLAUDE.md](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/CLAUDE.md) — gateway 속성 표·라이프사이클·DB·락 규율
 
@@ -2049,7 +2046,7 @@ driver-derived tag가 historian/trend/agent context로 흘러가려면 **승인 
 
 - `027_add_tag_history_retention.sql`가 `tag_history`에 **30일 drop-after retention policy**를 멱등(`if_not_exists => TRUE`)으로 건다. 2주 read-only PoC 리뷰 창 + 후속 리뷰 여유를 덮으면서 디스크 무한 증가를 막는다(runbook의 history disk growth 경고 대응).
 - TimescaleDB retention 백그라운드 워커가 없으면 마이그레이션 러너가 경고만 남기고 계속한다(graceful degradation). 이때도 조회 경로는 정상 동작한다.
-- 특정 고객/SI PoC의 retention 조정은 앱 코드가 아니라 배포 결정이다. 조정/확인 SQL은 [on-prem read-only PoC runbook](../../runbooks/on-prem-read-only-poc.md) §8을 따른다.
+- 특정 고객/SI PoC의 retention 조정은 앱 코드가 아니라 배포 결정이다. 조정/확인 SQL은 [on-prem read-only PoC runbook](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/runbooks/on-prem-read-only-poc.md) §8을 따른다.
 
 **Query window / auto-resolution (`historian/reader.py`):**
 
@@ -2292,7 +2289,7 @@ Frontend는 v1에서 “운영자가 매일 보는 경량 Web HMI/SCADA 화면�
 | `docs/wiki/sot/frontend.md` | frontend 아키텍처와 변경 규칙의 정본 |
 | `frontend/AGENTS.md` | frontend 작업 전 읽는 짧은 guardrail |
 | `frontend/CLAUDE.md` | Claude Code용 atom/API/화면 cheat sheet |
-| `docs/UI_GUIDE.md` | 운영자 중심 UI 디자인 가이드 |
+| [legacy `docs/UI_GUIDE.md`](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/UI_GUIDE.md) | 운영자 중심 UI 디자인 가이드(legacy-final) |
 | `frontend/src/**` | 실제 구현과 타입의 최종 정본 |
 
 이 문서는 코드 전체를 복붙하지 않는다. 신규 기능을 추가할 때 어떤 경계를 지켜야 하는지, 어떤 파일군을 같이 봐야 하는지만 고정한다.
@@ -2470,7 +2467,7 @@ ProcessLayout
 
 ## 11. Operator UI 규칙
 
-PureIron frontend는 운영자 중심 SCADA UI다. `docs/UI_GUIDE.md`가 상세 디자인 가이드다.
+PureIron frontend는 운영자 중심 SCADA UI다. [legacy `docs/UI_GUIDE.md`](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/UI_GUIDE.md)가 상세 디자인 가이드다.
 
 우선순위:
 
@@ -2524,7 +2521,7 @@ Frontend 작업은 화면이 크고 회귀 위험이 높다. 다음 원칙을 �
 | `Tabs`, `TabList`, `Tab`, `TabPanel` | 같은 영역의 peer view 콘텐츠 전환을 통일한다. controlled `value`/`onValueChange`, `role="tablist"`/`"tab"`/`"tabpanel"`, `aria-selected`, `aria-controls`/`aria-labelledby`, roving tabIndex, Left/Right·Home/End 이동, disabled tab skip, overflow 시 tablist만 가로 스크롤. active 색상·focus는 `--accent`/`--border-focus` token으로만 표현한다. |
 | `SegmentedControl`, `Segment` | 한 view의 표시 범위/모드를 바꾸는 compact single-select를 통일한다(예: 생산 일정 Month/Week/Day). controlled `value`/`onValueChange`, `role="radiogroup"`+접근 가능한 이름, `role="radio"`/`aria-checked`/disabled, roving tabIndex, Left/Right·Up/Down·Home/End 이동, disabled option skip, 컨트롤 자체 overflow 흡수로 페이지 가로 overflow 방지. 선택 상태는 raw fill이 아니라 `--surface-card`/`--text-accent`/`--border-focus` token으로 표현한다. |
 | `SideNav`, `SideNavItem` | 사이드바 계층 이동을 통일한다(예: 설정 화면 Profile/System/Security/Notifications/Accounts/RAG Lab). controlled `value`/`onValueChange`, `nav` landmark + 접근 가능한 이름, 활성 항목 `aria-current="page"`, disabled 항목 계약, 공통 `focus-visible`. 각 항목은 실제 `<button>`이라 roving tabIndex가 아니라 Tab 키로 순차 이동한다. 활성 상태는 raw indigo fill이 아니라 `--accent-dim` 배경, `--accent` border, AA 대비를 유지하는 `--text-1` label, `--border-focus` focus token으로 표현하고, full-width 항목은 데스크톱/모바일 모두 페이지 가로 overflow를 만들지 않는다. |
-| `StatusBadge` | 장비·통신·알람의 운영 상태를 `normal/info/warning/critical/offline/unknown` tone으로 통일한다. backend raw status는 화면 경계에서 tone으로 매핑하고, 모든 상태는 색상뿐 아니라 보이는 text+tone별 icon을 함께 제공한다. 지속 정상 상태에 pulse/glow를 쓰지 않으며 semantic status/surface token만 사용하고 393px 페이지 가로 overflow를 만들지 않는다. Alarm severity(priority)·lifecycle state 매핑 단일 소스는 `frontend/src/lib/alarmHelpers.ts`이고, Alarm Summary/History와 전역 Alarm drawer가 이를 공유한다(매핑 표는 `docs/UI_GUIDE.md`). |
+| `StatusBadge` | 장비·통신·알람의 운영 상태를 `normal/info/warning/critical/offline/unknown` tone으로 통일한다. backend raw status는 화면 경계에서 tone으로 매핑하고, 모든 상태는 색상뿐 아니라 보이는 text+tone별 icon을 함께 제공한다. 지속 정상 상태에 pulse/glow를 쓰지 않으며 semantic status/surface token만 사용하고 393px 페이지 가로 overflow를 만들지 않는다. Alarm severity(priority)·lifecycle state 매핑 단일 소스는 `frontend/src/lib/alarmHelpers.ts`이고, Alarm Summary/History와 전역 Alarm drawer가 이를 공유한다(매핑 표는 [legacy `docs/UI_GUIDE.md`](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/UI_GUIDE.md)). |
 
 **Tabs vs SegmentedControl vs SideNav 경계** — `Tabs`는 한 영역의 콘텐츠를 peer view로 교체할 때(예: 시스템 기록 3분류, 공정 Overview/SCADA/3D). 같은 콘텐츠의 표시 범위/모드만 상호배타적으로 토글하면 `SegmentedControl`(예: 생산 일정 Month/Week/Day), 사이드바 계층을 이동하며 콘텐츠 영역 전체를 교체하면 `SideNav`(예: 설정 화면 하위 카테고리)가 담당한다. 화면을 바꾸지 않고 콘텐츠 자체를 바꾸면 `Tabs`, 콘텐츠는 그대로 두고 범위/모드만 바꾸면 `SegmentedControl`, 목적지(콘텐츠 영역 전체)를 바꾸는 사이드 navigation이면 `SideNav`가 정답이다.
 
@@ -2655,7 +2652,6 @@ v1은 기존 PLC와 설비 제어 로직을 대체하지 않고, 그 위에 웹 
 
 ## 이 문서의 원천
 
-- [docs/PRD.md](../../PRD.md) — 기존 제품 목표·사용자·핵심 기능·MVP 제외·성능 요구
 - [README.md](../../../README.md) — 설치/실행 진입점, 기능 요약
 - [USER.md](../../../USER.md) — 사용자/팀 맥락, 장기 기술 비전, 작업 성향
 
@@ -2770,7 +2766,7 @@ v1은 첫 계약 가능성과 영업 데모 설득력을 높이는 기능에 집
 
 8. **Work Order Demo (수동 handoff, backend 기능 아님)**
    - 이상 상황에서 조치 후보를 제안하고, 알람 ack·조치 note·이력 위에서 **사람이 기존 작업 지시/CMMS 프로세스로 넘기는 수동 handoff 흐름**을 데모한다.
-   - v1은 Work Order를 backend에서 생성·저장·승인하지 않는다(DB/API/router 없음, `mes/`는 recipe/plan/task이지 work order 아님). 반복 가능한 데모 스크립트·검증 체크리스트는 [work-order-demo-handoff 런북](../../runbooks/work-order-demo-handoff.md), 자동/수동 분리는 [testing](testing.md#5-acceptance-criteria-현재-범위) AC-18을 따른다.
+   - v1은 Work Order를 backend에서 생성·저장·승인하지 않는다(DB/API/router 없음, `mes/`는 recipe/plan/task이지 work order 아님). 반복 가능한 데모 스크립트·검증 체크리스트는 [work-order-demo-handoff 런북](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/runbooks/work-order-demo-handoff.md), 자동/수동 분리는 [testing](testing.md#5-acceptance-criteria-현재-범위) AC-18을 따른다.
 
 9. **Auth / RBAC / Audit**
    - 사용자, 권한, 감사 로그를 제공한다.
@@ -2843,7 +2839,7 @@ PureIron의 UI는 전통적인 낡은 HMI 느낌에 갇히지 않는다.
 - Mobile-first Alarm Handling을 핵심 경험으로 둘 것.
 - 데이터 밀도, 명확한 상태 표현, 큰 버튼, 빠른 인지성을 우선할 것.
 - 3D Digital Twin은 v1에서 고객 설득과 공정 이해를 돕는 데 집중할 것.
-- AI-슬롭 안티패턴을 피할 것. 상세는 [UI_GUIDE.md](../../UI_GUIDE.md)를 따른다.
+- AI-슬롭 안티패턴을 피할 것. 상세는 [UI_GUIDE.md](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/UI_GUIDE.md)를 따른다.
 
 ## 첫 계약 전략
 
@@ -3181,7 +3177,7 @@ PR 완료 보고에는 다음 중 해당 항목을 최소 1개 이상 적는다.
 | Core domain model boundary(SoT) 변경 | `cd backend && uv run pytest tests/test_core_domain_boundary_contract.py -v` | [architecture](architecture.md#core-domain-model-boundary-sot) 경계 문구·금지 패턴 고정, DB/LLM 불필요 |
 | Root projection(`AGENTS.md`, `CLAUDE.md`, `README.md`) 변경 | `python scripts/wiki.py build && python scripts/wiki.py check` | projection이 명령/규칙을 바꾸면 관련 테스트 smoke |
 | Backend router/API 변경 | 관련 `backend/tests/test_*.py` | contract 영향 시 `api-events.md` 확인, 필요 시 E2E. 재현한 4xx/5xx의 로그/audit/trace 확인 경로를 PR에 기록 |
-| Alarm ack/note/journal 또는 알람 화면 변경 | `cd backend && uv run pytest tests/test_alarm_ack_note_history_contract.py tests/test_alarm_summary_ui_contract.py -v`; `cd frontend && npm run lint && npm run build && npm run e2e:browser` | PoC 전 브라우저 수동 smoke는 [PoC browser smoke runbook](../../runbooks/poc-browser-smoke.md)으로 증거를 남김 |
+| Alarm ack/note/journal 또는 알람 화면 변경 | `cd backend && uv run pytest tests/test_alarm_ack_note_history_contract.py tests/test_alarm_summary_ui_contract.py -v`; `cd frontend && npm run lint && npm run build && npm run e2e:browser` | PoC 전 브라우저 수동 smoke는 [PoC browser smoke runbook](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/runbooks/poc-browser-smoke.md)으로 증거를 남김 |
 | read-only PoC-safe 모드(`PUREIRON_POC_READ_ONLY_MODE`)/write-control 경로 변경 | `cd backend && uv run pytest tests/test_poc_read_only_mode.py tests/test_agent_troubleshooting_smoke.py -v` | `/api/health`·[runtime-config](runtime-config.md) env 계약 확인, 내부 수집·읽기 경로가 유지되는지 |
 | Gateway/lifecycle 변경 | `cd backend && uv run pytest tests/ -v` | graceful degradation 관련 테스트 추가 |
 | TagStore/tag write/event bus 변경 | 관련 tag/alarm/ws 테스트 | `../tests/e2e/test_acceptance.py`, 필요 시 `test_nonfunctional.py` |
@@ -3253,14 +3249,14 @@ tag/alarm/history 변화 자체의 상세 검증은 AC-5·AC-6·AC-7로 이미 �
 
 #### AC-18 수동 데모 체크리스트(자동화 대상 아님)
 
-데모 전 또는 릴리스 PoC 전에 사람이 확인한다. v1에서 자동화하지 않는 이유를 함께 적는다. 고객-site read-only PoC 리뷰 전에는 [PoC browser smoke runbook](../../runbooks/poc-browser-smoke.md)을 실행해 sanitized screenshots/CSV/notes 증거를 남긴다.
+데모 전 또는 릴리스 PoC 전에 사람이 확인한다. v1에서 자동화하지 않는 이유를 함께 적는다. 고객-site read-only PoC 리뷰 전에는 [PoC browser smoke runbook](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/runbooks/poc-browser-smoke.md)을 실행해 sanitized screenshots/CSV/notes 증거를 남긴다.
 
 - [ ] **3D Twin 시각 highlight** — `tag_reference`가 온 설비/노드가 실제 3D 화면에서 색/라벨로 강조되는지 (렌더링은 in-process 검증 불가).
-- [ ] **Agent 설명 품질** — 실제 provider/key가 있을 때 Agent가 이상 원인 후보와 조치 시나리오를 설득력 있게 설명하는지 확인한다. 자동화하지 않는 이유는 LLM 키와 자연어 품질이 결정적 assertion 대상이 아니기 때문이다. 실행 절차·질문 세트·pass/fail rubric·증거 sanitization은 [agent troubleshooting answer quality runbook](../../runbooks/agent-troubleshooting-answer-quality.md)을 따른다.
+- [ ] **Agent 설명 품질** — 실제 provider/key가 있을 때 Agent가 이상 원인 후보와 조치 시나리오를 설득력 있게 설명하는지 확인한다. 자동화하지 않는 이유는 LLM 키와 자연어 품질이 결정적 assertion 대상이 아니기 때문이다. 실행 절차·질문 세트·pass/fail rubric·증거 sanitization은 [agent troubleshooting answer quality runbook](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/runbooks/agent-troubleshooting-answer-quality.md)을 따른다.
 - [ ] **Agent graph 전체 compile** — 실제 LLM provider 키가 있을 때 graph가 supervisor 포함해 정상 compile되는지 (키 없는 CI에서는 미검증, 현재 baseline 부채).
-- [ ] **Work Order 수동 handoff** — 조치 후보에서 알람 ack·조치 note·이력 위로 사람이 기존 작업 지시/CMMS 프로세스로 넘기는 흐름. **Work Order는 현재 backend feature가 아니라 데모/수동 handoff**이며, v1은 사람 판단·수동 handoff까지만 다룬다(Work Order DB/API/router 없음, [product](product.md) MVP 제외: 사람 승인 없는 자동 조치 없음). 반복 가능한 데모 스크립트·검증 체크리스트는 [work-order-demo-handoff 런북](../../runbooks/work-order-demo-handoff.md)을 따른다. 자동화는 backend Work Order API가 생긴 뒤로 미룬다.
+- [ ] **Work Order 수동 handoff** — 조치 후보에서 알람 ack·조치 note·이력 위로 사람이 기존 작업 지시/CMMS 프로세스로 넘기는 흐름. **Work Order는 현재 backend feature가 아니라 데모/수동 handoff**이며, v1은 사람 판단·수동 handoff까지만 다룬다(Work Order DB/API/router 없음, [product](product.md) MVP 제외: 사람 승인 없는 자동 조치 없음). 반복 가능한 데모 스크립트·검증 체크리스트는 [work-order-demo-handoff 런북](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/runbooks/work-order-demo-handoff.md)을 따른다. 자동화는 backend Work Order API가 생긴 뒤로 미룬다.
 - [x] **모바일 알람 확인 UI 경로** — `AlarmSummary.tsx`가 모바일 전용 ack/note card와 history action context를 제공하고, `test_alarm_summary_ui_contract.py`가 unsupported delete affordance 제거까지 고정한다. 실제 브라우저/현장 스크린샷 증거는 PoC 실행 시점에 남긴다.
-- [ ] **알람 ack·조치 note·이력 브라우저 smoke** — active alarm before/after ack, action note 저장, history/journal row, read-only block 증거를 [PoC browser smoke runbook](../../runbooks/poc-browser-smoke.md)에 따라 남긴다.
+- [ ] **알람 ack·조치 note·이력 브라우저 smoke** — active alarm before/after ack, action note 저장, history/journal row, read-only block 증거를 [PoC browser smoke runbook](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/runbooks/poc-browser-smoke.md)에 따라 남긴다.
 
 수동 항목이 자동화 가능해지면(예: Work Order API 추가) 해당 항목을 AC-18 자동화 표로 승격한다.
 

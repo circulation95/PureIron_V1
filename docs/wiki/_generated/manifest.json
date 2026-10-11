@@ -3,15 +3,14 @@
   "docs": [
     {
       "audience": "both",
-      "bytes": 46366,
+      "bytes": 46275,
       "id": "adr-index",
       "last_verified": "2026-10-04",
       "path": "docs/wiki/adr/index.md",
       "section_count": 33,
-      "sha256": "b7defb35b0c2381ab542b518cbcbf1c1aaad98f9a4fdbcdc05798f6272a0d18e",
+      "sha256": "baf2af87b65952adee8319c8eacb1a5cacffb286cbe4fdaf1d64d2e593427756",
       "source_globs": [],
       "sources": [
-        "docs/ADR.md",
         "docs/wiki/sot/product.md",
         "docs/wiki/sot/agent-rules.md",
         "docs/wiki/sot/architecture.md",
@@ -40,16 +39,15 @@
     },
     {
       "audience": "both",
-      "bytes": 25212,
+      "bytes": 25261,
       "id": "gtm-first-contract",
       "last_verified": "2026-06-30",
       "path": "docs/wiki/gtm/first-contract.md",
       "section_count": 29,
-      "sha256": "6456b3327bb07d103ea379ae77b45242a35a63a7a2d0ce7e89b3804a3a19071e",
+      "sha256": "65a917e2ada5c92e1b12144034a6cdda7e97ee0be3119ed8c3f857a57f3844c6",
       "source_globs": [],
       "sources": [
         "docs/wiki/sot/product.md",
-        "docs/PRD.md",
         "USER.md"
       ],
       "status": "canonical",
@@ -72,12 +70,12 @@
     },
     {
       "audience": "both",
-      "bytes": 18974,
+      "bytes": 19722,
       "id": "report-mvp-gap",
       "last_verified": "2026-07-07",
       "path": "docs/wiki/reports/mvp-gap.md",
       "section_count": 8,
-      "sha256": "4898b5847a45015ada1b4d577c4686a578ddb0892196f5325b74dafe0cd5c231",
+      "sha256": "782833bf78da50a09db220b53a6499aff87c072286bb1839c8a771c7ff0e2127",
       "source_globs": [],
       "sources": [
         "docs/sales/read-only-poc-proposal.md",
@@ -97,12 +95,12 @@
     },
     {
       "audience": "agent",
-      "bytes": 18108,
+      "bytes": 18141,
       "id": "sot-agent-rules",
       "last_verified": "2026-08-17",
       "path": "docs/wiki/sot/agent-rules.md",
       "section_count": 14,
-      "sha256": "c39770523b6f2b0bf686ee9d2740518c9b9c6928ad452344c3afb08ee81a7e40",
+      "sha256": "225e5c9b655e2fb5c22d437e88d1857dc56a0a815eaa3091dfd0173c45e26de9",
       "source_globs": [],
       "sources": [
         "AGENTS.md",
@@ -133,15 +131,14 @@
     },
     {
       "audience": "both",
-      "bytes": 19454,
+      "bytes": 19327,
       "id": "sot-architecture",
       "last_verified": "2026-07-04",
       "path": "docs/wiki/sot/architecture.md",
       "section_count": 19,
-      "sha256": "a17f8a3e94f526904a1f1a31712802541946cf245535bcae90f3aeb8ce6e2aa8",
+      "sha256": "6e69dae3c4aa2a52ef7467117d18318c4ffd369e29ffb601c531160388d85ba8",
       "source_globs": [],
       "sources": [
-        "docs/ARCHITECTURE.md",
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/gateway.py",
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/CLAUDE.md"
       ],
@@ -185,12 +182,12 @@
     },
     {
       "audience": "both",
-      "bytes": 46628,
+      "bytes": 46696,
       "id": "sot-data-contracts",
       "last_verified": "2026-08-22",
       "path": "docs/wiki/sot/data-contracts.md",
       "section_count": 22,
-      "sha256": "48bb6bfc274ea9db2ec4831b10af37b807059a93682b62f54c7dc81be29475e1",
+      "sha256": "093fd2a0bdb6c7579a9a0bd09f14a83926033a2b136f74713a7bd02eda8038da",
       "source_globs": [
         "projects/demo-coffee/**/*.yaml",
         "projects/demo-coffee/**/*.json"
@@ -208,18 +205,18 @@
     },
     {
       "audience": "both",
-      "bytes": 18482,
+      "bytes": 18853,
       "id": "sot-frontend",
       "last_verified": "2026-07-23",
       "path": "docs/wiki/sot/frontend.md",
       "section_count": 15,
-      "sha256": "5df6e18a1550237da15df4aac3924a9f5cdf1e4830af5c2e3ea1b8086e88b5c3",
+      "sha256": "51a9ad832cfb6126129728b05ae754ec62ab37fde844f18400c2e19208a5389e",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/package.json",
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/AGENTS.md",
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/CLAUDE.md",
-        "docs/UI_GUIDE.md",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/UI_GUIDE.md",
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/src/atoms/tags.ts",
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/src/ws/client.ts",
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/src/types/processes.ts",
@@ -253,15 +250,14 @@
     },
     {
       "audience": "both",
-      "bytes": 13967,
+      "bytes": 13979,
       "id": "sot-product",
       "last_verified": "2026-06-30",
       "path": "docs/wiki/sot/product.md",
       "section_count": 18,
-      "sha256": "b38de2d1326e72f64ef890e27d414050847d786773a460a00e1850176cdf44a9",
+      "sha256": "1e7e1a9775ef653d03dbd3d23f614063b797f93cbd78366c35c24febe8670067",
       "source_globs": [],
       "sources": [
-        "docs/PRD.md",
         "README.md",
         "USER.md"
       ],
@@ -286,12 +282,12 @@
     },
     {
       "audience": "both",
-      "bytes": 33755,
+      "bytes": 34233,
       "id": "sot-testing",
       "last_verified": "2026-08-22",
       "path": "docs/wiki/sot/testing.md",
       "section_count": 18,
-      "sha256": "6fe0cef55336446daf23203766532c7467133ca74f05a67e6bb8d1bab8526ac0",
+      "sha256": "520ab0b15cb7d08919d6ce01b730cbcd19dc09eb0d37bb64cb538851a6d5ef80",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/pyproject.toml",
@@ -313,8 +309,8 @@
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/tests/test_operational_events.py",
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/tests/test_project_package.py",
         "https://github.com/circulation95/PureIron_ignition/tree/legacy-final/backend/src/pureiron/operational",
-        "docs/runbooks/poc-browser-smoke.md",
-        "docs/runbooks/agent-troubleshooting-answer-quality.md"
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/runbooks/poc-browser-smoke.md",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/runbooks/agent-troubleshooting-answer-quality.md"
       ],
       "status": "canonical",
       "title": "Testing SOT — 검증 계층·명령·게이트"

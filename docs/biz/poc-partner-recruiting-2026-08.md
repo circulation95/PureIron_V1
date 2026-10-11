@@ -191,4 +191,4 @@ GitHub: (링크)
 - [(사)스마트제조혁신협회](https://www.smiba.or.kr/) · [제조AI 매칭상담 205개사 신청 (헬로티)](https://www.hellot.net/news/article.html?no=106097) · [(데이터넷)](https://www.datanet.co.kr/news/articleView.html?idxno=205921)
 - [스마트제조혁신협회, 자율형공장 구축 지원사업 파트너](https://www.hellot.net/news/article.html?no=110489)
 - 네이버 카페 검색: [무인화기술](https://cafe.naver.com/completeautomation) · [간이자동화](https://cafe.naver.com/152ng) · [기술장인](https://cafe.naver.com/techmaster) · [전산실 사람들](https://cafe.naver.com/peopleofit) · [PLC관련 기술자 모임](https://m.cafe.daum.net/plcplc)
-- 내부: `docs/wiki/reports/mvp-gap.md` · `docs/wiki/gtm/first-contract.md` · `docs/sales/executive-one-pager.md` · `docs/runbooks/on-prem-read-only-poc.md`
+- 내부: `docs/wiki/reports/mvp-gap.md` · `docs/wiki/gtm/first-contract.md` · `docs/sales/executive-one-pager.md` · `PureIron_ignition@legacy-final:docs/runbooks/on-prem-read-only-poc.md`

@@ -5,7 +5,6 @@ status: canonical
 audience: both
 owners: [pureiron-core]
 sources:
-  - docs/PRD.md
   - README.md
   - USER.md
 last_verified: 2026-06-30
@@ -21,7 +20,6 @@ v1은 기존 PLC와 설비 제어 로직을 대체하지 않고, 그 위에 웹 
 
 ## 이 문서의 원천
 
-- [docs/PRD.md](../../PRD.md) — 기존 제품 목표·사용자·핵심 기능·MVP 제외·성능 요구
 - [README.md](../../../README.md) — 설치/실행 진입점, 기능 요약
 - [USER.md](../../../USER.md) — 사용자/팀 맥락, 장기 기술 비전, 작업 성향
 
@@ -136,7 +134,7 @@ v1은 첫 계약 가능성과 영업 데모 설득력을 높이는 기능에 집
 
 8. **Work Order Demo (수동 handoff, backend 기능 아님)**
    - 이상 상황에서 조치 후보를 제안하고, 알람 ack·조치 note·이력 위에서 **사람이 기존 작업 지시/CMMS 프로세스로 넘기는 수동 handoff 흐름**을 데모한다.
-   - v1은 Work Order를 backend에서 생성·저장·승인하지 않는다(DB/API/router 없음, `mes/`는 recipe/plan/task이지 work order 아님). 반복 가능한 데모 스크립트·검증 체크리스트는 [work-order-demo-handoff 런북](../../runbooks/work-order-demo-handoff.md), 자동/수동 분리는 [testing](testing.md#5-acceptance-criteria-현재-범위) AC-18을 따른다.
+   - v1은 Work Order를 backend에서 생성·저장·승인하지 않는다(DB/API/router 없음, `mes/`는 recipe/plan/task이지 work order 아님). 반복 가능한 데모 스크립트·검증 체크리스트는 [work-order-demo-handoff 런북](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/runbooks/work-order-demo-handoff.md), 자동/수동 분리는 [testing](testing.md#5-acceptance-criteria-현재-범위) AC-18을 따른다.
 
 9. **Auth / RBAC / Audit**
    - 사용자, 권한, 감사 로그를 제공한다.
@@ -209,7 +207,7 @@ PureIron의 UI는 전통적인 낡은 HMI 느낌에 갇히지 않는다.
 - Mobile-first Alarm Handling을 핵심 경험으로 둘 것.
 - 데이터 밀도, 명확한 상태 표현, 큰 버튼, 빠른 인지성을 우선할 것.
 - 3D Digital Twin은 v1에서 고객 설득과 공정 이해를 돕는 데 집중할 것.
-- AI-슬롭 안티패턴을 피할 것. 상세는 [UI_GUIDE.md](../../UI_GUIDE.md)를 따른다.
+- AI-슬롭 안티패턴을 피할 것. 상세는 [UI_GUIDE.md](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/UI_GUIDE.md)를 따른다.
 
 ## 첫 계약 전략
 
