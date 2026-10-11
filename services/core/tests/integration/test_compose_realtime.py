@@ -103,6 +103,16 @@ def _wait_normal(token: str) -> None:
         time.sleep(1)
 
 
+def _wait_journal_flushed(timeout_s: float = 15.0) -> None:
+    deadline = time.monotonic() + timeout_s
+    while True:
+        alarms = cast("Json", json.loads(wait_http(f"{CORE_API}/readyz", timeout_s=30))["alarms"])
+        if alarms["journal_queue_rows"] == 0:
+            return
+        assert time.monotonic() < deadline, f"alarm journal not flushed: {alarms}"
+        time.sleep(0.5)
+
+
 async def _db_rows(stack: Stack, since: datetime) -> tuple[list[Json], list[Json]]:
     conn = await asyncpg.connect(stack.dsn("pureiron"), password=stack.password)
     try:
@@ -155,6 +165,7 @@ def test_alarm_ws_within_2s_then_ack_journal_and_audit(stack: Stack, operator: s
             ("NORMAL", OPERATOR),  # 그 사이 해제됐으면 ACK가 곧 NORMAL
         }
         assert api("POST", f"/alarms/{ALARM_ID}/ack", operator)[0] in {409, 200}
+    _wait_journal_flushed()  # 조건 변화 전이는 writer 큐(1s 주기)를 거쳐 쓰인다
     journal, audit = asyncio.run(_db_rows(stack, since))
     acks = [r for r in journal if r["username"] == OPERATOR]
     assert acks, journal
