@@ -8,7 +8,7 @@
 #            no-customer-branching integration-compose
 # 조건부:    n-minus-1 repro-build  (CI가 경로·라벨·schedule로 판단해 호출)
 # 보조:      contracts-gen(생성물 갱신), images(이미지 빌드),
-#            perf-ingest(2,000태그 1s 부하 → artifacts/perf/<PUREIRON_PERF_RELEASE:-r2>/ingest.json,
+#            perf-ingest(2,000태그 1s 부하 + 알람 50·WS 1 → artifacts/perf/<PUREIRON_PERF_RELEASE:-r3>/ingest.json,
 #            기록만 — 합격선 없음)
 #
 # 환경변수: BASE_REF(기본 origin/master) — contracts-diff·migration-lint 비교 기준.
