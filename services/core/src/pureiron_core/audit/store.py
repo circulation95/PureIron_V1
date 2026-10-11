@@ -1,7 +1,8 @@
 """`audit_log` 기록·조회(asyncpg raw SQL, plan M3b D12).
 
-`record`는 best-effort(실패 시 경고 로그, 예외 없음), `record_with(conn, …)`는 호출자
-트랜잭션 안에서 쓰고 실패를 그대로 올린다(M3b-2 알람 ACK = 저널·감사 같은 트랜잭션).
+`PgAuditStore`는 `AuditLog`(best-effort `record` — 실패 시 경고 로그, 예외 없음 — 와 `query`)와
+`AuditWriter`(`record_with(conn, …)` — 호출자 트랜잭션 안에서 쓰고 asyncpg 예외를 그대로 올린다,
+M3b-2 알람 ACK = 저널·감사 같은 트랜잭션)를 구현한다.
 조회는 최신순·`[start, end)`.
 """
 

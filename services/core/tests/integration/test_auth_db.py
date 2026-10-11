@@ -19,7 +19,13 @@ from pathlib import Path
 import asyncpg
 import pytest
 
-from pureiron_core.audit.ports import AuditAction, AuditEntry, AuditQuery, AuditSource
+from pureiron_core.audit.ports import (
+    AuditAction,
+    AuditEntry,
+    AuditQuery,
+    AuditSource,
+    AuditWriter,
+)
 from pureiron_core.audit.store import PgAuditStore
 from pureiron_core.auth.ports import (
     InvalidCredentialsError,
@@ -31,7 +37,7 @@ from pureiron_core.auth.ports import (
 from pureiron_core.auth.service import AuthService
 from pureiron_core.auth.sessions import PgSessionStore
 from pureiron_core.auth.users import PgUserStore
-from pureiron_core.platform.db import Database
+from pureiron_core.platform.db import Connection, Database
 
 from .conftest import SiteDb, Stack, core_cli
 
@@ -53,12 +59,23 @@ class _RollbackError(Exception):
     pass
 
 
-async def _record_then_roll_back(conn: asyncpg.Connection, store: PgAuditStore) -> None:
+async def _record_then_roll_back(conn: asyncpg.Connection, writer: AuditWriter) -> None:
     async with conn.transaction():
-        await store.record_with(
+        await writer.record_with(
             conn, AuditEntry(action=AuditAction.AUTH_LOGIN, source=AuditSource.API)
         )
         raise _RollbackError
+
+
+async def _record_good_then_bad(conn: Connection, writer: AuditWriter) -> None:
+    async with conn.transaction():
+        await writer.record_with(
+            conn, AuditEntry(action=AuditAction.AUTH_LOGIN, source=AuditSource.API)
+        )
+        # NUL은 text에 들어갈 수 없다 → 서버가 거부(CharacterNotInRepertoireError).
+        await writer.record_with(
+            conn, AuditEntry(action=AuditAction.AUTH_LOGOUT, source=AuditSource.API, target="a\x00")
+        )
 
 
 @pytest.fixture
@@ -220,6 +237,18 @@ async def test_audit_query_filters_order_and_limit(site_db: SiteDb, db: Database
         "updater",
     )
     assert latest.detail == {"generation": 3, "nested": {"ok": True}}
+
+
+@pytest.mark.fresh_db
+async def test_record_with_raises_driver_errors_and_rolls_back_the_caller(
+    site_db: SiteDb, db: Database
+) -> None:
+    """`AuditWriter` 계약: 실패는 asyncpg 예외 그대로 → 같은 트랜잭션의 앞선 쓰기도 남지 않는다."""
+    writer: AuditWriter = PgAuditStore(db)
+    async with db.connection() as conn:
+        with pytest.raises(asyncpg.PostgresError):
+            await _record_good_then_bad(conn, writer)
+    assert (await _fetch(site_db, "SELECT count(*) AS n FROM audit_log"))[0]["n"] == 0
 
 
 async def test_audit_record_failure_only_warns(caplog: pytest.LogCaptureFixture) -> None:
