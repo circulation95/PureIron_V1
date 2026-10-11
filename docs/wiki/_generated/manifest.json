@@ -217,12 +217,12 @@
     },
     {
       "audience": "both",
-      "bytes": 18853,
+      "bytes": 22763,
       "id": "sot-frontend",
       "last_verified": "2026-07-23",
       "path": "docs/wiki/sot/frontend.md",
-      "section_count": 15,
-      "sha256": "51a9ad832cfb6126129728b05ae754ec62ab37fde844f18400c2e19208a5389e",
+      "section_count": 16,
+      "sha256": "24052153d759b5e3744e478e3378d28647f1897f6f2f1c62bdecb7aab994ef2e",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/package.json",
@@ -294,12 +294,12 @@
     },
     {
       "audience": "both",
-      "bytes": 34343,
+      "bytes": 34996,
       "id": "sot-testing",
       "last_verified": "2026-08-22",
       "path": "docs/wiki/sot/testing.md",
       "section_count": 18,
-      "sha256": "554a50aaa9f0f5218803b92a8ac66728ac6d13e34d220c79361c576dcbe91daf",
+      "sha256": "6b867fd26c47e39d66d29519bccaf269b1a9ceee8f6c633d94e7cc1db94c5a1d",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/pyproject.toml",
