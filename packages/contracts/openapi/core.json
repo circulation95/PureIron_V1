@@ -679,6 +679,11 @@
       }
     },
     "securitySchemes": {
+      "HTTPBearer": {
+        "description": "Updater token",
+        "scheme": "bearer",
+        "type": "http"
+      },
       "SessionBearer": {
         "description": "로그인 응답 본문의 `token`을 `Authorization: Bearer`로. 비브라우저(ai·스크립트)용",
         "scheme": "bearer",
@@ -689,11 +694,6 @@
         "in": "cookie",
         "name": "pureiron_session",
         "type": "apiKey"
-      },
-      "UpdaterToken": {
-        "description": "Updater token",
-        "scheme": "bearer",
-        "type": "http"
       }
     }
   },
@@ -1061,7 +1061,7 @@
         },
         "security": [
           {
-            "UpdaterToken": []
+            "HTTPBearer": []
           }
         ],
         "summary": "Release Edit Lock",
@@ -1108,7 +1108,7 @@
         },
         "security": [
           {
-            "UpdaterToken": []
+            "HTTPBearer": []
           }
         ],
         "summary": "Acquire Edit Lock",
