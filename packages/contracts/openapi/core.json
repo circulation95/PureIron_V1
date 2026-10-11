@@ -1,6 +1,23 @@
 {
   "components": {
     "schemas": {
+      "AckAllOut": {
+        "properties": {
+          "acknowledged": {
+            "description": "이번에 ACK한 알람(ACK 뒤 상태)",
+            "items": {
+              "$ref": "#/components/schemas/AlarmOut"
+            },
+            "title": "Acknowledged",
+            "type": "array"
+          }
+        },
+        "required": [
+          "acknowledged"
+        ],
+        "title": "AckAllOut",
+        "type": "object"
+      },
       "Acquisition": {
         "description": "수집 상태 집계(준비 판정에는 쓰지 않음 — 장비가 꺼진 현장도 ready). 태그 값은 담지 않는다.",
         "properties": {
@@ -56,6 +73,329 @@
           "ingest"
         ],
         "title": "Acquisition",
+        "type": "object"
+      },
+      "AlarmEventMessage": {
+        "description": "알람 상태 전이(인증된 모든 연결에 방송). 필드는 전이 뒤 `AlarmOut`.",
+        "properties": {
+          "alarm_id": {
+            "title": "Alarm Id",
+            "type": "string"
+          },
+          "alarm_type": {
+            "description": "프로젝트 정의의 `type`",
+            "enum": [
+              "above",
+              "below"
+            ],
+            "title": "Alarm Type",
+            "type": "string"
+          },
+          "changed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "마지막 전이 시각",
+            "title": "Changed At"
+          },
+          "changed_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "마지막 전이를 한 사용자(ACK). 조건 변화는 null",
+            "title": "Changed By"
+          },
+          "deadband": {
+            "title": "Deadband",
+            "type": "number"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "on_delay_s": {
+            "title": "On Delay S",
+            "type": "number"
+          },
+          "priority": {
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ],
+            "title": "Priority",
+            "type": "string"
+          },
+          "setpoint": {
+            "title": "Setpoint",
+            "type": "number"
+          },
+          "state": {
+            "description": "RETIRED = 정의에서 빠짐(WS 방송·저널에만 나온다)",
+            "enum": [
+              "NORMAL",
+              "ACTIVE_UNACKED",
+              "ACTIVE_ACKED",
+              "CLEARED_UNACKED",
+              "RETIRED"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "tag_path": {
+            "title": "Tag Path",
+            "type": "string"
+          },
+          "type": {
+            "const": "alarm_event",
+            "title": "Type",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "마지막 전이를 만든 값(ACK는 값을 바꾸지 않는다)",
+            "title": "Value"
+          },
+          "value_ts": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "그 값의 샘플 시각(복원한 알람은 null)",
+            "title": "Value Ts"
+          }
+        },
+        "required": [
+          "alarm_id",
+          "tag_path",
+          "alarm_type",
+          "setpoint",
+          "deadband",
+          "on_delay_s",
+          "priority",
+          "description",
+          "state",
+          "value",
+          "value_ts",
+          "changed_at",
+          "changed_by",
+          "type"
+        ],
+        "title": "AlarmEventMessage",
+        "type": "object"
+      },
+      "AlarmList": {
+        "properties": {
+          "alarms": {
+            "description": "NORMAL이 아닌 알람(활성 + 해제됐지만 미확인): 우선순위 높은 것 → 최근 전이 순",
+            "items": {
+              "$ref": "#/components/schemas/AlarmOut"
+            },
+            "title": "Alarms",
+            "type": "array"
+          }
+        },
+        "required": [
+          "alarms"
+        ],
+        "title": "AlarmList",
+        "type": "object"
+      },
+      "AlarmOut": {
+        "properties": {
+          "alarm_id": {
+            "title": "Alarm Id",
+            "type": "string"
+          },
+          "alarm_type": {
+            "description": "프로젝트 정의의 `type`",
+            "enum": [
+              "above",
+              "below"
+            ],
+            "title": "Alarm Type",
+            "type": "string"
+          },
+          "changed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "마지막 전이 시각",
+            "title": "Changed At"
+          },
+          "changed_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "마지막 전이를 한 사용자(ACK). 조건 변화는 null",
+            "title": "Changed By"
+          },
+          "deadband": {
+            "title": "Deadband",
+            "type": "number"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "on_delay_s": {
+            "title": "On Delay S",
+            "type": "number"
+          },
+          "priority": {
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ],
+            "title": "Priority",
+            "type": "string"
+          },
+          "setpoint": {
+            "title": "Setpoint",
+            "type": "number"
+          },
+          "state": {
+            "description": "RETIRED = 정의에서 빠짐(WS 방송·저널에만 나온다)",
+            "enum": [
+              "NORMAL",
+              "ACTIVE_UNACKED",
+              "ACTIVE_ACKED",
+              "CLEARED_UNACKED",
+              "RETIRED"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "tag_path": {
+            "title": "Tag Path",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "마지막 전이를 만든 값(ACK는 값을 바꾸지 않는다)",
+            "title": "Value"
+          },
+          "value_ts": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "그 값의 샘플 시각(복원한 알람은 null)",
+            "title": "Value Ts"
+          }
+        },
+        "required": [
+          "alarm_id",
+          "tag_path",
+          "alarm_type",
+          "setpoint",
+          "deadband",
+          "on_delay_s",
+          "priority",
+          "description",
+          "state",
+          "value",
+          "value_ts",
+          "changed_at",
+          "changed_by"
+        ],
+        "title": "AlarmOut",
+        "type": "object"
+      },
+      "Alarms": {
+        "description": "알람 상태 집계(준비 판정에는 쓰지 않음). 누적 값은 core 기동 후 기준.",
+        "properties": {
+          "active_total": {
+            "description": "ACTIVE_UNACKED + ACTIVE_ACKED",
+            "title": "Active Total",
+            "type": "integer"
+          },
+          "dropped_total": {
+            "description": "저널 큐 상한을 넘어 버린(가장 오래된) 행 수",
+            "title": "Dropped Total",
+            "type": "integer"
+          },
+          "journal_queue_rows": {
+            "description": "아직 DB에 쓰지 못한 알람 저널 행 수",
+            "title": "Journal Queue Rows",
+            "type": "integer"
+          },
+          "unacked_total": {
+            "description": "ACTIVE_UNACKED + CLEARED_UNACKED",
+            "title": "Unacked Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "active_total",
+          "unacked_total",
+          "journal_queue_rows",
+          "dropped_total"
+        ],
+        "title": "Alarms",
         "type": "object"
       },
       "AuditEntryOut": {
@@ -137,6 +477,98 @@
         "title": "AuditPage",
         "type": "object"
       },
+      "AuthMessage": {
+        "additionalProperties": false,
+        "description": "세션 쿠키가 없는 클라이언트의 첫 메시지(연결 후 5s 안). 토큰 = 로그인 응답의 `token`.",
+        "properties": {
+          "token": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Token",
+            "type": "string"
+          },
+          "type": {
+            "const": "auth",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "token"
+        ],
+        "title": "AuthMessage",
+        "type": "object"
+      },
+      "BucketOut": {
+        "properties": {
+          "avg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg"
+          },
+          "last": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last"
+          },
+          "max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max"
+          },
+          "min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min"
+          },
+          "samples": {
+            "description": "bucket 안 행 수(bool·NULL 행 포함 — avg 분모와 다르다)",
+            "title": "Samples",
+            "type": "integer"
+          },
+          "time": {
+            "description": "bucket 시작 시각",
+            "format": "date-time",
+            "title": "Time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "time",
+          "avg",
+          "min",
+          "max",
+          "last",
+          "samples"
+        ],
+        "title": "BucketOut",
+        "type": "object"
+      },
       "Check": {
         "properties": {
           "detail": {
@@ -159,6 +591,401 @@
           "ok"
         ],
         "title": "Check",
+        "type": "object"
+      },
+      "DeviceList": {
+        "properties": {
+          "devices": {
+            "description": "현재 plan의 장비 전부(device_id 순)",
+            "items": {
+              "$ref": "#/components/schemas/DeviceOut"
+            },
+            "title": "Devices",
+            "type": "array"
+          }
+        },
+        "required": [
+          "devices"
+        ],
+        "title": "DeviceList",
+        "type": "object"
+      },
+      "DeviceOut": {
+        "description": "장비 통신 상태(태그가 아니다). health 필드는 collector `DeviceHealth`, 못 받았으면 null.",
+        "properties": {
+          "bad_quality_tag_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bad Quality Tag Count"
+          },
+          "connected": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connected"
+          },
+          "consecutive_failures": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consecutive Failures"
+          },
+          "device_id": {
+            "title": "Device Id",
+            "type": "string"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "last_error_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error At"
+          },
+          "last_success_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Success At"
+          },
+          "poll_latency_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Poll Latency Ms"
+          },
+          "poll_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Poll Total"
+          },
+          "protocol": {
+            "title": "Protocol",
+            "type": "string"
+          },
+          "read_success_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read Success Rate"
+          },
+          "reconnect_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reconnect Count"
+          },
+          "silent": {
+            "description": "core 무신호 판정(live 샘플이 max(3*poll, 5s) 동안 없음)",
+            "title": "Silent",
+            "type": "boolean"
+          },
+          "state": {
+            "description": "core 판정: health가 connected이고 무신호가 아니면 CONNECTED",
+            "enum": [
+              "CONNECTED",
+              "DISCONNECTED"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "tag_count": {
+            "title": "Tag Count",
+            "type": "integer"
+          },
+          "timeout_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout Count"
+          }
+        },
+        "required": [
+          "device_id",
+          "protocol",
+          "state",
+          "silent",
+          "tag_count",
+          "connected",
+          "status",
+          "last_success_at",
+          "last_error",
+          "last_error_at",
+          "consecutive_failures",
+          "poll_latency_ms",
+          "read_success_rate",
+          "poll_total",
+          "timeout_count",
+          "bad_quality_tag_count",
+          "reconnect_count"
+        ],
+        "title": "DeviceOut",
+        "type": "object"
+      },
+      "DeviceUpdateMessage": {
+        "description": "장비 상태 변화(인증된 모든 연결에 방송).",
+        "properties": {
+          "bad_quality_tag_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bad Quality Tag Count"
+          },
+          "connected": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connected"
+          },
+          "consecutive_failures": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consecutive Failures"
+          },
+          "device_id": {
+            "title": "Device Id",
+            "type": "string"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "last_error_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error At"
+          },
+          "last_success_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Success At"
+          },
+          "poll_latency_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Poll Latency Ms"
+          },
+          "poll_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Poll Total"
+          },
+          "protocol": {
+            "title": "Protocol",
+            "type": "string"
+          },
+          "read_success_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read Success Rate"
+          },
+          "reconnect_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reconnect Count"
+          },
+          "silent": {
+            "description": "core 무신호 판정(live 샘플이 max(3*poll, 5s) 동안 없음)",
+            "title": "Silent",
+            "type": "boolean"
+          },
+          "state": {
+            "description": "core 판정: health가 connected이고 무신호가 아니면 CONNECTED",
+            "enum": [
+              "CONNECTED",
+              "DISCONNECTED"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "tag_count": {
+            "title": "Tag Count",
+            "type": "integer"
+          },
+          "timeout_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout Count"
+          },
+          "type": {
+            "const": "device_update",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_id",
+          "protocol",
+          "state",
+          "silent",
+          "tag_count",
+          "connected",
+          "status",
+          "last_success_at",
+          "last_error",
+          "last_error_at",
+          "consecutive_failures",
+          "poll_latency_ms",
+          "read_success_rate",
+          "poll_total",
+          "timeout_count",
+          "bad_quality_tag_count",
+          "reconnect_count",
+          "type"
+        ],
+        "title": "DeviceUpdateMessage",
         "type": "object"
       },
       "EditLockOut": {
@@ -227,6 +1054,36 @@
         "title": "Health",
         "type": "object"
       },
+      "HelloMessage": {
+        "properties": {
+          "role": {
+            "enum": [
+              "viewer",
+              "operator",
+              "engineer",
+              "admin"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "type": {
+            "const": "hello",
+            "title": "Type",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "username",
+          "role"
+        ],
+        "title": "HelloMessage",
+        "type": "object"
+      },
       "Historian": {
         "description": "이력 기록 상태(준비 판정에는 쓰지 않음). 누적 값은 core 기동 후 기준.",
         "properties": {
@@ -285,6 +1142,71 @@
         "title": "Historian",
         "type": "object"
       },
+      "HistoryOut": {
+        "properties": {
+          "resolution": {
+            "description": "실제로 쓴 해상도(auto 해석 결과)",
+            "enum": [
+              "raw",
+              "1m",
+              "1h"
+            ],
+            "title": "Resolution",
+            "type": "string"
+          },
+          "series": {
+            "description": "요청한 tag_id 순서(중복 제거)",
+            "items": {
+              "$ref": "#/components/schemas/HistorySeries"
+            },
+            "title": "Series",
+            "type": "array"
+          }
+        },
+        "required": [
+          "resolution",
+          "series"
+        ],
+        "title": "HistoryOut",
+        "type": "object"
+      },
+      "HistorySeries": {
+        "properties": {
+          "buckets": {
+            "description": "resolution=1m·1h일 때만 채운다",
+            "items": {
+              "$ref": "#/components/schemas/BucketOut"
+            },
+            "title": "Buckets",
+            "type": "array"
+          },
+          "raw": {
+            "description": "resolution=raw일 때만 채운다",
+            "items": {
+              "$ref": "#/components/schemas/RawPointOut"
+            },
+            "title": "Raw",
+            "type": "array"
+          },
+          "tag_id": {
+            "title": "Tag Id",
+            "type": "integer"
+          },
+          "truncated": {
+            "description": "limit_rows를 넘어 앞쪽 limit_rows개만 담았다",
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tag_id",
+          "truncated",
+          "raw",
+          "buckets"
+        ],
+        "title": "HistorySeries",
+        "type": "object"
+      },
       "IngestCounts": {
         "description": "ingest 누적 샘플 수(core 기동 후). live만 현재값에 반영, 나머지는 이력 전용.",
         "properties": {
@@ -324,6 +1246,100 @@
           "heartbeats"
         ],
         "title": "IngestCounts",
+        "type": "object"
+      },
+      "JournalEntryOut": {
+        "properties": {
+          "alarm_id": {
+            "title": "Alarm Id",
+            "type": "string"
+          },
+          "from_state": {
+            "title": "From State",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "tag_path": {
+            "title": "Tag Path",
+            "type": "string"
+          },
+          "time": {
+            "format": "date-time",
+            "title": "Time",
+            "type": "string"
+          },
+          "to_state": {
+            "description": "NORMAL·ACTIVE_UNACKED·ACTIVE_ACKED·CLEARED_UNACKED·RETIRED",
+            "title": "To State",
+            "type": "string"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ACK한 사용자. 조건 변화로 생긴 전이는 null",
+            "title": "Username"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "id",
+          "time",
+          "alarm_id",
+          "tag_path",
+          "from_state",
+          "to_state",
+          "value",
+          "username",
+          "note"
+        ],
+        "title": "JournalEntryOut",
+        "type": "object"
+      },
+      "JournalPage": {
+        "properties": {
+          "entries": {
+            "description": "최신순",
+            "items": {
+              "$ref": "#/components/schemas/JournalEntryOut"
+            },
+            "title": "Entries",
+            "type": "array"
+          }
+        },
+        "required": [
+          "entries"
+        ],
+        "title": "JournalPage",
         "type": "object"
       },
       "LoginOut": {
@@ -432,6 +1448,36 @@
         "title": "PasswordChangeRequest",
         "type": "object"
       },
+      "PingMessage": {
+        "description": "20s마다. 클라이언트는 `pong`으로 답한다(60s 동안 pong이 없으면 서버가 끊는다).",
+        "properties": {
+          "type": {
+            "const": "ping",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "PingMessage",
+        "type": "object"
+      },
+      "PongMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "const": "pong",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "PongMessage",
+        "type": "object"
+      },
       "ProjectStateOut": {
         "properties": {
           "applied_at": {
@@ -528,16 +1574,62 @@
         "title": "ProjectStateOut",
         "type": "object"
       },
+      "RawPointOut": {
+        "properties": {
+          "quality": {
+            "enum": [
+              "GOOD",
+              "BAD",
+              "UNCERTAIN"
+            ],
+            "title": "Quality",
+            "type": "string"
+          },
+          "time": {
+            "format": "date-time",
+            "title": "Time",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "숫자 또는 bool. NaN·값 없는 BAD는 null",
+            "title": "Value"
+          }
+        },
+        "required": [
+          "time",
+          "value",
+          "quality"
+        ],
+        "title": "RawPointOut",
+        "type": "object"
+      },
       "Readiness": {
         "properties": {
           "acquisition": {
             "$ref": "#/components/schemas/Acquisition"
+          },
+          "alarms": {
+            "$ref": "#/components/schemas/Alarms"
           },
           "checks": {
             "$ref": "#/components/schemas/ReadinessChecks"
           },
           "historian": {
             "$ref": "#/components/schemas/Historian"
+          },
+          "realtime": {
+            "$ref": "#/components/schemas/Realtime"
           },
           "status": {
             "enum": [
@@ -557,7 +1649,9 @@
           "version",
           "checks",
           "acquisition",
-          "historian"
+          "historian",
+          "alarms",
+          "realtime"
         ],
         "title": "Readiness",
         "type": "object"
@@ -580,6 +1674,21 @@
           "collector"
         ],
         "title": "ReadinessChecks",
+        "type": "object"
+      },
+      "Realtime": {
+        "description": "WS 연결 집계(준비 판정에는 쓰지 않음).",
+        "properties": {
+          "connections": {
+            "description": "지금 열린 인증된 WS 연결 수",
+            "title": "Connections",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "connections"
+        ],
+        "title": "Realtime",
         "type": "object"
       },
       "RoleName": {
@@ -637,6 +1746,163 @@
         "title": "SchemaEnvelopeCheck",
         "type": "object"
       },
+      "SubscribeMessage": {
+        "additionalProperties": false,
+        "description": "태그 구독 추가. 새로 구독한 태그의 현재값을 곧바로 `tag_update`로 한 번 보낸다.",
+        "properties": {
+          "tag_ids": {
+            "items": {
+              "$ref": "#/components/schemas/TagId"
+            },
+            "maxItems": 10000,
+            "title": "Tag Ids",
+            "type": "array"
+          },
+          "type": {
+            "const": "subscribe",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "tag_ids"
+        ],
+        "title": "SubscribeMessage",
+        "type": "object"
+      },
+      "TagId": {
+        "maximum": 2147483647,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "TagList": {
+        "properties": {
+          "tags": {
+            "description": "현재 plan의 태그 전부(tag_id 순)",
+            "items": {
+              "$ref": "#/components/schemas/TagValueOut"
+            },
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tags"
+        ],
+        "title": "TagList",
+        "type": "object"
+      },
+      "TagUpdateMessage": {
+        "description": "구독한 태그의 변화(배치 주기마다 합침 — 태그별 최신값만). 구독 직후 현재값도 이 메시지.",
+        "properties": {
+          "type": {
+            "const": "tag_update",
+            "title": "Type",
+            "type": "string"
+          },
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/TagValueOut"
+            },
+            "title": "Values",
+            "type": "array"
+          }
+        },
+        "required": [
+          "type",
+          "values"
+        ],
+        "title": "TagUpdateMessage",
+        "type": "object"
+      },
+      "TagValueOut": {
+        "properties": {
+          "device_id": {
+            "title": "Device Id",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "quality": {
+            "enum": [
+              "GOOD",
+              "BAD",
+              "UNCERTAIN"
+            ],
+            "title": "Quality",
+            "type": "string"
+          },
+          "tag_id": {
+            "title": "Tag Id",
+            "type": "integer"
+          },
+          "ts": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "샘플 시각(아직 샘플이 없으면 null)",
+            "title": "Ts"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "NaN/Inf·값 없음은 null",
+            "title": "Value"
+          }
+        },
+        "required": [
+          "tag_id",
+          "path",
+          "device_id",
+          "value",
+          "quality",
+          "ts"
+        ],
+        "title": "TagValueOut",
+        "type": "object"
+      },
+      "UnsubscribeMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "tag_ids": {
+            "items": {
+              "$ref": "#/components/schemas/TagId"
+            },
+            "maxItems": 10000,
+            "title": "Tag Ids",
+            "type": "array"
+          },
+          "type": {
+            "const": "unsubscribe",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "tag_ids"
+        ],
+        "title": "UnsubscribeMessage",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -676,6 +1942,64 @@
         ],
         "title": "ValidationError",
         "type": "object"
+      },
+      "WsClientMessage": {
+        "description": "클라이언트가 보내는 WS 메시지. 형식이 어긋난 메시지는 무시한다.",
+        "discriminator": {
+          "mapping": {
+            "auth": "#/components/schemas/AuthMessage",
+            "pong": "#/components/schemas/PongMessage",
+            "subscribe": "#/components/schemas/SubscribeMessage",
+            "unsubscribe": "#/components/schemas/UnsubscribeMessage"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/AuthMessage"
+          },
+          {
+            "$ref": "#/components/schemas/SubscribeMessage"
+          },
+          {
+            "$ref": "#/components/schemas/UnsubscribeMessage"
+          },
+          {
+            "$ref": "#/components/schemas/PongMessage"
+          }
+        ],
+        "title": "WsClientMessage"
+      },
+      "WsServerMessage": {
+        "description": "서버가 보내는 WS 메시지(JSON 텍스트 프레임 하나에 하나).",
+        "discriminator": {
+          "mapping": {
+            "alarm_event": "#/components/schemas/AlarmEventMessage",
+            "device_update": "#/components/schemas/DeviceUpdateMessage",
+            "hello": "#/components/schemas/HelloMessage",
+            "ping": "#/components/schemas/PingMessage",
+            "tag_update": "#/components/schemas/TagUpdateMessage"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/HelloMessage"
+          },
+          {
+            "$ref": "#/components/schemas/TagUpdateMessage"
+          },
+          {
+            "$ref": "#/components/schemas/AlarmEventMessage"
+          },
+          {
+            "$ref": "#/components/schemas/DeviceUpdateMessage"
+          },
+          {
+            "$ref": "#/components/schemas/PingMessage"
+          }
+        ],
+        "title": "WsServerMessage"
       }
     },
     "securitySchemes": {
@@ -703,6 +2027,259 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/alarms": {
+      "get": {
+        "operationId": "list_alarms",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlarmList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "not authenticated"
+          },
+          "403": {
+            "description": "requires a higher role"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          },
+          {
+            "SessionBearer": []
+          }
+        ],
+        "summary": "List Alarms",
+        "tags": [
+          "alarms"
+        ]
+      }
+    },
+    "/api/v1/alarms/ack-all": {
+      "post": {
+        "operationId": "ack_all_alarms",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AckAllOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "not authenticated"
+          },
+          "403": {
+            "description": "requires a higher role"
+          },
+          "503": {
+            "description": "site-db unavailable"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          },
+          {
+            "SessionBearer": []
+          }
+        ],
+        "summary": "Ack All",
+        "tags": [
+          "alarms"
+        ]
+      }
+    },
+    "/api/v1/alarms/journal": {
+      "get": {
+        "operationId": "list_alarm_journal",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "alarm_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Alarm Id"
+            }
+          },
+          {
+            "description": "포함(>=)",
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "포함(>=)",
+              "title": "Start"
+            }
+          },
+          {
+            "description": "제외(<)",
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "제외(<)",
+              "title": "End"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "not authenticated"
+          },
+          "403": {
+            "description": "requires a higher role"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          },
+          {
+            "SessionBearer": []
+          }
+        ],
+        "summary": "List Journal",
+        "tags": [
+          "alarms"
+        ]
+      }
+    },
+    "/api/v1/alarms/{alarm_id}/ack": {
+      "post": {
+        "operationId": "ack_alarm",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "alarm_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+              "title": "Alarm Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlarmOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "not authenticated"
+          },
+          "403": {
+            "description": "requires a higher role"
+          },
+          "404": {
+            "description": "unknown alarm"
+          },
+          "409": {
+            "description": "nothing to acknowledge (NORMAL·ACKED)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "site-db unavailable"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          },
+          {
+            "SessionBearer": []
+          }
+        ],
+        "summary": "Ack",
+        "tags": [
+          "alarms"
+        ]
+      }
+    },
     "/api/v1/audit": {
       "get": {
         "operationId": "list_audit",
@@ -981,6 +2558,38 @@
         ]
       }
     },
+    "/api/v1/devices": {
+      "get": {
+        "operationId": "list_devices",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "not authenticated"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          },
+          {
+            "SessionBearer": []
+          }
+        ],
+        "summary": "List Devices",
+        "tags": [
+          "devices"
+        ]
+      }
+    },
     "/api/v1/healthz": {
       "get": {
         "operationId": "healthz",
@@ -999,6 +2608,125 @@
         "summary": "Healthz",
         "tags": [
           "ops"
+        ]
+      }
+    },
+    "/api/v1/history": {
+      "get": {
+        "operationId": "get_history",
+        "parameters": [
+          {
+            "description": "반복 가능(최대 20개)",
+            "in": "query",
+            "name": "tag_id",
+            "required": true,
+            "schema": {
+              "description": "반복 가능(최대 20개)",
+              "items": {
+                "maximum": 2147483647,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "maxItems": 20,
+              "minItems": 1,
+              "title": "Tag Id",
+              "type": "array"
+            }
+          },
+          {
+            "description": "포함(>=)",
+            "in": "query",
+            "name": "start",
+            "required": true,
+            "schema": {
+              "description": "포함(>=)",
+              "format": "date-time",
+              "title": "Start",
+              "type": "string"
+            }
+          },
+          {
+            "description": "제외(<)",
+            "in": "query",
+            "name": "end",
+            "required": true,
+            "schema": {
+              "description": "제외(<)",
+              "format": "date-time",
+              "title": "End",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resolution",
+            "required": false,
+            "schema": {
+              "default": "auto",
+              "enum": [
+                "auto",
+                "raw",
+                "1m",
+                "1h"
+              ],
+              "title": "Resolution",
+              "type": "string"
+            }
+          },
+          {
+            "description": "태그별 행 상한",
+            "in": "query",
+            "name": "limit_rows",
+            "required": false,
+            "schema": {
+              "default": 20000,
+              "description": "태그별 행 상한",
+              "maximum": 20000,
+              "minimum": 1,
+              "title": "Limit Rows",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "not authenticated"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "site-db unavailable"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          },
+          {
+            "SessionBearer": []
+          }
+        ],
+        "summary": "Get History",
+        "tags": [
+          "history"
         ]
       }
     },
@@ -1143,6 +2871,38 @@
         "summary": "Readyz",
         "tags": [
           "ops"
+        ]
+      }
+    },
+    "/api/v1/tags": {
+      "get": {
+        "operationId": "list_tags",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "not authenticated"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          },
+          {
+            "SessionBearer": []
+          }
+        ],
+        "summary": "List Tags",
+        "tags": [
+          "tags"
         ]
       }
     }
