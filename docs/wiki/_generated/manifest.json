@@ -3,12 +3,12 @@
   "docs": [
     {
       "audience": "both",
-      "bytes": 46275,
+      "bytes": 46302,
       "id": "adr-index",
       "last_verified": "2026-10-04",
       "path": "docs/wiki/adr/index.md",
       "section_count": 33,
-      "sha256": "baf2af87b65952adee8319c8eacb1a5cacffb286cbe4fdaf1d64d2e593427756",
+      "sha256": "644c4bfbd6e721318afbeba836a68176ce63c762adeaad4428692ec236dd8c74",
       "source_globs": [],
       "sources": [
         "docs/wiki/sot/product.md",
@@ -131,19 +131,31 @@
     },
     {
       "audience": "both",
-      "bytes": 19327,
+      "bytes": 16366,
       "id": "sot-architecture",
-      "last_verified": "2026-07-04",
+      "last_verified": "2026-10-11",
       "path": "docs/wiki/sot/architecture.md",
-      "section_count": 19,
-      "sha256": "6e69dae3c4aa2a52ef7467117d18318c4ffd369e29ffb601c531160388d85ba8",
+      "section_count": 17,
+      "sha256": "cc9d63338606e2e869a0ae124d85beef498713cc63880b1e24792bbe3b096e57",
       "source_globs": [],
       "sources": [
-        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/gateway.py",
-        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/CLAUDE.md"
+        "services/core/src/pureiron_core/runtime.py",
+        "services/core/src/pureiron_core/app.py",
+        "services/core/src/pureiron_core/cli.py",
+        "services/core/.importlinter",
+        "services/core/src/pureiron_core/acquisition/server.py",
+        "services/core/src/pureiron_core/acquisition/ingest.py",
+        "services/core/src/pureiron_core/platform/bus.py",
+        "services/core/src/pureiron_core/tags/ports.py",
+        "services/collector/src/pureiron_collector/stream.py",
+        "services/updater/src/pureiron_updater/phases.py",
+        "packages/contracts/collector.proto",
+        "deploy/compose/site.compose.yml",
+        "deploy/releases/r2.json",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/wiki/sot/architecture.md"
       ],
       "status": "canonical",
-      "title": "Architecture SOT — 시스템 구조"
+      "title": "Architecture SOT — 시스템 구조 (V1)"
     },
     {
       "audience": "both",
