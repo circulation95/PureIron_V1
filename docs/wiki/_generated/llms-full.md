@@ -1741,7 +1741,7 @@ M1에서 PureIron_V1에 **골격으로** 들어간 것. 기능 본구현은 표�
 | core 모듈 경계 | import-linter 계약 (a)(b)(c) — 3절 | `services/core/.importlinter` |
 | TypeScript | tsc `strict` + `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes` 등 | `services/web/tsconfig.json` |
 | TypeScript lint | typescript-eslint `strictTypeChecked` + `stylisticTypeChecked` + react-hooks | `services/web/eslint.config.js` |
-| 억제·우회 | 0건. 정본 패턴은 `scripts/g1.sh` no-suppressions job(`type: ignore`, `noqa`, `pyright: ignore/basic/standard`, `fmt: off/skip`, `pragma: no cover`, `eslint-disable`, `as any`, `@ts-ignore`·`@ts-expect-error`·`@ts-nocheck`, `app.state`) | `scripts/g1.sh` |
+| 억제·우회 | 0건. 정본 패턴은 `scripts/g1.sh` no-suppressions job(`type: ignore`, `noqa`, `pyright: ignore/basic/standard/reportGeneralTypeIssues`, `fmt: off/skip`, `pragma: no cover`, `eslint-disable`, `as any`, `@ts-ignore`·`@ts-expect-error`·`@ts-nocheck`, `app.state`) | `scripts/g1.sh` |
 | 생성 코드 | `_gen/`·`schema.d.ts`는 lint 제외, 대신 drift 0 | ADR-028 |
 
 - ruff는 `PLR0913`(인자 수)·`PLR2004`(매직 넘버)만 전역으로 끈다. 인자가 많으면 선택 인자를 키워드 전용(`*,`)
@@ -1768,7 +1768,7 @@ services/core/src/pureiron_core/
 ```
 
 - 의존 방향은 `api > domain > platform`(계약 (b)). 도메인끼리는 **상대 모듈의 `ports`만** import한다(계약 (c)).
-  `runtime`·`app`을 import하는 것은 진입점뿐이다 — 도메인·api·platform은 import하지 못한다(계약 (a)).
+  `runtime`·`app`을 import하는 것은 진입점뿐이다(`app`이 `runtime`을 쓰는 것은 제외) — 도메인·api·platform은 import하지 못한다(계약 (a)).
   **새 도메인 모듈을 만들면 `.importlinter`의 (a)(b)(c) 세 곳에 모두 추가**한다 — 빠지면
   `tests/test_importlinter_negative.py`가 실패한다.
 - 값 객체와 모듈 경계를 넘는 상태 스냅샷은 `@dataclass(frozen=True, slots=True)`다. 한 소유자 안의 누적 통계·
@@ -1820,12 +1820,14 @@ services/core/src/pureiron_core/
 | 크기 값 | 필드·인자·상수에 단위 접미사 `_bytes`(개수면 `_rows` 등) | `size_bytes`(bundle-metrics), `flush_max_rows` |
 | 라우터 팩토리 | `build_<x>_router` | `build_health_router` |
 | 모듈 내부 | `_` 접두 | `_schema_check`, `_int` |
-| 환경변수 | `PUREIRON_<서비스>_<이름>`(core는 `PUREIRON_<이름>`), 비밀값은 `…_FILE` | `PUREIRON_DB_PASSWORD_FILE` |
+| 환경변수 | 사이트 공용 값은 `PUREIRON_<이름>`, 새 서비스 전용 튜닝 값은 `PUREIRON_<서비스>_<이름>`, 비밀값은 `…_FILE` | `PUREIRON_SITE_ID`, `PUREIRON_COLLECTOR_HEARTBEAT_S`, `PUREIRON_DB_PASSWORD_FILE` |
 
-- 단위 접미사의 예외: 함수 안 짧은 지역 변수(`delay`, `deadline`)와 외부 API 시그니처를 따르는 이름
-  (`subprocess`·`asyncio`의 `timeout`). `Pg` 접두의 예외: Protocol 짝이 없는 기반 클래스(`Database`, `SchemaGuard`).
+- 단위 접미사의 예외: 함수 안 짧은 지역 변수(`delay`, `deadline`), 외부 API 시그니처를 따르는 이름
+  (`subprocess`·`asyncio`의 `timeout`), `timedelta`처럼 타입이 단위를 담는 값(`RAW_MAX_SPAN`). `Pg` 접두의 예외: Protocol 짝이 없는 기반 클래스(`Database`, `SchemaGuard`).
 - 축약은 업계 표준(`db`, `ts`, `rev`, `gen`, `dsn`)만 쓴다. 한 글자 이름은 컴프리헨션·짧은 람다 안에서만.
-- bool은 상태를 말하는 이름(`db_ok`, `connected`)으로, 누적 숫자는 `_total` 접미사로 쓴다.
+- bool은 상태를 말하는 이름(`db_ok`, `connected`)으로 쓴다. 상태·API로 노출하는 누적값은 `_total` 접미사
+  (`dropped_total`, `devices_total`)를 쓴다. 모듈 내부 통계 필드(`RecorderStats.raw`)와 이미 정해진 계약 필드
+  (`collector.proto` `timeout_count`)는 예외 — 계약 필드 이름은 바꾸지 않는다.
 
 ## 6. 함수와 파일 크기
 
@@ -1856,7 +1858,7 @@ services/core/src/pureiron_core/
 - 주석이 코드를 그대로 다시 말하면 지운다. 주석이 길어지면 이름이나 구조로 표현할 수 없는지 먼저 본다.
 - 모듈 docstring이 없는 기존 파일은 손댈 때 채운다.
 - TODO·FIXME로 미완성을 남기지 않는다. 남는 일은 PR 본문 백로그 표에 쓴다.
-- `print`는 CLI 진입점(`cli.py`·`main.py`)에서만 쓰고, 라이브러리 코드는 `log`를 쓴다. 기계가 읽는 출력은
+- `print`는 CLI 진입점(`cli.py`·`main.py`·`if __name__ == "__main__"` 단독 스크립트)에서만 쓰고, 라이브러리 코드는 `log`를 쓴다. 기계가 읽는 출력은
   `--json` 옵션으로 `json.dumps(..., sort_keys=True)`를 낸다.
 
 ## 8. 에러 처리·로깅·비동기
@@ -1870,7 +1872,8 @@ services/core/src/pureiron_core/
      traceback을 첫 실패·상태가 바뀔 때만 내고(`log.exception`), 이후는 `log.warning`이나 간격을 둔다.
   2. **변환 후 재던짐** — `raise MigrationFailedError(...) from exc` (`platform/migrate.py`).
   3. **정리 후 재던짐 또는 명시적 best-effort** — 자원을 정리하고 원래 예외를 다시 던지거나(`platform/db.py`),
-     실패해도 되는 정리를 `contextlib.suppress(Exception)`으로 감싼다. best-effort에는 이유 주석을 붙인다.
+     실패해도 되는 작업을 `contextlib.suppress(Exception)` 또는 `log` 후 계속으로 처리한다(updater `phases.py`
+     gc). best-effort인 이유는 주석이나 docstring에 적는다.
 - 일시적 실패(DB·collector 단절)는 **로그 + 재시도 + 상태 노출**(`db_ok`, `/readyz`)로 다루고 프로세스를
   죽이지 않는다(graceful degradation). 설정 오류처럼 고칠 수 없는 것은 기동 시 바로 실패한다(`SettingsError`).
 - 로거는 모듈마다 `log = logging.getLogger(__name__)`, 인자는 `%s` 지연 포맷으로 넘긴다(f-string 금지).
@@ -1919,6 +1922,8 @@ services/core/src/pureiron_core/
 - [ ] 주석이 "무엇"을 반복하지 않고 "왜"·계약을 말하는가, 언어가 7절 표와 맞는가
 - [ ] 넓은 catch가 8절의 세 경우인가, I/O에 이름 붙은 제한 시간이 있는가, 임계 구역 안에 await·I/O·발행이 없는가
 - [ ] 가짜 객체가 직접 쓴 클래스이고, monkeypatch가 자기 코드를 치환하지 않고, 기대값이 독립적인가(9절)
+- [ ] `print`는 CLI 진입점에만 있고 백그라운드 task에 소유자가 있는가(7·8절)
+- [ ] (web) 생성 타입만 쓰고, `any`·`!`·불필요한 `as`가 없고, effect가 정리 함수를 돌려주는가(10절)
 - [ ] 같은 일을 하는 기존 코드와 모양이 같은가(1절 4번)
 
 ## 12. 현재 코드와의 차이 (백로그, 2026-10-11 검토 기준)
@@ -1928,10 +1933,11 @@ services/core/src/pureiron_core/
 | 규칙 | 위치 | 내용 |
 |---|---|---|
 | 8절 제한 시간 상수 | `services/updater/src/pureiron_updater/images.py` | `timeout=60/1800/30/120` 리터럴 → 이름 붙은 상수 |
-| 9절 monkeypatch | `services/updater/tests/test_cli.py`(`cli.real_deps`), `deploy/tests/test_build_bundle.py`(`SIZE_LIMIT`), `packages/bundle-tools/tests/test_pib.py`·`test_keys_images_cli.py`(`BoundedTarInfo._base_proc_member`) | 자기 코드 치환 → 주입 인자 |
+| 9절 monkeypatch | `services/updater/tests/test_cli.py`(`cli.real_deps`), `deploy/tests/test_build_bundle.py`(`SIZE_LIMIT`), `packages/bundle-tools/tests/test_pib.py`·`test_keys_images_cli.py`(`BoundedTarInfo._base_proc_member`), `services/updater/tests/test_phases.py`(`pureiron_updater.gc.collect`) | 자기 코드 치환 → 주입 인자 |
 | 2절 예외 이유 주석 | 루트 `pyproject.toml` `"**/tests/**" = ["PLR0915"]` | 이유 주석 없음 |
 | 8절 로거 이름 | `getLogger("pureiron_updater")`, `getLogger("simulator")` | `__name__`으로 |
-| 10절 `as` | `services/web/src/App.tsx` `Object.keys(...) as …` | 허용 예외에 해당(유지) |
+| 5절 크기 단위 접미사 | `SIZE_LIMIT`(`deploy/bundle/build_bundle.py`), `METADATA_LIMIT`(`pureiron_bundle/pib.py`), `DEFAULT_LIMIT`(`historian/reader.py`, 행 수) | `_BYTES`·`_ROWS` 접미사 |
+| 5절 환경변수 접두 | updater `PUREIRON_POLL_INTERVAL_S`·`PUREIRON_CHECK_TIMEOUT_S`(서비스 전용인데 접두 없음) | **변경하지 않는다** — 현장 `.env`·compose와 맞물린 배포 계약 |
 | 7·9절 docstring | 모듈 docstring 없음: `services/control-api/src/pureiron_control/app.py`; 테스트 docstring 없음 17개(예: collector `test_modbus.py`·`test_plan.py`) | 손댈 때 채움 |
 
 ## 13. 이 문서를 바꾸는 법
@@ -2273,7 +2279,7 @@ window: { recurring: { tz: Asia/Seoul, days: [sat, sun], start: "02:00", end: "0
 
 # Frontend SOT
 
-> **legacy(PureIron_ignition) 기준** — 이 문서의 현행 구현 사실(코드 경로·모듈·명령·테스트)은 [`PureIron_ignition@legacy-final`](https://github.com/circulation95/PureIron_ignition/tree/legacy-final) 기준이다. 이 repo(PureIron_V1)에는 legacy 코드가 없고, 새 구조의 목표 설계는 [ADR](../adr/index.md)에서 다룬다. V1 새 코드의 작성 규약은 [coding-style](coding-style.md) 10절가 우선한다.
+> **legacy(PureIron_ignition) 기준** — 이 문서의 현행 구현 사실(코드 경로·모듈·명령·테스트)은 [`PureIron_ignition@legacy-final`](https://github.com/circulation95/PureIron_ignition/tree/legacy-final) 기준이다. 이 repo(PureIron_V1)에는 legacy 코드가 없고, 새 구조의 목표 설계는 [ADR](../adr/index.md)에서 다룬다. V1 새 코드의 작성 규약은 [coding-style](coding-style.md) 10절이 우선한다.
 
 이 문서는 PureIron frontend의 **구조·상태·실시간·UI 작업 규칙**에 대한 정본이다. 상세 구현은 `frontend/src/**`가 정본이고, `frontend/AGENTS.md`와 `frontend/CLAUDE.md`는 도구별 operational cheat sheet다.
 
@@ -3033,7 +3039,7 @@ PureIron 런타임 설정의 정본은 `backend/src/pureiron/config.py`의 `Sett
 
 # Testing SOT
 
-> **legacy(PureIron_ignition) 기준** — 이 문서의 현행 구현 사실(코드 경로·모듈·명령·테스트)은 [`PureIron_ignition@legacy-final`](https://github.com/circulation95/PureIron_ignition/tree/legacy-final) 기준이다. 이 repo(PureIron_V1)에는 legacy 코드가 없고, 새 구조의 목표 설계는 [ADR](../adr/index.md)에서 다룬다. V1 새 코드의 작성 규약은 [coding-style](coding-style.md) 9절가 우선한다.
+> **legacy(PureIron_ignition) 기준** — 이 문서의 현행 구현 사실(코드 경로·모듈·명령·테스트)은 [`PureIron_ignition@legacy-final`](https://github.com/circulation95/PureIron_ignition/tree/legacy-final) 기준이다. 이 repo(PureIron_V1)에는 legacy 코드가 없고, 새 구조의 목표 설계는 [ADR](../adr/index.md)에서 다룬다. V1 새 코드의 작성 규약은 [coding-style](coding-style.md) 9절이 우선한다.
 
 이 문서는 PureIron의 **검증 계층, 실행 명령, 변경 유형별 최소 게이트**에 대한 정본이다. 개별 테스트의 상세 assertion은 `backend/tests/**`, `backend/tests/e2e/**`, `tests/e2e/**`가 정본이다.
 
