@@ -144,7 +144,8 @@ class AuthService:
     # --- 세션(AuthPort) ---------------------------------------------------------------------
 
     async def login(self, username: str, password: str) -> LoginResult:
-        user = await self._users.get(username)
+        # NUL은 PostgreSQL text에 들어갈 수 없다(조회하면 DB 오류) — 그런 이름의 사용자는 없다.
+        user = None if "\x00" in username else await self._users.get(username)
         matched = await self._verify(password, DUMMY_HASH if user is None else user.password_hash)
         if user is None:
             raise InvalidCredentialsError("unknown_user")

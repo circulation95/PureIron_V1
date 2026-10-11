@@ -126,7 +126,15 @@ async def test_filters_are_passed_through() -> None:
 
 @pytest.mark.parametrize(
     "params",
-    [{"limit": "0"}, {"limit": "1001"}, {"start": "2026-10-11T00:00:00"}, {"username": "u" * 65}],
+    [
+        {"limit": "0"},
+        {"limit": "1001"},
+        {"start": "2026-10-11T00:00:00"},
+        {"username": "u" * 65},
+        {"username": "al\x00ice"},
+        {"action": "auth.\x00login"},
+    ],
+    ids=["limit-0", "limit-1001", "naive-start", "long-username", "nul-username", "nul-action"],
 )
 async def test_invalid_query_is_422(params: dict[str, str]) -> None:
     audit = FakeAudit()
@@ -152,4 +160,4 @@ def test_anonymous_is_401() -> None:
 async def test_store_outage_is_503() -> None:
     api = _api(DownAudit())
     response = api.client.get(URL, headers=await _headers(api, Role.ENGINEER))
-    assert response.status_code == 503
+    assert (response.status_code, response.json()) == (503, {"detail": "site-db unavailable"})

@@ -267,8 +267,9 @@ def test_get_project() -> None:
     assert body["edit_lock_gen"] == 9
 
 
-def test_get_project_db_down_is_503() -> None:
-    assert _project_client(FakeStore(available=False)).get("/api/v1/project").status_code == 503
+def test_get_project_db_down_is_503_without_db_error_text() -> None:
+    response = _project_client(FakeStore(available=False)).get("/api/v1/project")
+    assert (response.status_code, response.json()) == (503, {"detail": "site-db unavailable"})
 
 
 def test_edit_lock_requires_configured_token() -> None:

@@ -322,9 +322,32 @@ async def test_store_outage_is_503() -> None:
     await _user(api)
     token = _login(api)
     api.fx.users.available = False
-    assert api.client.get(ME, headers=_bearer(token)).status_code == 503
+    me = api.client.get(ME, headers=_bearer(token))
     login = api.client.post("/api/v1/auth/login", json={"username": "alice", "password": PASSWORD})
-    assert login.status_code == 503
+    # 인증 없는 표면이라 DB 오류 원문(내부 주소·드라이버 메시지)을 응답에 싣지 않는다.
+    for response in (me, login):
+        assert (response.status_code, response.json()) == (503, {"detail": "site-db unavailable"})
+
+
+async def test_nul_in_username_is_an_ordinary_failed_login() -> None:
+    """NUL은 DB가 받지 못하는 문자다: DB 장애(503)가 아니라 없는 사용자와 같은 401로 끝난다."""
+    api = _api()
+    await _user(api)
+    api.fx.users.available = False  # 조회하지 않는다 — DB가 죽어 있어도 같은 401
+    response = api.client.post(
+        "/api/v1/auth/login", json={"username": "al\x00ice", "password": PASSWORD}
+    )
+    assert (response.status_code, response.json()) == (
+        401,
+        {"detail": "invalid username or password"},
+    )
+    assert api.audit.entries == [
+        AuditEntry(
+            action=AuditAction.AUTH_LOGIN_FAILED,
+            source=AuditSource.API,
+            detail={"reason": "unknown_user", "username_invalid": True},
+        )
+    ]
 
 
 async def test_requests_succeed_when_audit_store_is_down() -> None:

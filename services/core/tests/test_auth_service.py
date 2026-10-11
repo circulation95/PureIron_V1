@@ -73,6 +73,14 @@ async def test_login_failures_share_one_message(username: str, password: str, re
     assert fx.sessions.rows == {}
 
 
+async def test_nul_in_username_fails_like_an_unknown_user_without_a_lookup() -> None:
+    fx = await _with_user(auth_fixture())
+    fx.users.available = False  # 조회하면 AuthUnavailableError — 조회하지 않아야 한다
+    with pytest.raises(InvalidCredentialsError) as caught:
+        await fx.service.login("al\x00ice", PASSWORD)
+    assert caught.value.reason == "unknown_user"
+
+
 async def test_disabled_user_cannot_log_in_but_wrong_password_does_not_reveal_it() -> None:
     fx = await _with_user(auth_fixture())
     await fx.service.set_enabled("alice", False)

@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.security import APIKeyCookie, HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from pureiron_core.api.errors import site_db_unavailable
 from pureiron_core.audit.ports import AuditAction, AuditEntry, AuditSink, AuditSource
 from pureiron_core.auth.passwords import username_problem
 from pureiron_core.auth.ports import (
@@ -115,10 +116,6 @@ def _unauthorized(detail: str) -> HTTPException:
     )
 
 
-def _unavailable(exc: Exception) -> HTTPException:
-    return HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
-
-
 def _token(cookie: str | None, bearer: HTTPAuthorizationCredentials | None) -> str | None:
     return cookie or (bearer.credentials if bearer is not None else None)
 
@@ -154,7 +151,7 @@ class SessionGuard:
             log.debug("session rejected: %s", exc)
             raise _unauthorized("not authenticated") from exc
         except AuthUnavailableError as exc:
-            raise _unavailable(exc) from exc
+            raise site_db_unavailable(exc) from exc
         return AuthContext(principal=principal, token=token)
 
     def require_role(self, minimum: Role) -> Callable[..., Awaitable[Principal]]:
@@ -210,7 +207,7 @@ def build_auth_router(
                 )
             raise _unauthorized(str(exc)) from exc
         except AuthUnavailableError as exc:
-            raise _unavailable(exc) from exc
+            raise site_db_unavailable(exc) from exc
         response.set_cookie(
             SESSION_COOKIE,
             result.token,
@@ -243,7 +240,7 @@ def build_auth_router(
                     principal = None
                 await auth.logout(token)
             except AuthUnavailableError as exc:
-                raise _unavailable(exc) from exc
+                raise site_db_unavailable(exc) from exc
             if principal is not None:
                 await record(AuditAction.AUTH_LOGOUT, principal.username)
         response = Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -283,7 +280,7 @@ def build_auth_router(
         except InvalidPasswordError as exc:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
         except AuthUnavailableError as exc:
-            raise _unavailable(exc) from exc
+            raise site_db_unavailable(exc) from exc
         await record(AuditAction.AUTH_PASSWORD_CHANGE, ctx.principal.username)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 

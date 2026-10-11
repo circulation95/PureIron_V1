@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
+from pureiron_core.api.errors import site_db_unavailable
 from pureiron_core.audit.ports import AuditAction, AuditEntry, AuditSink, AuditSource
 from pureiron_core.platform.db import DatabaseUnavailableError
 from pureiron_core.project.ports import EditLockConflictError, ProjectStateError, ProjectStatePort
@@ -44,10 +45,6 @@ class EditLockRequest(BaseModel):
 
 class EditLockOut(BaseModel):
     site_rev: int
-
-
-def _unavailable(exc: Exception) -> HTTPException:
-    return HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
 
 
 def build_project_router(
@@ -81,7 +78,7 @@ def build_project_router(
         try:
             state = await store.get()
         except (DatabaseUnavailableError, ProjectStateError) as exc:
-            raise _unavailable(exc) from exc
+            raise site_db_unavailable(exc) from exc
         return ProjectStateOut(
             project_id=state.project_id,
             version=state.version,
@@ -106,7 +103,7 @@ def build_project_router(
         except EditLockConflictError as exc:
             raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         except (DatabaseUnavailableError, ProjectStateError) as exc:
-            raise _unavailable(exc) from exc
+            raise site_db_unavailable(exc) from exc
         await record(
             AuditAction.PROJECT_EDIT_LOCK_ACQUIRE,
             body.owner,
@@ -130,7 +127,7 @@ def build_project_router(
         except EditLockConflictError as exc:
             raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         except (DatabaseUnavailableError, ProjectStateError) as exc:
-            raise _unavailable(exc) from exc
+            raise site_db_unavailable(exc) from exc
         await record(AuditAction.PROJECT_EDIT_LOCK_RELEASE, owner)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
