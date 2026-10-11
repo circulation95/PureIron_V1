@@ -12,8 +12,10 @@ from fastapi.testclient import TestClient
 
 from pureiron_core.api.auth import SESSION_COOKIE, SessionGuard, build_auth_router
 from pureiron_core.api.project import build_project_router
-from pureiron_core.audit.ports import AuditAction, AuditEntry, AuditSource
+from pureiron_core.audit.ports import AuditAction, AuditEntry, AuditSink, AuditSource
+from pureiron_core.audit.store import PgAuditStore
 from pureiron_core.auth.ports import Principal, Role
+from pureiron_core.platform.db import Database
 from pureiron_core.project.ports import ProjectState
 
 from .auth_fakes import AuthFixture, auth_fixture
@@ -31,7 +33,7 @@ class Api:
     app: FastAPI
 
 
-def _api(*, cookie_secure: bool = False) -> Api:
+def _api(*, cookie_secure: bool = False, sink: AuditSink | None = None) -> Api:
     fx = auth_fixture()
     audit = FakeAudit()
     guard = SessionGuard(fx.service)
@@ -39,7 +41,7 @@ def _api(*, cookie_secure: bool = False) -> Api:
     app.include_router(
         build_auth_router(
             auth=fx.service,
-            audit=audit,
+            audit=sink or audit,
             guard=guard,
             cookie_secure=cookie_secure,
             cookie_max_age_s=604_800,
@@ -287,6 +289,24 @@ async def test_store_outage_is_503() -> None:
     assert login.status_code == 503
 
 
+async def test_requests_succeed_when_audit_store_is_down() -> None:
+    """감사 기록은 best-effort: site-db에 못 써도 로그인·비밀번호 변경은 성공한다(legacy 동일)."""
+    unreachable = Database("postgresql://pureiron@127.0.0.1:1/none", connect_timeout_s=1)
+    api = _api(sink=PgAuditStore(unreachable))
+    await _user(api)
+    try:
+        _login(api)
+        changed = api.client.post(
+            "/api/v1/auth/password",
+            json={"current_password": PASSWORD, "new_password": "secretBBB2"},
+        )
+        assert changed.status_code == 204
+        _login(api, password="secretBBB2")
+        assert api.client.post("/api/v1/auth/logout").status_code == 204
+    finally:
+        await unreachable.close()
+
+
 def test_openapi_names_session_and_updater_schemes_apart() -> None:
     api = _api()
     project = build_project_router(store=_NoProject(), updater_token="t", audit=FakeAudit())
@@ -300,11 +320,15 @@ def test_openapi_names_session_and_updater_schemes_apart() -> None:
         "description": schemes["SessionCookie"]["description"],
     }
     assert schemes["SessionBearer"]["scheme"] == "bearer"
-    assert schemes["UpdaterToken"]["scheme"] == "bearer"
+    assert schemes["HTTPBearer"] == {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Updater token",
+    }
     me = spec["paths"]["/api/v1/auth/me"]["get"]["security"]
     assert me == [{"SessionCookie": []}, {"SessionBearer": []}]
     lock = spec["paths"]["/api/v1/project/edit-lock"]["post"]["security"]
-    assert lock == [{"UpdaterToken": []}]
+    assert lock == [{"HTTPBearer": []}]
     assert "security" not in spec["paths"]["/api/v1/auth/login"]["post"]
 
 

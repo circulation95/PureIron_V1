@@ -3,6 +3,7 @@ last_seen 1분 throttle, 비밀번호 변경·재설정의 세션 폐기, 계정
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from dataclasses import replace
@@ -91,6 +92,25 @@ async def test_corrupt_stored_hash_refuses_login_with_warning(
     with caplog.at_level(logging.WARNING), pytest.raises(InvalidCredentialsError):
         await fx.service.login("alice", PASSWORD)
     assert "unusable" in caplog.text
+
+
+async def test_password_hashing_runs_off_the_event_loop() -> None:
+    """scrypt(수십 ms)가 이벤트 루프를 막지 않는다: 로그인 동안 다른 task가 계속 돈다."""
+    fx = await _with_user(auth_fixture())
+    ticks = 0
+
+    async def ticker() -> None:
+        nonlocal ticks
+        while True:
+            ticks += 1
+            await asyncio.sleep(0)
+
+    task = asyncio.create_task(ticker())
+    try:
+        await fx.service.login("alice", PASSWORD)
+    finally:
+        task.cancel()
+    assert ticks > 10
 
 
 async def test_authenticate_returns_principal_and_rejects_unknown_tokens() -> None:

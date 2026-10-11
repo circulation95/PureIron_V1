@@ -19,8 +19,10 @@ from pureiron_core.audit.ports import AuditAction, AuditEntry, AuditSink, AuditS
 from pureiron_core.platform.db import DatabaseUnavailableError
 from pureiron_core.project.ports import EditLockConflictError, ProjectStateError, ProjectStatePort
 
-# 사용자 세션(SessionCookie·SessionBearer, api/auth.py)과 이름으로 구분한다.
-_bearer = HTTPBearer(auto_error=False, scheme_name="UpdaterToken", description="Updater token")
+# OpenAPI 스키마 이름은 기본값 `HTTPBearer`(= Updater token) 그대로 둔다 — 이름을 바꾸면
+# oasdiff가 api-security-removed(breaking)로 거부한다. 사용자 세션은 `SessionCookie`·
+# `SessionBearer`(api/auth.py).
+_bearer = HTTPBearer(auto_error=False, description="Updater token")
 
 
 class ProjectStateOut(BaseModel):

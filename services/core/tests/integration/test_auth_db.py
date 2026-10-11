@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -121,6 +122,18 @@ async def test_sessions_store_only_digest_and_revoke_immediately(
         await service.authenticate(second.token)
     with pytest.raises(UserNotFoundError):
         await service.set_enabled("nobody", False)
+
+
+@pytest.mark.fresh_db
+async def test_concurrent_add_of_same_username_has_one_winner(db: Database) -> None:
+    service = AuthService(PgUserStore(db), PgSessionStore(db))
+    results = await asyncio.gather(
+        service.add_user("race", PASSWORD, Role.VIEWER),
+        service.add_user("race", PASSWORD, Role.ADMIN),
+        return_exceptions=True,
+    )
+    assert sum(isinstance(r, UserExistsError) for r in results) == 1
+    assert [u.username for u in await service.list_users()] == ["race"]
 
 
 @pytest.mark.fresh_db
