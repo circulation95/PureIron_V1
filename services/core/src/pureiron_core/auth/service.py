@@ -33,6 +33,7 @@ from pureiron_core.auth.ports import (
     Role,
     SessionInvalidError,
     User,
+    UserNotFoundError,
 )
 from pureiron_core.auth.sessions import SessionRecord
 from pureiron_core.auth.users import UserRecord
@@ -43,6 +44,9 @@ DEFAULT_SESSION_IDLE_S = 12 * 3600.0
 DEFAULT_SESSION_ABSOLUTE_S = 7 * 24 * 3600.0
 TOUCH_INTERVAL_S = 60.0
 TOKEN_BYTES = 32
+# 동시에 도는 scrypt 수 상한(한 번에 ~16 MiB·수십 ms). 로그인이 몰려도 CPU·기본 executor 스레드를
+# 다른 `to_thread` 사용처와 다투며 core 전체를 늦추지 않게 한다 — 넘치는 요청은 기다린다.
+MAX_CONCURRENT_HASHES = 4
 DISPLAY_NAME_MAX_CHARS = 64
 # 없는 사용자 로그인도 실제 검증과 같은 비용을 쓰게 하는 해시(아무 비밀번호와도 맞지 않는 임의 값).
 # 매개변수는 passwords.DEFAULT_*와 같아야 한다(test_passwords가 확인).
@@ -121,13 +125,19 @@ class AuthService:
         self._absolute = timedelta(seconds=absolute_s)
         self._touch_interval = timedelta(seconds=TOUCH_INTERVAL_S)
         self._clock = clock
+        self._hashing = asyncio.Semaphore(MAX_CONCURRENT_HASHES)
 
     async def _verify(self, password: str, stored: str) -> bool:
         try:
-            return await asyncio.to_thread(verify_password, password, stored)
+            async with self._hashing:
+                return await asyncio.to_thread(verify_password, password, stored)
         except PasswordHashError as exc:
             log.warning("stored password hash is unusable, login refused: %s", exc)
             return False
+
+    async def _hash(self, password: str) -> str:
+        async with self._hashing:
+            return await asyncio.to_thread(hash_password, password)
 
     # --- 세션(AuthPort) ---------------------------------------------------------------------
 
@@ -180,9 +190,10 @@ class AuthService:
             raise InvalidCredentialsError("bad_password")
         if new == current:
             raise InvalidPasswordError("new password must differ from the current password")
-        hashed = await asyncio.to_thread(hash_password, new)
-        await self._users.set_password(user.username, hashed)
+        hashed = await self._hash(new)
+        # 다른 세션을 먼저 폐기한다: 그 뒤 저장이 실패해도 탈취됐을 수 있는 세션이 남지 않는다.
         await self._sessions.revoke_user(user.user_id, self._clock(), keep=token_digest(token))
+        await self._users.set_password(user.username, hashed)
 
     # --- 계정 관리(CLI 전용, plan D3) ----------------------------------------------------------
 
@@ -193,19 +204,24 @@ class AuthService:
             raise InvalidAccountError(problem)
         _check_password(password)
         name = _display_name(display_name)
-        hashed = await asyncio.to_thread(hash_password, password)
+        hashed = await self._hash(password)
         record = await self._users.add(
             username=username, display_name=name, role=role, password_hash=hashed
         )
         return record.public()
 
     async def set_password(self, username: str, password: str) -> User:
-        """관리자 재설정: 그 사용자의 모든 세션을 폐기한다."""
+        """관리자 재설정: 그 사용자의 모든 세션을 폐기한다.
+
+        폐기를 저장보다 먼저 한다 — 저장이 실패해도 옛 세션이 살아남지 않게.
+        """
         _check_password(password)
-        hashed = await asyncio.to_thread(hash_password, password)
-        record = await self._users.set_password(username, hashed)
-        await self._sessions.revoke_user(record.user_id, self._clock())
-        return record.public()
+        hashed = await self._hash(password)
+        current = await self._users.get(username)
+        if current is None:
+            raise UserNotFoundError(username)
+        await self._sessions.revoke_user(current.user_id, self._clock())
+        return (await self._users.set_password(username, hashed)).public()
 
     async def set_enabled(self, username: str, enabled: bool) -> User:
         record = await self._users.set_enabled(username, enabled)

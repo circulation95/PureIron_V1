@@ -5,7 +5,7 @@ CREATE TABLE users (
     user_id       bigserial   PRIMARY KEY,
     username      text        NOT NULL UNIQUE,
     display_name  text,
-    role          smallint    NOT NULL,
+    role          smallint    NOT NULL CHECK (role BETWEEN 0 AND 3),
     password_hash text        NOT NULL,
     enabled       boolean     NOT NULL DEFAULT TRUE,
     created_at    timestamptz NOT NULL DEFAULT now(),

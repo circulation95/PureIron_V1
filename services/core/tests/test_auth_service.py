@@ -223,6 +223,19 @@ async def test_change_password_rejections_leave_password_unchanged(
     await fx.service.login("alice", PASSWORD)
 
 
+async def test_password_reset_revokes_sessions_before_storing() -> None:
+    """폐기가 먼저다: 비밀번호 저장이 실패해도 옛 세션은 이미 무효다(안전한 쪽으로 실패)."""
+    fx = await _with_user(auth_fixture())
+    token = (await fx.service.login("alice", PASSWORD)).token
+    fx.users.fail_writes = True
+    with pytest.raises(AuthUnavailableError):
+        await fx.service.set_password("alice", "reset-by-admin")
+    fx.users.fail_writes = False
+    with pytest.raises(SessionInvalidError):
+        await fx.service.authenticate(token)
+    await fx.service.login("alice", PASSWORD)  # 비밀번호는 그대로
+
+
 async def test_admin_password_reset_revokes_every_session() -> None:
     fx = await _with_user(auth_fixture())
     token = (await fx.service.login("alice", PASSWORD)).token

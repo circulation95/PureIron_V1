@@ -211,7 +211,8 @@ async def test_audit_query_filters_order_and_limit(site_db: SiteDb, db: Database
             detail={"generation": 3, "nested": {"ok": True}},
         )
     )
-    latest = (await store.query(AuditQuery(limit=1)))[0]
+    # 시드 행은 고정 시각이라 now()로 기록된 행과 순서를 가정하지 않고 action으로 고른다.
+    (latest,) = await store.query(AuditQuery(action="project.edit_lock_acquire"))
     assert (latest.action, latest.source, latest.username, latest.target) == (
         "project.edit_lock_acquire",
         "updater",

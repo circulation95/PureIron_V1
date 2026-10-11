@@ -1460,16 +1460,16 @@ PureIron_V1 core의 정본은 `services/core/src/pureiron_core/api/` 와 생성�
 | 메서드·경로 | 권한 | 동작 |
 |---|---|---|
 | `POST /auth/login` | 없음 | `{username, password}` → `{token, expires_at, user}` + 세션 쿠키. 실패는 이유와 무관하게 401 `invalid username or password` |
-| `POST /auth/logout` | 로그인 | 이 세션 즉시 폐기 + 쿠키 삭제, 204 |
+| `POST /auth/logout` | 없음 | 보낸 세션(쿠키·Bearer)을 즉시 폐기 + 쿠키 삭제, 항상 204(이미 끝난 세션이어도 — HttpOnly 쿠키는 브라우저 JS가 지울 수 없다). 감사는 유효한 세션을 끝냈을 때만 |
 | `GET /auth/me` | 로그인 | `{user_id, username, role, display_name}` |
 | `POST /auth/password` | 로그인 | `{current_password, new_password}` → 204. 현재 비밀번호 틀림 400, 정책 위반·같은 비밀번호 422. 이 세션만 남기고 나머지 세션 폐기 |
 | `GET /audit` | engineer+ | `?username&action&start&end&limit` → `{entries}` 최신순. 시간 `[start, end)`(시간대 필수), `limit` 1~1000(기본 100) |
 
 - **세션 토큰 전달**: 브라우저는 로그인 응답의 쿠키 `pureiron_session`(HttpOnly·SameSite=Strict·Path=/api·Max-Age=절대 만료, Secure는 `PUREIRON_AUTH_COOKIE_SECURE`)을 그대로 쓴다 — JS가 토큰을 읽지 않고 WS 업그레이드에도 실린다. 비브라우저(ai·스크립트)는 응답 본문 `token`을 `Authorization: Bearer`로 보낸다. 둘 다 오면 쿠키를 쓴다.
 - **OpenAPI 보안 스키마 이름**: 사용자 세션 = `SessionCookie`(apiKey/cookie)·`SessionBearer`(http bearer), Updater 편집 잠금 = `HTTPBearer`(http bearer, description `Updater token` — M1부터의 이름. 바꾸면 oasdiff `api-security-removed` breaking). 둘은 같은 `Authorization` 헤더를 쓰지만 서로 다른 비밀이다.
-- **역할**: `viewer < operator < engineer < admin`(수준 비교, 응답은 소문자 이름). 미인증·무효 세션 401(`WWW-Authenticate: Bearer`), 역할 부족 403, site-db 장애 503.
+- **역할**: `viewer < operator < engineer < admin`(수준 비교, 응답은 소문자 이름). 미인증·무효 세션 401(`WWW-Authenticate: Bearer`, detail은 이유와 무관하게 `not authenticated`), 역할 부족 403, site-db 장애 503.
 - **세션 무효 조건**: 로그아웃, 사용자 비활성화(CLI — 즉시, 다시 활성화해도 옛 세션은 폐기 상태), 관리자 비밀번호 재설정(그 사용자 전체), 유휴·절대 만료(`PUREIRON_AUTH_SESSION_*`).
-- **감사 action**: `auth.login`·`auth.login_failed`(입력한 username과 `detail.reason` = `unknown_user|bad_password|disabled`, 비밀번호는 남기지 않음)·`auth.logout`·`auth.password_change`(source `api`), `users.add|passwd|disable|enable`(source `cli`, 행위자 `username` = null, `target` = 계정), `project.edit_lock_acquire|release`(source `updater`, `target` = owner). 감사 기록 실패는 경고 로그만 남기고 요청은 성공한다.
+- **감사 action**: `auth.login`·`auth.login_failed`(입력한 username과 `detail.reason` = `unknown_user|bad_password|disabled`, 비밀번호는 남기지 않음. username 규칙에 맞지 않는 입력 — 예: 비밀번호를 username 칸에 넣은 실수 — 은 username 없이 `detail.username_invalid = true`만)·`auth.logout`·`auth.password_change`(source `api`), `users.add|passwd|disable|enable`(source `cli`, 행위자 `username` = null, `target` = 계정), `project.edit_lock_acquire|release`(source `updater`, `target` = owner). 감사 기록 실패는 경고 로그만 남기고 요청은 성공한다.
 
 ## 내부 이벤트 버스
 
@@ -2279,7 +2279,7 @@ window: { recurring: { tz: Asia/Seoul, days: [sat, sun], start: "02:00", end: "0
 ### V1 구현 현황 (M3b-1 auth·audit, 2026-10-11)
 
 - **epoch 4(r3, 미release — 진행 중)**: `epochs.yaml` 4 → `0011_audit.sql`. M3b-2가 `0012`를 더하면 포인터를 뒤로 늘린다(미release epoch 확장 규칙, migrate lint `--base-ref`). 두 파일 모두 트랜잭션 파일이라 실행과 기록이 한 트랜잭션이다 — 파일 안에서 죽으면 객체가 남지 않고, 0010만 기록된 상태에서는 epoch가 3에 머문다(r2 앱 ready). 통합 테스트 `test_epoch4_resumes_after_crash_between_or_inside_files`.
-- **0010_auth**: `users(user_id bigserial PK, username text NOT NULL UNIQUE, display_name, role smallint, password_hash, enabled DEFAULT true, created_at, updated_at)` — role 0 viewer·1 operator·2 engineer·3 admin. 계정은 지우지 않고 `enabled`만 바꾼다. `password_hash` = `scrypt$n$r$p$salt_b64$hash_b64`(표준 라이브러리 scrypt, 기본 n=2^14·r=8·p=1·16 B salt, 매개변수를 해시에 같이 둬 기본값을 올려도 옛 해시가 검증된다). `sessions(token_sha256 bytea PK, user_id → users, created_at, last_seen_at, expires_at, revoked_at)` + `(user_id)` 인덱스 — 토큰 원문은 저장하지 않는다. 로그인할 때 그 사용자의 절대 만료·폐기된 세션 행을 지운다. UNIQUE·REFERENCES는 `CREATE TABLE` 안이라 migrate lint 허용 범위(제약 추가 검사는 `ALTER TABLE`만 본다).
+- **0010_auth**: `users(user_id bigserial PK, username text NOT NULL UNIQUE, display_name, role smallint CHECK 0~3, password_hash, enabled DEFAULT true, created_at, updated_at)` — role 0 viewer·1 operator·2 engineer·3 admin. 계정은 지우지 않고 `enabled`만 바꾼다. `password_hash` = `scrypt$n$r$p$salt_b64$hash_b64`(표준 라이브러리 scrypt, 기본 n=2^14·r=8·p=1·16 B salt, 매개변수를 해시에 같이 둬 기본값을 올려도 옛 해시가 검증된다). `sessions(token_sha256 bytea PK, user_id → users, created_at, last_seen_at, expires_at, revoked_at)` + `(user_id)` 인덱스 — 토큰 원문은 저장하지 않는다. 로그인할 때 그 사용자의 절대 만료·폐기된 세션 행을 지운다. UNIQUE·REFERENCES·CHECK는 `CREATE TABLE` 안이라 migrate lint 허용 범위(제약 추가 검사는 `ALTER TABLE`만 본다). `audit_log.source`에는 CHECK를 두지 않는다 — 나중에 값을 더할 수 없게 되므로(ADD-only).
 - **0011_audit**: `audit_log(id bigserial PK, time timestamptz DEFAULT now(), username, action NOT NULL, target, detail jsonb DEFAULT '{}', source NOT NULL)` + `(time DESC)`·`(username, time DESC)` 인덱스. 추가만 하고 고치거나 지우지 않는다(보존 정책은 범위 밖). `detail`에는 비밀번호·토큰을 넣지 않는다. action·source 값은 [api-events](api-events.md) V1 인증·감사 절.
 - **기본 계정 없음**: migrate는 사용자를 만들지 않는다. compose dev·통합 테스트·VM 하네스는 `pureiron-core users add`(비밀번호는 stdin 또는 `--password-file`)로 만든다.
 

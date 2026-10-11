@@ -35,6 +35,16 @@ def test_password_file_first_line_without_newline(tmp_path: Path) -> None:
     assert read_password(path) == "s3cret-pass "
 
 
+def test_non_utf8_password_file_is_a_clean_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "pw"
+    path.write_bytes(b"\xff\xfe-not-utf8")
+    argv = ["users", "add", "alice", "--role", "viewer", "--password-file", str(path)]
+    assert main(argv) == EXIT_FAILED
+    assert "not UTF-8" in capsys.readouterr().err
+
+
 def test_password_from_piped_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("sys.stdin", io.StringIO("piped-secret\nrest\n"))
     assert read_password(None) == "piped-secret"

@@ -25,7 +25,7 @@ import uvicorn
 from pureiron_core.app import create_app
 from pureiron_core.audit.ports import AuditAction, AuditEntry, AuditSource
 from pureiron_core.audit.store import PgAuditStore
-from pureiron_core.auth.ports import AuthError, Role, User
+from pureiron_core.auth.ports import AuthError, InvalidPasswordError, Role, User
 from pureiron_core.auth.service import AuthService
 from pureiron_core.auth.sessions import PgSessionStore
 from pureiron_core.auth.users import PgUserStore
@@ -257,7 +257,10 @@ def _apply_definitions(args: argparse.Namespace, settings: Settings) -> int:
 def read_password(password_file: Path | None) -> str:
     """`--password-file`의 첫 줄, 없으면 stdin(터미널이면 에코 없이 묻는다). 끝 줄바꿈만 뗀다."""
     if password_file is not None:
-        text = password_file.read_text(encoding="utf-8")
+        try:
+            text = password_file.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            raise InvalidPasswordError(f"{password_file}: password file is not UTF-8") from None
     elif sys.stdin.isatty():
         text = getpass.getpass("password: ")
     else:

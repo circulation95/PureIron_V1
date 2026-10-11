@@ -28,6 +28,8 @@ class Clock:
 class FakeUsers:
     records: dict[str, UserRecord] = field(default_factory=dict[str, UserRecord])
     available: bool = True
+    # 쓰기만 실패시킨다(읽기·세션은 정상) — 부분 실패 순서 검증용.
+    fail_writes: bool = False
 
     def check(self) -> None:
         if not self.available:
@@ -67,6 +69,8 @@ class FakeUsers:
 
     def _replace(self, username: str, **changes: object) -> UserRecord:
         self.check()
+        if self.fail_writes:
+            raise AuthUnavailableError("site-db error: write failed")
         current = self.records.get(username)
         if current is None:
             raise UserNotFoundError(username)

@@ -70,7 +70,8 @@ class PgAuditStore:
         try:
             async with self._db.connection() as conn:
                 await self.record_with(conn, entry)
-        except (DatabaseUnavailableError, asyncpg.PostgresError) as exc:
+        # best-effort 경계: 연결 상태 오류(InterfaceError)도 요청을 실패시키지 않는다.
+        except (DatabaseUnavailableError, asyncpg.PostgresError, asyncpg.InterfaceError) as exc:
             log.warning(
                 "audit record dropped (action=%s user=%s): %s", entry.action, entry.username, exc
             )

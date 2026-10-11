@@ -53,6 +53,17 @@ def _path(environ: Mapping[str, str], key: str) -> Path | None:
     return Path(raw) if raw else None
 
 
+# 세션 수명 상한(timedelta 범위 밖 값이 기동 중 OverflowError가 되지 않게, 1년 넘는 세션은 오설정).
+_MAX_SESSION_S = 366 * 24 * 3600.0
+
+
+def _session_s(environ: Mapping[str, str], key: str, default: float) -> float:
+    value = _float(environ, key, default)
+    if value > _MAX_SESSION_S:
+        raise SettingsError(f"{key} must be at most {_MAX_SESSION_S:g} seconds, got {value:g}")
+    return value
+
+
 _TRUE = frozenset({"1", "true", "yes", "on"})
 _FALSE = frozenset({"0", "false", "no", "off"})
 
@@ -132,7 +143,9 @@ class Settings:
             historian_flush_max_rows=_positive_int(
                 environ, "PUREIRON_HISTORIAN_FLUSH_MAX_ROWS", 20_000
             ),
-            auth_session_idle_s=_float(environ, "PUREIRON_AUTH_SESSION_IDLE_S", 43_200.0),
-            auth_session_absolute_s=_float(environ, "PUREIRON_AUTH_SESSION_ABSOLUTE_S", 604_800.0),
+            auth_session_idle_s=_session_s(environ, "PUREIRON_AUTH_SESSION_IDLE_S", 43_200.0),
+            auth_session_absolute_s=_session_s(
+                environ, "PUREIRON_AUTH_SESSION_ABSOLUTE_S", 604_800.0
+            ),
             auth_cookie_secure=_bool(environ, "PUREIRON_AUTH_COOKIE_SECURE", False),
         )

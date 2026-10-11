@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -18,6 +19,7 @@ from fastapi.security import APIKeyCookie, HTTPAuthorizationCredentials, HTTPBea
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from pureiron_core.audit.ports import AuditAction, AuditEntry, AuditSink, AuditSource
+from pureiron_core.auth.passwords import username_problem
 from pureiron_core.auth.ports import (
     AuthPort,
     AuthUnavailableError,
@@ -27,6 +29,8 @@ from pureiron_core.auth.ports import (
     Role,
     SessionInvalidError,
 )
+
+log = logging.getLogger(__name__)
 
 SESSION_COOKIE = "pureiron_session"
 # 쿠키는 API 경로에만 보낸다(웹 정적 파일 요청에는 실리지 않게). WS(`/api/v1/ws`)도 이 아래다.
@@ -115,6 +119,10 @@ def _unavailable(exc: Exception) -> HTTPException:
     return HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
 
 
+def _token(cookie: str | None, bearer: HTTPAuthorizationCredentials | None) -> str | None:
+    return cookie or (bearer.credentials if bearer is not None else None)
+
+
 @dataclass(frozen=True, slots=True)
 class AuthContext:
     principal: Principal
@@ -136,13 +144,15 @@ class SessionGuard:
         cookie: Annotated[str | None, Depends(_session_cookie)],
         bearer: Annotated[HTTPAuthorizationCredentials | None, Depends(_session_bearer)],
     ) -> AuthContext:
-        token = cookie or (bearer.credentials if bearer is not None else None)
+        token = _token(cookie, bearer)
         if not token:
             raise _unauthorized("not authenticated")
         try:
             principal = await self._auth.authenticate(token)
         except SessionInvalidError as exc:
-            raise _unauthorized(str(exc)) from exc
+            # 이유(만료·폐기·비활성화)는 응답에 내지 않는다 — 토큰을 가진 쪽이 상태를 알지 못하게.
+            log.debug("session rejected: %s", exc)
+            raise _unauthorized("not authenticated") from exc
         except AuthUnavailableError as exc:
             raise _unavailable(exc) from exc
         return AuthContext(principal=principal, token=token)
@@ -187,7 +197,17 @@ def build_auth_router(
         try:
             result = await auth.login(body.username, body.password)
         except InvalidCredentialsError as exc:
-            await record(AuditAction.AUTH_LOGIN_FAILED, body.username, reason=exc.reason)
+            # 규칙에 맞지 않는 입력(예: username 칸에 넣은 비밀번호)은 감사에 남기지 않는다.
+            if username_problem(body.username) is None:
+                await record(AuditAction.AUTH_LOGIN_FAILED, body.username, reason=exc.reason)
+            else:
+                await audit.record(
+                    AuditEntry(
+                        action=AuditAction.AUTH_LOGIN_FAILED,
+                        source=AuditSource.API,
+                        detail={"reason": exc.reason, "username_invalid": True},
+                    )
+                )
             raise _unauthorized(str(exc)) from exc
         except AuthUnavailableError as exc:
             raise _unavailable(exc) from exc
@@ -205,18 +225,27 @@ def build_auth_router(
             token=result.token, expires_at=result.expires_at, user=_me(result.principal)
         )
 
-    @router.post(
-        "/logout",
-        operation_id="logout",
-        status_code=status.HTTP_204_NO_CONTENT,
-        responses=_UNAUTHORIZED,
-    )
-    async def logout(ctx: AuthContext = signed_in) -> Response:
-        try:
-            await auth.logout(ctx.token)
-        except AuthUnavailableError as exc:
-            raise _unavailable(exc) from exc
-        await record(AuditAction.AUTH_LOGOUT, ctx.principal.username)
+    @router.post("/logout", operation_id="logout", status_code=status.HTTP_204_NO_CONTENT)
+    async def logout(
+        cookie: Annotated[str | None, Depends(_session_cookie)],
+        bearer: Annotated[HTTPAuthorizationCredentials | None, Depends(_session_bearer)],
+    ) -> Response:
+        """세션이 이미 끝났어도 204 + 쿠키 삭제(HttpOnly라 브라우저 JS는 죽은 쿠키를 못 지운다).
+
+        감사는 유효한 세션을 끝냈을 때만 남긴다.
+        """
+        token = _token(cookie, bearer)
+        if token:
+            try:
+                try:
+                    principal: Principal | None = await auth.authenticate(token)
+                except SessionInvalidError:
+                    principal = None
+                await auth.logout(token)
+            except AuthUnavailableError as exc:
+                raise _unavailable(exc) from exc
+            if principal is not None:
+                await record(AuditAction.AUTH_LOGOUT, principal.username)
         response = Response(status_code=status.HTTP_204_NO_CONTENT)
         response.delete_cookie(
             SESSION_COOKIE,

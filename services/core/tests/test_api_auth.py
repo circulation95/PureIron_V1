@@ -193,7 +193,45 @@ async def test_logout_revokes_session_and_clears_cookie() -> None:
     assert "max-age=0" in cookie
     assert api.client.get(ME, headers=_bearer(token)).status_code == 401
     assert api.audit.entries[-1].action == AuditAction.AUTH_LOGOUT
-    assert TestClient(api.app).post("/api/v1/auth/logout").status_code == 401
+
+
+async def test_logout_with_dead_or_missing_session_still_clears_cookie() -> None:
+    """만료·폐기된 쿠키도 지울 수 있어야 한다(HttpOnly라 브라우저 JS는 못 지움). 감사는 없다."""
+    api = _api()
+    await _user(api)
+    token = _login(api)
+    assert api.client.post("/api/v1/auth/logout").status_code == 204
+    entries = len(api.audit.entries)
+    again = TestClient(api.app).post("/api/v1/auth/logout", headers=_bearer(token))
+    assert again.status_code == 204
+    assert "max-age=0" in again.headers["set-cookie"].lower()
+    assert TestClient(api.app).post("/api/v1/auth/logout").status_code == 204
+    assert len(api.audit.entries) == entries
+
+
+async def test_rejected_session_reason_is_not_disclosed() -> None:
+    api = _api()
+    await _user(api)
+    token = _login(api)
+    await api.fx.service.set_enabled("alice", False)
+    response = api.client.get(ME, headers=_bearer(token))
+    assert (response.status_code, response.json()) == (401, {"detail": "not authenticated"})
+
+
+async def test_malformed_username_is_not_stored_in_audit() -> None:
+    """username 칸에 비밀번호를 넣는 실수가 감사 로그에 평문으로 남지 않게 한다."""
+    api = _api()
+    response = api.client.post(
+        "/api/v1/auth/login", json={"username": "My Secret Pass!", "password": "whatever-1"}
+    )
+    assert response.status_code == 401
+    assert api.audit.entries == [
+        AuditEntry(
+            action=AuditAction.AUTH_LOGIN_FAILED,
+            source=AuditSource.API,
+            detail={"reason": "unknown_user", "username_invalid": True},
+        )
+    ]
 
 
 async def test_disabled_user_existing_token_is_401() -> None:

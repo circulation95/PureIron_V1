@@ -43,9 +43,13 @@ def _call(
         with urllib.request.urlopen(request, timeout=10) as response:
             raw: bytes = response.read()
             status: int = response.status
-            response_headers = dict(response.headers.items())
+            response_headers = {k.lower(): v for k, v in response.headers.items()}
     except urllib.error.HTTPError as exc:
-        raw, status, response_headers = exc.read(), exc.code, dict(exc.headers.items())
+        raw, status, response_headers = (
+            exc.read(),
+            exc.code,
+            {k.lower(): v for k, v in exc.headers.items()},
+        )
     payload = cast("Json", json.loads(raw)) if raw else {}
     return status, response_headers, payload
 
@@ -90,7 +94,7 @@ def test_login_me_audit_logout(accounts: None) -> None:
     status, headers, body = _login(WEB, ADMIN)  # web(nginx) 같은 origin 프록시 경유
     assert status == 200, body
     token = str(body["token"])
-    cookie = headers["Set-Cookie"].lower()
+    cookie = headers["set-cookie"].lower()
     assert cookie.startswith(f"pureiron_session={token.lower()};")
     assert "httponly" in cookie
     assert "samesite=strict" in cookie

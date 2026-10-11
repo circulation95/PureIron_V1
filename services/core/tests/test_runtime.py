@@ -83,6 +83,8 @@ def test_auth_settings_defaults_and_overrides() -> None:
         Settings.from_env({"PUREIRON_AUTH_COOKIE_SECURE": "maybe"})
     with pytest.raises(SettingsError, match="PUREIRON_AUTH_SESSION_IDLE_S"):
         Settings.from_env({"PUREIRON_AUTH_SESSION_IDLE_S": "0"})
+    with pytest.raises(SettingsError, match="at most"):
+        Settings.from_env({"PUREIRON_AUTH_SESSION_ABSOLUTE_S": "1e20"})
 
 
 def test_settings_errors(tmp_path: Path) -> None:
