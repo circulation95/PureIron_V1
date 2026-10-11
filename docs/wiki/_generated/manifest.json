@@ -1,5 +1,5 @@
 {
-  "doc_count": 14,
+  "doc_count": 15,
   "docs": [
     {
       "audience": "both",
@@ -57,12 +57,12 @@
     },
     {
       "audience": "both",
-      "bytes": 3942,
+      "bytes": 4095,
       "id": "wiki-index",
       "last_verified": "2026-06-30",
       "path": "docs/wiki/index.md",
       "section_count": 6,
-      "sha256": "e2555e65ff6f12d5256c79e39a07c21407498aa7bf826f04806c86ea707da93e",
+      "sha256": "589816ade436f2eed8aac48612a8c18cf1e8b77fa18497e2c1523a1a772cba5c",
       "source_globs": [],
       "sources": [
         "README.md"
@@ -97,12 +97,12 @@
     },
     {
       "audience": "agent",
-      "bytes": 17933,
+      "bytes": 18108,
       "id": "sot-agent-rules",
       "last_verified": "2026-08-17",
       "path": "docs/wiki/sot/agent-rules.md",
       "section_count": 14,
-      "sha256": "aa1082108433bbabbf244a994680466ff88d1a162c9201c99cf03904704ffbfb",
+      "sha256": "c39770523b6f2b0bf686ee9d2740518c9b9c6928ad452344c3afb08ee81a7e40",
       "source_globs": [],
       "sources": [
         "AGENTS.md",
@@ -150,6 +150,41 @@
     },
     {
       "audience": "both",
+      "bytes": 21319,
+      "id": "sot-coding-style",
+      "last_verified": "2026-10-11",
+      "path": "docs/wiki/sot/coding-style.md",
+      "section_count": 14,
+      "sha256": "4d0995f9acac4d79af184070bd976d5c590534f78c3bff656785238b4c6a3a76",
+      "source_globs": [],
+      "sources": [
+        "pyproject.toml",
+        "services/core/pyproject.toml",
+        "services/core/.importlinter",
+        "services/core/tests/test_importlinter_negative.py",
+        "scripts/g1.sh",
+        "services/core/src/pureiron_core/runtime.py",
+        "services/core/src/pureiron_core/app.py",
+        "services/core/src/pureiron_core/historian/ports.py",
+        "services/core/src/pureiron_core/historian/service.py",
+        "services/core/src/pureiron_core/historian/writer.py",
+        "services/core/src/pureiron_core/tags/store.py",
+        "services/core/src/pureiron_core/api/health.py",
+        "services/core/src/pureiron_core/platform/migrate.py",
+        "services/core/src/pureiron_core/platform/db.py",
+        "services/core/src/pureiron_core/settings.py",
+        "services/core/src/pureiron_core/cli.py",
+        "services/core/tests/test_historian_writer.py",
+        "services/web/tsconfig.json",
+        "services/web/eslint.config.js",
+        "services/web/src/App.tsx",
+        "services/web/src/api/client.ts"
+      ],
+      "status": "canonical",
+      "title": "Coding Style SOT — V1 코드 구조·추상화·이름·주석·테스트 규약"
+    },
+    {
+      "audience": "both",
       "bytes": 46628,
       "id": "sot-data-contracts",
       "last_verified": "2026-08-22",
@@ -173,12 +208,12 @@
     },
     {
       "audience": "both",
-      "bytes": 18393,
+      "bytes": 18482,
       "id": "sot-frontend",
       "last_verified": "2026-07-23",
       "path": "docs/wiki/sot/frontend.md",
       "section_count": 15,
-      "sha256": "2cb7a2c028337a700f1b5b1f378dc54269594ee1d1d3e1b0fdcc1d52af1aeebd",
+      "sha256": "5df6e18a1550237da15df4aac3924a9f5cdf1e4830af5c2e3ea1b8086e88b5c3",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/package.json",
@@ -251,12 +286,12 @@
     },
     {
       "audience": "both",
-      "bytes": 33667,
+      "bytes": 33755,
       "id": "sot-testing",
       "last_verified": "2026-08-22",
       "path": "docs/wiki/sot/testing.md",
       "section_count": 18,
-      "sha256": "d69a398b29684365777d0e0528dee6a40db11ae5217756069e3fc76eb6f4a14c",
+      "sha256": "6fe0cef55336446daf23203766532c7467133ca74f05a67e6bb8d1bab8526ac0",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/pyproject.toml",

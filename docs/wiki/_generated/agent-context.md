@@ -140,6 +140,8 @@ legacy의 Settings/Tag/Device 화면과 `/api/settings`·`/api/tags`·`/api/devi
 7. 결과 검증
 8. 필요한 문서 반영
 
+V1 새 코드를 쓰거나 리뷰할 때는 [coding-style](../sot/coding-style.md)(구조·추상화 기준·이름·주석 언어·테스트·리뷰 체크리스트)을 따른다.
+
 완료 보고는 실제 실행 결과에 근거해야 한다. 실행하지 않은 결과를 실행한 것처럼 말하지 않는다.
 
 ## 작업 증거 규율

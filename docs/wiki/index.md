@@ -38,6 +38,7 @@ PureIron 문서의 **단일 정본(Source of Truth) 허브**. 사람과 LLM 에�
 | API·이벤트 | [api-events](sot/api-events.md) | `*/router.py`, `events/` |
 | MES/Schedule v1 용어·플로우 | [mes-schedule](sot/mes-schedule.md) | Wiki SOT (`mes/`, `agents/tools/schedule_tools.py`, `ScheduleScreen.tsx`) |
 | 프론트엔드 | [frontend](sot/frontend.md) | `frontend/src/**`, `frontend/package.json` |
+| V1 코드 스타일·구조·리뷰 기준 | [coding-style](sot/coding-style.md) | `pyproject.toml`, `services/core/.importlinter`, V1 `services/**` |
 | 테스트 | [testing](sot/testing.md) | `backend/tests/`, `tests/e2e/`, `frontend/package.json` |
 | 에이전트 작업 규칙 | [agent-rules](sot/agent-rules.md) | Wiki SOT + projection files |
 | 아키텍처 결정 기록 | [adr](adr/index.md) | Wiki ADR |
