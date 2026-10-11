@@ -119,6 +119,8 @@ class Settings:
     auth_session_absolute_s: float = 604_800.0
     # 세션 쿠키 Secure 속성. 현장은 http(Secure 쿠키는 브라우저가 보내지 않음)라 기본 false.
     auth_cookie_secure: bool = False
+    # WS `tag_update` 합치기 주기(태그별 최신값만 이 주기마다 보낸다).
+    realtime_batch_ms: int = 250
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str]) -> Settings:
@@ -148,4 +150,5 @@ class Settings:
                 environ, "PUREIRON_AUTH_SESSION_ABSOLUTE_S", 604_800.0
             ),
             auth_cookie_secure=_bool(environ, "PUREIRON_AUTH_COOKIE_SECURE", False),
+            realtime_batch_ms=_positive_int(environ, "PUREIRON_REALTIME_BATCH_MS", 250),
         )

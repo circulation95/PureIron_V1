@@ -1,4 +1,5 @@
-"""historian ↔ site-db: 중복 흡수, µs 시각, NaN → NULL, reader raw/1m/1h(실시간 집계 D4)."""
+"""historian ↔ site-db: 중복 흡수, µs 시각, NaN → NULL, reader raw/1m/1h(실시간 집계 D4),
+태그별 상한·truncated·첫 bucket 정렬(L10)."""
 
 from __future__ import annotations
 
@@ -74,7 +75,8 @@ async def test_duplicates_absorbed_us_precision_and_nan_is_null(
     assert writer.status().written_total == 12
     assert await conn.fetchval("SELECT count(*) FROM tag_history") == 4
 
-    points = await read_raw(conn, [1, 2], base - timedelta(seconds=1), base + timedelta(seconds=5))
+    series = await read_raw(conn, [1, 2], base - timedelta(seconds=1), base + timedelta(seconds=5))
+    points = [p for s in series for p in s.points]
     assert [(p.tag_id, p.value_num, p.value_bool, p.quality) for p in points] == [
         (1, 1.5, None, pb.GOOD),
         (1, None, None, pb.GOOD),
@@ -103,11 +105,35 @@ async def test_aggregates_include_recent_rows_without_refresh(
     recorder.offer_raw(rows, plan_rev=0)
     await writer.flush()
 
-    [m] = await read_aggregate(conn, [1], minute, minute + timedelta(minutes=1), "1m")
+    [minutes] = await read_aggregate(conn, [1], minute, minute + timedelta(minutes=1), "1m")
+    [m] = minutes.points
     assert (m.bucket, m.avg, m.min, m.max, m.last, m.samples) == (minute, 3.0, 1.0, 5.0, 5.0, 4)
     hour = minute.replace(minute=0)
-    [h] = await read_aggregate(conn, [1], hour, hour + timedelta(hours=1), "1h")
+    [hours] = await read_aggregate(conn, [1], hour, hour + timedelta(hours=1), "1h")
+    [h] = hours.points
     assert (h.bucket, h.avg, h.min, h.max, h.samples) == (hour, 3.0, 1.0, 5.0, 4)
+    # L10: start가 bucket 중간이어도 그 bucket부터 준다(time_bucket 경계 정렬)
+    [mid] = await read_aggregate(
+        conn, [1], minute + timedelta(seconds=30), minute + timedelta(minutes=1), "1m"
+    )
+    assert [p.bucket for p in mid.points] == [minute]
+
+
+async def test_limit_is_per_tag_and_marks_truncated(
+    db: Database, conn: asyncpg.Connection[asyncpg.Record]
+) -> None:
+    """L10: 한 태그의 행이 많아도 다른 태그를 굶기지 않고, 넘친 태그만 truncated."""
+    writer = HistoryWriter(PgRowStore(db))
+    recorder = Recorder(writer)
+    base = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=10)
+    busy = [_num(1, base + timedelta(seconds=s), float(s)) for s in range(5)]
+    quiet = [_num(2, base + timedelta(seconds=s), float(s)) for s in range(2)]
+    recorder.offer_raw([*busy, *quiet], plan_rev=0)
+    await writer.flush()
+    a, b, c = await read_raw(conn, [1, 2, 3], base, base + timedelta(minutes=1), limit_per_tag=3)
+    assert (a.tag_id, [p.value_num for p in a.points], a.truncated) == (1, [0.0, 1.0, 2.0], True)
+    assert (b.tag_id, len(b.points), b.truncated) == (2, 2, False)
+    assert (c.tag_id, c.points, c.truncated) == (3, (), False)
 
 
 async def test_rows_rejected_by_site_db_are_isolated(

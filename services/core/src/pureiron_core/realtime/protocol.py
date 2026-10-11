@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 from pureiron_core.acquisition.ports import DeviceSnapshot
 from pureiron_core.alarms.ports import AlarmSnapshot
+from pureiron_core.auth.ports import Principal, Role
 from pureiron_core.tags.ports import TagValue, json_value
 
 # 구독 한 메시지·한 연결의 tag_id 상한(메모리 상한). tag_id는 site-db int4(1 이상).
@@ -139,6 +140,18 @@ class HelloMessage(BaseModel):
     type: Literal["hello"]
     username: str
     role: Literal["viewer", "operator", "engineer", "admin"]
+
+    @classmethod
+    def of(cls, principal: Principal) -> HelloMessage:
+        return cls(type="hello", username=principal.username, role=_ROLE_LABELS[principal.role])
+
+
+_ROLE_LABELS: dict[Role, Literal["viewer", "operator", "engineer", "admin"]] = {
+    Role.VIEWER: "viewer",
+    Role.OPERATOR: "operator",
+    Role.ENGINEER: "engineer",
+    Role.ADMIN: "admin",
+}
 
 
 class TagUpdateMessage(BaseModel):

@@ -87,6 +87,13 @@ def test_auth_settings_defaults_and_overrides() -> None:
         Settings.from_env({"PUREIRON_AUTH_SESSION_ABSOLUTE_S": "1e20"})
 
 
+def test_realtime_batch_setting() -> None:
+    assert Settings.from_env({}).realtime_batch_ms == 250
+    assert Settings.from_env({"PUREIRON_REALTIME_BATCH_MS": "100"}).realtime_batch_ms == 100
+    with pytest.raises(SettingsError, match="PUREIRON_REALTIME_BATCH_MS"):
+        Settings.from_env({"PUREIRON_REALTIME_BATCH_MS": "0"})
+
+
 def test_settings_errors(tmp_path: Path) -> None:
     with pytest.raises(SettingsError, match="PUREIRON_GRPC_PORT"):
         Settings.from_env({"PUREIRON_GRPC_PORT": "x"})

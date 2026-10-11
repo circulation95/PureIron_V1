@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from pureiron_core import __version__
 from pureiron_core.acquisition.ports import AcquisitionSummary, IngestCounts
+from pureiron_core.alarms.ports import AlarmStatus
 from pureiron_core.api.health import build_health_router
 from pureiron_core.api.project import build_project_router
 from pureiron_core.audit.ports import AuditAction, AuditEntry, AuditSource
@@ -22,6 +23,7 @@ from pureiron_core.platform.migrate import (
     load_catalog,
 )
 from pureiron_core.project.ports import EditLockConflictError, ProjectState
+from pureiron_core.realtime.ports import RealtimeStatus
 
 from .conftest import MIGRATIONS, FakeAudit
 
@@ -77,20 +79,67 @@ class FakeHistorian:
         return self.current
 
 
+@dataclass
+class FakeAlarms:
+    current: AlarmStatus = field(
+        default_factory=lambda: AlarmStatus(
+            active_total=0, unacked_total=0, journal_queue_rows=0, dropped_total=0
+        )
+    )
+
+    def status(self) -> AlarmStatus:
+        return self.current
+
+
+@dataclass
+class FakeRealtime:
+    connections: int = 0
+
+    def status(self) -> RealtimeStatus:
+        return RealtimeStatus(connections=self.connections)
+
+
 def _health_client(
     db: FakeDb,
     schema: FakeSchema,
     collector: FakeCollector,
     historian: FakeHistorian | None = None,
+    *,
+    alarms: FakeAlarms | None = None,
+    realtime: FakeRealtime | None = None,
 ) -> TestClient:
     app = FastAPI()
     app.include_router(
         build_health_router(
-            db=db, schema=schema, collector=collector, historian=historian or FakeHistorian()
+            db=db,
+            schema=schema,
+            collector=collector,
+            historian=historian or FakeHistorian(),
+            alarms=alarms or FakeAlarms(),
+            realtime=realtime or FakeRealtime(),
         ),
         prefix="/api/v1",
     )
     return TestClient(app)
+
+
+def test_readyz_alarms_and_realtime_are_informational() -> None:
+    """알람·WS 집계는 정보로만 나가고 준비 판정과 무관하다(M3b-2)."""
+    alarms = FakeAlarms(
+        AlarmStatus(active_total=3, unacked_total=2, journal_queue_rows=7, dropped_total=1)
+    )
+    response = _health_client(
+        FakeDb(), FakeSchema(), FakeCollector(), alarms=alarms, realtime=FakeRealtime(4)
+    ).get("/api/v1/readyz")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["alarms"] == {
+        "active_total": 3,
+        "unacked_total": 2,
+        "journal_queue_rows": 7,
+        "dropped_total": 1,
+    }
+    assert body["realtime"] == {"connections": 4}
 
 
 def test_healthz() -> None:
