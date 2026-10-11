@@ -425,9 +425,11 @@ async def test_epoch3_resumes_after_crash_in_or_between_files(
         await conn.close()
     if partial is not None:
         crashed = await asyncpg.connect(stack.dsn(fresh_database), password=stack.password)
-        await crashed.execute("BEGIN")
-        await crashed.execute(split_statements(by_name[partial].sql)[0].sql)
-        crashed.terminate()  # 커밋 전 프로세스 crash
+        try:
+            await crashed.execute("BEGIN")
+            await crashed.execute(split_statements(by_name[partial].sql)[0].sql)
+        finally:
+            crashed.terminate()  # 커밋 전 프로세스 crash
 
     last_done = max((by_name[name].version for name in done), default=catalog.last_version_of(2))
     pending = [m.filename for m in catalog.migrations if m.version > last_done]

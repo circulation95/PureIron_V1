@@ -11,12 +11,15 @@
 - 단 행 내용 때문에 거부된 쓰기(`RowsRejectedError` — 같은 행을 다시 써도 또 실패)는 되돌리지 않고
   batch를 반으로 나눠 앞쪽부터 다시 쓴다. 1행까지 줄어도 거부되면 그 행만 버리고 `poisoned_total`을
   센다(R1 L9b: 한 행이 버퍼 전체를 매 주기 막지 않게). 독성 행 k개가 섞인 n행 batch는 INSERT를
-  약 2k·log2(n)번 더 한다. 알려진 원인(int4 밖 tag_id·NaN·모르는 quality)은 recorder가 미리 막는다.
-- 한 번의 쓰기(연결 획득·INSERT·연결 반환 대기)는 `write_timeout_s`(기본 쿼리 제한 10s + 여유 5s)
-  가 지나면 취소하고 실패로 본다 — 행은 버퍼로 돌아가 다음 주기에 다시 쓴다. 이 취소는 한 번뿐이라
+  약 2k·log2(n)번 더 하고, 상한은 모든 행이 거부될 때의 2n-1번이다(20,000행이면 약 4만 번 — 그 동안
+  `poisoned_total`이 빠르게 오른다). 알려진 원인(int4 밖 tag_id·NaN·모르는 quality)은 recorder가
+  미리 막는다.
+- INSERT 한 번(연결 획득·INSERT·연결 반환 대기)은 `write_timeout_s`(기본 쿼리 제한 10s + 여유 5s)
+  가 지나면 취소하고 실패로 본다 — 끝나지 않은 행은 버퍼로 돌아가 다음 주기에 다시 쓴다. 이 취소는 한 번뿐이라
   INSERT 도중에 걸리면 이어지는 연결 반환(asyncpg는 shield한다)은 끊지 못한다. 그 반환은
   `Database`의 획득·반환 제한(기본 5s, 넘으면 연결을 terminate)으로 끝나므로 half-open DB
-  연결에서도 flush 한 번은 최대 `write_timeout_s` + 그 제한(기본 20s) 안에 돌아온다.
+  연결에서도 INSERT 한 번은 최대 `write_timeout_s` + 그 제한(기본 20s) 안에 돌아온다. 시간 초과는
+  격리 대상이 아니므로 flush는 첫 시간 초과에서 멈춘다.
 - 문서화된 허용 손실: core 프로세스 crash 시 아직 쓰지 못한 버퍼(정상 시 ≤ 1 주기분, DB 장애 중이면
   상한 내 전체).
 """
@@ -110,14 +113,9 @@ class PgRowStore:
             async with self._db.connection() as conn:
                 await conn.execute(INSERT_SQL, *columns(rows), timeout=self._query_timeout_s)
         except (asyncpg.DataError, asyncpg.IntegrityConstraintViolationError) as exc:
-            # 서버가 행 값을 거부(SQLSTATE 22·23: 범위 밖 시각 등).
-            raise RowsRejectedError(str(exc)) from exc
-        except asyncpg.InterfaceError as exc:
-            # 클라이언트 쪽 인자 인코딩 실패(asyncpg 내부 `exceptions._base.DataError`, 공개 이름이
-            # 없어 ValueError 겸함으로 구별한다)도 행 내용 오류다. 나머지 InterfaceError는 그대로.
-            if isinstance(exc, ValueError):
-                raise RowsRejectedError(str(exc)) from exc
-            raise
+            # 행 값 거부: 서버 SQLSTATE 22·23(범위 밖 시각 등)과, asyncpg 0.31이 같은 DataError로
+            # 올리는 클라이언트 쪽 인자 인코딩 실패(int4 밖 tag_id 등).
+            raise RowsRejectedError(f"{type(exc).__name__}: {exc}") from exc
 
 
 @dataclass(slots=True)

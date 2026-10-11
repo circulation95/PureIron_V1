@@ -54,6 +54,9 @@ class Database:
             log.warning("site-db not reachable at startup, will retry on use: %s", exc)
 
     async def close(self) -> None:
+        # 백그라운드 반환(각 budget 안에 끝남)을 먼저 거둔다 — 종료 정리에서 취소되면 asyncpg 안쪽
+        # shield가 다시 떨어져 나가 그 예외를 아무도 읽지 않는다.
+        await asyncio.gather(*self._releasing, return_exceptions=True)
         async with self._lock:
             if self._pool is not None:
                 await self._pool.close()

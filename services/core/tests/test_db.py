@@ -178,10 +178,6 @@ async def test_stop_cancel_during_execute_is_not_swallowed_by_release_timeout(
     assert "stopped with 3 unwritten" in caplog.text
 
 
-class _ClientDataError(asyncpg.InterfaceError, ValueError):
-    """asyncpg 클라이언트 쪽 인자 인코딩 실패(`exceptions._base.DataError`)와 같은 모양."""
-
-
 class RaisingConn:
     def __init__(self, exc: BaseException) -> None:
         self.exc = exc
@@ -223,7 +219,7 @@ def _store_raising(monkeypatch: pytest.MonkeyPatch, exc: BaseException) -> PgRow
         asyncpg.DataError("timestamp out of range"),
         asyncpg.NumericValueOutOfRangeError("value out of range"),
         asyncpg.UniqueViolationError("duplicate key"),
-        _ClientDataError("invalid input for query argument $2"),
+        asyncpg.DataError("invalid input for query argument $2: 2147483648"),
     ],
     ids=["server-data", "server-data-subclass", "integrity", "client-encode"],
 )
@@ -242,9 +238,10 @@ async def test_row_store_reports_row_content_errors_as_rejected(
     [
         (ConnectionResetError("db down"), DatabaseUnavailableError),
         (asyncpg.InterfaceError("connection is closed"), asyncpg.InterfaceError),
+        (asyncpg.ClientConfigurationError("bad sslmode"), asyncpg.ClientConfigurationError),
         (asyncpg.InsufficientPrivilegeError("permission denied"), asyncpg.PostgresError),
     ],
-    ids=["connection", "interface", "server-other"],
+    ids=["connection", "interface", "client-config", "server-other"],
 )
 async def test_row_store_keeps_other_errors(
     monkeypatch: pytest.MonkeyPatch, exc: Exception, expected: type[Exception]
