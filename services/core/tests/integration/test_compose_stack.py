@@ -2,7 +2,8 @@
 
 M3a-2: 시뮬레이터 100태그 apply → 10s 내 100% GOOD, collector kill → 태그 BAD·장비 DISCONNECTED.
 M3a-3: collector를 core 네트워크에서 30s 떼었다 붙이면 분리 구간 샘플이 replay로 이력에 들어오고
-중복이 없다(장비 쪽 field 네트워크는 유지 — `site.dev.yml`).
+중복이 없다(장비 쪽 field 네트워크는 유지 — `site.dev.yml`). M3b-2: 그 replay는 알람을 만들지
+않는다.
 """
 
 from __future__ import annotations
@@ -29,15 +30,13 @@ from .conftest import (
     CORE_PORT,
     MIGRATIONS,
     PROJECT,
+    SIM_TAGS,
     WEB_PORT,
     SiteDb,
     Stack,
+    apply_sim_project,
     compose,
-    core_cli,
-    holding_tag,
-    modbus_device,
     wait_http,
-    write_project,
 )
 
 pytestmark = pytest.mark.integration
@@ -132,7 +131,6 @@ async def test_apply_records_base_site_rev_and_restore_roundtrip(site_db: SiteDb
         await db.close()
 
 
-SIM_TAGS = 100
 GOOD_WITHIN_S = 10.0
 
 
@@ -162,21 +160,9 @@ def _wait_acquisition(
     raise AssertionError(f"acquisition did not reach the expected state in {timeout_s}s: {last}")
 
 
-def _apply_sim_project(stack: Stack, tmp_path: Path) -> None:
-    """시뮬레이터 holding 0..SIM_TAGS-1을 태그로 apply(테스트끼리 같은 정의 → 같은 id·rev)."""
-    wait_http(f"{CORE}/readyz", timeout_s=120)
-    root = write_project(
-        tmp_path / "sim-project",
-        {"sim": modbus_device("sim", "simulator", 5020)},
-        {"sim": [holding_tag(f"sim/r{i:03d}", "sim", i) for i in range(SIM_TAGS)]},
-    )
-    applied = core_cli(stack.cli_env("pureiron"), "apply-definitions", str(root), "--json")
-    assert applied.returncode == 0, applied.stdout + applied.stderr
-
-
 @pytest.mark.compose
 def test_sim_100_tags_good_then_collector_kill(stack: Stack, tmp_path: Path) -> None:
-    _apply_sim_project(stack, tmp_path)
+    apply_sim_project(stack, tmp_path)
 
     good = _wait_acquisition(
         lambda a: a.get("tags_total") == SIM_TAGS and a.get("tags_good") == SIM_TAGS,
@@ -250,6 +236,21 @@ def _collector_clock(container: str) -> tuple[float, float, float]:
     return float(out[0]), float(out[1]), time.monotonic() - started
 
 
+async def _gap_alarm_rows(dsn: str, password: str, gap: tuple[float, float]) -> int:
+    """분리 구간 [gap) 시각의 알람 저널 행 수(replay가 알람을 만들면 이 구간 시각으로 남는다)."""
+    conn = await asyncpg.connect(dsn, password=password)
+    try:
+        count = await conn.fetchval(
+            "SELECT count(*) FROM alarm_journal"
+            " WHERE time >= to_timestamp($1) AND time < to_timestamp($2)",
+            *gap,
+        )
+    finally:
+        await conn.close()
+    assert isinstance(count, int)
+    return count
+
+
 async def _gap_rows(dsn: str, password: str, gap: tuple[float, float]) -> list[int]:
     """분리 구간 [gap) 태그별 이력 행 수(sim 태그 전부, 행이 없으면 0)."""
     conn = await asyncpg.connect(dsn, password=password)
@@ -312,7 +313,7 @@ def test_network_disconnect_replay(stack: Stack, tmp_path: Path) -> None:
        단위 근거(test_session `test_live_replay_and_stale_samples`·
        `test_replay_through_recorder_is_raw_and_emits_no_events`).
     """
-    _apply_sim_project(stack, tmp_path)
+    apply_sim_project(stack, tmp_path)
     _wait_acquisition(lambda a: a.get("tags_good") == SIM_TAGS, 30)
     container = compose(stack.compose_env, "ps", "-q", "collector").stdout.strip()
     assert container, "collector container not running"
@@ -373,3 +374,10 @@ def test_network_disconnect_replay(stack: Stack, tmp_path: Path) -> None:
     assert live_b == live_a, (live_a, live_b)  # ④(주)
     assert stale_at_replay == 0, stale_at_replay  # ④(주2)
     assert replayed >= sum(counts), (replayed, sum(counts))  # ③·④(a)
+    # ⑤(M3b-2) replay는 알람을 만들지 않는다: 분리 구간 시각의 저널 행 0. 분리 중 태그는 BAD라 평가
+    # 보류이고, replay batch는 tag.changed를 내지 않는다. 재연결 뒤 live 값의 전이는 tb 뒤 시각이다.
+    _wait(
+        lambda: _int_field(_section(_readyz(), "alarms"), "journal_queue_rows") == 0, 30, "journal"
+    )
+    gap_alarms = asyncio.run(_gap_alarm_rows(stack.dsn("pureiron"), stack.password, (ta, tb)))
+    assert gap_alarms == 0, gap_alarms
