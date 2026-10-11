@@ -1,16 +1,78 @@
 :root {
   color-scheme: light dark;
   font-family: system-ui, "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+  font-size: 15px;
   --ok: #1a7f37;
   --bad: #c62828;
+  --warn: #b26a00;
+  --line: #8884;
+  --muted: GrayText;
+  --accent: #2563eb;
 }
-main { max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
-h1 { font-size: 1.4rem; }
-.status { font-weight: 600; }
+body { margin: 0; background: Canvas; color: CanvasText; }
+main { max-width: 80rem; margin: 1rem auto; padding: 0 1rem; }
+h1 { font-size: 1.3rem; margin: 0.5rem 0 0.75rem; }
+button { font: inherit; padding: 0.3rem 0.8rem; cursor: pointer; }
+button:disabled { cursor: default; }
+input { font: inherit; }
 .ok { color: var(--ok); }
 .bad, .error { color: var(--bad); }
-.checks { list-style: none; padding: 0; }
-.check { display: grid; grid-template-columns: 1.5rem 8rem 1fr; padding: 0.4rem 0; border-bottom: 1px solid #8884; }
-.check .label { color: CanvasText; }
-.check .detail { color: GrayText; }
-.check.ok .detail { color: var(--ok); }
+.page-status { color: var(--muted); }
+.page-status.error { color: var(--bad); }
+.summary { color: var(--muted); }
+.notice { padding: 0.6rem 0.8rem; border-left: 3px solid var(--warn); background: #b26a0014; }
+
+/* 상단 내비게이션 */
+.topbar { display: flex; align-items: center; gap: 1rem; padding: 0.5rem 1rem; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.topbar .brand { font-weight: 700; }
+.topbar nav { display: flex; gap: 0.25rem; flex: 1; flex-wrap: wrap; }
+.topbar nav a { padding: 0.3rem 0.7rem; border-radius: 4px; color: inherit; text-decoration: none; }
+.topbar nav a.active { background: #2563eb22; color: var(--accent); font-weight: 600; }
+.topbar .user { color: var(--muted); }
+.badge { display: inline-block; min-width: 1.2rem; margin-left: 0.3rem; padding: 0 0.35rem; border-radius: 0.6rem; background: var(--bad); color: #fff; font-size: 0.8rem; text-align: center; }
+.conn { font-size: 0.85rem; }
+.conn-open { color: var(--ok); }
+.conn-connecting { color: var(--warn); }
+.conn-closed { color: var(--bad); }
+
+/* 표 */
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+th { font-weight: 600; color: var(--muted); }
+.num { text-align: right; }
+td.detail { white-space: normal; font-family: ui-monospace, monospace; font-size: 0.85rem; }
+.toolbar { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
+
+/* 품질·상태 */
+.quality, .priority, .device-state { display: inline-block; padding: 0 0.4rem; border-radius: 3px; font-size: 0.85rem; font-weight: 600; }
+.q-good { color: var(--ok); background: #1a7f371a; }
+.q-bad { color: var(--bad); background: #c628281a; }
+.q-uncertain { color: var(--warn); background: #b26a001a; }
+.device-state.ok { color: var(--ok); background: #1a7f371a; }
+.device-state.bad { color: var(--bad); background: #c628281a; }
+.p-critical { color: #fff; background: var(--bad); }
+.p-high { color: var(--bad); background: #c628281a; }
+.p-medium { color: var(--warn); background: #b26a001a; }
+.p-low { color: var(--muted); background: #8882; }
+.alarm-state.unacked { color: var(--bad); font-weight: 600; }
+
+/* 탭·구간 선택 */
+.tabs { display: flex; gap: 0.25rem; margin-bottom: 0.75rem; border-bottom: 1px solid var(--line); }
+.tabs button { border: none; background: none; border-bottom: 2px solid transparent; }
+.tabs button[aria-selected="true"] { border-bottom-color: var(--accent); color: var(--accent); font-weight: 600; }
+.segmented { display: inline-flex; }
+.segmented button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+
+/* 로그인 */
+.login { max-width: 22rem; margin: 15vh auto; }
+.login form { display: flex; flex-direction: column; gap: 0.75rem; }
+.login label { display: flex; flex-direction: column; gap: 0.25rem; }
+
+/* 필터·트렌드 */
+.filters { display: flex; gap: 0.75rem; align-items: end; flex-wrap: wrap; margin-bottom: 0.75rem; }
+.filters label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.9rem; }
+.trend { display: grid; grid-template-columns: 14rem 1fr; gap: 1rem; }
+.tag-picker { max-height: 30rem; overflow-y: auto; border: 1px solid var(--line); margin: 0; }
+.tag-picker label { display: block; padding: 0.1rem 0; }
+.trend-body { min-width: 0; }
+.chart { width: 100%; }
