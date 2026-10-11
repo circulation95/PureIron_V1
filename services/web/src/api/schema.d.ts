@@ -47,7 +47,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Logout */
+        /**
+         * Logout
+         * @description 세션이 이미 끝났어도 204 + 쿠키 삭제(HttpOnly라 브라우저 JS는 죽은 쿠키를 못 지운다).
+         *
+         *     감사는 유효한 세션을 끝냈을 때만 남긴다.
+         */
         post: operations["logout"];
         delete?: never;
         options?: never;
@@ -538,13 +543,6 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description not authenticated */
-            401: {
                 headers: {
                     [name: string]: unknown;
                 };

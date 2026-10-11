@@ -880,13 +880,11 @@
     },
     "/api/v1/auth/logout": {
       "post": {
+        "description": "세션이 이미 끝났어도 204 + 쿠키 삭제(HttpOnly라 브라우저 JS는 죽은 쿠키를 못 지운다).\n\n감사는 유효한 세션을 끝냈을 때만 남긴다.",
         "operationId": "logout",
         "responses": {
           "204": {
             "description": "Successful Response"
-          },
-          "401": {
-            "description": "not authenticated"
           }
         },
         "security": [
