@@ -33,7 +33,8 @@ from pureiron_core.settings import Settings, SettingsError, read_secret
 from pureiron_project.project import load_project
 
 # SIGTERM 뒤 열린 HTTP 요청을 기다리는 시간(초, uvicorn은 int). compose core
-# `stop_grace_period: 25s` 안에서 최종 이력 flush가 SIGKILL 전에 끝나게 정한다(W5). half-open DB 최악:
+# `stop_grace_period: 25s` 안에서 최종 이력 flush가 SIGKILL 전에 끝나게 정한다(W5).
+# half-open DB 최악:
 #   uvicorn 0.2s(종료 감지 tick 0.1s + 연결 종료 요청 뒤 0.1s) + 이 값 2s
 #   → lifespan `SiteRuntime.stop()`: acquisition = PlanKeeper 취소가 쿼리 도중이면 반환 정리 5s
 #     + gRPC grace 2s → historian 15s(진행 중 쓰기 반환 정리 5s + 최종 flush 5s + 그 반환 정리 5s)

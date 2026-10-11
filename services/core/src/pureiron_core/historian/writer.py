@@ -15,8 +15,8 @@
   `poisoned_total`이 빠르게 오른다). 알려진 원인(int4 밖 tag_id·NaN·모르는 quality)은 recorder가
   미리 막는다.
 - INSERT 한 번(연결 획득·INSERT·연결 반환 대기)은 `write_timeout_s`(기본 쿼리 제한 10s + 여유 5s)
-  가 지나면 취소하고 실패로 본다 — 끝나지 않은 행은 버퍼로 돌아가 다음 주기에 다시 쓴다. 이 취소는 한 번뿐이라
-  INSERT 도중에 걸리면 이어지는 연결 반환(asyncpg는 shield한다)은 끊지 못한다. 그 반환은
+  가 지나면 취소하고 실패로 본다 — 끝나지 않은 행은 버퍼로 돌아가 다음 주기에 다시 쓴다. 이 취소는
+  한 번뿐이라 INSERT 도중에 걸리면 이어지는 연결 반환(asyncpg는 shield한다)은 끊지 못한다. 그 반환은
   `Database`의 획득·반환 제한(기본 5s, 넘으면 연결을 terminate)으로 끝나므로 half-open DB
   연결에서도 INSERT 한 번은 최대 `write_timeout_s` + 그 제한(기본 20s) 안에 돌아온다. 시간 초과는
   격리 대상이 아니므로 flush는 첫 시간 초과에서 멈춘다.
