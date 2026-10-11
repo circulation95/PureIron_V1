@@ -8,7 +8,8 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings 0",
-    "gen:api": "openapi-typescript ../../packages/contracts/openapi/core.json -o src/api/schema.d.ts"
+    "gen:api": "openapi-typescript ../../packages/contracts/openapi/core.json -o src/api/schema.d.ts",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "openapi-fetch": "0.17.0",
