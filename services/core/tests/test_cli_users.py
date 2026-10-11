@@ -35,6 +35,12 @@ def test_password_file_first_line_without_newline(tmp_path: Path) -> None:
     assert read_password(path) == "s3cret-pass "
 
 
+def test_password_file_utf8_bom_is_not_part_of_the_password(tmp_path: Path) -> None:
+    path = tmp_path / "pw"
+    path.write_bytes(b"\xef\xbb\xbfpw-secret-1\r\n")  # PowerShell 5.1 Out-File -Encoding utf8
+    assert read_password(path) == "pw-secret-1"
+
+
 def test_non_utf8_password_file_is_a_clean_error(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

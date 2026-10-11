@@ -258,7 +258,8 @@ def read_password(password_file: Path | None) -> str:
     """`--password-file`의 첫 줄, 없으면 stdin(터미널이면 에코 없이 묻는다). 끝 줄바꿈만 뗀다."""
     if password_file is not None:
         try:
-            text = password_file.read_text(encoding="utf-8")
+            # utf-8-sig: PowerShell 5.1 `Out-File -Encoding utf8`이 붙이는 BOM을 떼고 읽는다.
+            text = password_file.read_text(encoding="utf-8-sig")
         except UnicodeDecodeError:
             raise InvalidPasswordError(f"{password_file}: password file is not UTF-8") from None
     elif sys.stdin.isatty():
