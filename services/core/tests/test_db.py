@@ -16,6 +16,7 @@ async 함수의 `timeout` 인자(ruff ASYNC109)를 피하려고 asyncpg와 같�
 from __future__ import annotations
 
 import asyncio
+import gc
 import time
 from collections.abc import Coroutine
 from typing import Any
@@ -253,3 +254,36 @@ async def test_row_store_keeps_other_errors(
     with pytest.raises(expected) as info:
         await store.insert([Row(1, 1, 1.0, None, 1)])
     assert not isinstance(info.value, RowsRejectedError)
+
+
+@pytest.mark.parametrize("body_fails", [False, True], ids=["after-body", "after-body-error"])
+async def test_cancelled_release_wait_leaves_no_unretrieved_task_exception(
+    monkeypatch: pytest.MonkeyPatch, body_fails: bool
+) -> None:
+    """V2-1: 반환을 기다리던 쪽이 취소되고 백그라운드 반환이 budget을 넘겨 실패해도 asyncio가
+    `Task exception was never retrieved`를 남기지 않는다(반환 task의 예외를 회수한다).
+
+    shield된 반환은 바깥 취소에 끊기지 않는다. Python 3.12 `shield`는 바깥이 취소되면 안쪽 task의
+    완료 콜백을 떼어 내므로, 그 task가 나중에 실패하면 예외를 아무도 읽지 않는다.
+    """
+    loop = asyncio.get_running_loop()
+    contexts: list[dict[str, object]] = []
+    loop.set_exception_handler(lambda _loop, context: contexts.append(context))
+    try:
+        conn = FakeConn()
+        conn.cancelling = True  # 쿼리가 끊긴 연결: 반환이 취소 완료를 budget까지 기다린다
+        db = fake_db(monkeypatch, FakePool(conn), acquire_timeout_s=0.1)
+
+        async def use() -> None:
+            async with db.connection():
+                if body_fails:
+                    raise DatabaseUnavailableError("query timed out")
+
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(use(), 0.05)  # 반환 대기 도중 취소
+        await asyncio.sleep(0.2)  # 백그라운드 반환이 budget(0.1s)을 넘겨 실패한다
+        gc.collect()
+        assert conn.terminated
+        assert [c.get("message") for c in contexts] == []
+    finally:
+        loop.set_exception_handler(None)
