@@ -2,7 +2,8 @@
 
 세션 = `secrets.token_urlsafe(32)` 불투명 토큰, DB에는 sha256만. 유효 조건은
 `now < expires_at`(절대 만료), `now < last_seen_at + idle_s`(유휴 만료), 폐기되지 않음, 사용자
-enabled 넷 모두. `last_seen_at`은 `TOUCH_INTERVAL_S`에 한 번만 쓴다(요청마다 UPDATE 하지 않게).
+enabled 넷 모두. `last_seen_at`은 `min(TOUCH_INTERVAL_S, idle_s / 2)`에 한 번만 쓴다(요청마다
+UPDATE 하지 않게). 간격이 유휴 만료의 절반을 넘지 않아야 활동 중인 세션이 갱신 전에 끊기지 않는다.
 로그인 실패는 이유와 무관하게 같은 예외·비슷한 시간(없는 사용자도 더미 해시를 검증)으로 끝난다.
 감사 기록은 이 모듈이 하지 않는다 — 호출자(api·cli)가 결과를 보고 남긴다(auth는 platform에만 의존).
 """
@@ -123,7 +124,8 @@ class AuthService:
         self._sessions = sessions
         self._idle = timedelta(seconds=idle_s)
         self._absolute = timedelta(seconds=absolute_s)
-        self._touch_interval = timedelta(seconds=TOUCH_INTERVAL_S)
+        # idle_s ≤ 60이면 60초 간격 갱신은 유휴 만료 뒤에야 온다 — 활동 중인 세션도 끊긴다.
+        self._touch_interval = timedelta(seconds=min(TOUCH_INTERVAL_S, idle_s / 2))
         self._clock = clock
         self._hashing = asyncio.Semaphore(MAX_CONCURRENT_HASHES)
 

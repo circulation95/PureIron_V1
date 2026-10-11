@@ -207,18 +207,18 @@ sot-product	docs/wiki/sot/product.md	디자인-방향	200	12	688	h2	디자인 �
 sot-product	docs/wiki/sot/product.md	첫-계약-전략	212	16	1670	h2	첫 계약 전략
 sot-product	docs/wiki/sot/product.md	성공-기준	228	14	655	h2	성공 기준
 sot-product	docs/wiki/sot/product.md	성능--비기능-요구	242	9	240	h2	성능 / 비기능 요구
-sot-runtime-config	docs/wiki/sot/runtime-config.md	runtime-config-sot	13	146	14002	h1	Runtime Config SOT
+sot-runtime-config	docs/wiki/sot/runtime-config.md	runtime-config-sot	13	146	14111	h1	Runtime Config SOT
 sot-runtime-config	docs/wiki/sot/runtime-config.md	이-문서의-원천	25	5	335	h2	이 문서의 원천
 sot-runtime-config	docs/wiki/sot/runtime-config.md	settings-환경변수	30	32	2226	h2	`Settings` 환경변수
 sot-runtime-config	docs/wiki/sot/runtime-config.md	직접-읽는-환경변수	62	9	461	h2	직접 읽는 환경변수
 sot-runtime-config	docs/wiki/sot/runtime-config.md	설정-파일-위치	71	6	515	h2	설정 파일 위치
 sot-runtime-config	docs/wiki/sot/runtime-config.md	agent-troubleshooting-poc-설정	77	9	1112	h2	Agent troubleshooting PoC 설정
 sot-runtime-config	docs/wiki/sot/runtime-config.md	drift-검사	86	10	508	h2	drift 검사
-sot-runtime-config	docs/wiki/sot/runtime-config.md	목표-설계미구현	96	63	8078	h2	목표 설계(미구현)
+sot-runtime-config	docs/wiki/sot/runtime-config.md	목표-설계미구현	96	63	8187	h2	목표 설계(미구현)
 sot-runtime-config	docs/wiki/sot/runtime-config.md	지원-호스트-adr-027	100	5	448	h3	지원 호스트 (ADR-027)
 sot-runtime-config	docs/wiki/sot/runtime-config.md	호스트-경로	105	11	625	h3	호스트 경로
 sot-runtime-config	docs/wiki/sot/runtime-config.md	실행-규칙	116	10	2250	h3	실행 규칙
-sot-runtime-config	docs/wiki/sot/runtime-config.md	v1-환경변수-m1m3a-구현	126	33	4391	h3	V1 환경변수 (M1~M3a 구현)
+sot-runtime-config	docs/wiki/sot/runtime-config.md	v1-환경변수-m1m3a-구현	126	33	4500	h3	V1 환경변수 (M1~M3a 구현)
 sot-testing	docs/wiki/sot/testing.md	testing-sot	32	344	31817	h1	Testing SOT
 sot-testing	docs/wiki/sot/testing.md	1-문서-경계	40	20	1306	h2	1. 문서 경계
 sot-testing	docs/wiki/sot/testing.md	2-기본-실행-명령	60	35	1204	h2	2. 기본 실행 명령

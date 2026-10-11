@@ -157,6 +157,27 @@ async def test_last_seen_is_written_at_most_once_a_minute() -> None:
     assert fx.sessions.touches == [T0 + timedelta(seconds=60), T0 + timedelta(seconds=120)]
 
 
+@pytest.mark.parametrize(
+    ("idle_s", "every_s"),
+    [(60, 30), (30, 20), (30, 10)],
+    ids=["idle60-every30", "idle30-every20", "idle30-every10"],
+)
+async def test_short_idle_timeout_still_extends_an_active_session(
+    idle_s: float, every_s: float
+) -> None:
+    """idle_s ≤ 60에서도 유휴 만료보다 자주 쓰는 세션은 끊기지 않는다(갱신 간격 ≤ idle_s / 2)."""
+    fx = await _with_user(auth_fixture(idle_s=idle_s, absolute_s=3600))
+    token = (await fx.service.login("alice", PASSWORD)).token
+    elapsed_s = 0.0
+    while elapsed_s < 600:
+        fx.clock.advance(every_s)
+        elapsed_s += every_s
+        await fx.service.authenticate(token)
+    fx.clock.advance(idle_s)  # 그리고 쓰지 않으면 유휴 만료는 그대로 온다
+    with pytest.raises(SessionInvalidError, match="idle"):
+        await fx.service.authenticate(token)
+
+
 async def test_logout_revokes_immediately_and_unknown_logout_is_harmless() -> None:
     fx = await _with_user(auth_fixture())
     token = (await fx.service.login("alice", PASSWORD)).token
