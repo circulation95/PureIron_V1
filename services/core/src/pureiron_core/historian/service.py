@@ -32,6 +32,7 @@ class Historian:
             buffer_rows=writer.buffer_rows,
             dropped_total=writer.dropped_total,
             written_total=writer.written_total,
+            poisoned_total=writer.poisoned_total,
             write_lag_s=writer.write_lag_s,
             db_ok=writer.db_ok,
             rejected_total=self.recorder.stats.rejected,

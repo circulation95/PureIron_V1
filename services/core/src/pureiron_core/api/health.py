@@ -83,6 +83,9 @@ class Historian(BaseModel):
     buffer_rows: int = Field(description="아직 DB에 쓰지 못한 메모리 버퍼 행 수(쓰는 중 포함)")
     dropped_total: int = Field(description="버퍼 상한을 넘어 버린(가장 오래된) 행 수")
     written_total: int = Field(description="INSERT에 넘긴 행 수(중복으로 무시된 행 포함)")
+    poisoned_total: int = Field(
+        description="site-db가 행 내용 때문에 거부해 버린 행 수(batch를 반으로 나눠 그 행만 격리)"
+    )
     write_lag_s: float | None = Field(description="버퍼에서 가장 오래 기다린 행의 대기 시간")
     db_ok: bool = Field(description="마지막 이력 쓰기 성공 여부")
     rejected_total: int = Field(
@@ -194,6 +197,7 @@ def build_health_router(
                 buffer_rows=history.buffer_rows,
                 dropped_total=history.dropped_total,
                 written_total=history.written_total,
+                poisoned_total=history.poisoned_total,
                 write_lag_s=history.write_lag_s,
                 db_ok=history.db_ok,
                 rejected_total=history.rejected_total,

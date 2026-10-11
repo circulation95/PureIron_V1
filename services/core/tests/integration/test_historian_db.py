@@ -12,7 +12,7 @@ import pytest
 from pureiron_core._gen import collector_pb2 as pb
 from pureiron_core.historian.reader import read_aggregate, read_raw
 from pureiron_core.historian.recorder import Recorder
-from pureiron_core.historian.writer import HistoryWriter, PgRowStore
+from pureiron_core.historian.writer import HistoryWriter, PgRowStore, Row, RowsRejectedError
 from pureiron_core.platform.db import Database
 from pureiron_core.project.ports import Definitions, TagDef
 
@@ -108,3 +108,25 @@ async def test_aggregates_include_recent_rows_without_refresh(
     hour = minute.replace(minute=0)
     [h] = await read_aggregate(conn, [1], hour, hour + timedelta(hours=1), "1h")
     assert (h.bucket, h.avg, h.min, h.max, h.samples) == (hour, 3.0, 1.0, 5.0, 4)
+
+
+async def test_rows_rejected_by_site_db_are_isolated(
+    db: Database, conn: asyncpg.Connection[asyncpg.Record]
+) -> None:
+    """R1 L9b: 실제 asyncpg·TimescaleDB의 행 내용 오류(클라이언트 인코딩·서버 SQLSTATE 22)가
+    `RowsRejectedError`로 분류되고, writer가 그 행만 버린 채 나머지를 같은 flush에 쓴다."""
+    store = PgRowStore(db)
+    base = _ns(datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=5))
+    client_bad = Row(base, 2**31, 1.0, None, pb.GOOD)  # int4 인코딩 실패(클라이언트)
+    server_bad = Row(-(2**62) * 1000, 1, 1.0, None, pb.GOOD)  # timestamp out of range(서버)
+    for bad in (client_bad, server_bad):
+        with pytest.raises(RowsRejectedError):
+            await store.insert([bad])
+
+    writer = HistoryWriter(store)
+    good = [Row(base + i * S, 1, float(i), None, pb.GOOD) for i in range(6)]
+    writer.append([*good[:2], client_bad, *good[2:4], server_bad, *good[4:]])
+    assert await writer.flush() == 6
+    status = writer.status()
+    assert (status.buffer_rows, status.poisoned_total, status.db_ok) == (0, 2, True)
+    assert await conn.fetchval("SELECT count(*) FROM tag_history WHERE tag_id = 1") == 6

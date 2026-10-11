@@ -1,4 +1,4 @@
-"""site-db 풀 래퍼: 연결 획득·반환 시간 제한(V1 N1).
+"""site-db 풀 래퍼: 연결 획득·반환 시간 제한(V1 N1)과 `PgRowStore` 오류 분류(R1 L9b).
 
 가짜 pool은 asyncpg 0.31.0 `asyncpg/pool.py`의 다음 동작만 흉내 낸다(가정이 틀리면 테스트도 틀린다):
 - `acquire(timeout=t)`는 획득 대기를 `wait_for(…, t)`로 제한하고, t를 그 연결의 반환 budget으로
@@ -23,7 +23,7 @@ from typing import Any
 import asyncpg
 import pytest
 
-from pureiron_core.historian.writer import HistoryWriter, PgRowStore, Row
+from pureiron_core.historian.writer import HistoryWriter, PgRowStore, Row, RowsRejectedError
 from pureiron_core.platform.db import Database, DatabaseUnavailableError
 
 
@@ -175,3 +175,81 @@ async def test_stop_cancel_during_execute_is_not_swallowed_by_release_timeout(
     assert elapsed < 2 * acquire_s + 0.3
     assert writer.status().buffer_rows == 3
     assert "stopped with 3 unwritten" in caplog.text
+
+
+class _ClientDataError(asyncpg.InterfaceError, ValueError):
+    """asyncpg 클라이언트 쪽 인자 인코딩 실패(`exceptions._base.DataError`)와 같은 모양."""
+
+
+class RaisingConn:
+    def __init__(self, exc: BaseException) -> None:
+        self.exc = exc
+
+    def execute(
+        self, query: str, *args: object, timeout: float | None = None
+    ) -> Coroutine[Any, Any, str]:
+        return self._raise()
+
+    async def _raise(self) -> str:
+        raise self.exc
+
+
+class PlainPool:
+    def __init__(self, conn: RaisingConn) -> None:
+        self.conn = conn
+
+    def acquire(self, *, timeout: float | None = None) -> Coroutine[Any, Any, RaisingConn]:
+        return self._acquire()
+
+    async def _acquire(self) -> RaisingConn:
+        return self.conn
+
+    async def release(self, conn: RaisingConn) -> None:
+        pass
+
+
+def _store_raising(monkeypatch: pytest.MonkeyPatch, exc: BaseException) -> PgRowStore:
+    async def create_pool(*_args: object, **_kwargs: object) -> PlainPool:
+        return PlainPool(RaisingConn(exc))
+
+    monkeypatch.setattr(asyncpg, "create_pool", create_pool)
+    return PgRowStore(Database("postgresql://fake"))
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        asyncpg.DataError("timestamp out of range"),
+        asyncpg.NumericValueOutOfRangeError("value out of range"),
+        asyncpg.UniqueViolationError("duplicate key"),
+        _ClientDataError("invalid input for query argument $2"),
+    ],
+    ids=["server-data", "server-data-subclass", "integrity", "client-encode"],
+)
+async def test_row_store_reports_row_content_errors_as_rejected(
+    monkeypatch: pytest.MonkeyPatch, exc: Exception
+) -> None:
+    """R1 L9b: 행 내용 오류만 `RowsRejectedError`가 된다(writer가 반분 격리)."""
+    store = _store_raising(monkeypatch, exc)
+    with pytest.raises(RowsRejectedError) as info:
+        await store.insert([Row(1, 1, 1.0, None, 1)])
+    assert info.value.__cause__ is exc
+
+
+@pytest.mark.parametrize(
+    ("exc", "expected"),
+    [
+        (ConnectionResetError("db down"), DatabaseUnavailableError),
+        (asyncpg.InterfaceError("connection is closed"), asyncpg.InterfaceError),
+        (asyncpg.InsufficientPrivilegeError("permission denied"), asyncpg.PostgresError),
+    ],
+    ids=["connection", "interface", "server-other"],
+)
+async def test_row_store_keeps_other_errors(
+    monkeypatch: pytest.MonkeyPatch, exc: Exception, expected: type[Exception]
+) -> None:
+    """연결·권한 등 행 탓이 아닌 오류는 그대로(writer가 batch 전체를 되돌린다)."""
+    store = _store_raising(monkeypatch, exc)
+    with pytest.raises(expected) as info:
+        await store.insert([Row(1, 1, 1.0, None, 1)])
+    assert not isinstance(info.value, RowsRejectedError)
