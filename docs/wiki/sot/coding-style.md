@@ -73,6 +73,7 @@ services/core/src/pureiron_core/
   runtime.py      유일한 조립 지점: SiteRuntime.build(settings) — 모든 객체를 만들고 생성자로 주입
   app.py          create_app(rt): HTTP 노출만. 라우터 팩토리에 rt의 부품을 넘긴다
   cli.py          진입점(pureiron-core). runtime·app을 import하는 곳
+  cli_<명령>.py    진입점 하위 명령(예: cli_users.py). cli.py가 등록만 한다 — runtime·app은 import하지 않는다
   api/            HTTP 계층: build_<x>_router(deps) + pydantic 응답 모델
   <domain>/       acquisition · historian · project · tags (M3b: alarms · auth · audit · realtime · devices)
     ports.py      다른 모듈이 기대도 되는 유일한 표면: 상태 dataclass · Protocol · 공개 예외

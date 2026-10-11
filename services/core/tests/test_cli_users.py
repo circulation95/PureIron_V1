@@ -10,7 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from pureiron_core.cli import main, read_password
+from pureiron_core.cli import main
+from pureiron_core.cli_users import read_password
 from pureiron_core.platform.migrate import EXIT_FAILED
 
 UNREACHABLE_DSN = "postgresql://pureiron@127.0.0.1:1/none"
