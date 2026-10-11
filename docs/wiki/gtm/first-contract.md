@@ -6,7 +6,6 @@ audience: both
 owners: [pureiron-core]
 sources:
   - docs/wiki/sot/product.md
-  - docs/PRD.md
   - USER.md
 last_verified: 2026-06-30
 ---
@@ -22,7 +21,6 @@ last_verified: 2026-06-30
 ## 이 문서의 원천
 
 - [product](../sot/product.md) — 제품 의도, 초기 고객, v1 가치, 첫 계약 전략의 상위 방향
-- [docs/PRD.md](../../PRD.md) — 제품 목표·사용자·MVP 제외
 - [USER.md](../../../USER.md) — 팀 역할, 2인 팀 감당 범위, 작업 성향
 
 ## 결정 상태 표기
@@ -102,7 +100,7 @@ PoC 제안서(고객 제출용)는 다음 골격을 따른다. 내용 채움은 
 2. Simulator + 3D Digital Twin으로 실제 공정처럼 동작하는 라인을 보여준다.
 3. 알람을 발생시키고 모바일에서 확인 → 조치 이력 남김.
 4. Agent가 알람 원인 후보와 조치 시나리오를 설명한다(자동 제어 아님, 사람 판단 보조).
-5. 알람 ack·조치 note·이력 위에서 사람이 기존 작업 지시/CMMS 프로세스로 넘기는 **수동 Work Order handoff**를 보여준다(backend Work Order 기능 아님, 사람 판단·수동 handoff까지만). 반복 가능한 스크립트는 [work-order-demo-handoff 런북](../../runbooks/work-order-demo-handoff.md).
+5. 알람 ack·조치 note·이력 위에서 사람이 기존 작업 지시/CMMS 프로세스로 넘기는 **수동 Work Order handoff**를 보여준다(backend Work Order 기능 아님, 사람 판단·수동 handoff까지만). 반복 가능한 스크립트는 [work-order-demo-handoff 런북](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/runbooks/work-order-demo-handoff.md).
 
 데모는 "기존 설비를 유지한 채 시작 가능"하다는 메시지를 짧고 명확하게 전달하는 것을 목표로 한다.
 
@@ -280,7 +278,7 @@ PoC 제안서(고객 제출용)는 다음 골격을 따른다. 내용 채움은 
 - [x] 추가 창업자 인터뷰(Q9~Q13) 반영 → 1순위 고객 페인 한 문장, 첫 PoC PLC/프로토콜/네트워크 원칙, 데이터 저장/배포 방식, PoC 기간/투입, 가격 anchor 확정(2026-06-30).
 - [ ] 남은 `needs-founder-input` 확정: 구체 고객사명, 현장별 실측 PLC/네트워크 구성.
 - [ ] 타깃 확정 후 표준 read-only PoC 제안서 1종 실제 작성(가격 anchor를 현장 조건으로 산정해 반영). 표준 제안서 초안: [docs/sales/read-only-poc-proposal.md](../../sales/read-only-poc-proposal.md)(고객/영업용 초안, SOT 아님).
-- [x] Work Order 데모 경로를 수동 handoff로 명확화 + 반복 가능한 스크립트/체크리스트 고정([work-order-demo-handoff 런북](../../runbooks/work-order-demo-handoff.md), 2026-07-03).
+- [x] Work Order 데모 경로를 수동 handoff로 명확화 + 반복 가능한 스크립트/체크리스트 고정([work-order-demo-handoff 런북](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/runbooks/work-order-demo-handoff.md), 2026-07-03).
 - [ ] 나머지 데모 시나리오(1~4단계)를 실제 데모 스크립트/체크리스트로 구체화([testing](../sot/testing.md)의 데모/E2E 기준과 연결).
 
 이 문서는 "GTM 전략이 끝났다"가 아니라 "첫 계약 결정을 모으는 정본 위치가 생겼고, 1차+추가 인터뷰로 핵심 방향·범위·가격 anchor가 확정됐다"는 상태를 나타낸다.

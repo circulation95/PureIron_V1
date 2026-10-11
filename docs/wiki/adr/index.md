@@ -5,7 +5,6 @@ status: canonical
 audience: both
 owners: [pureiron-core]
 sources:
-  - docs/ADR.md
   - docs/wiki/sot/product.md
   - docs/wiki/sot/agent-rules.md
   - docs/wiki/sot/architecture.md
@@ -33,7 +32,6 @@ last_verified: 2026-10-04
 | `docs/wiki/sot/api-events.md` | REST/WebSocket/SSE/event 계약 |
 | `docs/wiki/sot/frontend.md` | frontend 구조와 제약 |
 | `docs/wiki/sot/testing.md` | 검증 계층과 게이트 |
-| `docs/ADR.md` | 초기 ADR 원문. 현재는 이 문서가 Wiki 정본 |
 
 새 결정은 기능 설명이 아니라 **결정 / 이유 / 트레이드오프 / 관련 SOT** 형식으로 추가한다.
 

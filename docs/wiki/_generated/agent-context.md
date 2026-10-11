@@ -207,7 +207,7 @@ SOT 문서는 서로 링크하고, 같은 내용을 복사하지 않는다.
 
 PureIron 문서는 **3계층**으로 나뉘며, 계층마다 역할과 편집 권한이 다르다.
 
-- **raw source (보존 계층)** — `backend/**`, `frontend/**`, `configs/**`, DB 마이그레이션, `config.py`·`.env.example` 등 런타임/설정 파일. 시스템의 정본(system of record). LLM은 문서나 `check`를 통과시키려고 raw source를 임의로 고치지 않는다(drift는 경고일 뿐). 루트 레거시 문서(`docs/PRD.md`·`docs/ADR.md`·`MANUAL.md`)는 위키가 요약하는 **source input**일 뿐 canonical SOT가 아니다(ADR 정본은 [adr](../adr/index.md)).
+- **raw source (보존 계층)** — `backend/**`, `frontend/**`, `configs/**`, DB 마이그레이션, `config.py`·`.env.example` 등 런타임/설정 파일. 시스템의 정본(system of record). LLM은 문서나 `check`를 통과시키려고 raw source를 임의로 고치지 않는다(drift는 경고일 뿐). legacy 루트 문서(`PureIron_ignition@legacy-final`의 `docs/PRD.md`·`docs/ADR.md`·`MANUAL.md`)는 위키가 요약하는 **source input**일 뿐 canonical SOT가 아니다(ADR 정본은 [adr](../adr/index.md)).
 - **wiki SOT (통합 계층)** — `docs/wiki/**`(`_generated/` 제외). LLM이 raw source를 통합·요약·교차참조하는 곳이며 문서의 canonical.
 - **generated projection (생성물)** — `docs/wiki/_generated/**`·`docs/LLM_WIKI.md`. `python scripts/wiki.py build` 출력 전용, 수기 편집 금지.
 

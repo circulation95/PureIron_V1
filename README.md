@@ -43,7 +43,7 @@ docker compose -f docker/docker-compose.yml up --build
 docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up --build   # dev override
 ```
 
-상세 PoC 절차: [docs/runbooks/on-prem-read-only-poc.md](docs/runbooks/on-prem-read-only-poc.md)
+상세 PoC 절차: [legacy `docs/runbooks/on-prem-read-only-poc.md`](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/runbooks/on-prem-read-only-poc.md)
 
 기본 계정(개발용): `admin` / `admin`
 

@@ -91,9 +91,9 @@
 |---|---|---|
 | 8/10(월) | A | Pool 등록 승인 상태 확인. 보완요청 오면 당일 처리 |
 | 8/9(일)~8/10(월) | C | 선정 현장과 통화. PLC·네트워크·수집 태그 사전 확인, **승인 태그 목록 합의** |
-| 8/11(화)~8/12(수) | C | **현장 방문 설치.** `docker-compose.poc.yml` + `.env.poc` 로 read-only 설치. 승인 태그만 수집. 런북: `docs/runbooks/on-prem-read-only-poc.md` |
-| 8/12(수) | C | `docs/runbooks/poc-browser-smoke.md` 실행 → 알람 ack·조치 note·이력 **스크린샷 증거 확보**(sanitized) |
-| 8/12(수) | C | `docs/runbooks/agent-troubleshooting-answer-quality.md` AQ-1~AQ-6 실행 → **AI 답변 품질 증거** 확보. 2차 대면평가에서 그대로 쓴다 |
+| 8/11(화)~8/12(수) | C | **현장 방문 설치.** `docker-compose.poc.yml` + `.env.poc` 로 read-only 설치. 승인 태그만 수집. 런북: `PureIron_ignition@legacy-final:docs/runbooks/on-prem-read-only-poc.md` |
+| 8/12(수) | C | `PureIron_ignition@legacy-final:docs/runbooks/poc-browser-smoke.md` 실행 → 알람 ack·조치 note·이력 **스크린샷 증거 확보**(sanitized) |
+| 8/12(수) | C | `PureIron_ignition@legacy-final:docs/runbooks/agent-troubleshooting-answer-quality.md` AQ-1~AQ-6 실행 → **AI 답변 품질 증거** 확보. 2차 대면평가에서 그대로 쓴다 |
 | 8/12~8/14 | B | **제조AI 솔루션 소개서(자유서식) 작성.** 배점 비중이 가장 큰 문서. §5 배점 매핑표 기준으로 항목별 작성 |
 | 8/13(목)~8/14(금) | C | **데모 영상 3~5분 촬영.** 구성: 현장 알람 발생 → 모바일에서 확인 → AI가 원인 후보·조치 설명 → 조치 note 입력 → 이력 축적 → 같은 알람 재발 시 과거 이력 참조. 3D Twin은 마지막 15초 임팩트용 |
 | **8/16(일)** | — | ⛔ **체크포인트 2: 적용사례에 쓸 실제 현장 1곳이 확보됐는가?** NO면 §7 대안 시나리오로 전환 |

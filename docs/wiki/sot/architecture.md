@@ -5,7 +5,6 @@ status: canonical
 audience: both
 owners: [pureiron-core]
 sources:
-  - docs/ARCHITECTURE.md
   - https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/gateway.py
   - https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/CLAUDE.md
 last_verified: 2026-07-04
@@ -23,7 +22,6 @@ PureIron은 단일 FastAPI 백엔드 + 단일 React 프론트엔드 + PostgreSQL
 
 ## 이 문서의 원천
 
-- [docs/ARCHITECTURE.md](../../ARCHITECTURE.md) — 통신 레이어, 모듈 책임, 데이터 흐름
 - [backend/src/pureiron/gateway.py](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/gateway.py) — ScadaGateway 싱글톤(런타임 정본)
 - [backend/CLAUDE.md](https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/CLAUDE.md) — gateway 속성 표·라이프사이클·DB·락 규율
 
