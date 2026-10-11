@@ -113,12 +113,12 @@
     },
     {
       "audience": "both",
-      "bytes": 12615,
+      "bytes": 15289,
       "id": "sot-api-events",
       "last_verified": "2026-06-26",
       "path": "docs/wiki/sot/api-events.md",
-      "section_count": 11,
-      "sha256": "c15ced5f7fd2846cd76b5c591ef60f61663ad6fa7fc2a8f8967968fb215b7963",
+      "section_count": 12,
+      "sha256": "69a0b08e20f7d8c27901a59fdcf78bc3235f215205b93d614abcffcaa3bef6d6",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/main.py",
@@ -194,12 +194,12 @@
     },
     {
       "audience": "both",
-      "bytes": 47832,
+      "bytes": 49868,
       "id": "sot-data-contracts",
       "last_verified": "2026-08-22",
       "path": "docs/wiki/sot/data-contracts.md",
-      "section_count": 22,
-      "sha256": "d27b41b3f054fa0efaa5f6d0a47ce066a41e957088ab9e408cf0a94e180482e6",
+      "section_count": 23,
+      "sha256": "439a86ad5f5fd8042d456293f796958165d8dc44467af8b800d188179c709a2d",
       "source_globs": [
         "projects/demo-coffee/**/*.yaml",
         "projects/demo-coffee/**/*.json"
@@ -278,12 +278,12 @@
     },
     {
       "audience": "both",
-      "bytes": 13778,
+      "bytes": 14367,
       "id": "sot-runtime-config",
       "last_verified": "2026-06-26",
       "path": "docs/wiki/sot/runtime-config.md",
       "section_count": 12,
-      "sha256": "4f0005bfb4966ba861e80903e539eccdb5013b4536ffc1c64f530e5dab451e76",
+      "sha256": "30ece3f8b46096ab6433344f8ddc793d58441c72251d888d8a80e72333668cc2",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/config.py",

@@ -338,3 +338,10 @@ window: { recurring: { tz: Asia/Seoul, days: [sat, sun], start: "02:00", end: "0
 - **조회**(`historian.reader`): raw(`tag_history`)·1m·1h(CAGG) + 구간 길이로 고르는 `auto_resolution`(≤ 1 h raw, ≤ 24 h 1m, 그 이상 1h). HTTP 이력 API·Trend 화면은 인증과 함께 M3b.
 - **검증**: compose 네트워크 분리 replay는 통합 테스트 `test_network_disconnect_replay`, 2,000태그 1 s 부하 기록은 `g1.sh perf-ingest` — 판정식은 테스트 docstring(`services/core/tests/integration/test_compose_stack.py`), 실행 job은 [testing](testing.md) `integration-compose`·`perf-ingest`.
 - **아직 없음**: `GET /history`(M3b), retention 적용(M5).
+
+### V1 구현 현황 (M3b-1 auth·audit, 2026-10-11)
+
+- **epoch 4(r3, 미release — 진행 중)**: `epochs.yaml` 4 → `0011_audit.sql`. M3b-2가 `0012`를 더하면 포인터를 뒤로 늘린다(미release epoch 확장 규칙, migrate lint `--base-ref`). 두 파일 모두 트랜잭션 파일이라 실행과 기록이 한 트랜잭션이다 — 파일 안에서 죽으면 객체가 남지 않고, 0010만 기록된 상태에서는 epoch가 3에 머문다(r2 앱 ready). 통합 테스트 `test_epoch4_resumes_after_crash_between_or_inside_files`.
+- **0010_auth**: `users(user_id bigserial PK, username text NOT NULL UNIQUE, display_name, role smallint, password_hash, enabled DEFAULT true, created_at, updated_at)` — role 0 viewer·1 operator·2 engineer·3 admin. 계정은 지우지 않고 `enabled`만 바꾼다. `password_hash` = `scrypt$n$r$p$salt_b64$hash_b64`(표준 라이브러리 scrypt, 기본 n=2^14·r=8·p=1·16 B salt, 매개변수를 해시에 같이 둬 기본값을 올려도 옛 해시가 검증된다). `sessions(token_sha256 bytea PK, user_id → users, created_at, last_seen_at, expires_at, revoked_at)` + `(user_id)` 인덱스 — 토큰 원문은 저장하지 않는다. 로그인할 때 그 사용자의 절대 만료·폐기된 세션 행을 지운다. UNIQUE·REFERENCES는 `CREATE TABLE` 안이라 migrate lint 허용 범위(제약 추가 검사는 `ALTER TABLE`만 본다).
+- **0011_audit**: `audit_log(id bigserial PK, time timestamptz DEFAULT now(), username, action NOT NULL, target, detail jsonb DEFAULT '{}', source NOT NULL)` + `(time DESC)`·`(username, time DESC)` 인덱스. 추가만 하고 고치거나 지우지 않는다(보존 정책은 범위 밖). `detail`에는 비밀번호·토큰을 넣지 않는다. action·source 값은 [api-events](api-events.md) V1 인증·감사 절.
+- **기본 계정 없음**: migrate는 사용자를 만들지 않는다. compose dev·통합 테스트·VM 하네스는 `pureiron-core users add`(비밀번호는 stdin 또는 `--password-file`)로 만든다.
