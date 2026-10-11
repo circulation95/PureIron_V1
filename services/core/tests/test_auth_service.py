@@ -64,6 +64,7 @@ async def test_each_login_gets_a_new_token() -> None:
         ("nobody", PASSWORD, "unknown_user"),
         ("Alice", PASSWORD, "unknown_user"),
     ],
+    ids=["bad_password", "bad_password-empty", "unknown_user", "unknown_user-case"],
 )
 async def test_login_failures_share_one_message(username: str, password: str, reason: str) -> None:
     fx = await _with_user(auth_fixture())
@@ -240,6 +241,7 @@ async def test_change_password_keeps_this_session_and_revokes_others() -> None:
         (PASSWORD, "x" * 129, InvalidPasswordError),
         (PASSWORD, PASSWORD, InvalidPasswordError),
     ],
+    ids=["wrong-current", "short", "long", "same"],
 )
 async def test_change_password_rejections_leave_password_unchanged(
     current: str, new: str, error: type[Exception]

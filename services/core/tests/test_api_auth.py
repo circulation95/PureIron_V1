@@ -298,6 +298,7 @@ async def test_change_password_success_and_audit_has_no_password() -> None:
         ({"current_password": PASSWORD, "new_password": PASSWORD}, 422),
         ({"current_password": PASSWORD, "new_password": "newpass4567", "extra": "x"}, 422),
     ],
+    ids=["wrong-current", "short", "long", "blank", "same", "extra"],
 )
 async def test_change_password_rejections(body: dict[str, object], status: int) -> None:
     api = _api()
