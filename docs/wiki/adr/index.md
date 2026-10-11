@@ -466,7 +466,7 @@ Frontend는 SaaS landing page처럼 보이면 안 된다. 운영자가 매일 �
 - 프로세스 간 통신(gRPC)과 배포 단위가 늘어 운영 표면이 커진다.
 - legacy 기능(OPC-UA 외 프로토콜, UDT, 스크립트, 대시보드, Agent, MES)은 순서대로 다시 이식해야 하며 그동안 legacy와 새 경로 2벌을 유지한다.
 
-**관련 SOT**: [architecture](../sot/architecture.md#목표-설계미구현), [runtime-config](../sot/runtime-config.md#목표-설계미구현)
+**관련 SOT**: [architecture](../sot/architecture.md#시스템-구성-adr-019), [runtime-config](../sot/runtime-config.md#목표-설계미구현)
 
 ## ADR-020: collector ↔ core gRPC 계약 · Ack · replay 의미론
 
@@ -486,7 +486,7 @@ collector와 core는 `packages/contracts/collector.proto`의 양방향 스트림
 - core 프로세스 crash 시 아직 flush되지 않은 버퍼는 손실될 수 있다(정상 시 flush 주기 1초분, DB 장애 중이면 상한 내 전체). 이 허용 손실을 문서화한다.
 - proto는 호환성 diff 게이트(ADR-028)로 보호해야 하며 프로토콜 추가는 `TagPoint.address` oneof 확장으로만 한다.
 
-**관련 SOT**: [architecture](../sot/architecture.md#목표-설계미구현), [data-contracts](../sot/data-contracts.md#목표-설계미구현)
+**관련 SOT**: [architecture](../sot/architecture.md#통신-경계-adr-020), [data-contracts](../sot/data-contracts.md#목표-설계미구현)
 
 ## ADR-021: TimescaleDB 유지 · 기록 정책
 
@@ -527,7 +527,7 @@ PoC 무료 모드(첫 유료 계약 전): GitHub Free private repo라 branch pro
 - PoC 동안 승인 강제는 GitHub 기능이 아니라 workflow 검사 수준이다(단일 runner 호스트 장애 위험 포함).
 - 여러 epoch를 건너뛰는 현장은 단계별 연속 PR(`stepwise.py`)이 필요하다.
 
-**관련 SOT**: [architecture](../sot/architecture.md#목표-설계미구현), [runtime-config](../sot/runtime-config.md#목표-설계미구현)
+**관련 SOT**: [architecture](../sot/architecture.md#배포--중앙-adr-022-adr-023), [runtime-config](../sot/runtime-config.md#목표-설계미구현)
 
 ## ADR-023: 단일 서명 번들 · 신뢰 루트 · 이미지 신원(config digest)
 
@@ -567,7 +567,7 @@ PoC 무료 모드(첫 유료 계약 전): GitHub Free private repo라 branch pro
 - 컬럼 제거·이름 변경이 최소 2 release에 걸친다.
 - 오래 방치된 현장은 epoch당 1단계씩 적용해야 해 업데이트 시간이 늘어난다.
 
-**관련 SOT**: [data-contracts](../sot/data-contracts.md#목표-설계미구현), [architecture](../sot/architecture.md#목표-설계미구현)
+**관련 SOT**: [data-contracts](../sot/data-contracts.md#목표-설계미구현), [architecture](../sot/architecture.md#db--마이그레이션-adr-021-adr-024)
 
 ## ADR-025: 프로젝트 정본 · 드래프트 회수(단조 site_rev)
 
@@ -605,7 +605,7 @@ PoC 무료 모드(첫 유료 계약 전): GitHub Free private repo라 branch pro
 - 이식 기간 동안 두 repo를 오가며 참조해야 한다.
 - 고객이 repo를 직접 소유해야 하는 시점이 오면 project-tools·workflow를 공개 repo로 분리하거나 org로 이전해야 한다.
 
-**관련 SOT**: [architecture](../sot/architecture.md#목표-설계미구현), [agent-rules](../sot/agent-rules.md)
+**관련 SOT**: [architecture](../sot/architecture.md#시스템-구성-adr-019), [agent-rules](../sot/agent-rules.md)
 
 ## ADR-027: 지원 호스트 매트릭스
 

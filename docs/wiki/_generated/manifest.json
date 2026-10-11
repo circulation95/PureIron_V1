@@ -3,12 +3,12 @@
   "docs": [
     {
       "audience": "both",
-      "bytes": 46275,
+      "bytes": 46302,
       "id": "adr-index",
       "last_verified": "2026-10-04",
       "path": "docs/wiki/adr/index.md",
       "section_count": 33,
-      "sha256": "baf2af87b65952adee8319c8eacb1a5cacffb286cbe4fdaf1d64d2e593427756",
+      "sha256": "644c4bfbd6e721318afbeba836a68176ce63c762adeaad4428692ec236dd8c74",
       "source_globs": [],
       "sources": [
         "docs/wiki/sot/product.md",
@@ -55,12 +55,12 @@
     },
     {
       "audience": "both",
-      "bytes": 4095,
+      "bytes": 4139,
       "id": "wiki-index",
       "last_verified": "2026-06-30",
       "path": "docs/wiki/index.md",
       "section_count": 6,
-      "sha256": "589816ade436f2eed8aac48612a8c18cf1e8b77fa18497e2c1523a1a772cba5c",
+      "sha256": "5a43ca40032b7495e83014fdbbe079bbd2285da578485904466a3d24d7ef0f61",
       "source_globs": [],
       "sources": [
         "README.md"
@@ -131,19 +131,31 @@
     },
     {
       "audience": "both",
-      "bytes": 19327,
+      "bytes": 17643,
       "id": "sot-architecture",
-      "last_verified": "2026-07-04",
+      "last_verified": "2026-10-11",
       "path": "docs/wiki/sot/architecture.md",
-      "section_count": 19,
-      "sha256": "6e69dae3c4aa2a52ef7467117d18318c4ffd369e29ffb601c531160388d85ba8",
+      "section_count": 17,
+      "sha256": "b4e9c6eb01c0466deadb3897d28aedd84ab1d1b66ffd7b6906ff259de01dba1c",
       "source_globs": [],
       "sources": [
-        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/gateway.py",
-        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/CLAUDE.md"
+        "services/core/src/pureiron_core/runtime.py",
+        "services/core/src/pureiron_core/app.py",
+        "services/core/src/pureiron_core/cli.py",
+        "services/core/.importlinter",
+        "services/core/src/pureiron_core/acquisition/server.py",
+        "services/core/src/pureiron_core/acquisition/ingest.py",
+        "services/core/src/pureiron_core/platform/bus.py",
+        "services/core/src/pureiron_core/tags/ports.py",
+        "services/collector/src/pureiron_collector/stream.py",
+        "services/updater/src/pureiron_updater/phases.py",
+        "packages/contracts/collector.proto",
+        "deploy/compose/site.compose.yml",
+        "deploy/releases/r2.json",
+        "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/wiki/sot/architecture.md"
       ],
       "status": "canonical",
-      "title": "Architecture SOT — 시스템 구조"
+      "title": "Architecture SOT — 시스템 구조 (V1)"
     },
     {
       "audience": "both",

@@ -5,7 +5,7 @@
 ## SOT
 - [Agent Rules SOT — 에이전트 작업 규칙](docs/wiki/sot/agent-rules.md): LLM 에이전트가 PureIron에서 작업할 때 따르는 규칙의 **정본**이다.
 - [API & Events SOT — 라우터·이벤트 계약](docs/wiki/sot/api-events.md): PureIron의 REST prefix, WebSocket wire protocol, Chat SSE event, 내부 event bus topic 계약이다.
-- [Architecture SOT — 시스템 구조](docs/wiki/sot/architecture.md): PureIron은 단일 FastAPI 백엔드 + 단일 React 프론트엔드 + PostgreSQL(TimescaleDB + pgvector) + Redis로 구성된 모놀리식 Web HMI/SCADA 서버다.
+- [Architecture SOT — 시스템 구조 (V1)](docs/wiki/sot/architecture.md): PureIron V1은 현장 한 곳에 설치되는 **서비스 4개(collector·core·web·site-db) + 호스트 Updater**와, 벤더 쪽 **중앙
 - [Coding Style SOT — V1 코드 구조·추상화·이름·주석·테스트 규약](docs/wiki/sot/coding-style.md): 이 문서는 PureIron_V1 새 코드(`services/`·`packages/`·`deploy/`·`tests/e2e/`)를 **어떻게 쓰는가**의 정본이다.
 - [Data Contracts SOT — DB·설정 스키마](docs/wiki/sot/data-contracts.md): PureIron의 DB 스키마와 YAML/JSON 설정 파일 계약이다.
 - [Frontend SOT — React·Jotai·SCADA UI·3D Twin](docs/wiki/sot/frontend.md): 이 문서는 PureIron frontend의 **구조·상태·실시간·UI 작업 규칙**에 대한 정본이다. 상세 구현은 `frontend/src/**`가 정본이고, `frontend/AGENTS.md`와 `frontend/CLAUDE.md`는 도구별 operational cheat sheet다.
