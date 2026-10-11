@@ -217,6 +217,7 @@ def write_project(
     tags: Mapping[str, list[JsonObject]],
     *,
     historian: JsonObject | None = None,
+    alarms: list[JsonObject] | None = None,
 ) -> Path:
     """고객 프로젝트 트리를 만든다(JSON은 YAML이기도 하다 — load_project가 그대로 읽는다).
 
@@ -234,6 +235,9 @@ def write_project(
         (root / "devices" / f"{device_id}.yaml").write_text(json.dumps(device), encoding="utf-8")
     for device_id, items in tags.items():
         (root / "tags" / f"{device_id}.yaml").write_text(json.dumps(items), encoding="utf-8")
+    if alarms is not None:
+        (root / "alarms").mkdir()
+        (root / "alarms" / "alarms.yaml").write_text(json.dumps(alarms), encoding="utf-8")
     return root
 
 
@@ -247,6 +251,10 @@ def holding_tag(path: str, device_id: str, address: int, data_type: str = "uint1
         "device": device_id,
         "modbus": {"register_type": "holding", "address": address, "data_type": data_type},
     }
+
+
+def above_alarm(alarm_id: str, tag: str, setpoint: float, **extra: object) -> JsonObject:
+    return {"id": alarm_id, "tag": tag, "type": "above", "setpoint": setpoint, **extra}
 
 
 def core_cli(

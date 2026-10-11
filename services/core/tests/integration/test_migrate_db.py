@@ -43,7 +43,7 @@ def test_up_is_idempotent_and_status_reports_epoch(stack: Stack, fresh_database:
     env = stack.cli_env(fresh_database)
     first = _cli(env, "migrate", "up")
     assert first.returncode == 0, first.stderr
-    assert "applied 11" in first.stdout
+    assert "applied 12" in first.stdout
     second = _cli(env, "migrate", "up")
     assert second.returncode == 0, second.stderr
     assert "applied 0" in second.stdout
@@ -465,17 +465,25 @@ async def _crash_inside(conn: asyncpg.Connection, sql: str) -> None:
         ((), "0010_auth.sql"),
         (("0010_auth.sql",), None),
         (("0010_auth.sql",), "0011_audit.sql"),
+        (("0010_auth.sql", "0011_audit.sql"), None),
+        (("0010_auth.sql", "0011_audit.sql"), "0012_alarms.sql"),
     ],
-    ids=["0010-rolled-back", "0010-recorded", "0011-rolled-back"],
+    ids=[
+        "0010-rolled-back",
+        "0010-recorded",
+        "0011-rolled-back",
+        "0011-recorded",
+        "0012-rolled-back",
+    ],
 )
 async def test_epoch4_resumes_after_crash_between_or_inside_files(
     stack: Stack, fresh_database: str, committed: tuple[str, ...], crashed: str | None
 ) -> None:
-    """epoch 4(0010·0011, 트랜잭션 파일)가 중간에 끊긴 상태에서 `up` → 수렴.
+    """epoch 4(0010·0011·0012, 트랜잭션 파일)가 중간에 끊긴 상태에서 `up` → 수렴.
 
     트랜잭션 파일은 실행과 기록이 한 트랜잭션이라 "실행됐지만 기록 안 됨"은 생기지 않는다. 대신
-    파일 안에서 죽으면 그 파일의 객체가 하나도 남지 않고, 0010만 기록된 상태에서는 epoch가 3에
-    머문다(r2 앱 ready). 두 경우 모두 다시 `up` 하면 남은 파일만 적용된다.
+    파일 안에서 죽으면 그 파일의 객체가 하나도 남지 않고, 마지막 파일(0012) 전까지만 기록된
+    상태에서는 epoch가 3에 머문다(r2 앱 ready). 모든 경우 다시 `up` 하면 남은 파일만 적용된다.
     """
     catalog = migrate.load_catalog(MIGRATIONS)
     by_name = {m.filename: m for m in catalog.migrations}
@@ -498,10 +506,15 @@ async def test_epoch4_resumes_after_crash_between_or_inside_files(
             with pytest.raises(_CrashBeforeCommitError):
                 await _crash_inside(conn, by_name[crashed].sql)
         assert await migrate.read_epoch(conn) == 3
-        for table in ("users", "sessions"):
+        for table, owner in (
+            ("users", "0010_auth.sql"),
+            ("sessions", "0010_auth.sql"),
+            ("audit_log", "0011_audit.sql"),
+            ("alarms", "0012_alarms.sql"),
+            ("alarm_journal", "0012_alarms.sql"),
+        ):
             exists = await conn.fetchval("SELECT to_regclass($1)", table) is not None
-            assert exists is ("0010_auth.sql" in committed), table
-        assert await conn.fetchval("SELECT to_regclass('audit_log')") is None
+            assert exists is (owner in committed), table
         status = json.loads(_cli(env, "migrate", "status", "--json").stdout)
         epoch3_last = catalog.last_version_of(3)
         pending = [
@@ -515,18 +528,20 @@ async def test_epoch4_resumes_after_crash_between_or_inside_files(
 
     up = _cli(env, "migrate", "up", "--to", "4")
     assert up.returncode == 0, up.stderr
-    assert f"applied {2 - len(committed)}" in up.stdout
+    assert f"applied {3 - len(committed)}" in up.stdout
     conn = await asyncpg.connect(stack.dsn(fresh_database), password=stack.password)
     try:
         assert await migrate.read_epoch(conn) == 4
         indexes = await conn.fetch(
             "SELECT indexname FROM pg_indexes WHERE tablename = ANY($1::text[])",
-            ["users", "sessions", "audit_log"],
+            ["users", "sessions", "audit_log", "alarm_journal"],
         )
         assert {
             "sessions_user_id_idx",
             "audit_log_time_idx",
             "audit_log_username_time_idx",
+            "alarm_journal_alarm_id_time_idx",
+            "alarm_journal_time_idx",
         } <= {r["indexname"] for r in indexes}
         assert await conn.fetchval("SELECT count(*) FROM users") == 0  # 기본 계정 없음(D3)
     finally:

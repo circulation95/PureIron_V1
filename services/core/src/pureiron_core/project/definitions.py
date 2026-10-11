@@ -1,8 +1,8 @@
-"""장비·태그 정의 저장(M3a 최소 apply 경로). raw SQL만(No ORM).
+"""장비·태그·알람 정의 저장(M3a 최소 apply 경로, 알람은 M3b-2 D6). raw SQL만(No ORM).
 
 `apply_definitions`는 검증된 프로젝트 트리(`pureiron_project.load_project`)의 장비·태그를
-path 기준으로 upsert 하고, 빠진 것은 `retired_at`만 표시한다(ADR-021: 같은 path는 같은 id로
-되살아나고, 다른 path에 id를 재사용하지 않는다). 실제로 바뀐 것이 있을 때만
+path 기준으로, 알람을 alarm_id 기준으로 upsert 하고, 빠진 것은 `retired_at`만 표시한다(ADR-021:
+같은 path는 같은 id로 되살아나고, 다른 path에 id를 재사용하지 않는다). 실제로 바뀐 것이 있을 때만
 `definitions_rev`(= plan_rev)를 올린다. `project.yaml`의 `historian`(기록 기본값)도 같은
 트랜잭션에서 `project_state.historian`에 저장하고, 바뀌면 rev를 올린다 — recorder가 plan과 같은
 rev·같은 스냅샷으로 정책을 읽게.
@@ -13,13 +13,14 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import cast
 
 import asyncpg
 
 from pureiron_core.platform.db import Connection, Database, DatabaseUnavailableError
 from pureiron_core.project.ports import (
+    AlarmDef,
     Definitions,
     DefinitionsUnavailableError,
     DeviceDef,
@@ -78,6 +79,27 @@ UPDATE devices SET retired_at = now()
  WHERE retired_at IS NULL AND NOT (id = ANY($1::text[]))
 """
 
+_UPSERT_ALARMS = """
+WITH up AS (
+    INSERT INTO alarms (alarm_id, tag_path, definition)
+    SELECT a.alarm_id, a.tag_path, a.definition::jsonb
+      FROM unnest($1::text[], $2::text[], $3::text[]) AS a(alarm_id, tag_path, definition)
+    ON CONFLICT (alarm_id) DO UPDATE
+       SET tag_path = EXCLUDED.tag_path, definition = EXCLUDED.definition, retired_at = NULL
+     WHERE alarms.definition IS DISTINCT FROM EXCLUDED.definition
+        OR alarms.tag_path IS DISTINCT FROM EXCLUDED.tag_path
+        OR alarms.retired_at IS NOT NULL
+    RETURNING (xmax = 0) AS inserted
+)
+SELECT count(*) FILTER (WHERE inserted) AS added, count(*) FILTER (WHERE NOT inserted) AS updated
+  FROM up
+"""
+
+_RETIRE_ALARMS = """
+UPDATE alarms SET retired_at = now()
+ WHERE retired_at IS NULL AND NOT (alarm_id = ANY($1::text[]))
+"""
+
 _SET_HISTORIAN = """
 UPDATE project_state SET historian = $1::jsonb
  WHERE id AND historian IS DISTINCT FROM $1::jsonb
@@ -95,6 +117,9 @@ class ApplyResult:
     tags_updated: int
     tags_retired: int
     historian_changed: bool = False
+    alarms_added: int = 0
+    alarms_updated: int = 0
+    alarms_retired: int = 0
 
     def as_json(self) -> dict[str, object]:
         return asdict(self)
@@ -110,6 +135,9 @@ class _Rows:
     tag_defs: list[str]
     # project.yaml `historian` 정규형 JSON. 비어 있으면(전부 기본값) None = NULL.
     historian: str | None = None
+    alarm_ids: list[str] = field(default_factory=list[str])
+    alarm_tags: list[str] = field(default_factory=list[str])
+    alarm_defs: list[str] = field(default_factory=list[str])
 
 
 def _encode(value: object) -> str:
@@ -135,6 +163,12 @@ def _rows(project: Project) -> _Rows:
                     rows.tag_paths.append(str(tag["path"]))
                     rows.tag_devices.append(str(tag["device"]))
                     rows.tag_defs.append(_encode(tag))
+        elif f.kind is Kind.ALARM_LIST and isinstance(f.data, list):
+            for alarm in f.data:
+                if isinstance(alarm, dict):
+                    rows.alarm_ids.append(str(alarm["id"]))
+                    rows.alarm_tags.append(str(alarm["tag"]))
+                    rows.alarm_defs.append(_encode(alarm))
     return rows
 
 
@@ -155,7 +189,11 @@ async def apply_definitions(conn: Connection, project: Project) -> ApplyResult:
         tags_retired = _count(await conn.execute(_RETIRE_TAGS, rows.tag_paths))
         devices_retired = _count(await conn.execute(_RETIRE_DEVICES, rows.device_ids))
         historian_changed = _count(await conn.execute(_SET_HISTORIAN, rows.historian)) > 0
-        if devices is None or tags is None:  # 집계 SELECT는 항상 한 행
+        alarms = await conn.fetchrow(
+            _UPSERT_ALARMS, rows.alarm_ids, rows.alarm_tags, rows.alarm_defs
+        )
+        alarms_retired = _count(await conn.execute(_RETIRE_ALARMS, rows.alarm_ids))
+        if devices is None or tags is None or alarms is None:  # 집계 SELECT는 항상 한 행
             raise ProjectStateError("definition upsert returned no summary row")
         counts = (
             int(devices["added"]),
@@ -165,7 +203,8 @@ async def apply_definitions(conn: Connection, project: Project) -> ApplyResult:
             int(tags["updated"]),
             tags_retired,
         )
-        changed = any(counts) or historian_changed
+        alarm_counts = (int(alarms["added"]), int(alarms["updated"]), alarms_retired)
+        changed = any(counts) or any(alarm_counts) or historian_changed
         if changed:
             rev = await conn.fetchval(
                 "UPDATE project_state SET definitions_rev = definitions_rev + 1, updated_at = now()"
@@ -175,7 +214,15 @@ async def apply_definitions(conn: Connection, project: Project) -> ApplyResult:
             rev = await conn.fetchval("SELECT definitions_rev FROM project_state WHERE id")
         if not isinstance(rev, int):  # 트랜잭션 안에서 실패시켜 upsert·retire도 되돌린다
             raise ProjectStateError("project_state row missing (run `pureiron-core migrate up`)")
-    return ApplyResult(rev, changed, *counts, historian_changed=historian_changed)
+    return ApplyResult(
+        rev,
+        changed,
+        *counts,
+        historian_changed=historian_changed,
+        alarms_added=alarm_counts[0],
+        alarms_updated=alarm_counts[1],
+        alarms_retired=alarm_counts[2],
+    )
 
 
 def _decode(raw: object) -> Mapping[str, object]:
@@ -229,6 +276,11 @@ async def _load(conn: Connection) -> Definitions:
             " ORDER BY id",
             timeout=_QUERY_TIMEOUT_S,
         )
+        alarm_rows = await conn.fetch(
+            "SELECT alarm_id, tag_path, definition FROM alarms"
+            " WHERE retired_at IS NULL ORDER BY alarm_id",
+            timeout=_QUERY_TIMEOUT_S,
+        )
     if state is None or not isinstance(rev := state["definitions_rev"], int):
         raise DefinitionsUnavailableError("project_state row missing")
     historian: object = state["historian"]
@@ -239,5 +291,9 @@ async def _load(conn: Connection) -> Definitions:
         tags=tuple(
             TagDef(int(r["id"]), str(r["path"]), str(r["device_id"]), _decode(r["definition"]))
             for r in tag_rows
+        ),
+        alarms=tuple(
+            AlarmDef(str(r["alarm_id"]), str(r["tag_path"]), _decode(r["definition"]))
+            for r in alarm_rows
         ),
     )

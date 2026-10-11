@@ -222,7 +222,8 @@ def _apply_definitions(args: argparse.Namespace, settings: Settings) -> int:
                 f"apply-definitions: rev={result.rev} changed={result.changed} "
                 f"devices +{result.devices_added} ~{result.devices_updated} "
                 f"-{result.devices_retired} tags +{result.tags_added} ~{result.tags_updated} "
-                f"-{result.tags_retired} historian {'~' if result.historian_changed else '='}"
+                f"-{result.tags_retired} alarms +{result.alarms_added} ~{result.alarms_updated} "
+                f"-{result.alarms_retired} historian {'~' if result.historian_changed else '='}"
             )
         return migrate.EXIT_OK
 
