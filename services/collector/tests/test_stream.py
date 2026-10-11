@@ -278,6 +278,54 @@ async def test_batches_made_while_core_is_down_replay_before_live() -> None:
     assert [(b.seq, b.replay) for b in sent] == [(1, True), (2, True), (3, True), (4, False)]
 
 
+def _drain(queue: asyncio.Queue[pb.CollectorMsg]) -> list[tuple[int, bool, list[int]]]:
+    """큐의 batch → (seq, replay, 샘플 시각들)."""
+    sent = [queue.get_nowait().batch for _ in range(queue.qsize())]
+    return [(b.seq, b.replay, [s.ts_unix_ns for s in b.samples]) for b in sent]
+
+
+def _at(*ts: int) -> list[pb.Sample]:
+    return [pb.Sample(tag_id=1, ts_unix_ns=t, num=float(t), quality=pb.GOOD) for t in ts]
+
+
+async def test_reconnect_edge_samples_go_once_as_replay_or_live_never_both() -> None:
+    """V1 N4: 재연결 경계의 샘플은 정확히 한 번, 링에 있던 것은 replay로만 간다.
+
+    통합 테스트(compose ④)는 창 끝 EDGE 2s 안의 샘플이 재연결 뒤 live로 다시 오는 회귀를 나이로
+    구별하지 못한다 — 여기서 seq·replay·샘플 시각으로 고정한다. 단절 전 보냈지만 Ack 못 받은
+    batch(seq 2)도 replay로 다시 가고(core가 UNIQUE로 흡수), 단절 중 링에 들어간 batch는 live로
+    가지 않으며, 재연결 순간 아직 batch로 묶이지 않은 샘플(t=7)은 새 seq의 live로 한 번만 간다.
+    """
+    acquisition = Acquisition(replace(FAST, batch_max_samples=2), FakeDriver)
+    await acquisition.apply_plan(pb.AcquisitionPlan(plan_rev=1))  # 장비 없음 → 샘플은 손으로 넣는다
+    first: asyncio.Queue[pb.CollectorMsg] = asyncio.Queue()
+    acquisition.attach(first)
+    acquisition.accept(_at(1, 2))
+    acquisition.flush()
+    acquisition.ring.ack(1)
+    acquisition.accept(_at(3))
+    acquisition.flush()  # 보냈지만 Ack 전에 끊긴다
+
+    acquisition.detach()
+    acquisition.accept(_at(4, 5, 6))
+    acquisition.flush()  # 단절 중: 링에만
+    acquisition.accept(_at(7))  # 창 끝: 재연결 순간 아직 버퍼에 있다
+
+    second: asyncio.Queue[pb.CollectorMsg] = asyncio.Queue()
+    await acquisition.apply_plan(pb.AcquisitionPlan(plan_rev=1))  # 같은 rev 재연결 → 그대로
+    acquisition.attach(second)
+    acquisition.attach(second)  # 세션 도중 plan이 다시 와도 replay를 반복하지 않는다
+    acquisition.accept(_at(8))
+    acquisition.flush()
+
+    assert _drain(first) == [(1, False, [1, 2]), (2, False, [3])]
+    sent = _drain(second)
+    assert sent == [(2, True, [3]), (3, True, [4, 5]), (4, True, [6]), (5, False, [7, 8])]
+    live = [t for _, replay, ts in sent if not replay for t in ts]
+    replayed = [t for _, replay, ts in sent if replay for t in ts]
+    assert not set(live) & set(replayed)
+
+
 async def test_same_plan_rev_on_reconnect_keeps_pollers() -> None:
     acquisition = Acquisition(FAST, FakeDriver)
     await acquisition.apply_plan(device_plan_msg(1, 1))

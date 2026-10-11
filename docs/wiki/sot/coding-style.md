@@ -141,7 +141,7 @@ services/core/src/pureiron_core/
   (`subprocess`·`asyncio`의 `timeout`), `timedelta`처럼 타입이 단위를 담는 값(`RAW_MAX_SPAN`). `Pg` 접두의 예외: Protocol 짝이 없는 기반 클래스(`Database`, `SchemaGuard`).
 - 축약은 업계 표준(`db`, `ts`, `rev`, `gen`, `dsn`)만 쓴다. 한 글자 이름은 컴프리헨션·짧은 람다 안에서만.
 - bool은 상태를 말하는 이름(`db_ok`, `connected`)으로 쓴다. 상태·API로 노출하는 누적값은 `_total` 접미사
-  (`dropped_total`, `devices_total`)를 쓴다. 모듈 내부 통계 필드(`RecorderStats.raw`)와 이미 정해진 계약 필드
+  (`dropped_total`, `devices_total`)를 쓴다. 모듈 내부 통계 필드(`RecorderStats.rejected_rev`)와 이미 정해진 계약 필드
   (`collector.proto` `timeout_count`)는 예외 — 계약 필드 이름은 바꾸지 않는다.
 
 ## 6. 함수와 파일 크기

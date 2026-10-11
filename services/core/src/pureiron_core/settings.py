@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,8 +41,10 @@ def _float(environ: Mapping[str, str], key: str, default: float) -> float:
         value = float(raw)
     except ValueError:
         raise SettingsError(f"{key} must be a number, got {raw!r}") from None
-    if value <= 0:
-        raise SettingsError(f"{key} must be positive, got {raw!r}")
+    # float()은 "nan"·"inf"도 받는다 — 주기·제한 시간이 무한이면 그 일이 멈춘다(예: flush_s=inf면
+    # 정지할 때만 flush, R1 L11).
+    if not math.isfinite(value) or value <= 0:
+        raise SettingsError(f"{key} must be a positive finite number, got {raw!r}")
     return value
 
 

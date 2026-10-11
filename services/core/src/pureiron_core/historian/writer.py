@@ -8,11 +8,18 @@
   주기에 버퍼가 빌 때까지 계속 쓴다.
 - 쓰기에 실패하면 꺼낸 행을 버퍼 앞에 순서대로 되돌리고 상한을 다시 적용한다 — DB 장애 동안은 이
   버퍼가 이력을 들고 있고(collector 링버퍼는 core 단절 구간만 담당), 넘치면 오래된 것부터 잃는다.
-- 한 번의 쓰기(연결 획득·INSERT·연결 반환 대기)는 `write_timeout_s`(기본 쿼리 제한 10s + 여유 5s)
-  가 지나면 취소하고 실패로 본다 — 행은 버퍼로 돌아가 다음 주기에 다시 쓴다. 이 취소는 한 번뿐이라
-  INSERT 도중에 걸리면 이어지는 연결 반환(asyncpg는 shield한다)은 끊지 못한다. 그 반환은
+- 단 행 내용 때문에 거부된 쓰기(`RowsRejectedError` — 같은 행을 다시 써도 또 실패)는 되돌리지 않고
+  batch를 반으로 나눠 앞쪽부터 다시 쓴다. 1행까지 줄어도 거부되면 그 행만 버리고 `poisoned_total`을
+  센다(R1 L9b: 한 행이 버퍼 전체를 매 주기 막지 않게). 독성 행 k개가 섞인 n행 batch는 INSERT를
+  약 2k·log2(n)번 더 하고, 상한은 모든 행이 거부될 때의 2n-1번이다(20,000행이면 약 4만 번 — 그 동안
+  `poisoned_total`이 빠르게 오른다). 알려진 원인(int4 밖 tag_id·NaN·모르는 quality)은 recorder가
+  미리 막는다.
+- INSERT 한 번(연결 획득·INSERT·연결 반환 대기)은 `write_timeout_s`(기본 쿼리 제한 10s + 여유 5s)
+  가 지나면 취소하고 실패로 본다 — 끝나지 않은 행은 버퍼로 돌아가 다음 주기에 다시 쓴다. 이 취소는
+  한 번뿐이라 INSERT 도중에 걸리면 이어지는 연결 반환(asyncpg는 shield한다)은 끊지 못한다. 그 반환은
   `Database`의 획득·반환 제한(기본 5s, 넘으면 연결을 terminate)으로 끝나므로 half-open DB
-  연결에서도 flush 한 번은 최대 `write_timeout_s` + 그 제한(기본 20s) 안에 돌아온다.
+  연결에서도 INSERT 한 번은 최대 `write_timeout_s` + 그 제한(기본 20s) 안에 돌아온다. 시간 초과는
+  격리 대상이 아니므로 flush는 첫 시간 초과에서 멈춘다.
 - 문서화된 허용 손실: core 프로세스 crash 시 아직 쓰지 못한 버퍼(정상 시 ≤ 1 주기분, DB 장애 중이면
   상한 내 전체).
 """
@@ -28,6 +35,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
+import asyncpg
+
 from pureiron_core.platform.db import Database
 
 log = logging.getLogger(__name__)
@@ -41,6 +50,7 @@ QUERY_TIMEOUT_S = 10.0
 # `Database`의 획득·반환 제한이 따로 끝낸다.
 DEFAULT_WRITE_TIMEOUT_S = QUERY_TIMEOUT_S + 5.0
 DROP_WARN_INTERVAL_S = 60.0
+POISON_WARN_INTERVAL_S = 60.0
 
 # 시각은 µs 정수로 넘겨 DB에서 timestamptz로 바꾼다(datetime 변환 비용·부동소수 반올림 없음).
 INSERT_SQL = """
@@ -63,9 +73,14 @@ class Row:
     quality: int
 
 
+class RowsRejectedError(Exception):
+    """DB가 행 내용 때문에 쓰기를 거부했다 — 같은 행을 다시 써도 또 실패한다(writer가 반분 격리)."""
+
+
 class RowStore(Protocol):
     async def insert(self, rows: Sequence[Row]) -> None:
-        """한 번에 쓴다. 실패하면 예외(writer가 행을 버퍼에 되돌린다)."""
+        """한 번에 쓴다. 행 내용 오류면 `RowsRejectedError`, 그 밖의 실패(연결·시간 초과)는 다른
+        예외(writer가 행을 버퍼에 되돌린다)."""
         ...
 
 
@@ -94,8 +109,13 @@ class PgRowStore:
         self._query_timeout_s = query_timeout_s
 
     async def insert(self, rows: Sequence[Row]) -> None:
-        async with self._db.connection() as conn:
-            await conn.execute(INSERT_SQL, *columns(rows), timeout=self._query_timeout_s)
+        try:
+            async with self._db.connection() as conn:
+                await conn.execute(INSERT_SQL, *columns(rows), timeout=self._query_timeout_s)
+        except (asyncpg.DataError, asyncpg.IntegrityConstraintViolationError) as exc:
+            # 행 값 거부: 서버 SQLSTATE 22·23(범위 밖 시각 등)과, asyncpg 0.31이 같은 DataError로
+            # 올리는 클라이언트 쪽 인자 인코딩 실패(int4 밖 tag_id 등).
+            raise RowsRejectedError(f"{type(exc).__name__}: {exc}") from exc
 
 
 @dataclass(slots=True)
@@ -109,6 +129,7 @@ class WriterStatus:
     buffer_rows: int
     dropped_total: int
     written_total: int
+    poisoned_total: int
     write_lag_s: float | None
     db_ok: bool
 
@@ -132,13 +153,16 @@ class HistoryWriter:
         self._clock = clock
         self._chunks: deque[_Chunk] = deque()
         self._rows = 0
-        # 쓰는 중(꺼냈지만 아직 결과를 모르는) 행: 상태 보고에만 쓴다.
+        # 쓰는 중(꺼냈지만 아직 결과를 모르는) 행. 꺼낸 batch의 앞에서부터 끝난(기록·격리) 만큼
+        # 줄어든다 — 실패하면 끝나지 않은 뒤쪽만 되돌린다.
         self._inflight_rows = 0
         self._inflight_since: float | None = None
         self._dropped = 0
         self._written = 0
+        self._poisoned = 0
         self._db_ok = True
         self._drop_warned_at: float | None = None
+        self._poison_warned_at: float | None = None
         self._flush_lock = asyncio.Lock()
         self._task: asyncio.Task[None] | None = None
 
@@ -191,10 +215,20 @@ class HistoryWriter:
         self._rows -= count
         return taken
 
-    def _put_back(self, taken: list[_Chunk]) -> None:
-        """실패한 행을 순서대로 앞에 되돌린다. 넘치면 _trim이 이 (가장 오래된) 행부터 버린다."""
-        self._chunks.extendleft(reversed(taken))
-        self._rows += sum(len(c.rows) for c in taken)
+    def _put_back(self, taken: list[_Chunk], done: int) -> None:
+        """앞 `done`행(기록·격리 끝)을 뺀 나머지를 순서대로 앞에 되돌린다.
+
+        넘치면 _trim이 이 (가장 오래된) 행부터 버린다.
+        """
+        rest: list[_Chunk] = []
+        for chunk in taken:
+            if done >= len(chunk.rows):
+                done -= len(chunk.rows)
+                continue
+            rest.append(_Chunk(chunk.enqueued, chunk.rows[done:]) if done else chunk)
+            done = 0
+        self._chunks.extendleft(reversed(rest))
+        self._rows += sum(len(c.rows) for c in rest)
         self._trim()
 
     def status(self) -> WriterStatus:
@@ -206,6 +240,7 @@ class HistoryWriter:
             buffer_rows=self._rows + self._inflight_rows,
             dropped_total=self._dropped,
             written_total=self._written,
+            poisoned_total=self._poisoned,
             write_lag_s=None if oldest is None else self._clock() - oldest,
             db_ok=self._db_ok,
         )
@@ -214,20 +249,19 @@ class HistoryWriter:
     async def flush(self) -> int:
         """버퍼가 빌 때까지(또는 실패할 때까지) 쓴다. 이번에 쓴 행 수."""
         async with self._flush_lock:
-            total = 0
+            written_before = self._written
             while self._chunks:
                 taken = self._take()
                 rows = [r for chunk in taken for r in chunk.rows]
                 self._inflight_rows = len(rows)
                 self._inflight_since = taken[0].enqueued
                 try:
-                    async with asyncio.timeout(self._write_timeout_s):
-                        await self._store.insert(rows)
+                    await self._write(rows)
                 except asyncio.CancelledError:
-                    self._put_back(taken)
+                    self._put_back(taken, len(rows) - self._inflight_rows)
                     raise
                 except Exception as exc:
-                    self._put_back(taken)
+                    self._put_back(taken, len(rows) - self._inflight_rows)
                     if self._db_ok:
                         log.warning(
                             "historian write failed, keeping %d row(s) in memory: %s",
@@ -237,16 +271,50 @@ class HistoryWriter:
                             else exc,
                         )
                     self._db_ok = False
-                    return total
+                    break
                 finally:
                     self._inflight_rows = 0
                     self._inflight_since = None
+            return self._written - written_before
+
+    async def _write(self, rows: list[Row]) -> None:
+        """`rows`를 앞에서부터 쓴다. 행 내용 오류면 반으로 나눠 다시 쓰고 1행이면 버린다.
+
+        구간을 왼쪽부터 처리하므로 끝난(기록·격리) 행은 항상 batch의 앞부분이다 — 다른 실패로
+        멈추면 `_inflight_rows`가 남은 뒤쪽 행 수다. 쓰기 제한은 INSERT 한 번마다 건다.
+        """
+        pending = [(0, len(rows))]  # 끝이 다음에 쓸 (가장 왼쪽) 구간
+        while pending:
+            start, end = pending.pop()
+            try:
+                async with asyncio.timeout(self._write_timeout_s):
+                    await self._store.insert(rows[start:end])
+            except RowsRejectedError as exc:
+                if end - start > 1:
+                    mid = (start + end) // 2
+                    pending += [(mid, end), (start, mid)]
+                    continue
+                self._poison(rows[start], exc)
+            else:
                 if not self._db_ok:
                     log.info("historian writes recovered (%d row(s) still buffered)", self._rows)
                 self._db_ok = True
-                self._written += len(rows)
-                total += len(rows)
-            return total
+                self._written += end - start
+            self._inflight_rows -= end - start
+
+    def _poison(self, row: Row, exc: RowsRejectedError) -> None:
+        self._poisoned += 1
+        now = self._clock()
+        if self._poison_warned_at is None or now - self._poison_warned_at >= POISON_WARN_INTERVAL_S:
+            self._poison_warned_at = now
+            log.warning(
+                "historian dropped a row rejected by site-db (tag_id=%d, ts_ns=%d): %s "
+                "(total poisoned=%d)",
+                row.tag_id,
+                row.ts_ns,
+                exc,
+                self._poisoned,
+            )
 
     async def _run(self) -> None:
         while True:

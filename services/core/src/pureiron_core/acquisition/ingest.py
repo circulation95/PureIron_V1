@@ -51,20 +51,6 @@ class HistorySink(Protocol):
 
 
 @dataclass(slots=True)
-class DiscardHistory:
-    """이력을 쓰지 않는 sink(테스트용): 개수만 센다."""
-
-    raw: int = 0
-    live: int = 0
-
-    def offer_raw(self, samples: Sequence[pb.Sample], *, plan_rev: int) -> None:
-        self.raw += len(samples)
-
-    def offer_live(self, samples: Sequence[pb.Sample], *, plan_rev: int, now_ns: int) -> None:
-        self.live += len(samples)
-
-
-@dataclass(slots=True)
 class IngestStats:
     batches: int = 0
     heartbeats: int = 0

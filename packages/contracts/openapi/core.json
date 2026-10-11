@@ -166,6 +166,11 @@
             "title": "Dropped Total",
             "type": "integer"
           },
+          "poisoned_total": {
+            "description": "site-db가 행 내용 때문에 거부해 버린 행 수(batch를 반으로 나눠 그 행만 격리)",
+            "title": "Poisoned Total",
+            "type": "integer"
+          },
           "rejected_total": {
             "description": "이력에서 버린 샘플 수 = batch plan_rev가 현재 rev보다 앞선 것(site-db 재생성 신호) + 현재 정의에 없는 tag_id의 live 샘플(정의 기준 — plan에서 문제로 빠진 태그는 기록) + int4 범위 밖 tag_id",
             "title": "Rejected Total",
@@ -193,6 +198,7 @@
           "buffer_rows",
           "dropped_total",
           "written_total",
+          "poisoned_total",
           "write_lag_s",
           "db_ok",
           "rejected_total"

@@ -76,6 +76,13 @@ def test_settings_errors(tmp_path: Path) -> None:
         read_secret(tmp_path / "missing")
 
 
+@pytest.mark.parametrize("raw", ["nan", "NaN", "inf", "-inf", "Infinity", "1e999"])
+def test_settings_reject_non_finite_seconds(raw: str) -> None:
+    """R1 L11: float()이 받는 비유한값은 거부한다(무한 주기면 그 일이 멈춘다)."""
+    with pytest.raises(SettingsError, match="PUREIRON_HISTORIAN_FLUSH_S must be a positive finite"):
+        Settings.from_env({"PUREIRON_HISTORIAN_FLUSH_S": raw})
+
+
 async def test_bus_pattern_isolation_and_unsubscribe() -> None:
     bus = EventBus()
     seen: list[str] = []

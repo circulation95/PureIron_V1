@@ -44,6 +44,8 @@ class Database:
         self._acquire_timeout_s = acquire_timeout_s
         self._pool: Pool | None = None
         self._lock = asyncio.Lock()
+        # 기다리던 쪽이 취소돼 백그라운드로 넘어간 반환 task(끝날 때까지 강한 참조를 든다).
+        self._releasing: set[asyncio.Task[None]] = set()
 
     async def start(self) -> None:
         try:
@@ -52,6 +54,9 @@ class Database:
             log.warning("site-db not reachable at startup, will retry on use: %s", exc)
 
     async def close(self) -> None:
+        # 백그라운드 반환(각 budget 안에 끝남)을 먼저 거둔다 — 종료 정리에서 취소되면 asyncpg 안쪽
+        # shield가 다시 떨어져 나가 그 예외를 아무도 읽지 않는다.
+        await asyncio.gather(*self._releasing, return_exceptions=True)
         async with self._lock:
             if self._pool is not None:
                 await self._pool.close()
@@ -101,13 +106,35 @@ class Database:
                 # CancelledError를 덮으면 취소가 사라진다. 반환에 실패한 연결은 asyncpg가
                 # terminate한다.
                 with contextlib.suppress(Exception):
-                    await pool.release(conn)
+                    await self._release(pool, conn)
                 raise
-            await pool.release(conn)  # budget = 획득 때 남긴 acquire_timeout_s
+            await self._release(pool, conn)  # budget = 획득 때 남긴 acquire_timeout_s
         # TimeoutError도 OSError의 하위 클래스라 본문 쿼리·반환의 시간 초과도 여기서 바뀐다(원인은
         # __cause__). project API는 이를 503으로 내보낸다.
         except (OSError, asyncpg.exceptions.ConnectionDoesNotExistError) as exc:
             raise DatabaseUnavailableError(str(exc) or type(exc).__name__) from exc
+
+    async def _release(self, pool: Pool, conn: PoolConnectionProxy[asyncpg.Record]) -> None:
+        """반환을 소유한 task로 돌려 그 예외를 항상 회수한다(V2-1).
+
+        asyncpg 반환은 `asyncio.shield(holder.release(budget))`다. Python 3.12 `shield`는 바깥
+        await가 취소되면 안쪽 task의 완료 콜백을 떼어 내서, 그 반환이 budget을 넘겨 실패하면 아무도
+        예외를 읽지 않아 `Task exception was never retrieved`가 남는다(half-open DB에서 쓰기
+        시도마다). 여기 task는 바깥 취소에 끊기지 않으므로(`shield`) asyncpg의 shield도 취소되지
+        않고, 예외가 이 task로 올라와 완료 콜백이 읽는다. task는 budget(`acquire_timeout_s`) 안에
+        끝난다.
+        """
+        task = asyncio.create_task(pool.release(conn))
+        self._releasing.add(task)
+        task.add_done_callback(self._release_done)
+        await asyncio.shield(task)
+
+    def _release_done(self, task: asyncio.Task[None]) -> None:
+        self._releasing.discard(task)
+        if not task.cancelled() and (exc := task.exception()) is not None:
+            # 기다리던 쪽이 있었다면 그쪽도 같은 예외를 받는다. 취소된 뒤라면 연결은 asyncpg가
+            # terminate했고 슬롯도 풀렸다 — 반복될 수 있어 debug로만 남긴다.
+            log.debug("connection release failed: %r", exc)
 
     async def ping(self, timeout_s: float = 2.0) -> bool:
         try:

@@ -88,7 +88,6 @@ def test_zero_deadband_skips_repeats_records_changes() -> None:
     recorder, sink = _recorder(_tag(1))
     _live(recorder, num(1, 0, 5.0), num(1, 1, 5.0), num(1, 2, 5.0), num(1, 3, 5.000001))
     assert [r.value_num for r in sink.rows] == [5.0, 5.000001]
-    assert (recorder.stats.live_recorded, recorder.stats.live_skipped) == (2, 2)
 
 
 def test_bool_change_is_recorded() -> None:
@@ -169,7 +168,6 @@ def test_raw_is_always_recorded_and_leaves_live_state_alone() -> None:
     raw = [num(1, 10, 1.0), num(1, 5, 1.0), num(1, 11, 1.0), num(1, 500, 1.0, BAD)]
     recorder.offer_raw(raw, plan_rev=3)
     assert len(sink.rows) == 5
-    assert recorder.stats.raw == 4
     # live 상태는 t=10 기록 그대로: 미래 raw(t=500)가 있어도 t=11 live는 역행이 아니고,
     # BAD raw로 quality 상태가 바뀌지도 않았으므로 같은 값 live는 생략된다.
     _live(recorder, num(1, 11, 1.0))
@@ -267,7 +265,7 @@ def test_samples_before_any_plan_are_kept_raw() -> None:
     # live도 deadband 없이 모두
     recorder.offer_live([num(1, 1, 1.0), num(1, 2, 1.0)], plan_rev=9, now_ns=NOW)
     assert _times(sink) == [0, 1, 2]
-    assert (recorder.stats.raw, recorder.stats.rejected) == (3, 0)
+    assert recorder.stats.rejected == 0
     # plan을 받은 뒤부터는 live 규칙(같은 값 반복 생략, 첫 샘플은 기록)
     recorder.set_definitions(_defs(_tag(1), rev=9))
     _live(recorder, num(1, 3, 1.0), num(1, 4, 1.0), plan_rev=9)

@@ -40,6 +40,10 @@ services:
       PUREIRON_UPDATER_TOKEN_FILE: /run/secrets/updater_token
       PUREIRON_RELEASE: ${PUREIRON_RELEASE:-0.1.0-dev}
     secrets: [db_password, updater_token]
+    # SIGTERM 뒤 SIGKILL까지(기본 10s). half-open DB에서 종료 최악 ≈ 24.2s(HTTP 유예 2s + plan
+    # keeper 반환 정리 5s + gRPC 2s + historian 15s, 계산은 cli.py HTTP_GRACEFUL_SHUTDOWN_S, W5)라
+    # 최종 이력 flush가 SIGKILL 전에 끝나도록 25s.
+    stop_grace_period: 25s
     healthcheck:
       test:
         - CMD

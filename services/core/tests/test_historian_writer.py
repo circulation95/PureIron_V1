@@ -1,4 +1,7 @@
-"""historian writer: 상한 drop-oldest, N행씩 flush, 실패 시 순서 보존 되돌림, 최종 flush."""
+"""historian writer: 상한 drop-oldest, N행 flush, 실패 시 순서 보존 되돌림, 독성 행 격리.
+
+최종 flush(stop)와 쓰기 제한 시간도 함께 본다.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +11,7 @@ from collections.abc import Sequence
 
 import pytest
 
-from pureiron_core.historian.writer import HistoryWriter, Row, columns
+from pureiron_core.historian.writer import HistoryWriter, Row, RowsRejectedError, columns
 
 
 def rows(*ids: int) -> list[Row]:
@@ -21,9 +24,13 @@ def ids(batch: Sequence[Row]) -> list[int]:
 
 
 class FakeStore:
-    def __init__(self) -> None:
+    """`poison`의 tag_id가 섞인 batch는 행 내용 오류로 거부한다(실제 DB처럼 batch 전체가 실패)."""
+
+    def __init__(self, *, poison: Sequence[int] = ()) -> None:
         self.batches: list[list[Row]] = []
         self.fail = False
+        self.fail_from_call: int | None = None  # 이 번째 호출부터 연결 오류
+        self.poison = set(poison)
         self.gate: asyncio.Event | None = None
         self.calls = 0
 
@@ -31,8 +38,11 @@ class FakeStore:
         self.calls += 1
         if self.gate is not None:
             await self.gate.wait()
-        if self.fail:
+        if self.fail or (self.fail_from_call is not None and self.calls >= self.fail_from_call):
             raise ConnectionError("db down")
+        bad = [r.tag_id for r in rows if r.tag_id in self.poison]
+        if bad:
+            raise RowsRejectedError(f"value out of range (tag {bad[0]})")
         self.batches.append(list(rows))
 
     @property
@@ -272,3 +282,97 @@ async def test_stop_with_failing_db_reports_unwritten_rows(
     writer.append(rows(1))
     await writer.stop()
     assert "stopped with 1 unwritten" in caplog.text
+
+
+async def test_poisoned_row_is_isolated_and_the_rest_written(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """R1 L9b: 행 내용 오류 한 행 → batch를 반으로 나눠 그 행만 버리고 나머지는 같은 주기에 쓴다."""
+    store = FakeStore(poison=[5])
+    writer = HistoryWriter(store)
+    writer.append(rows(1, 2, 3, 4, 5, 6, 7, 8))
+    assert await writer.flush() == 7
+    # [1..8]거부 → [1..4]기록 → [5..8]거부 → [5,6]거부 → [5]버림 → [6]기록 → [7,8]기록
+    assert [ids(b) for b in store.batches] == [[1, 2, 3, 4], [6], [7, 8]]
+    assert store.calls == 7
+    status = writer.status()
+    assert (status.buffer_rows, status.written_total, status.poisoned_total, status.db_ok) == (
+        0,
+        7,
+        1,
+        True,
+    )
+    assert "rejected by site-db (tag_id=5, ts_ns=5000001234)" in caplog.text
+    assert "write failed" not in caplog.text  # 행 내용 오류는 DB 장애가 아니다
+
+
+async def test_several_poisoned_rows_each_dropped_with_spaced_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    clock = Clock()
+    store = FakeStore(poison=[2, 9, 10])
+    writer = HistoryWriter(store, clock=clock)
+    writer.append(rows(1, 2, 3, 4, 5, 6, 7, 8, 9, 10))
+    assert await writer.flush() == 7
+    assert store.written == [1, 3, 4, 5, 6, 7, 8]
+    assert writer.status().poisoned_total == 3
+    assert caplog.text.count("rejected by site-db") == 1  # 경고는 간격을 둔다
+
+    store.poison = {11}
+    writer.append(rows(11))
+    clock.now += 60.0
+    assert await writer.flush() == 0
+    assert caplog.text.count("rejected by site-db") == 2
+    assert "total poisoned=4" in caplog.text
+
+
+async def test_single_poisoned_row_batch_is_dropped() -> None:
+    store = FakeStore(poison=[1])
+    writer = HistoryWriter(store)
+    writer.append(rows(1))
+    assert await writer.flush() == 0
+    assert store.calls == 1
+    status = writer.status()
+    assert (status.buffer_rows, status.poisoned_total) == (0, 1)
+
+
+async def test_connection_error_during_isolation_puts_back_only_unfinished_rows() -> None:
+    """격리 도중 연결 오류: 이미 기록·격리한 앞부분은 빼고 남은 뒤쪽만 순서대로 되돌린다."""
+    store = FakeStore(poison=[2])
+    store.fail_from_call = 4
+    writer = HistoryWriter(store)
+    writer.append(rows(1, 2))  # chunk 경계를 걸쳐 되돌리는지 본다
+    writer.append(rows(3, 4, 5))
+    # [1..5]거부 → [1,2]거부 → [1]기록 → [2] 연결 오류
+    assert await writer.flush() == 1
+    status = writer.status()
+    assert (status.buffer_rows, status.written_total, status.poisoned_total, status.db_ok) == (
+        4,
+        1,
+        0,
+        False,
+    )
+
+    store.fail_from_call = None
+    # [2..5]거부 → [2,3]거부 → [2]버림 → [3]기록 → [4,5]기록
+    assert await writer.flush() == 3
+    assert [ids(b) for b in store.batches] == [[1], [3], [4, 5]]
+    status = writer.status()
+    assert (status.buffer_rows, status.written_total, status.poisoned_total, status.db_ok) == (
+        0,
+        4,
+        1,
+        True,
+    )
+
+
+async def test_connection_error_is_not_isolated() -> None:
+    """연결 오류는 행 탓이 아니다 — 나누지 않고 batch 전체를 되돌린 채 그 주기를 멈춘다."""
+    store = FakeStore()
+    store.fail = True
+    writer = HistoryWriter(store)
+    writer.append(rows(1, 2, 3, 4))
+    assert await writer.flush() == 0
+    assert store.calls == 1
+    status = writer.status()
+    assert (status.buffer_rows, status.poisoned_total, status.db_ok) == (4, 0, False)
