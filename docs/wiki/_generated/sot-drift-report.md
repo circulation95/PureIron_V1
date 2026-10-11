@@ -34,6 +34,8 @@ api-events.md 에 미기재된 소스 프리픽스: (없음)
 - /api/tags
 - /api/udt
 - /api/v1
+- /api/v1/devices
+- /api/v1/ws
 - /docs
 - /metrics
 - /redoc
