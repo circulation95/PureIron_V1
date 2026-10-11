@@ -19,7 +19,7 @@ from pureiron_core.api.errors import site_db_unavailable
 from pureiron_core.auth.ports import Role
 from pureiron_core.historian.ports import HistoryUnavailableError
 from pureiron_core.historian.reader import (
-    DEFAULT_LIMIT_PER_TAG,
+    DEFAULT_MAX_ROWS_PER_TAG,
     HistoryResult,
     Resolution,
     auto_resolution,
@@ -132,8 +132,8 @@ def build_history_router(*, history: HistorySource, guard: SessionGuard) -> APIR
         end: Annotated[AwareDatetime, Query(description="제외(<)")],
         resolution: Annotated[Literal["auto", "raw", "1m", "1h"], Query()] = "auto",
         limit_rows: Annotated[
-            int, Query(ge=1, le=DEFAULT_LIMIT_PER_TAG, description="태그별 행 상한")
-        ] = DEFAULT_LIMIT_PER_TAG,
+            int, Query(ge=1, le=DEFAULT_MAX_ROWS_PER_TAG, description="태그별 행 상한")
+        ] = DEFAULT_MAX_ROWS_PER_TAG,
     ) -> HistoryOut:
         chosen: Resolution = auto_resolution(start, end) if resolution == "auto" else resolution
         try:

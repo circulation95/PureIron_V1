@@ -32,7 +32,7 @@ MAX_SPAN: dict[Resolution, timedelta] = {
     "1m": timedelta(days=7),
     "1h": timedelta(days=400),
 }
-DEFAULT_LIMIT_PER_TAG = 20_000
+DEFAULT_MAX_ROWS_PER_TAG = 20_000
 QUERY_TIMEOUT_S = 10.0
 
 # 태그마다 상한 + 1행을 읽어 잘림 여부를 안다(LATERAL = 태그별 인덱스 범위 조회).
@@ -153,7 +153,7 @@ async def read_raw(
     start: datetime,
     end: datetime,
     *,
-    limit_per_tag: int = DEFAULT_LIMIT_PER_TAG,
+    limit_per_tag: int = DEFAULT_MAX_ROWS_PER_TAG,
 ) -> tuple[Series[RawPoint], ...]:
     check_window(start, end, "raw", limit_per_tag)
     ids = list(dict.fromkeys(tag_ids))
@@ -172,7 +172,7 @@ async def read_aggregate(
     end: datetime,
     resolution: AggResolution,
     *,
-    limit_per_tag: int = DEFAULT_LIMIT_PER_TAG,
+    limit_per_tag: int = DEFAULT_MAX_ROWS_PER_TAG,
 ) -> tuple[Series[AggPoint], ...]:
     check_window(start, end, resolution, limit_per_tag)
     ids = list(dict.fromkeys(tag_ids))
