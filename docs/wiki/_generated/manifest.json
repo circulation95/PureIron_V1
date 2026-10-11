@@ -113,12 +113,12 @@
     },
     {
       "audience": "both",
-      "bytes": 15765,
+      "bytes": 15985,
       "id": "sot-api-events",
       "last_verified": "2026-06-26",
       "path": "docs/wiki/sot/api-events.md",
       "section_count": 12,
-      "sha256": "712ef27101626d23fc7bb0b2e324e0fb1036f7801a58c22ffb6a2481834c0463",
+      "sha256": "efa989e8f2b8983b0fef12d858d78e5a6450da27723a691483ddd95922cd7dc0",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/main.py",
