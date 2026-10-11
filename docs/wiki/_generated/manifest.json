@@ -113,12 +113,12 @@
     },
     {
       "audience": "both",
-      "bytes": 12615,
+      "bytes": 15985,
       "id": "sot-api-events",
       "last_verified": "2026-06-26",
       "path": "docs/wiki/sot/api-events.md",
-      "section_count": 11,
-      "sha256": "c15ced5f7fd2846cd76b5c591ef60f61663ad6fa7fc2a8f8967968fb215b7963",
+      "section_count": 12,
+      "sha256": "efa989e8f2b8983b0fef12d858d78e5a6450da27723a691483ddd95922cd7dc0",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/main.py",
@@ -159,12 +159,12 @@
     },
     {
       "audience": "both",
-      "bytes": 21328,
+      "bytes": 21463,
       "id": "sot-coding-style",
       "last_verified": "2026-10-11",
       "path": "docs/wiki/sot/coding-style.md",
       "section_count": 14,
-      "sha256": "cb72dfa3d199b9077e1674fec88e00ec6842d9c4e7617390aad7751ec62bcc68",
+      "sha256": "f5e4ed83aff3e1df81c48789106ce90b901e34ca65fbefe26b596f0f1fec6950",
       "source_globs": [],
       "sources": [
         "pyproject.toml",
@@ -194,12 +194,12 @@
     },
     {
       "audience": "both",
-      "bytes": 47832,
+      "bytes": 49996,
       "id": "sot-data-contracts",
       "last_verified": "2026-08-22",
       "path": "docs/wiki/sot/data-contracts.md",
-      "section_count": 22,
-      "sha256": "d27b41b3f054fa0efaa5f6d0a47ce066a41e957088ab9e408cf0a94e180482e6",
+      "section_count": 23,
+      "sha256": "04e8b3484ed63fc5a51ce00d58210905f055ea3cc30d83cc984d58ed6f8acc90",
       "source_globs": [
         "projects/demo-coffee/**/*.yaml",
         "projects/demo-coffee/**/*.json"
@@ -278,12 +278,12 @@
     },
     {
       "audience": "both",
-      "bytes": 13778,
+      "bytes": 14476,
       "id": "sot-runtime-config",
       "last_verified": "2026-06-26",
       "path": "docs/wiki/sot/runtime-config.md",
       "section_count": 12,
-      "sha256": "4f0005bfb4966ba861e80903e539eccdb5013b4536ffc1c64f530e5dab451e76",
+      "sha256": "7706e1582a95cacdcb2c4137d97dcdfbb4683cba42d8f38bd513112ba4ff27f2",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/config.py",

@@ -60,6 +60,33 @@ def test_settings_defaults_and_overrides(tmp_path: Path) -> None:
     assert read_secret(None) is None
 
 
+def test_auth_settings_defaults_and_overrides() -> None:
+    defaults = Settings.from_env({})
+    assert (
+        defaults.auth_session_idle_s,
+        defaults.auth_session_absolute_s,
+        defaults.auth_cookie_secure,
+    ) == (43_200.0, 604_800.0, False)
+    tuned = Settings.from_env(
+        {
+            "PUREIRON_AUTH_SESSION_IDLE_S": "600",
+            "PUREIRON_AUTH_SESSION_ABSOLUTE_S": "3600",
+            "PUREIRON_AUTH_COOKIE_SECURE": "true",
+        }
+    )
+    assert (tuned.auth_session_idle_s, tuned.auth_session_absolute_s) == (600.0, 3600.0)
+    assert tuned.auth_cookie_secure is True
+    for raw, expected in (("1", True), ("YES", True), ("off", False), ("0", False), ("", False)):
+        settings = Settings.from_env({"PUREIRON_AUTH_COOKIE_SECURE": raw})
+        assert settings.auth_cookie_secure is expected, raw
+    with pytest.raises(SettingsError, match="PUREIRON_AUTH_COOKIE_SECURE"):
+        Settings.from_env({"PUREIRON_AUTH_COOKIE_SECURE": "maybe"})
+    with pytest.raises(SettingsError, match="PUREIRON_AUTH_SESSION_IDLE_S"):
+        Settings.from_env({"PUREIRON_AUTH_SESSION_IDLE_S": "0"})
+    with pytest.raises(SettingsError, match="at most"):
+        Settings.from_env({"PUREIRON_AUTH_SESSION_ABSOLUTE_S": "1e20"})
+
+
 def test_settings_errors(tmp_path: Path) -> None:
     with pytest.raises(SettingsError, match="PUREIRON_GRPC_PORT"):
         Settings.from_env({"PUREIRON_GRPC_PORT": "x"})
@@ -117,3 +144,9 @@ def test_create_app_starts_without_site_db(tmp_path: Path) -> None:
         historian = ready.json()["historian"]
         assert (historian["buffer_rows"], historian["written_total"]) == (0, 0)
         assert client.get("/api/v1/project").status_code == 503
+        # 인증 경로도 죽지 않는다: 토큰 없음은 DB 없이 401, DB가 필요한 검증·로그인은 503.
+        assert client.get("/api/v1/auth/me").status_code == 401
+        bearer = {"Authorization": "Bearer some-token"}
+        assert client.get("/api/v1/auth/me", headers=bearer).status_code == 503
+        login = client.post("/api/v1/auth/login", json={"username": "a", "password": "b"})
+        assert login.status_code == 503

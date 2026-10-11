@@ -71,7 +71,7 @@ class Stack:
 
 
 def compose(
-    env: Mapping[str, str], *args: str, check: bool = True
+    env: Mapping[str, str], *args: str, check: bool = True, stdin: str | None = None
 ) -> subprocess.CompletedProcess[str]:
     cmd = [
         "docker",
@@ -89,6 +89,7 @@ def compose(
     result = subprocess.run(
         cmd,
         env={**os.environ, **env},
+        input=stdin,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -248,10 +249,18 @@ def holding_tag(path: str, device_id: str, address: int, data_type: str = "uint1
     }
 
 
-def core_cli(env: Mapping[str, str], *args: str) -> subprocess.CompletedProcess[str]:
+def core_cli(
+    env: Mapping[str, str], *args: str, stdin: str | None = None
+) -> subprocess.CompletedProcess[str]:
     """호스트 venv의 `pureiron-core` CLI(dev compose의 site-db 포트로 접속)."""
     exe = shutil.which("pureiron-core")
     assert exe is not None
     return subprocess.run(
-        [exe, *args], env=dict(env), capture_output=True, text=True, encoding="utf-8", check=False
+        [exe, *args],
+        env=dict(env),
+        input=stdin,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
     )

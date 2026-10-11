@@ -1,7 +1,8 @@
-"""`pureiron-core` 진입점: serve · migrate · project · apply-definitions.
+"""`pureiron-core` 진입점: serve · migrate · project · apply-definitions · users.
 
 종료 코드(plan §6.6): 0 성공, 2 lock, 3 checksum, 4 실패, 5 lint.
 `runtime`/`app`을 import할 수 있는 유일한 모듈이다(import-linter 계약 (a)).
+`users` 하위 명령의 parser·실행은 `cli_users.py`에 있고 여기서는 등록만 한다.
 """
 
 from __future__ import annotations
@@ -21,7 +22,9 @@ from typing import cast
 import asyncpg
 import uvicorn
 
+from pureiron_core import cli_users
 from pureiron_core.app import create_app
+from pureiron_core.auth.ports import AuthError
 from pureiron_core.platform import migrate
 from pureiron_core.platform.db import Database, DatabaseUnavailableError, connect_once
 from pureiron_core.platform.migrate_lint import lint_directory
@@ -87,6 +90,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     defs.add_argument("project_dir", type=Path)
     defs.add_argument("--json", action="store_true")
+    cli_users.configure_parser(
+        sub.add_parser(
+            "users",
+            help="사용자 계정 관리(CLI 전용, plan M3b D3). 비밀번호는 stdin 또는 --password-file",
+        )
+    )
     return parser
 
 
@@ -239,13 +248,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _serve(settings)
         if args.command == "migrate":
             return asyncio.run(_migrate(args, settings))
-        if args.command == "apply-definitions":
-            return _apply_definitions(args, settings)
-        return _run_project(args, settings)
+        handlers: dict[str, Callable[[argparse.Namespace, Settings], int]] = {
+            "apply-definitions": _apply_definitions,
+            "users": cli_users.run,
+            "project": _run_project,
+        }
+        return handlers[args.command](args, settings)
     except migrate.MigrationError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return exc.exit_code
     except (
+        AuthError,
         DatabaseUnavailableError,
         ProjectStateError,
         SettingsError,

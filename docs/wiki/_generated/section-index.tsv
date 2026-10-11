@@ -101,7 +101,7 @@ sot-agent-rules	docs/wiki/sot/agent-rules.md	문서-읽기-규율-섹션-단위-
 sot-agent-rules	docs/wiki/sot/agent-rules.md	중복-방지-원칙	190	17	795	h2	중복 방지 원칙
 sot-agent-rules	docs/wiki/sot/agent-rules.md	자동-생성-vs-수기-관리-범위	207	8	773	h2	자동 생성 vs 수기 관리 범위
 sot-agent-rules	docs/wiki/sot/agent-rules.md	기여-흐름-raw--wiki--pr--review	215	15	1647	h2	기여 흐름 (raw → wiki → PR → review)
-sot-api-events	docs/wiki/sot/api-events.md	api--events-sot	15	141	12036	h1	API & Events SOT
+sot-api-events	docs/wiki/sot/api-events.md	api--events-sot	15	159	15406	h1	API & Events SOT
 sot-api-events	docs/wiki/sot/api-events.md	이-문서의-원천	23	8	868	h2	이 문서의 원천
 sot-api-events	docs/wiki/sot/api-events.md	라우터-프리픽스	31	31	2580	h2	라우터 프리픽스
 sot-api-events	docs/wiki/sot/api-events.md	주요-api-계약-요약	62	16	3308	h2	주요 API 계약 요약
@@ -111,7 +111,8 @@ sot-api-events	docs/wiki/sot/api-events.md	클라이언트--서버	90	7	163	h3	�
 sot-api-events	docs/wiki/sot/api-events.md	서버--클라이언트	97	12	967	h3	서버 → 클라이언트
 sot-api-events	docs/wiki/sot/api-events.md	chat-sse-이벤트	109	19	815	h2	Chat SSE 이벤트
 sot-api-events	docs/wiki/sot/api-events.md	v1-core-운영-api-apiv1-m3a-구현	128	10	1533	h2	V1 core 운영 API (`/api/v1`, M3a 구현)
-sot-api-events	docs/wiki/sot/api-events.md	내부-이벤트-버스	138	18	829	h2	내부 이벤트 버스
+sot-api-events	docs/wiki/sot/api-events.md	v1-인증감사-api-apiv1-m3b-1-구현	138	18	3370	h2	V1 인증·감사 API (`/api/v1`, M3b-1 구현)
+sot-api-events	docs/wiki/sot/api-events.md	내부-이벤트-버스	156	18	829	h2	내부 이벤트 버스
 sot-architecture	docs/wiki/sot/architecture.md	architecture-sot	25	217	16774	h1	Architecture SOT
 sot-architecture	docs/wiki/sot/architecture.md	이-문서의-원천	39	8	449	h2	이 문서의 원천
 sot-architecture	docs/wiki/sot/architecture.md	아키텍처-경계	47	10	864	h2	아키텍처 경계
@@ -129,21 +130,21 @@ sot-architecture	docs/wiki/sot/architecture.md	프론트엔드-경계	215	6	417	
 sot-architecture	docs/wiki/sot/architecture.md	legacy-참고-pureiron_ignition	221	21	1696	h2	legacy 참고 (PureIron_ignition)
 sot-architecture	docs/wiki/sot/architecture.md	tagsourcekind-taxonomy	232	6	521	h3	TagSourceKind Taxonomy
 sot-architecture	docs/wiki/sot/architecture.md	온톨로지-투영	238	4	327	h3	온톨로지 투영
-sot-coding-style	docs/wiki/sot/coding-style.md	coding-style-sot	32	230	20226	h1	Coding Style SOT
+sot-coding-style	docs/wiki/sot/coding-style.md	coding-style-sot	32	231	20361	h1	Coding Style SOT
 sot-coding-style	docs/wiki/sot/coding-style.md	1-우선순위	40	10	618	h2	1. 우선순위
 sot-coding-style	docs/wiki/sot/coding-style.md	2-기계-게이트-어기면-ci-실패	50	19	1918	h2	2. 기계 게이트 (어기면 CI 실패)
-sot-coding-style	docs/wiki/sot/coding-style.md	3-core-모듈-구조	69	30	2362	h2	3. core 모듈 구조
-sot-coding-style	docs/wiki/sot/coding-style.md	4-추상화-기준	99	24	1747	h2	4. 추상화 기준
-sot-coding-style	docs/wiki/sot/coding-style.md	5-이름	123	24	2260	h2	5. 이름
-sot-coding-style	docs/wiki/sot/coding-style.md	6-함수와-파일-크기	147	12	1057	h2	6. 함수와 파일 크기
-sot-coding-style	docs/wiki/sot/coding-style.md	7-주석docstring메시지-언어	159	20	1728	h2	7. 주석·docstring·메시지 언어
-sot-coding-style	docs/wiki/sot/coding-style.md	8-에러-처리로깅비동기	179	24	2376	h2	8. 에러 처리·로깅·비동기
-sot-coding-style	docs/wiki/sot/coding-style.md	9-테스트	203	12	1086	h2	9. 테스트
-sot-coding-style	docs/wiki/sot/coding-style.md	10-프론트엔드-servicesweb-처방--m3b부터-적용	215	12	1091	h2	10. 프론트엔드 (`services/web`, 처방 — M3b부터 적용)
-sot-coding-style	docs/wiki/sot/coding-style.md	11-리뷰-체크리스트-가독성구조	227	17	1522	h2	11. 리뷰 체크리스트 (가독성·구조)
-sot-coding-style	docs/wiki/sot/coding-style.md	12-현재-코드와의-차이-백로그-2026-10-11-검토-기준	244	14	1558	h2	12. 현재 코드와의 차이 (백로그, 2026-10-11 검토 기준)
-sot-coding-style	docs/wiki/sot/coding-style.md	13-이-문서를-바꾸는-법	258	4	281	h2	13. 이 문서를 바꾸는 법
-sot-data-contracts	docs/wiki/sot/data-contracts.md	data-contracts-sot	20	321	47032	h1	Data Contracts SOT
+sot-coding-style	docs/wiki/sot/coding-style.md	3-core-모듈-구조	69	31	2497	h2	3. core 모듈 구조
+sot-coding-style	docs/wiki/sot/coding-style.md	4-추상화-기준	100	24	1747	h2	4. 추상화 기준
+sot-coding-style	docs/wiki/sot/coding-style.md	5-이름	124	24	2260	h2	5. 이름
+sot-coding-style	docs/wiki/sot/coding-style.md	6-함수와-파일-크기	148	12	1057	h2	6. 함수와 파일 크기
+sot-coding-style	docs/wiki/sot/coding-style.md	7-주석docstring메시지-언어	160	20	1728	h2	7. 주석·docstring·메시지 언어
+sot-coding-style	docs/wiki/sot/coding-style.md	8-에러-처리로깅비동기	180	24	2376	h2	8. 에러 처리·로깅·비동기
+sot-coding-style	docs/wiki/sot/coding-style.md	9-테스트	204	12	1086	h2	9. 테스트
+sot-coding-style	docs/wiki/sot/coding-style.md	10-프론트엔드-servicesweb-처방--m3b부터-적용	216	12	1091	h2	10. 프론트엔드 (`services/web`, 처방 — M3b부터 적용)
+sot-coding-style	docs/wiki/sot/coding-style.md	11-리뷰-체크리스트-가독성구조	228	17	1522	h2	11. 리뷰 체크리스트 (가독성·구조)
+sot-coding-style	docs/wiki/sot/coding-style.md	12-현재-코드와의-차이-백로그-2026-10-11-검토-기준	245	14	1558	h2	12. 현재 코드와의 차이 (백로그, 2026-10-11 검토 기준)
+sot-coding-style	docs/wiki/sot/coding-style.md	13-이-문서를-바꾸는-법	259	4	281	h2	13. 이 문서를 바꾸는 법
+sot-data-contracts	docs/wiki/sot/data-contracts.md	data-contracts-sot	20	328	49196	h1	Data Contracts SOT
 sot-data-contracts	docs/wiki/sot/data-contracts.md	이-문서의-원천	28	8	847	h2	이 문서의 원천
 sot-data-contracts	docs/wiki/sot/data-contracts.md	마이그레이션-규율	36	17	1446	h2	마이그레이션 규율
 sot-data-contracts	docs/wiki/sot/data-contracts.md	tag-정의-계약	53	20	1040	h2	Tag 정의 계약
@@ -153,7 +154,7 @@ sot-data-contracts	docs/wiki/sot/data-contracts.md	historian-retention--query-wi
 sot-data-contracts	docs/wiki/sot/data-contracts.md	project-config-root-계약	137	57	5026	h2	Project config root 계약
 sot-data-contracts	docs/wiki/sot/data-contracts.md	project-package-exportimport-계약	161	33	3368	h3	Project package export/import 계약
 sot-data-contracts	docs/wiki/sot/data-contracts.md	문서화-원칙	194	7	385	h2	문서화 원칙
-sot-data-contracts	docs/wiki/sot/data-contracts.md	목표-설계미구현	201	140	31232	h2	목표 설계(미구현)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	목표-설계미구현	201	147	33396	h2	목표 설계(미구현)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	마이그레이션스키마-호환-adr-024	205	8	1879	h3	마이그레이션·스키마 호환 (ADR-024)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	기록-정책-adr-021	213	4	195	h3	기록 정책 (ADR-021)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	프로젝트-정본-adr-025	217	19	1460	h3	프로젝트 정본 (ADR-025)
@@ -164,7 +165,8 @@ sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m2b-updater-
 sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m2c-설치-번들부트스트랩systemdenroll-2026-10-05	282	10	3620	h3	V1 구현 현황 (M2c 설치 번들·부트스트랩·systemd·enroll, 2026-10-05)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m2d-r1-release-2026-10-05	292	12	4005	h3	V1 구현 현황 (M2d r1 release, 2026-10-05)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m2d-hyper-v-vm-실측-2026-10-05	304	23	5321	h3	V1 구현 현황 (M2d Hyper-V VM 실측, 2026-10-05)
-sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m3a-3-historian-2026-10-09	327	14	6628	h3	V1 구현 현황 (M3a-3 historian, 2026-10-09)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m3a-3-historian-2026-10-09	327	15	6629	h3	V1 구현 현황 (M3a-3 historian, 2026-10-09)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m3b-1-authaudit-2026-10-11	342	6	2163	h3	V1 구현 현황 (M3b-1 auth·audit, 2026-10-11)
 sot-frontend	docs/wiki/sot/frontend.md	frontend-sot	24	268	17328	h1	Frontend SOT
 sot-frontend	docs/wiki/sot/frontend.md	1-문서-경계	32	12	702	h2	1. 문서 경계
 sot-frontend	docs/wiki/sot/frontend.md	2-스택과-실행-명령	44	24	625	h2	2. 스택과 실행 명령
@@ -205,18 +207,18 @@ sot-product	docs/wiki/sot/product.md	디자인-방향	200	12	688	h2	디자인 �
 sot-product	docs/wiki/sot/product.md	첫-계약-전략	212	16	1670	h2	첫 계약 전략
 sot-product	docs/wiki/sot/product.md	성공-기준	228	14	655	h2	성공 기준
 sot-product	docs/wiki/sot/product.md	성능--비기능-요구	242	9	240	h2	성능 / 비기능 요구
-sot-runtime-config	docs/wiki/sot/runtime-config.md	runtime-config-sot	13	143	13413	h1	Runtime Config SOT
+sot-runtime-config	docs/wiki/sot/runtime-config.md	runtime-config-sot	13	146	14111	h1	Runtime Config SOT
 sot-runtime-config	docs/wiki/sot/runtime-config.md	이-문서의-원천	25	5	335	h2	이 문서의 원천
 sot-runtime-config	docs/wiki/sot/runtime-config.md	settings-환경변수	30	32	2226	h2	`Settings` 환경변수
 sot-runtime-config	docs/wiki/sot/runtime-config.md	직접-읽는-환경변수	62	9	461	h2	직접 읽는 환경변수
 sot-runtime-config	docs/wiki/sot/runtime-config.md	설정-파일-위치	71	6	515	h2	설정 파일 위치
 sot-runtime-config	docs/wiki/sot/runtime-config.md	agent-troubleshooting-poc-설정	77	9	1112	h2	Agent troubleshooting PoC 설정
 sot-runtime-config	docs/wiki/sot/runtime-config.md	drift-검사	86	10	508	h2	drift 검사
-sot-runtime-config	docs/wiki/sot/runtime-config.md	목표-설계미구현	96	60	7489	h2	목표 설계(미구현)
+sot-runtime-config	docs/wiki/sot/runtime-config.md	목표-설계미구현	96	63	8187	h2	목표 설계(미구현)
 sot-runtime-config	docs/wiki/sot/runtime-config.md	지원-호스트-adr-027	100	5	448	h3	지원 호스트 (ADR-027)
 sot-runtime-config	docs/wiki/sot/runtime-config.md	호스트-경로	105	11	625	h3	호스트 경로
 sot-runtime-config	docs/wiki/sot/runtime-config.md	실행-규칙	116	10	2250	h3	실행 규칙
-sot-runtime-config	docs/wiki/sot/runtime-config.md	v1-환경변수-m1m3a-구현	126	30	3802	h3	V1 환경변수 (M1~M3a 구현)
+sot-runtime-config	docs/wiki/sot/runtime-config.md	v1-환경변수-m1m3a-구현	126	33	4500	h3	V1 환경변수 (M1~M3a 구현)
 sot-testing	docs/wiki/sot/testing.md	testing-sot	32	344	31817	h1	Testing SOT
 sot-testing	docs/wiki/sot/testing.md	1-문서-경계	40	20	1306	h2	1. 문서 경계
 sot-testing	docs/wiki/sot/testing.md	2-기본-실행-명령	60	35	1204	h2	2. 기본 실행 명령
