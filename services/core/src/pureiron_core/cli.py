@@ -32,6 +32,13 @@ from pureiron_core.runtime import SiteRuntime
 from pureiron_core.settings import Settings, SettingsError, read_secret
 from pureiron_project.project import load_project
 
+# SIGTERM 뒤 열린 HTTP 요청을 기다리는 시간(초, uvicorn은 int). compose core
+# `stop_grace_period: 20s` 안에서 최종 이력 flush가 SIGKILL 전에 끝나게 정한다(W5):
+# uvicorn 0.1s + 이 값 2s → lifespan `SiteRuntime.stop()`: acquisition(gRPC grace 2s) →
+# historian 최악 15s(half-open DB: 진행 중 쓰기 반환 정리 5s + 최종 flush 5s + 그 반환 정리 5s)
+# = 19.1s. 그 뒤 `db.close()`가 SIGKILL에 끊겨도 잃는 이력은 없다. 정상 DB에서는 모두 ms 단위다.
+HTTP_GRACEFUL_SHUTDOWN_S = 2
+
 _DURATION = re.compile(r"^(\d+(?:\.\d+)?)(ms|s|m)?$")
 
 
@@ -83,7 +90,13 @@ def _parser() -> argparse.ArgumentParser:
 
 def _serve(settings: Settings) -> int:
     app = create_app(SiteRuntime.build(settings))
-    uvicorn.run(app, host=settings.http_host, port=settings.http_port, log_config=None)
+    uvicorn.run(
+        app,
+        host=settings.http_host,
+        port=settings.http_port,
+        log_config=None,
+        timeout_graceful_shutdown=HTTP_GRACEFUL_SHUTDOWN_S,
+    )
     return 0
 
 

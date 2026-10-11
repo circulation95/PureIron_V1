@@ -75,3 +75,12 @@ def test_site_db_telemetry_off() -> None:
     command = cast(list[str], _services()["site-db"]["command"])
     assert command[0] == "postgres"
     assert "timescaledb.telemetry_level=off" in command
+
+
+def test_core_stop_grace_covers_worst_case_shutdown() -> None:
+    """W5: SIGKILL 전에 최종 이력 flush가 끝나야 한다. 최악 = uvicorn 0.1s + HTTP 유예 2s +
+    gRPC grace 2s + historian 15s(half-open DB) = 19.1s(`pureiron_core/cli.py` 주석)."""
+    grace = str(_services()["core"]["stop_grace_period"])
+    match = re.fullmatch(r"(\d+)s", grace)
+    assert match is not None, grace
+    assert int(match.group(1)) > 0.1 + 2 + 2 + 15
