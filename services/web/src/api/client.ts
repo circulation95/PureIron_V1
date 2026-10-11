@@ -11,6 +11,7 @@ export type TagValue = Schemas["TagValueOut"];
 export type Alarm = Schemas["AlarmOut"];
 export type JournalEntry = Schemas["JournalEntryOut"];
 export type Device = Schemas["DeviceOut"];
+export type History = Schemas["HistoryOut"];
 export type HistorySeries = Schemas["HistorySeries"];
 export type AuditEntry = Schemas["AuditEntryOut"];
 

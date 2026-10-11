@@ -6,6 +6,7 @@ import uPlot from "uplot";
 import {
   api,
   failureMessage,
+  type History,
   type HistorySeries,
   type Load,
   networkMessage,
@@ -24,12 +25,7 @@ const RANGES = {
 type Range = keyof typeof RANGES;
 const RANGE_KEYS: readonly Range[] = ["1h", "24h", "7d"];
 
-const RESOLUTION_LABELS = { raw: "원시 샘플", "1m": "1분 평균", "1h": "1시간 평균" } as const;
-
-interface History {
-  resolution: keyof typeof RESOLUTION_LABELS;
-  series: HistorySeries[];
-}
+const RESOLUTION_LABELS: Record<History["resolution"], string> = { raw: "원시 샘플", "1m": "1분 평균", "1h": "1시간 평균" };
 
 function toNumber(value: number | boolean | null): number | null {
   return typeof value === "boolean" ? Number(value) : value;
@@ -91,7 +87,7 @@ export function Trend() {
         setHistory(
           data === undefined
             ? { kind: "error", message: failureMessage(response) }
-            : { kind: "ok", value: { resolution: data.resolution, series: data.series } },
+            : { kind: "ok", value: data },
         );
       })
       .catch((err: unknown) => {
