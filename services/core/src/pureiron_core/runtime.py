@@ -10,6 +10,10 @@ from dataclasses import dataclass
 from pureiron_core.acquisition.devices import DeviceMonitor
 from pureiron_core.acquisition.ingest import Ingestor
 from pureiron_core.acquisition.server import AcquisitionServer, AcquisitionService, PlanKeeper
+from pureiron_core.audit.store import PgAuditStore
+from pureiron_core.auth.service import AuthService
+from pureiron_core.auth.sessions import PgSessionStore
+from pureiron_core.auth.users import PgUserStore
 from pureiron_core.historian.recorder import Recorder
 from pureiron_core.historian.service import Historian
 from pureiron_core.historian.writer import HistoryWriter, PgRowStore
@@ -34,6 +38,8 @@ class SiteRuntime:
     acquisition: AcquisitionServer
     project: PgProjectStateStore
     updater_token: str | None
+    auth: AuthService
+    audit: PgAuditStore
 
     @classmethod
     def build(cls, settings: Settings) -> SiteRuntime:
@@ -72,6 +78,13 @@ class SiteRuntime:
             ),
             project=PgProjectStateStore(db),
             updater_token=read_secret(settings.updater_token_file),
+            auth=AuthService(
+                PgUserStore(db),
+                PgSessionStore(db),
+                idle_s=settings.auth_session_idle_s,
+                absolute_s=settings.auth_session_absolute_s,
+            ),
+            audit=PgAuditStore(db),
         )
 
     async def start(self) -> None:

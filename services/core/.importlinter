@@ -12,6 +12,8 @@ type = forbidden
 source_modules =
     pureiron_core.api
     pureiron_core.acquisition
+    pureiron_core.audit
+    pureiron_core.auth
     pureiron_core.historian
     pureiron_core.project
     pureiron_core.tags
@@ -25,7 +27,7 @@ name = (b) api > domain > platform
 type = layers
 layers =
     pureiron_core.api
-    pureiron_core.acquisition : pureiron_core.historian : pureiron_core.project : pureiron_core.tags
+    pureiron_core.acquisition : pureiron_core.audit : pureiron_core.auth : pureiron_core.historian : pureiron_core.project : pureiron_core.tags
     pureiron_core.platform
 
 [importlinter:contract:domain-ports]
@@ -33,6 +35,8 @@ name = (c) domain modules depend on each other only through <module>.ports
 type = independence
 modules =
     pureiron_core.acquisition
+    pureiron_core.audit
+    pureiron_core.auth
     pureiron_core.historian
     pureiron_core.project
     pureiron_core.tags

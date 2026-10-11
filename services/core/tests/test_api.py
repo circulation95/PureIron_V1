@@ -12,6 +12,7 @@ from pureiron_core import __version__
 from pureiron_core.acquisition.ports import AcquisitionSummary, IngestCounts
 from pureiron_core.api.health import build_health_router
 from pureiron_core.api.project import build_project_router
+from pureiron_core.audit.ports import AuditAction, AuditEntry, AuditSource
 from pureiron_core.historian.ports import HistorianStatus
 from pureiron_core.platform.db import Connection, DatabaseUnavailableError
 from pureiron_core.platform.migrate import (
@@ -22,7 +23,7 @@ from pureiron_core.platform.migrate import (
 )
 from pureiron_core.project.ports import EditLockConflictError, ProjectState
 
-from .conftest import MIGRATIONS
+from .conftest import MIGRATIONS, FakeAudit
 
 TOKEN = "s3cret-updater-token"
 
@@ -244,9 +245,14 @@ class FakeStore:
         self.owner = self.gen = None
 
 
-def _project_client(store: FakeStore, token: str | None = TOKEN) -> TestClient:
+def _project_client(
+    store: FakeStore, token: str | None = TOKEN, audit: FakeAudit | None = None
+) -> TestClient:
     app = FastAPI()
-    app.include_router(build_project_router(store=store, updater_token=token), prefix="/api/v1")
+    app.include_router(
+        build_project_router(store=store, updater_token=token, audit=audit or FakeAudit()),
+        prefix="/api/v1",
+    )
     return TestClient(app)
 
 
@@ -285,7 +291,8 @@ def test_edit_lock_rejects_bad_token(headers: dict[str, str]) -> None:
 
 def test_edit_lock_acquire_conflict_release() -> None:
     store = FakeStore()
-    client = _project_client(store)
+    audit = FakeAudit()
+    client = _project_client(store, audit=audit)
     acquired = client.post(
         "/api/v1/project/edit-lock", json={"owner": "updater", "generation": 17}, headers=AUTH
     )
@@ -300,6 +307,25 @@ def test_edit_lock_acquire_conflict_release() -> None:
     assert client.delete("/api/v1/project/edit-lock?owner=x", headers=AUTH).status_code == 409
     assert client.delete("/api/v1/project/edit-lock?owner=updater", headers=AUTH).status_code == 204
     assert client.delete("/api/v1/project/edit-lock?owner=updater", headers=AUTH).status_code == 204
+    # 성공한 획득·해제만 감사에 남는다(409는 남기지 않음). 행위자는 사용자가 아니라 Updater다.
+    assert audit.entries == [
+        AuditEntry(
+            action=AuditAction.PROJECT_EDIT_LOCK_ACQUIRE,
+            source=AuditSource.UPDATER,
+            target="updater",
+            detail={"generation": 17, "site_rev": 7},
+        ),
+        AuditEntry(
+            action=AuditAction.PROJECT_EDIT_LOCK_RELEASE,
+            source=AuditSource.UPDATER,
+            target="updater",
+        ),
+        AuditEntry(
+            action=AuditAction.PROJECT_EDIT_LOCK_RELEASE,
+            source=AuditSource.UPDATER,
+            target="updater",
+        ),
+    ]
 
 
 def test_edit_lock_validates_body() -> None:

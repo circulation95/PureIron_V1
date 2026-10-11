@@ -7,3 +7,4 @@ epochs:
   1: 0005_project_state.sql
   2: 0007_cagg_1h_policy.sql
   3: 0009_historian.sql
+  4: 0011_audit.sql

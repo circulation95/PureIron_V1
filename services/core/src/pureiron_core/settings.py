@@ -53,6 +53,21 @@ def _path(environ: Mapping[str, str], key: str) -> Path | None:
     return Path(raw) if raw else None
 
 
+_TRUE = frozenset({"1", "true", "yes", "on"})
+_FALSE = frozenset({"0", "false", "no", "off"})
+
+
+def _bool(environ: Mapping[str, str], key: str, default: bool) -> bool:
+    raw = environ.get(key)
+    if raw is None or raw == "":
+        return default
+    if raw.strip().lower() in _TRUE:
+        return True
+    if raw.strip().lower() in _FALSE:
+        return False
+    raise SettingsError(f"{key} must be true or false, got {raw!r}")
+
+
 def read_secret(path: Path | None) -> str | None:
     """비밀 파일 내용(끝 줄바꿈 제거). 경로가 없으면 None, 파일이 없으면 오류."""
     if path is None:
@@ -88,6 +103,11 @@ class Settings:
     # 이력 flush 주기와 INSERT 한 번에 쓰는 최대 행 수.
     historian_flush_s: float = 1.0
     historian_flush_max_rows: int = 20_000
+    # 세션 유휴 만료(마지막 사용 기준)와 절대 만료(로그인 기준). 쿠키 Max-Age = 절대 만료.
+    auth_session_idle_s: float = 43_200.0
+    auth_session_absolute_s: float = 604_800.0
+    # 세션 쿠키 Secure 속성. 현장은 http(Secure 쿠키는 브라우저가 보내지 않음)라 기본 false.
+    auth_cookie_secure: bool = False
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str]) -> Settings:
@@ -112,4 +132,7 @@ class Settings:
             historian_flush_max_rows=_positive_int(
                 environ, "PUREIRON_HISTORIAN_FLUSH_MAX_ROWS", 20_000
             ),
+            auth_session_idle_s=_float(environ, "PUREIRON_AUTH_SESSION_IDLE_S", 43_200.0),
+            auth_session_absolute_s=_float(environ, "PUREIRON_AUTH_SESSION_ABSOLUTE_S", 604_800.0),
+            auth_cookie_secure=_bool(environ, "PUREIRON_AUTH_COOKIE_SECURE", False),
         )
