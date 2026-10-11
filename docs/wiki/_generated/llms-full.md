@@ -1450,7 +1450,7 @@ PureIron_V1 core의 정본은 `services/core/src/pureiron_core/api/` 와 생성�
 - `GET /api/v1/healthz` — 프로세스 생존(`status`, `version`).
 - `GET /api/v1/readyz` — 준비 = site-db 연결 + 스키마 epoch envelope + collector 세션(아니면 503). 준비 판정에 쓰지 않는 정보 필드:
   - `acquisition`: `plan_rev`, 장비 수·연결 수, 태그 수·GOOD 수, `good_ratio`, `ingest{live, stale, future, replay}`(core 기동 후 누적 샘플 수 — live만 현재값에 반영, 나머지는 이력 전용)·`ingest{batches, heartbeats}`(받은 ValueBatch 수, 그중 빈 heartbeat 수 — 부하 측정의 batch/s).
-  - `historian`: `buffer_rows`(쓰지 못한 버퍼 행, 쓰는 중 포함), `dropped_total`(상한 초과로 버린 행), `written_total`(INSERT에 넘긴 행, 중복 포함), `write_lag_s`(버퍼 최고령 행 대기 시간, 비면 null), `db_ok`(마지막 쓰기 성공), `rejected_total`(이력에서 버린 샘플 = batch `plan_rev`가 현재 rev보다 앞선 것 + 현재 정의에 없는 tag_id의 live 샘플(정의 기준 — plan에서 문제로 빠진 태그는 기록, [data-contracts](data-contracts.md) M3a-3 historian 현황) + int4 범위 밖 tag_id).
+  - `historian`: `buffer_rows`(쓰지 못한 버퍼 행, 쓰는 중 포함), `dropped_total`(상한 초과로 버린 행), `written_total`(INSERT에 넘긴 행, 중복 포함), `poisoned_total`(site-db가 행 내용 때문에 거부해 반분 격리 끝에 버린 행, M3b-0), `write_lag_s`(버퍼 최고령 행 대기 시간, 비면 null), `db_ok`(마지막 쓰기 성공), `rejected_total`(이력에서 버린 샘플 = batch `plan_rev`가 현재 rev보다 앞선 것 + 현재 정의에 없는 tag_id의 live 샘플(정의 기준 — plan에서 문제로 빠진 태그는 기록, [data-contracts](data-contracts.md) M3a-3 historian 현황) + int4 범위 밖 tag_id).
 - replay batch는 이력에만 기록되고 `tag.changed.*`를 발행하지 않는다. 이력 조회 HTTP API는 M3b.
 
 ## 내부 이벤트 버스
@@ -1812,7 +1812,7 @@ services/core/src/pureiron_core/
   (`subprocess`·`asyncio`의 `timeout`), `timedelta`처럼 타입이 단위를 담는 값(`RAW_MAX_SPAN`). `Pg` 접두의 예외: Protocol 짝이 없는 기반 클래스(`Database`, `SchemaGuard`).
 - 축약은 업계 표준(`db`, `ts`, `rev`, `gen`, `dsn`)만 쓴다. 한 글자 이름은 컴프리헨션·짧은 람다 안에서만.
 - bool은 상태를 말하는 이름(`db_ok`, `connected`)으로 쓴다. 상태·API로 노출하는 누적값은 `_total` 접미사
-  (`dropped_total`, `devices_total`)를 쓴다. 모듈 내부 통계 필드(`RecorderStats.raw`)와 이미 정해진 계약 필드
+  (`dropped_total`, `devices_total`)를 쓴다. 모듈 내부 통계 필드(`RecorderStats.rejected_rev`)와 이미 정해진 계약 필드
   (`collector.proto` `timeout_count`)는 예외 — 계약 필드 이름은 바꾸지 않는다.
 
 ## 6. 함수와 파일 크기
@@ -2252,7 +2252,7 @@ window: { recurring: { tz: Asia/Seoul, days: [sat, sun], start: "02:00", end: "0
   - replay·오래된 live(> `PUREIRON_INGEST_LIVE_MAX_AGE_S`)·미래 시각 live(> now + 2 s)는 **원시 기록**한다 — 걸러내지 않고, live deadband 상태를 읽지도 바꾸지도 않는다(이력은 받은 것을 다 남기고 걸러내기는 현재값 경로만).
   - NaN/Inf는 `value_num = NULL`(quality는 받은 값, 모르는 quality는 BAD) — CAGG avg/min/max 오염 방지. deadband 비교에서 비유한값끼리는 같은 값이다.
   - batch `plan_rev`가 현재 rev보다 크면 이력에서 버린다(rev는 단조 증가 → site-db 재생성 신호, 옛 tag_id가 다른 태그로 기록되는 것 방지). plan을 아직 모르면(기동 직후 DB 미준비) live까지 원시로 받아 둔다(collector는 Ack된 batch를 다시 보내지 않으므로 버리면 DB 복구 전 이력이 사라진다) — 그 사이 DB 재생성이 겹치면 막지 못한다(한계). 현재 정의에 없는 tag_id의 live 샘플(정의에 있는 tag_id 기준 — plan에서 문제로 빠진 태그도 정책을 유지해 기록한다)과 `tag_history.tag_id`(int4) 범위 밖 tag_id도 버린다(한 행이 INSERT 전체를 매번 실패시키지 않게). raw는 옛 rev의 tag_id(retired 포함)를 그대로 기록한다(id 재사용 없음). 버린 수는 `/readyz.historian.rejected_total`.
-- **쓰기**(`historian.writer`): 메모리 버퍼 상한 600,000행(넘치면 가장 오래된 행부터 버림, `dropped_total`. 쓰는 중 최대 `FLUSH_MAX_ROWS` 추가 — 순간 최대 620,000행), 1 s마다 최대 20,000행씩 `INSERT … ON CONFLICT (tag_id, time) DO NOTHING`(replay 중복 흡수, 시각은 µs). 실패하면 꺼낸 행을 순서대로 버퍼 앞에 되돌리고 상한을 다시 적용한다 — DB 장애 동안은 이 버퍼가, core 단절 동안은 collector 링버퍼(60 s)가 이력을 든다. 한 번의 쓰기(연결 획득·INSERT·연결 반환 대기)는 15 s(INSERT 쿼리 제한 10 s + 여유 5 s)가 지나면 취소해 실패로 보고, 행은 다음 주기에 다시 쓴다(`db_ok=false`). DB 연결 획득과 반환은 `Database`가 각각 5 s로 제한한다(획득 초과는 `DatabaseUnavailableError`, 반환 초과는 연결 terminate — 슬롯도 그 안에 풀림). 15 s 취소가 INSERT 도중에 걸리면 shield된 반환은 그 반환 제한으로 끝나므로, half-open DB에서도 flush 한 번은 **최대 20 s**(쓰기 15 s + 반환 5 s) 안에 돌아온다. 정지 순서는 수집 정지 → 진행 중 쓰기 취소 → 최종 flush(5 s 제한) → DB close이고, half-open이면 쓰기 취소와 최종 flush 뒤에 반환 정리가 각각 최대 5 s 더해진다(`stop` 최악 15 s).
+- **쓰기**(`historian.writer`): 메모리 버퍼 상한 600,000행(넘치면 가장 오래된 행부터 버림, `dropped_total`. 쓰는 중 최대 `FLUSH_MAX_ROWS` 추가 — 순간 최대 620,000행), 1 s마다 최대 20,000행씩 `INSERT … ON CONFLICT (tag_id, time) DO NOTHING`(replay 중복 흡수, 시각은 µs). 실패하면 꺼낸 행을 순서대로 버퍼 앞에 되돌리고 상한을 다시 적용한다 — DB 장애 동안은 이 버퍼가, core 단절 동안은 collector 링버퍼(60 s)가 이력을 든다. 단 행 내용 때문에 거부되면(asyncpg `DataError`·`IntegrityConstraintViolationError`·클라이언트 인자 인코딩 실패) 되돌리지 않고 batch를 반으로 나눠 앞쪽부터 다시 쓰고, 1행까지 줄어도 거부되면 그 행만 버린다(`poisoned_total`, 경고 60 s 간격, M3b-0 L9b) — 한 행이 버퍼 전체를 매 주기 막지 않게. 격리 도중 연결 오류가 나면 이미 기록·격리한 앞부분을 뺀 뒤쪽만 되돌린다. 한 번의 쓰기(연결 획득·INSERT·연결 반환 대기)는 15 s(INSERT 쿼리 제한 10 s + 여유 5 s)가 지나면 취소해 실패로 보고, 행은 다음 주기에 다시 쓴다(`db_ok=false`). DB 연결 획득과 반환은 `Database`가 각각 5 s로 제한한다(획득 초과는 `DatabaseUnavailableError`, 반환 초과는 연결 terminate — 슬롯도 그 안에 풀림). 15 s 취소가 INSERT 도중에 걸리면 shield된 반환은 그 반환 제한으로 끝나므로, half-open DB에서도 flush 한 번은 **최대 20 s**(쓰기 15 s + 반환 5 s) 안에 돌아온다. 정지 순서는 수집 정지 → 진행 중 쓰기 취소 → 최종 flush(5 s 제한) → DB close이고, half-open이면 쓰기 취소와 최종 flush 뒤에 반환 정리가 각각 최대 5 s 더해진다(`stop` 최악 15 s). compose core `stop_grace_period: 20s` 안에서 SIGTERM → uvicorn HTTP 유예 2 s(`HTTP_GRACEFUL_SHUTDOWN_S`) → gRPC grace 2 s → historian 15 s = 19.1 s라 최종 flush는 SIGKILL 전에 끝난다(M3b-0 W5). 반환을 기다리던 쪽이 취소된 뒤의 반환 실패는 `Database`가 회수한다(asyncio `Task exception was never retrieved` 없음, V2-1).
 - **허용 손실(문서화)**: core 프로세스 crash 시 아직 쓰지 못한 버퍼(정상 시 ≤ 1 flush 주기분, DB 장애 중이면 상한 안의 전체), 버퍼 상한 초과분(가장 오래된 것부터), collector 링버퍼 60 s를 넘는 core 단절 구간.
 - **조회**(`historian.reader`): raw(`tag_history`)·1m·1h(CAGG) + 구간 길이로 고르는 `auto_resolution`(≤ 1 h raw, ≤ 24 h 1m, 그 이상 1h). HTTP 이력 API·Trend 화면은 인증과 함께 M3b.
 - **검증**: compose 네트워크 분리 replay는 통합 테스트 `test_network_disconnect_replay`, 2,000태그 1 s 부하 기록은 `g1.sh perf-ingest` — 판정식은 테스트 docstring(`services/core/tests/integration/test_compose_stack.py`), 실행 job은 [testing](testing.md) `integration-compose`·`perf-ingest`.
@@ -2983,7 +2983,7 @@ PureIron 런타임 설정의 정본은 `backend/src/pureiron/config.py`의 `Sett
 - compose 프로젝트명 `pureiron` 고정(`-p pureiron`), 모든 이미지 `pureiron/<svc>:<release>` + `pull_policy: never`, 로드 후 `.Id == config_digest` assert.
 - 비밀값: `pureiron-site secret set <name>`으로 `state/secrets/`에 저장, 프로젝트는 `secret://<name>`만 참조. 중앙 토큰은 `control_api_token`.
 - 현장 CLI(`pureiron-site`): `enroll`, `apply <pib>`, `bundle verify <pib>`, `status`, `secret set`, `report export`, `project export`.
-- Redis 없음(ADR-008 개정). core `/readyz` = DB 연결 + 스키마 호환 범위 + collector 세션. 응답의 `acquisition`(plan_rev·장비 연결 수·태그 GOOD 수·`good_ratio`·ingest 누적 `live`/`stale`/`future`/`replay`)은 집계일 뿐 준비 판정에 쓰지 않으며, Updater `checking` 단계의 GOOD 비율 기준이 이 값을 쓴다(M3a). `historian`(버퍼 행 수·drop·쓰기 지연·`db_ok`·버린 샘플 수)도 정보로만 낸다 — 이력 DB 쓰기가 막혀도 수집·현재값은 계속된다(M3a-3).
+- Redis 없음(ADR-008 개정). core `/readyz` = DB 연결 + 스키마 호환 범위 + collector 세션. 응답의 `acquisition`(plan_rev·장비 연결 수·태그 GOOD 수·`good_ratio`·ingest 누적 `live`/`stale`/`future`/`replay`)은 집계일 뿐 준비 판정에 쓰지 않으며, Updater `checking` 단계의 GOOD 비율 기준이 이 값을 쓴다(M3a). `historian`(버퍼 행 수·drop·쓰기 지연·`db_ok`·버린 샘플 수·site-db가 거부해 격리한 행 수)도 정보로만 낸다 — 이력 DB 쓰기가 막혀도 수집·현재값은 계속된다(M3a-3).
 - 장비·태그 정의: `pureiron-core apply-definitions <프로젝트 디렉터리>`가 project-tools로 검증한 뒤 `devices.definition`·`tags.definition`(jsonb)에 path 기준 upsert·retire 하고, `project.yaml`의 `historian`(기록 기본값, 정규형·비면 NULL)은 `project_state.historian`에 같은 트랜잭션으로 저장한다. 바뀐 것이 있을 때만 `project_state.definitions_rev`(= plan_rev)를 올린다. core는 이 rev를 주기적으로 읽어 collector에 새 plan을 보낸다(정식 project apply는 M5).
 - **dev/VM DB 주의(M3a-3 D12)**: D12로 epoch 3 내용이 0008 → 0009로 늘었다(release된 epoch는 2까지라 현장 영향 없음). 0008까지 적용된 dev/VM DB는 새 core를 올리기 전에 `pureiron-core migrate up`이 필수다 — `/readyz`·Updater는 epoch 번호만 보므로, 안 하면 `/readyz`는 ready인데 `project_state.historian` 열이 없어 정의 로드가 실패하고 plan이 적용되지 않아 수집 전체가 멈춘다.
 - 관측: core·collector `/metrics`, Updater가 60초마다 `state/metrics/<svc>.prom`·일별 jsonl로 기록, `/var/lib/pureiron` 사용률 경고 ≥ 0.80·위험 ≥ 0.90.
@@ -3016,6 +3016,8 @@ PureIron 런타임 설정의 정본은 `backend/src/pureiron/config.py`의 `Sett
 | `PUREIRON_DB_DATA` | compose | `/var/lib/pureiron/db` | site-db 데이터(개발·CI는 named volume `pureiron-db`) |
 | `PUREIRON_WEB_BIND` / `PUREIRON_WEB_PORT` | compose | `0.0.0.0` / `80` | web 노출 |
 | `PUREIRON_SITE_DB_VERSION` | compose | `deploy/releases/site-db.lock`의 version | site-db 이미지 태그 |
+
+core의 초 단위 값(`…_S`)은 양의 유한 수만 받는다 — 0·음수·`nan`·`inf`는 기동 시 `SettingsError`로 실패한다(M3b-0). compose core는 `stop_grace_period: 20s`다(종료 예산은 [data-contracts](data-contracts.md) M3a-3 historian 현황).
 
 ---
 
