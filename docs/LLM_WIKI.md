@@ -15,7 +15,7 @@
 - **sot-mes-schedule** (9KB/7절) — 이 문서는 PureIron의 **MES-lite / Schedule 기능의 v1 고객 노출 용어와 사용자 플로우 계약의 정본**이다. ([docs/wiki/sot/mes-schedule.md](wiki/sot/mes-schedule.md))
 - **sot-product** (14KB/18절) — PureIron은 중소 제조업과 산업시설을 위한 경량 Web HMI/SCADA 플랫폼이다. ([docs/wiki/sot/product.md](wiki/sot/product.md))
 - **sot-runtime-config** (14KB/12절) — PureIron 런타임 설정의 정본은 `backend/src/pureiron/config.py`의 `Settings(BaseSettings)` 클래스다. ([docs/wiki/sot/runtime-config.md](wiki/sot/runtime-config.md))
-- **sot-testing** (34KB/18절) — 이 문서는 PureIron의 **검증 계층, 실행 명령, 변경 유형별 최소 게이트**에 대한 정본이다. 개별 테스트의 상세 assertion은 `backend/tests/**`, `backend/tests/e2e/**`, `tests/e2e/**`가 정본이다. ([docs/wiki/sot/testing.md](wiki/sot/testing.md))
+- **sot-testing** (35KB/18절) — 이 문서는 PureIron의 **검증 계층, 실행 명령, 변경 유형별 최소 게이트**에 대한 정본이다. 개별 테스트의 상세 assertion은 `backend/tests/**`, `backend/tests/e2e/**`, `tests/e2e/**`가 정본이다. ([docs/wiki/sot/testing.md](wiki/sot/testing.md))
 
 ## SOT 외 구획 (필요할 때만 열기)
 - **gtm-first-contract** — 사업/첫 계약 결정. [docs/wiki/gtm/first-contract.md](wiki/gtm/first-contract.md)
