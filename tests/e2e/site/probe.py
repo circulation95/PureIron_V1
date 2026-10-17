@@ -6,9 +6,10 @@
 - `service`: `pureiron-updater` 활성 여부·재시작 횟수
 - `containers`: compose 프로젝트 `pureiron` 서비스별 이미지 `.Id`(= config digest, PD-19),
   `StartedAt`
-- `readyz`: web 경유 `/api/v1/readyz` 상태 코드와 본문, `project`: 편집 잠금
+- `readyz`: web 경유 `/api/v1/readyz` 상태 코드와 본문, `project`: 편집 잠금(`GET /api/v1/project`).
+  둘 다 무인증 경로라 r3(epoch 4)의 사용자 세션 인증 뒤에도 그대로 읽는다
 - `db`: schema epoch, CAGG 목록, 압축 chunk 수, `tag_history` 행 수, 실시간 집계 CAGG 목록,
-  `project_state.historian` 열 유무(epoch 3)
+  현재 스키마의 테이블·인덱스·열(`테이블.열`) 목록 — 업그레이드가 더한 산출물을 직접 확인한다
 - `docker`: storage driver·image store(classic이면 driver-type 없음)
 - `nft`: e2e 감시 테이블(`inet e2e_audit`) 카운터 — 외부로 나가려던 패킷 수
 
@@ -34,12 +35,20 @@ DB_SQL = {
     "compressed_chunks": "SELECT count(*) FROM timescaledb_information.chunks "
     "WHERE hypertable_name = 'tag_history' AND is_compressed",
     "tag_history_rows": "SELECT count(*) FROM tag_history",
-    # epoch 3(0009) 산출물: 실시간 집계 CAGG, project_state.historian 열(없으면 "", "0")
+    # epoch별 산출물은 이름 목록(쉼표 구분, 없으면 "")으로 내고 하네스가 집합으로 판정한다.
+    # 실시간 집계 CAGG(0009)
     "realtime_caggs": "SELECT coalesce(string_agg(view_name, ',' ORDER BY view_name), '') "
     "FROM timescaledb_information.continuous_aggregates WHERE NOT materialized_only",
-    "historian_column": "SELECT count(*) FROM information_schema.columns "
-    "WHERE table_schema = current_schema() AND table_name = 'project_state' "
-    "AND column_name = 'historian'",
+    # 테이블·인덱스(0010~0012 users·sessions·audit_log·alarms·alarm_journal 등)
+    "tables": "SELECT coalesce(string_agg(table_name, ',' ORDER BY table_name), '') "
+    "FROM information_schema.tables "
+    "WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'",
+    "indexes": "SELECT coalesce(string_agg(indexname, ',' ORDER BY indexname), '') "
+    "FROM pg_indexes WHERE schemaname = current_schema()",
+    # 열 `테이블.열`(0008 definition·definitions_rev, 0009 historian)
+    "columns": "SELECT coalesce(string_agg(table_name || '.' || column_name, ',' "
+    "ORDER BY table_name, column_name), '') FROM information_schema.columns "
+    "WHERE table_schema = current_schema()",
 }
 
 

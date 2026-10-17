@@ -2,12 +2,12 @@
 
     uv run --no-sync python tests/e2e/m2d/bundles.py fault-release --work W
     uv run --no-sync python tests/e2e/m2d/bundles.py site --work W --out O --gen 2 \\
-        --product 2026.10.2-fault1 --window-start 2026-10-05T00:00:00Z --window-end ...
-    uv run --no-sync python tests/e2e/m2d/bundles.py install --work W --out O --release 2026.10.1
+        --product 2026.10.3-fault1 --window-start 2026-10-05T00:00:00Z --window-end ...
+    uv run --no-sync python tests/e2e/m2d/bundles.py install --work W --out O --release 2026.10.2
 
-release 쌍(`BASE`·`NEXT`·`FAULT`)은 `release_pair.py`가 정한다(S3: r1→r2, fault r2f).
+release 쌍(`BASE`·`NEXT`·`FAULT`)은 `release_pair.py`가 정한다(S4: r2→r3, fault r3f).
 
-- `fault-release`: `FAULT`(r2', `2026.10.2-fault1`) — `NEXT` 이미지 그대로에 collector만 세션을 맺지
+- `fault-release`: `FAULT`(r3', `2026.10.3-fault1`) — `NEXT` 이미지 그대로에 collector만 세션을 맺지
   않는 파생 이미지(`sleep`). core는 healthy라 `up --wait`는 통과하고 `/readyz`(collector 세션)가
   실패해 `checking`에서 `E_HEALTH` → 롤백을 일으킨다. 저장소 `deploy/releases`는 건드리지 않고
   `W/releases`(저장소 release 기록 전부의 사본 + `FAULT`)와 `W/store`(`BASE`·`NEXT`는 실제 image
