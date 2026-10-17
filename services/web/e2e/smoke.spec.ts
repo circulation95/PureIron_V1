@@ -77,6 +77,13 @@ test("엔지니어: 로그인 → 5화면 → 알람 ACK → 감사 → 로그�
   });
 });
 
+test("로그아웃 상태에서 보호 경로는 ?next= 한 단계로 로그인에 보내고, 로그인 뒤 그 경로로 돌아온다", async ({ page }) => {
+  await page.goto("/alarms");
+  await expect(page).toHaveURL(/\/login\?next=%2Falarms$/);
+  await login(page, USERS.viewer);
+  await expect(page).toHaveURL(/\/alarms$/);
+});
+
 test("조회자: ACK 버튼과 감사 로그가 보이지 않는다", async ({ page }) => {
   await page.goto("/alarms");
   await login(page, USERS.viewer);

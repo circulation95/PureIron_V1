@@ -188,7 +188,7 @@ function HistoryView({ history, paths }: { history: History; paths: ReadonlyMap<
       <p className="summary">해상도: {RESOLUTION_LABELS[history.resolution]}</p>
       {truncated.length > 0 && (
         <p className="notice" role="note">
-          행 상한을 넘어 앞부분만 표시: {truncated.map((series) => paths.get(series.tag_id)).join(", ")}
+          행 상한을 넘어 앞부분만 표시: {truncated.map((series) => paths.get(series.tag_id) ?? `tag ${String(series.tag_id)}`).join(", ")}
         </p>
       )}
       <TrendChart data={data} labels={labels} />

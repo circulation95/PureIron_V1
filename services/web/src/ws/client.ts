@@ -111,7 +111,10 @@ export class RealtimeClient {
       return refs === 0;
     });
     if (added.length > 0) this.send({ type: "subscribe", tag_ids: added });
+    let released = false; // 두 번 불러도 다른 화면의 참조 계수를 깎지 않게
     return () => {
+      if (released) return;
+      released = true;
       const removed = tagIds.filter((id) => {
         const refs = (this.tagRefs.get(id) ?? 1) - 1;
         if (refs > 0) {
@@ -131,6 +134,7 @@ export class RealtimeClient {
     this.socket = socket;
     this.armSilenceTimer(socket);
     socket.onmessage = (event: MessageEvent) => {
+      if (this.socket !== socket) return; // 이전 소켓의 늦은 프레임이 현재 감시 타이머를 지우지 않게
       this.armSilenceTimer(socket);
       if (typeof event.data === "string") this.receive(event.data);
     };

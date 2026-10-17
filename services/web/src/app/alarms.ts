@@ -15,15 +15,29 @@ export function sortAlarms(alarms: readonly Alarm[]): Alarm[] {
 }
 
 /**
- * 전이 뒤 알람을 목록에 반영한다. NORMAL·RETIRED는 목록에서 뺀다.
- * 이미 더 늦은 전이(`changed_at`)가 반영돼 있으면 건너뛴다: 늦게 도착한 오래된 응답이 최신 이벤트를 덮어쓰지 않게.
+ * 전이 뒤 알람을 목록에 반영한다. NORMAL·RETIRED는 목록에서 뺀다. WS 이벤트는 한 연결 안에서 발행 순서대로 오므로
+ * 시각 비교 없이 도착 순서대로 적용한다(서버 시계가 뒤로 가도 최신 전이를 버리지 않는다).
  */
 export function upsertAlarm(alarms: readonly Alarm[], alarm: Alarm): Alarm[] {
-  const current = alarms.find((a) => a.alarm_id === alarm.alarm_id);
-  if (current !== undefined && changedAtMs(current) > changedAtMs(alarm)) return [...alarms];
   const rest = alarms.filter((a) => a.alarm_id !== alarm.alarm_id);
   if (alarm.state === "NORMAL" || alarm.state === "RETIRED") return rest;
   return sortAlarms([...rest, alarm]);
+}
+
+/** REST 결과(ACK 응답)는 목록에 이미 있는 알람만 갱신한다: 없다면 더 새로운 이벤트가 이미 뺀 것이다. */
+export function applyRestAlarm(alarms: readonly Alarm[], alarm: Alarm): Alarm[] {
+  return alarms.some((a) => a.alarm_id === alarm.alarm_id) ? upsertAlarm(alarms, alarm) : [...alarms];
+}
+
+/**
+ * 스냅샷 위에 로드 중 버퍼된 이벤트를 도착 순서대로 재생한다. `changed_at` 비교는 여기서만 쓴다:
+ * 같은 알람의 스냅샷이 더 새로우면 그 이벤트는 건너뛴다.
+ */
+export function mergeSnapshot(snapshot: readonly Alarm[], buffered: readonly Alarm[]): Alarm[] {
+  const snapshotMs = new Map(snapshot.map((a) => [a.alarm_id, changedAtMs(a)]));
+  return buffered
+    .filter((event) => (snapshotMs.get(event.alarm_id) ?? 0) <= changedAtMs(event))
+    .reduce(upsertAlarm, sortAlarms(snapshot));
 }
 
 export function isUnacked(alarm: Alarm): boolean {

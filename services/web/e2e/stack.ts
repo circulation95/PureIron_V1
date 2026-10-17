@@ -45,7 +45,7 @@ function run(cmd: string, args: readonly string[], env: NodeJS.ProcessEnv, stdin
     encoding: "utf-8",
     timeout: COMMAND_TIMEOUT_MS,
   });
-  return { ok: result.status === 0, output: `${result.stdout}${result.stderr}` };
+  return { ok: result.status === 0, output: [result.error?.message, result.stdout, result.stderr].filter(Boolean).join("\n") };
 }
 
 function compose(stack: Stack, args: readonly string[], options: { check?: boolean; stdin?: string } = {}) {
