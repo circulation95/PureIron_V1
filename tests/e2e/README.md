@@ -72,7 +72,7 @@ uv run python tests/e2e/m2d/run.py destroy         # VM·차분 디스크 삭제
 
 | 단계 | 확인 |
 |---|---|
-| `prepare` | WSL 사본에서 FAULT(`r3f`: NEXT 이미지에 collector가 세션을 맺지 않는 파생 → `/readyz` 503. 로컬 NEXT 이미지 digest가 기록과 다르면 store tar를 다시 load, 파생 뒤 core·web digest == NEXT 기록 확인), release 기록 version·epoch 대조, 설치 번들 **실빌드**(`fetch_debs.sh`·`build_updater.sh`, manifest release = BASE), g1(BASE) |
+| `prepare` | WSL 사본에서 FAULT(`r3f`: NEXT 이미지에 collector가 세션을 맺지 않는 파생 → `/readyz` 503. 로컬 NEXT 이미지 digest가 기록과 다르면 store tar를 다시 load, 파생 뒤 core·web digest == NEXT 기록 확인), release 기록 version·epoch·앱 envelope [epoch, epoch + 1] 대조, 설치 번들 **실빌드**(`fetch_debs.sh`·`build_updater.sh`, manifest release = BASE), g1(BASE) |
 | `vm` | golden(클라우드 이미지 → 64 GiB 동적 VHDX, 읽기 전용) 위 차분 디스크, seed ISO(cloud-init: 사용자·고정 IP·OS phone-home 끄기·nftables 감시 테이블) |
 | `install` | runbook 2단계(메타데이터만 전용 디렉터리에 추출 → `bootstrap-verify.sh` sha256·root 지문 대조) → `install.sh --offline-time-confirmed` → enroll → g1 → 서비스 시작. `/readyz` 200, overlay2 + classic store, 실행 이미지 `.Id` == BASE config digest. 압축 chunk 이력 시드, c0 기반(DB epoch == BASE epoch·BASE 산출물·NEXT 테이블 없음·압축 chunk·이력 행) 확인 후 체크포인트 `c0` |
 | `scenarios` | `c0`에서 거부(다른 현장 `E_SITE`·변조 `E_DIGEST`) exit 1, 같은 gen 재빌드는 no-op exit 0(R-7 멱등) — 모두 core `StartedAt`·실행 이미지 불변 / `c0`에서 BASE→NEXT(압축 DB 위 NEXT epoch migrate) 성공 + NEXT 스키마(epoch 4·0010~0012 테이블·인덱스·1m/1h CAGG와 실시간 집계·0008/0009 열·압축 chunk 유지) → 낮은 gen `E_GEN` 거부 / `c0`에서 FAULT → 5분 안에 BASE digest + `failed` |
@@ -120,4 +120,4 @@ systemd-resolved가 보내므로(컨테이너 질의도 Docker 내장 DNS → re
 
 ## 단위 테스트
 
-`tests/e2e/tests/` — phase 순서·상태 읽기·nft 규칙·seed ISO 왕복·PowerShell 인용·수렴 판정·release 쌍(BASE·NEXT 기록 대조 필수·crash 순서·항목 30개·c0/NEXT 스키마 집합 판정)·store symlink 다시 연결·스테이징 진단 기록(`stage_for_window`). G1 `unit`에 포함된다.
+`tests/e2e/tests/` — phase 순서·상태 읽기·nft 규칙·seed ISO 왕복·PowerShell 인용·수렴 판정·release 쌍(BASE·NEXT 기록 대조 필수·crash 순서·항목 30개·c0/NEXT 스키마 집합 판정)·store symlink 다시 연결·`ensure_image` 적재 조건·스테이징 진단 기록(`stage_for_window`). G1 `unit`에 포함된다.

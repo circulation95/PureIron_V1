@@ -14,7 +14,8 @@ release 쌍은 `release_pair.py`(`BASE`→`NEXT`, 헬스 실패 `FAULT`)가 정�
 3. `install` — runbook 2단계(전용 디렉터리에 메타데이터만 추출 → 지문·sha256 대조 →
    `bootstrap-verify.sh`) → `install.sh --offline-time-confirmed` → enroll → g1 apply → 서비스 시작.
    `/readyz` 200, classic image store(overlay2), 이미지 `.Id` == BASE config digest. 압축 chunk가
-   있는 이력을 넣고(DB epoch == BASE epoch 확인) 체크포인트 `c0`를 만든다.
+   있는 이력을 넣고(DB epoch == BASE epoch·BASE 산출물 있음·NEXT 테이블 없음 확인) 체크포인트
+   `c0`를 만든다.
 4. `scenarios` — `c0`에서 거부(다른 현장 `E_SITE`·변조 `E_DIGEST`) exit 1과 같은 gen 재빌드 no-op
    exit 0(R-7 멱등), 모두 core `StartedAt`·실행 이미지 불변. `c0`에서 BASE→NEXT(압축 DB 위 NEXT
    epoch migrate) 성공 + NEXT 스키마 확인 → 그 위에서 낮은 gen `E_GEN` 거부. `c0`에서 FAULT →
@@ -283,12 +284,22 @@ def digests_of(release_json: dict[str, object]) -> dict[str, str]:
 
 
 def check_record(name: str, record: dict[str, object]) -> None:
-    """release 기록이 쌍의 기대(달력 버전·스키마 epoch)와 같은지 — 다르면 잘못된 기반에서
-    30개를 돌리게 되므로 prepare에서 멈춘다."""
+    """release 기록이 쌍의 기대(달력 버전·스키마 epoch·앱 envelope [epoch, epoch + 1])와 같은지 —
+    다르면 잘못된 기반에서 30개를 돌리게 되므로 prepare에서 멈춘다. envelope는 롤백 판정(BASE
+    앱이 NEXT epoch DB에서 ready)의 전제다."""
     schema = cast(dict[str, object], record.get("schema") or {})
-    got = (record.get("version"), schema.get("epoch"))
-    if got != (RELEASES[name], EPOCHS[name]):
-        raise E2EError(f"{name}.json: (version, epoch) {got} != {(RELEASES[name], EPOCHS[name])}")
+    epoch = EPOCHS[name]
+    got = (
+        record.get("version"),
+        schema.get("epoch"),
+        schema.get("app_expected"),
+        schema.get("app_max_compatible"),
+    )
+    want = (RELEASES[name], epoch, epoch, epoch + 1)
+    if got != want:
+        raise E2EError(
+            f"{name}.json: (version, epoch, app_expected, app_max_compatible) {got} != {want}"
+        )
 
 
 def step_prepare(ctx: Context) -> None:

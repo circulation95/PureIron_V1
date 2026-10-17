@@ -27,6 +27,7 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
@@ -52,15 +53,28 @@ def _run(*cmd: str, cwd: Path = ROOT) -> None:
     subprocess.run(cmd, cwd=cwd, check=True)
 
 
-def ensure_image(tag: str, tar: Path, want: str, scratch: Path) -> None:
+def local_digest(tag: str, scratch: Path) -> str | None:
+    """로컬 docker 이미지 `tag`의 config digest(`docker save` 경유, `scratch`에 임시 tar). 없으면
+    None."""
+    inspect = subprocess.run(("docker", "image", "inspect", tag), capture_output=True, check=False)
+    return config_digest_of_image(tag, scratch) if inspect.returncode == 0 else None
+
+
+def ensure_image(
+    tag: str,
+    tar: Path,
+    want: str,
+    *,
+    digest_of: Callable[[str], str | None],
+    load: Callable[[Path], None],
+) -> None:
     """로컬 `tag`의 config digest가 release 기록 값 `want`가 되게 한다. 없거나 다르면
     (같은 태그로 다시 빌드한 이미지) image store의 tar(`docker save`로 태그 포함)에서 적재하고
     다시 확인한다."""
-    inspect = subprocess.run(("docker", "image", "inspect", tag), capture_output=True, check=False)
-    if inspect.returncode == 0 and config_digest_of_image(tag, scratch) == want:
+    if digest_of(tag) == want:
         return
-    _run("docker", "load", "-q", "-i", str(tar))
-    got = config_digest_of_image(tag, scratch)
+    load(tar)
+    got = digest_of(tag)
     if got != want:
         raise SystemExit(f"{tag}: config digest {got} != release record {want} ({tar})")
 
@@ -105,12 +119,15 @@ def fault_release(work: Path) -> Path:
     build_dir = work / "fault-collector"
     build_dir.mkdir(exist_ok=True)
     (build_dir / "Dockerfile").write_text(FAULT_DOCKERFILE.format(base=FAULT_BASE), "utf-8")
+    # digest 계산용 임시 tar는 docker build context(build_dir) 밖에 둔다.
+    scratch = work / "digest-scratch"
     for svc in APP_SERVICES:
         ensure_image(
             f"pureiron/{svc}:{FAULT_BASE}",
             real_store / FAULT_BASE / f"{svc}.tar",
             base_images[svc]["config_digest"],
-            build_dir,
+            digest_of=lambda tag: local_digest(tag, scratch),
+            load=lambda tar: _run("docker", "load", "-q", "-i", str(tar)),
         )
     _run("docker", "build", "-q", "-t", f"pureiron/collector:{FAULT_NAME}", str(build_dir))
     images: dict[str, dict[str, str]] = {}

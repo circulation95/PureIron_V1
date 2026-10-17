@@ -207,6 +207,61 @@ def test_relink_repairs_broken_and_stale_symlinks(tmp_path: Path) -> None:
         bundles.relink(tmp_path / "x", tmp_path / "missing")
     with pytest.raises(SystemExit):  # 진짜 파일은 지우지 않는다
         bundles.relink(new, store)
+    assert not new.is_symlink()
+    assert new.read_text("utf-8") == "x"
+    with pytest.raises(SystemExit):  # 진짜 디렉터리(store 링크 자리)도 그대로 둔다
+        bundles.relink(other, store)
+    assert other.is_dir()
+    assert not other.is_symlink()
+
+
+class FakeDocker:
+    """`ensure_image` 주입용 — 태그별 로컬 digest와 tar를 load했을 때 남길 digest."""
+
+    def __init__(self, local: str | None, after_load: str) -> None:
+        self.local, self.after_load, self.loaded = local, after_load, 0
+
+    def digest_of(self, tag: str) -> str | None:
+        return self.local
+
+    def load(self, tar: Path) -> None:
+        self.loaded += 1
+        self.local = self.after_load
+
+
+@pytest.mark.parametrize(
+    ("local", "after_load", "loads"),
+    [
+        ("sha256:want", "sha256:want", 0),  # 이미 기록과 같다 → 적재하지 않는다
+        (None, "sha256:want", 1),  # 태그 없음 → store tar 적재
+        ("sha256:rebuilt", "sha256:want", 1),  # 같은 태그로 다시 빌드한 이미지 → 다시 적재
+    ],
+)
+def test_ensure_image_loads_only_when_digest_differs(
+    local: str | None, after_load: str, loads: int
+) -> None:
+    docker = FakeDocker(local, after_load)
+    bundles.ensure_image(
+        "pureiron/core:r3",
+        Path("core.tar"),
+        "sha256:want",
+        digest_of=docker.digest_of,
+        load=docker.load,
+    )
+    assert docker.loaded == loads
+
+
+def test_ensure_image_stops_when_store_tar_differs() -> None:
+    docker = FakeDocker("sha256:rebuilt", "sha256:other")
+    with pytest.raises(SystemExit):
+        bundles.ensure_image(
+            "pureiron/core:r3",
+            Path("core.tar"),
+            "sha256:want",
+            digest_of=docker.digest_of,
+            load=docker.load,
+        )
+    assert docker.loaded == 1
 
 
 RELEASE_RECORDS = Path(__file__).resolve().parents[3] / "deploy" / "releases"
@@ -238,6 +293,19 @@ def test_release_pair_matches_repo_records(name: str) -> None:
         {"version": RELEASES[NEXT], "schema": {"epoch": EPOCHS[NEXT] - 1}},
         {"version": "2026.10.0", "schema": {"epoch": EPOCHS[NEXT]}},
         {"version": RELEASES[NEXT]},
+        # envelope가 [epoch, epoch + 1]이 아니면 롤백 판정의 전제가 기록과 어긋난다
+        {
+            "version": RELEASES[NEXT],
+            "schema": {
+                "epoch": EPOCHS[NEXT],
+                "app_expected": EPOCHS[NEXT],
+                "app_max_compatible": 9,
+            },
+        },
+        {
+            "version": RELEASES[NEXT],
+            "schema": {"epoch": EPOCHS[NEXT], "app_expected": EPOCHS[BASE]},
+        },
     ],
 )
 def test_check_record_rejects_other_release(record: dict[str, object]) -> None:
