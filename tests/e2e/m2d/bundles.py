@@ -28,10 +28,11 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "deploy" / "build"))
 
-from images import config_digest_from_tar, image_store
+from images import config_digest_from_tar, config_digest_of_image, image_store
 from release_pair import BASE, FAULT, NEXT, RELEASES
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -51,12 +52,32 @@ def _run(*cmd: str, cwd: Path = ROOT) -> None:
     subprocess.run(cmd, cwd=cwd, check=True)
 
 
-def ensure_image(tag: str, tar: Path) -> None:
-    """`tag`가 로컬 docker에 없으면 image store의 tar(`docker save`로 태그 포함)에서 적재한다."""
+def ensure_image(tag: str, tar: Path, want: str, scratch: Path) -> None:
+    """로컬 `tag`의 config digest가 release 기록 값 `want`가 되게 한다. 없거나 다르면
+    (같은 태그로 다시 빌드한 이미지) image store의 tar(`docker save`로 태그 포함)에서 적재하고
+    다시 확인한다."""
     inspect = subprocess.run(("docker", "image", "inspect", tag), capture_output=True, check=False)
-    if inspect.returncode != 0:
-        _run("docker", "load", "-q", "-i", str(tar))
-    _run("docker", "image", "inspect", "--format", "{{.Id}}", tag)
+    if inspect.returncode == 0 and config_digest_of_image(tag, scratch) == want:
+        return
+    _run("docker", "load", "-q", "-i", str(tar))
+    got = config_digest_of_image(tag, scratch)
+    if got != want:
+        raise SystemExit(f"{tag}: config digest {got} != release record {want} ({tar})")
+
+
+def relink(link: Path, target: Path) -> None:
+    """`link`를 `target`을 가리키는 symlink로 맞춘다. 끊겼거나 다른 곳(이전 쌍·옮긴 store)을
+    가리키면 다시 건다 — `exists()`는 끊긴 symlink를 없다고 봐서 `symlink_to`가
+    FileExistsError를 냈다."""
+    if not target.exists():
+        raise SystemExit(f"{target} missing")
+    if link.is_symlink():
+        if link.readlink() == target:
+            return
+        link.unlink()
+    elif link.exists():
+        raise SystemExit(f"{link} exists and is not a symlink")
+    link.symlink_to(target, target_is_directory=target.is_dir())
 
 
 def fault_release(work: Path) -> Path:
@@ -75,10 +96,9 @@ def fault_release(work: Path) -> Path:
     for record_path in sorted((ROOT / "deploy" / "releases").glob("*.json")):
         shutil.copy2(record_path, releases / record_path.name)
     for name in (BASE, NEXT):
-        link = store / name
-        if not link.is_symlink():
-            link.symlink_to(real_store / name, target_is_directory=True)
+        relink(store / name, real_store / name)
     base = json.loads((releases / f"{FAULT_BASE}.json").read_text(encoding="utf-8"))
+    base_images = cast(dict[str, dict[str, str]], base["images"])
     fault_store = store / FAULT_NAME
     fault_store.mkdir(exist_ok=True)
 
@@ -86,7 +106,12 @@ def fault_release(work: Path) -> Path:
     build_dir.mkdir(exist_ok=True)
     (build_dir / "Dockerfile").write_text(FAULT_DOCKERFILE.format(base=FAULT_BASE), "utf-8")
     for svc in APP_SERVICES:
-        ensure_image(f"pureiron/{svc}:{FAULT_BASE}", real_store / FAULT_BASE / f"{svc}.tar")
+        ensure_image(
+            f"pureiron/{svc}:{FAULT_BASE}",
+            real_store / FAULT_BASE / f"{svc}.tar",
+            base_images[svc]["config_digest"],
+            build_dir,
+        )
     _run("docker", "build", "-q", "-t", f"pureiron/collector:{FAULT_NAME}", str(build_dir))
     images: dict[str, dict[str, str]] = {}
     for svc in APP_SERVICES:
@@ -96,10 +121,13 @@ def fault_release(work: Path) -> Path:
         tar = fault_store / f"{svc}.tar"
         _run("docker", "save", "-o", str(tar), tag)
         images[svc] = {"tag": tag, "config_digest": config_digest_from_tar(tar)}
-    site_db = fault_store / "site-db.tar"
-    if not site_db.exists():
-        site_db.symlink_to(real_store / FAULT_BASE / "site-db.tar")
-    images["site-db"] = base["images"]["site-db"]
+        # core·web은 FAULT_BASE 이미지 그대로여야 한다(collector만 파생) — 롤백 판정이
+        # 이 digest를 쓴다.
+        want = base_images[svc]["config_digest"]
+        if svc != "collector" and images[svc]["config_digest"] != want:
+            raise SystemExit(f"{tag}: config digest {images[svc]['config_digest']} != {want}")
+    relink(fault_store / "site-db.tar", real_store / FAULT_BASE / "site-db.tar")
+    images["site-db"] = base_images["site-db"]
     record = {
         "name": FAULT_NAME,
         "release": FAULT_NAME,

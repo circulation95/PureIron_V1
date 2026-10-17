@@ -185,6 +185,28 @@ def test_seed_enables_resolved_debug_for_dns_evidence() -> None:
     assert "SYSTEMD_LOG_LEVEL=debug" in text
 
 
+def test_relink_repairs_broken_and_stale_symlinks(tmp_path: Path) -> None:
+    old, new = tmp_path / "old.tar", tmp_path / "new.tar"
+    new.write_text("x", "utf-8")
+    link = tmp_path / "site-db.tar"
+    link.symlink_to(old)  # 끊긴 symlink — 예전에는 exists() False → symlink_to가 FileExistsError
+    bundles.relink(link, new)
+    assert link.readlink() == new
+    bundles.relink(link, new)  # 이미 맞으면 그대로
+    assert link.readlink() == new
+    store, other = tmp_path / "store", tmp_path / "other"
+    store.mkdir()
+    other.mkdir()
+    dir_link = tmp_path / "r2"
+    dir_link.symlink_to(other, target_is_directory=True)  # 다른 곳(이전 store)을 가리킴
+    bundles.relink(dir_link, store)
+    assert dir_link.readlink() == store
+    with pytest.raises(SystemExit):
+        bundles.relink(tmp_path / "x", tmp_path / "missing")
+    with pytest.raises(SystemExit):  # 진짜 파일은 지우지 않는다
+        bundles.relink(new, store)
+
+
 RELEASE_RECORDS = Path(__file__).resolve().parents[3] / "deploy" / "releases"
 
 
