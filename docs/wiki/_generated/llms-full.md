@@ -1139,6 +1139,17 @@ plan M2 종료 조건 실측.
 - crash 18회 모두 16~109 s 안에 수렴(`fetched`·`verified` 92~109 s, 나머지 16~38 s, M2는 15~106 s). nftables 외부 접속 시도 누적 0.
 - 번들: install 80 MB, r2 현장 번들 739 MB(site-db 599 MB, core 61 MB), 빌드 약 55 s.
 
+## S4 r2→r3 (run `20261017T132857Z`, 30/30 PASS, missing 0, 2026-10-17)
+
+같은 하네스, 쌍 r2→r3(fault `r3f`). 1차 run `20261017T113834Z`는 16/30 — 하네스 결함 1건을 고친 2차가 이 기록이다. 제품 코드는 바꾸지 않았다.
+
+- 폐쇄망 부트스트랩 + g1(r2) 53 s. c0 = epoch 3(1분·1시간 CAGG 실시간 집계, 0008·0009 열) + 압축 chunk, epoch 4 테이블 없음.
+- r2→r3 25 s(`switching` 12 s, `migrating` 2 s) → epoch 4, `users`·`sessions`·`audit_log`·`alarms`·`alarm_journal`과 인덱스 5개, CAGG·BASE 열·압축 chunk·이력 행 보존. `E_SITE`·`E_DIGEST`·`E_GEN` 거부와 같은 gen no-op은 M2·S3와 같다(core `StartedAt`·실행 이미지 불변).
+- r3′ → `E_HEALTH`, 135 s 안에 r2 digest 복귀 + `failed`(`checking` 90 s·`rolling_back` 20 s). crash 단계의 r3→r2 시도도 `succeeded` — r2 앱(envelope [3, 4])이 epoch 4 DB에서 ready인 롤백 경로 실측.
+- crash 18회 모두 16~99 s 안에 수렴(`fetched`·`verified` 94~99 s, 나머지 16~57 s). service 대상 16회는 스테이징이 창보다 78~82 s 먼저 끝났다(apply rc 0, 1회). nftables 외부 접속 시도 누적 0.
+- 번들: install 80 MB, r3 현장 번들 740 MB(site-db 599 MB, core 61 MB), 빌드 약 60 s.
+- **1차 실패와 수정**: crash 14건이 `staged_before_window`만 false(복구 판정은 모두 true). 14건은 정확히 "apply ssh가 끝날 때 crash 감시자 ssh가 살아 있던" 케이스였다(감시자가 먼저 끝나는 `verified`, CLI 대상 `fetched`는 통과). 실측을 콘솔에서 띄우면 동시에 도는 ssh 둘이 같은 콘솔 stdin을 물려받는다 → `tests/e2e/infra/vm.py`의 ssh·scp를 모두 `stdin=DEVNULL`(`ssh -n`과 같음)로 띄우게 고쳤다. 2차는 같은 조건(콘솔 실행, 14건 모두 `watcher_alive` true)에서 통과했다. 하네스는 crash마다 `stage`(apply rc·시도 횟수·창까지 여유·감시자 생존)를 결과에 남긴다.
+
 ---
 
 <!-- source: docs/wiki/sot/agent-rules.md -->
@@ -1594,14 +1605,14 @@ PureIron V1은 현장 한 곳에 설치되는 **서비스 4개(collector·core·
 
 ## 시스템 구성 (ADR-019)
 
-| 구성 | 역할 | 구현 상태 (2026-10-11) |
+| 구성 | 역할 | 구현 상태 (2026-10-17) |
 |---|---|---|
 | `collector` | 장비 통신, `ValueBatch`·`DeviceHealth` 송신. 무상태·DB 접근 없음, 60s 메모리 링버퍼 | Modbus TCP 드라이버·링버퍼·replay·DeviceHealth (M3a) |
-| `core` | 태그·이력·장비 상태·프로젝트 적용 + 알람·인증·감사·실시간(M3b), REST `/api/v1`, gRPC 서버 | acquisition·tags·historian·project (M3a), 알람·인증·감사·WS·`/api/v1/devices`는 M3b |
-| `web` | nginx + React(로그인 + 태그 현황·알람/ACK·트렌드·장비 상태·감사 로그) | readyz 상태 화면 1개(M1), 5화면은 M3b |
-| `site-db` | TimescaleDB PG16(`pureiron/site-db:2.30.2-pg16`) | 마이그레이션 `0001~0009`, epoch 3 |
+| `core` | 태그·이력·장비 상태·프로젝트 적용 + 알람·인증·감사·실시간(M3b), REST `/api/v1`, gRPC 서버 | acquisition·tags·historian·project (M3a), 알람·인증·감사·WS·`/api/v1/devices` (M3b) |
+| `web` | nginx + React(로그인 + 태그 현황·알람/ACK·트렌드·장비 상태·감사 로그) | 로그인 + 5화면, WS 실시간, Playwright 스모크 (M3b) |
+| `site-db` | TimescaleDB PG16(`pureiron/site-db:2.30.2-pg16`) | 마이그레이션 `0001~0012`, epoch 4 (r3) |
 | `ai` | core read-only API 소비 | 계약만, 첫 완료 범위 제외 |
-| Updater | 호스트 systemd 서비스(컨테이너 아님): 번들 검증·백업·마이그레이션·전환·롤백 | 완료(M2), VM 실측 30/30(r0→r1, r1→r2) |
+| Updater | 호스트 systemd 서비스(컨테이너 아님): 번들 검증·백업·마이그레이션·전환·롤백 | 완료(M2), VM 실측 30/30(r0→r1, r1→r2, r2→r3) |
 | control-api | 벤더 내부 중앙 API: 등록·heartbeat·desired·reports·drafts·fleet | `GET /api/v1/healthz` 골격만(M4) |
 | control-web | 중앙 읽기 전용 표(basic auth) | 미착수(M4) |
 | `simulator` | 개발용 Modbus 시뮬레이터(compose profile `dev`) | `deploy/simulator/` |
@@ -1747,14 +1758,14 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
 - 폐쇄망 현장도 같은 `.pib`를 USB 등으로 반입해 같은 검증을 거친다. 설치는 install 번들(`deploy/install/`)로 오프라인 부트스트랩.
 - 이미지 신원 = config digest(release 기록 `deploy/releases/<r>.json`). 현장 이미지는 번들에서 `docker load`만 한다.
 
-## V1 구현 현황 (2026-10-11)
+## V1 구현 현황 (2026-10-17)
 
 | 마일스톤 | 내용 | 상태 |
 |---|---|---|
 | M1 | 저장소 골격, core 조립·import 계약, G1 게이트(CI), compose | 완료 |
 | M2 | Updater·bundle-tools·install 번들, r0·r1, Hyper-V VM 실측 30/30 | 완료 |
 | M3a | collector(Modbus·링버퍼·replay), core tags·historian·정의, r2(epoch 3), VM 실측 r1→r2 30/30 | 완료 |
-| M3b | alarms·auth·audit·realtime·devices·history API, web 로그인 + 5화면, r3(epoch 4) | 진행(S4: r2→r3 VM 재검증 남음) |
+| M3b | alarms·auth·audit·realtime·devices·history API, web 로그인 + 5화면, r3(epoch 4), VM 실측 r2→r3 30/30 | 완료 |
 | M3c | PLC 쓰기 경로(ADR-013 가드레일) | 예정 |
 | M4 | control-api·control-web·fleet·release 파이프라인 | 예정 |
 | M5 | 프로젝트 수명주기(project-tools 완성, apply·드래프트 회수) | 예정 |
@@ -2311,7 +2322,7 @@ window: { recurring: { tz: Asia/Seoul, days: [sat, sun], start: "02:00", end: "0
 
 - **r1 = epoch 2**(`deploy/releases/r1.json`, 2026.10.1): `tag_history_1h`(1시간 CAGG, 1분 CAGG와 같은 열 `avg·min·max·last·samples`). 1분 CAGG 위에 계층으로 쌓지 않고 원본 `tag_history`에서 직접 집계한다 — 1시간 refresh가 1분 policy 범위(1일)에 묶이지 않게(압축 chunk도 읽음). 앱 envelope는 [2, 3] — r0 앱(envelope [1, 2])은 epoch 2 DB에서 계속 ready다(롤백 경로).
 - **r2 = epoch 3**(`deploy/releases/r2.json`, 2026.10.2, S3): `0008`(장비·태그 정의 jsonb)·`0009`(historian 설정·CAGG 실시간 집계, 아래 M3a-3 절). 앱 envelope는 [3, 4] — r1 앱(envelope [2, 3])은 epoch 3 DB에서 계속 ready다(롤백 경로).
-- **r3 = epoch 4**(`deploy/releases/r3.json`, 2026.10.3, S4·M3b 마감): `0010`(사용자·세션)·`0011`(감사 기록)·`0012`(알람 정의·저널). 테이블만 더하고 기존 객체는 바꾸지 않는다. 앱 envelope는 [4, 5] — r2 앱(envelope [3, 4])은 epoch 4 DB에서도 ready 조건(envelope)을 만족한다(롤백 경로). 근거는 g1 n-minus-1: r2 이미지 자신의 `migrate status`가 epoch 4 DB에서 cur=4·app_expected 3·envelope 안·checksum ok·`unknown_applied` [10, 11, 12], 같은 DB에서 r2 core-test 실패 0·waiver 0(새 DB·compose 전용 테스트는 설계상 skip).
+- **r3 = epoch 4**(`deploy/releases/r3.json`, 2026.10.3, S4·M3b 마감): `0010`(사용자·세션)·`0011`(감사 기록)·`0012`(알람 정의·저널). 테이블만 더하고 기존 객체는 바꾸지 않는다. 앱 envelope는 [4, 5] — r2 앱(envelope [3, 4])은 epoch 4 DB에서도 ready 조건(envelope)을 만족한다(롤백 경로). 근거는 g1 n-minus-1: r2 이미지 자신의 `migrate status`가 epoch 4 DB에서 cur=4·app_expected 3·envelope 안·checksum ok·`unknown_applied` [10, 11, 12], 같은 DB에서 r2 core-test 실패 0·waiver 0(새 DB·compose 전용 테스트는 설계상 skip). VM 실측 r2→r3 30/30(run `20261017T132857Z`, [vm-e2e-runs](../reports/vm-e2e-runs.md)): 압축 chunk가 있는 epoch 3 DB에서 25 s, r3′ 헬스 실패 → 135 s 안에 r2 digest 복귀, crash 18회 수렴.
 - **CAGG 조회 계약**(1분·1시간 공통):
   - `samples` = bucket의 행 수(`count(*)`, `value_num`이 NULL인 bool·BAD 행 포함)라 `avg(value_num)`의 분모와 다르다. 가중 롤업에 쓰지 않는다(필요하면 다음 epoch에 `count(value_num)` 열을 더한다).
   - `materialized_only`(기본 true)라 policy가 아직 채우지 않은 구간은 원본으로 돌아가 읽지 않는다. 1시간 CAGG의 최신 구간은 `end_offset` 1시간 + 주기 1시간으로 최대 약 2시간 늦다 — 소비자(M3a historian)는 최근 구간을 1분 CAGG·원본과 합쳐 읽는다.

@@ -87,9 +87,10 @@ report-mvp-gap	docs/wiki/reports/mvp-gap.md	다음-구현-우선순위-issue-후
 report-mvp-gap	docs/wiki/reports/mvp-gap.md	다음-후보-backlog-잔여만	80	8	902	h2	다음 후보 backlog (잔여만)
 report-mvp-gap	docs/wiki/reports/mvp-gap.md	v1에서-유지되는-제외-backlog-낮춤	88	9	456	h2	v1에서 유지되는 제외 (backlog 낮춤)
 report-mvp-gap	docs/wiki/reports/mvp-gap.md	검증	97	8	147	h2	검증
-report-vm-e2e-runs	docs/wiki/reports/vm-e2e-runs.md	hyper-v-vm-실측-기록	16	28	4065	h1	Hyper-V VM 실측 기록
-report-vm-e2e-runs	docs/wiki/reports/vm-e2e-runs.md	m2-r0r1-run-20261005t055523z-3030-pass	22	13	2044	h2	M2 r0→r1 (run `20261005T055523Z`, 30/30 PASS)
-report-vm-e2e-runs	docs/wiki/reports/vm-e2e-runs.md	s3-r1r2-run-20261009t231040z-3030-pass-missing-0-2026-10-10	35	9	1123	h2	S3 r1→r2 (run `20261009T231040Z`, 30/30 PASS, missing 0, 2026-10-10)
+report-vm-e2e-runs	docs/wiki/reports/vm-e2e-runs.md	hyper-v-vm-실측-기록	18	39	6038	h1	Hyper-V VM 실측 기록
+report-vm-e2e-runs	docs/wiki/reports/vm-e2e-runs.md	m2-r0r1-run-20261005t055523z-3030-pass	24	13	2044	h2	M2 r0→r1 (run `20261005T055523Z`, 30/30 PASS)
+report-vm-e2e-runs	docs/wiki/reports/vm-e2e-runs.md	s3-r1r2-run-20261009t231040z-3030-pass-missing-0-2026-10-10	37	10	1124	h2	S3 r1→r2 (run `20261009T231040Z`, 30/30 PASS, missing 0, 2026-10-10)
+report-vm-e2e-runs	docs/wiki/reports/vm-e2e-runs.md	s4-r2r3-run-20261017t132857z-3030-pass-missing-0-2026-10-17	47	10	1972	h2	S4 r2→r3 (run `20261017T132857Z`, 30/30 PASS, missing 0, 2026-10-17)
 sot-agent-rules	docs/wiki/sot/agent-rules.md	agent-rules-sot	15	215	17834	h1	Agent Rules SOT
 sot-agent-rules	docs/wiki/sot/agent-rules.md	이-문서의-역할	23	33	2198	h2	이 문서의 역할
 sot-agent-rules	docs/wiki/sot/agent-rules.md	작업-전-컨텍스트-로딩-순서	56	17	632	h2	작업 전 컨텍스트 로딩 순서
@@ -118,10 +119,10 @@ sot-api-events	docs/wiki/sot/api-events.md	v1-인증감사-api-apiv1-m3b-1-구�
 sot-api-events	docs/wiki/sot/api-events.md	v1-알람실시간장비이력-api-apiv1-m3b-2-구현	160	26	5201	h2	V1 알람·실시간·장비·이력 API (`/api/v1`, M3b-2 구현)
 sot-api-events	docs/wiki/sot/api-events.md	websocket-apiv1ws-v1-m3b-2	176	10	2259	h3	WebSocket `/api/v1/ws` (V1, M3b-2)
 sot-api-events	docs/wiki/sot/api-events.md	내부-이벤트-버스	186	18	1432	h2	내부 이벤트 버스
-sot-architecture	docs/wiki/sot/architecture.md	architecture-sot	25	228	18228	h1	Architecture SOT
+sot-architecture	docs/wiki/sot/architecture.md	architecture-sot	25	228	18249	h1	Architecture SOT
 sot-architecture	docs/wiki/sot/architecture.md	이-문서의-원천	39	8	449	h2	이 문서의 원천
 sot-architecture	docs/wiki/sot/architecture.md	아키텍처-경계	47	10	864	h2	아키텍처 경계
-sot-architecture	docs/wiki/sot/architecture.md	시스템-구성-adr-019	57	19	1917	h2	시스템 구성 (ADR-019)
+sot-architecture	docs/wiki/sot/architecture.md	시스템-구성-adr-019	57	19	1946	h2	시스템 구성 (ADR-019)
 sot-architecture	docs/wiki/sot/architecture.md	통신-경계-adr-020	76	17	1456	h2	통신 경계 (ADR-020)
 sot-architecture	docs/wiki/sot/architecture.md	core-구조	93	33	2356	h2	core 구조
 sot-architecture	docs/wiki/sot/architecture.md	core-domain-model-boundary-sot	126	14	1245	h2	Core Domain Model Boundary (SoT)
@@ -130,7 +131,7 @@ sot-architecture	docs/wiki/sot/architecture.md	이벤트-버스--잠금-규율	1
 sot-architecture	docs/wiki/sot/architecture.md	지원-디바이스-프로토콜-v1	181	11	796	h2	지원 디바이스 프로토콜 (v1)
 sot-architecture	docs/wiki/sot/architecture.md	db--마이그레이션-adr-021-adr-024	192	9	716	h2	DB · 마이그레이션 (ADR-021, ADR-024)
 sot-architecture	docs/wiki/sot/architecture.md	배포--중앙-adr-022-adr-023	201	11	985	h2	배포 · 중앙 (ADR-022, ADR-023)
-sot-architecture	docs/wiki/sot/architecture.md	v1-구현-현황-2026-10-11	212	14	861	h2	V1 구현 현황 (2026-10-11)
+sot-architecture	docs/wiki/sot/architecture.md	v1-구현-현황-2026-10-17	212	14	853	h2	V1 구현 현황 (2026-10-17)
 sot-architecture	docs/wiki/sot/architecture.md	프론트엔드-경계	226	6	417	h2	프론트엔드 경계
 sot-architecture	docs/wiki/sot/architecture.md	legacy-참고-pureiron_ignition	232	21	1696	h2	legacy 참고 (PureIron_ignition)
 sot-architecture	docs/wiki/sot/architecture.md	tagsourcekind-taxonomy	243	6	521	h3	TagSourceKind Taxonomy
@@ -149,7 +150,7 @@ sot-coding-style	docs/wiki/sot/coding-style.md	10-프론트엔드-servicesweb-�
 sot-coding-style	docs/wiki/sot/coding-style.md	11-리뷰-체크리스트-가독성구조	232	17	1522	h2	11. 리뷰 체크리스트 (가독성·구조)
 sot-coding-style	docs/wiki/sot/coding-style.md	12-현재-코드와의-차이-백로그-2026-10-11-검토-기준	249	14	1500	h2	12. 현재 코드와의 차이 (백로그, 2026-10-11 검토 기준)
 sot-coding-style	docs/wiki/sot/coding-style.md	13-이-문서를-바꾸는-법	263	4	281	h2	13. 이 문서를 바꾸는 법
-sot-data-contracts	docs/wiki/sot/data-contracts.md	data-contracts-sot	20	324	50495	h1	Data Contracts SOT
+sot-data-contracts	docs/wiki/sot/data-contracts.md	data-contracts-sot	20	324	50707	h1	Data Contracts SOT
 sot-data-contracts	docs/wiki/sot/data-contracts.md	이-문서의-원천	28	8	847	h2	이 문서의 원천
 sot-data-contracts	docs/wiki/sot/data-contracts.md	마이그레이션-규율	36	17	1446	h2	마이그레이션 규율
 sot-data-contracts	docs/wiki/sot/data-contracts.md	tag-정의-계약	53	20	1040	h2	Tag 정의 계약
@@ -159,7 +160,7 @@ sot-data-contracts	docs/wiki/sot/data-contracts.md	historian-retention--query-wi
 sot-data-contracts	docs/wiki/sot/data-contracts.md	project-config-root-계약	137	57	5026	h2	Project config root 계약
 sot-data-contracts	docs/wiki/sot/data-contracts.md	project-package-exportimport-계약	161	33	3368	h3	Project package export/import 계약
 sot-data-contracts	docs/wiki/sot/data-contracts.md	문서화-원칙	194	7	385	h2	문서화 원칙
-sot-data-contracts	docs/wiki/sot/data-contracts.md	목표-설계미구현	201	143	34695	h2	목표 설계(미구현)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	목표-설계미구현	201	143	34907	h2	목표 설계(미구현)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	마이그레이션스키마-호환-adr-024	205	8	1879	h3	마이그레이션·스키마 호환 (ADR-024)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	기록-정책-adr-021	213	4	195	h3	기록 정책 (ADR-021)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	프로젝트-정본-adr-025	217	19	1460	h3	프로젝트 정본 (ADR-025)
@@ -168,7 +169,7 @@ sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m1-2026-10-0
 sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m2a-번들-서명검증-2026-10-04	260	9	1892	h3	V1 구현 현황 (M2a 번들 서명·검증, 2026-10-04)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m2b-updater-상태기계recover-2026-10-05	269	13	2510	h3	V1 구현 현황 (M2b Updater 상태기계·recover, 2026-10-05)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m2c-설치-번들부트스트랩systemdenroll-2026-10-05	282	10	3620	h3	V1 구현 현황 (M2c 설치 번들·부트스트랩·systemd·enroll, 2026-10-05)
-sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m2d-r1-release-2026-10-05	292	13	4617	h3	V1 구현 현황 (M2d r1 release, 2026-10-05)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m2d-r1-release-2026-10-05	292	13	4829	h3	V1 구현 현황 (M2d r1 release, 2026-10-05)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m2d-hyper-v-vm-실측-2026-10-05	305	10	2440	h3	V1 구현 현황 (M2d Hyper-V VM 실측, 2026-10-05)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m3a-3-historian-2026-10-09	315	15	6629	h3	V1 구현 현황 (M3a-3 historian, 2026-10-09)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m3b-1-authaudit-2026-10-11	330	7	2305	h3	V1 구현 현황 (M3b-1 auth·audit, 2026-10-11)

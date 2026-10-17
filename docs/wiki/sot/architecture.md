@@ -17,9 +17,9 @@ sources:
   - services/updater/src/pureiron_updater/phases.py
   - packages/contracts/collector.proto
   - deploy/compose/site.compose.yml
-  - deploy/releases/r2.json
+  - deploy/releases/r3.json
   - https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/wiki/sot/architecture.md
-last_verified: 2026-10-11
+last_verified: 2026-10-17
 ---
 
 # Architecture SOT
@@ -56,14 +56,14 @@ PureIron V1은 현장 한 곳에 설치되는 **서비스 4개(collector·core·
 
 ## 시스템 구성 (ADR-019)
 
-| 구성 | 역할 | 구현 상태 (2026-10-11) |
+| 구성 | 역할 | 구현 상태 (2026-10-17) |
 |---|---|---|
 | `collector` | 장비 통신, `ValueBatch`·`DeviceHealth` 송신. 무상태·DB 접근 없음, 60s 메모리 링버퍼 | Modbus TCP 드라이버·링버퍼·replay·DeviceHealth (M3a) |
-| `core` | 태그·이력·장비 상태·프로젝트 적용 + 알람·인증·감사·실시간(M3b), REST `/api/v1`, gRPC 서버 | acquisition·tags·historian·project (M3a), 알람·인증·감사·WS·`/api/v1/devices`는 M3b |
-| `web` | nginx + React(로그인 + 태그 현황·알람/ACK·트렌드·장비 상태·감사 로그) | readyz 상태 화면 1개(M1), 5화면은 M3b |
-| `site-db` | TimescaleDB PG16(`pureiron/site-db:2.30.2-pg16`) | 마이그레이션 `0001~0009`, epoch 3 |
+| `core` | 태그·이력·장비 상태·프로젝트 적용 + 알람·인증·감사·실시간(M3b), REST `/api/v1`, gRPC 서버 | acquisition·tags·historian·project (M3a), 알람·인증·감사·WS·`/api/v1/devices` (M3b) |
+| `web` | nginx + React(로그인 + 태그 현황·알람/ACK·트렌드·장비 상태·감사 로그) | 로그인 + 5화면, WS 실시간, Playwright 스모크 (M3b) |
+| `site-db` | TimescaleDB PG16(`pureiron/site-db:2.30.2-pg16`) | 마이그레이션 `0001~0012`, epoch 4 (r3) |
 | `ai` | core read-only API 소비 | 계약만, 첫 완료 범위 제외 |
-| Updater | 호스트 systemd 서비스(컨테이너 아님): 번들 검증·백업·마이그레이션·전환·롤백 | 완료(M2), VM 실측 30/30(r0→r1, r1→r2) |
+| Updater | 호스트 systemd 서비스(컨테이너 아님): 번들 검증·백업·마이그레이션·전환·롤백 | 완료(M2), VM 실측 30/30(r0→r1, r1→r2, r2→r3) |
 | control-api | 벤더 내부 중앙 API: 등록·heartbeat·desired·reports·drafts·fleet | `GET /api/v1/healthz` 골격만(M4) |
 | control-web | 중앙 읽기 전용 표(basic auth) | 미착수(M4) |
 | `simulator` | 개발용 Modbus 시뮬레이터(compose profile `dev`) | `deploy/simulator/` |
@@ -209,14 +209,14 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
 - 폐쇄망 현장도 같은 `.pib`를 USB 등으로 반입해 같은 검증을 거친다. 설치는 install 번들(`deploy/install/`)로 오프라인 부트스트랩.
 - 이미지 신원 = config digest(release 기록 `deploy/releases/<r>.json`). 현장 이미지는 번들에서 `docker load`만 한다.
 
-## V1 구현 현황 (2026-10-11)
+## V1 구현 현황 (2026-10-17)
 
 | 마일스톤 | 내용 | 상태 |
 |---|---|---|
 | M1 | 저장소 골격, core 조립·import 계약, G1 게이트(CI), compose | 완료 |
 | M2 | Updater·bundle-tools·install 번들, r0·r1, Hyper-V VM 실측 30/30 | 완료 |
 | M3a | collector(Modbus·링버퍼·replay), core tags·historian·정의, r2(epoch 3), VM 실측 r1→r2 30/30 | 완료 |
-| M3b | alarms·auth·audit·realtime·devices·history API, web 로그인 + 5화면, r3(epoch 4) | 진행(S4: r2→r3 VM 재검증 남음) |
+| M3b | alarms·auth·audit·realtime·devices·history API, web 로그인 + 5화면, r3(epoch 4), VM 실측 r2→r3 30/30 | 완료 |
 | M3c | PLC 쓰기 경로(ADR-013 가드레일) | 예정 |
 | M4 | control-api·control-web·fleet·release 파이프라인 | 예정 |
 | M5 | 프로젝트 수명주기(project-tools 완성, apply·드래프트 회수) | 예정 |
