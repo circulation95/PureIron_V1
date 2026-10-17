@@ -1,4 +1,4 @@
-"""historian reader: 해상도 자동 선택 경계, 조회 구간 검증(DB 조회는 integration)."""
+"""historian reader: 해상도 자동 선택 경계, 조회 구간·span 상한 검증(DB 조회는 integration)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import cast
 
 import pytest
 
-from pureiron_core.historian.reader import auto_resolution, read_raw
+from pureiron_core.historian.reader import Resolution, auto_resolution, check_window, read_raw
 from pureiron_core.platform.db import Connection
 
 T0 = datetime(2026, 10, 9, tzinfo=UTC)
@@ -42,10 +42,27 @@ class NoConn:
         (T0, T0, 10, "after start"),
         (T0, T0 - timedelta(seconds=1), 10, "after start"),
         (T0, T0 + timedelta(hours=1), 0, "limit"),
+        (T0, T0 + timedelta(hours=1, microseconds=1), 10, "span exceeds"),
     ],
 )
 async def test_invalid_window_is_rejected_before_query(
     start: datetime, end: datetime, limit: int, message: str
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        await read_raw(cast("Connection", NoConn()), [1], start, end, limit=limit)
+        await read_raw(cast("Connection", NoConn()), [1], start, end, limit_per_tag=limit)
+
+
+@pytest.mark.parametrize(
+    ("resolution", "ok_span", "too_long"),
+    [
+        ("raw", timedelta(hours=1), timedelta(hours=1, seconds=1)),
+        ("1m", timedelta(days=7), timedelta(days=7, seconds=1)),
+        ("1h", timedelta(days=400), timedelta(days=400, seconds=1)),
+    ],
+)
+def test_span_limits_per_resolution(
+    resolution: Resolution, ok_span: timedelta, too_long: timedelta
+) -> None:
+    check_window(T0, T0 + ok_span, resolution, 1)
+    with pytest.raises(ValueError, match="span exceeds"):
+        check_window(T0, T0 + too_long, resolution, 1)

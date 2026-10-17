@@ -1,9 +1,17 @@
-"""다른 모듈이 acquisition에 기대도 되는 표면(도메인 간 import는 ports만, PD-8)."""
+"""다른 모듈이 acquisition에 기대도 되는 표면(도메인 간 import는 ports만, PD-8).
+
+장비 상태는 태그가 아니다(Device health is not a tag): collector `DeviceHealth`를 core
+`DeviceMonitor`가 보관하고 `DeviceStatusSource`(`GET /devices`·WS `device_update`)로만 낸다(M3b D9).
+상태가 바뀌면 버스에 `device.changed.<device_id>`가 나간다.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Protocol
+
+DEVICE_CHANGED_PREFIX = "device.changed."
 
 
 class CollectorSessionStatus(Protocol):
@@ -42,3 +50,44 @@ class AcquisitionSummary:
 
 class AcquisitionStatus(CollectorSessionStatus, Protocol):
     def summary(self) -> AcquisitionSummary: ...
+
+
+class DeviceState(StrEnum):
+    CONNECTED = "connected"
+    DISCONNECTED = "disconnected"
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceSnapshot:
+    """장비 하나의 통신 상태(plan 장비 + 마지막 collector `DeviceHealth`).
+
+    `state`는 core 판정(CONNECTED = health가 connected이고 무신호가 아님), `silent`는 core 무신호
+    판정이다. 나머지는 `pb.DeviceHealth` 필드이며 health를 아직 못 받았으면(또는 세션이 모두
+    끊겨 버렸으면) None이다. `tag_count`는 plan 기준 태그 수.
+    """
+
+    device_id: str
+    protocol: str
+    state: DeviceState
+    silent: bool
+    tag_count: int
+    connected: bool | None = None
+    status: str | None = None
+    last_success_unix_ns: int | None = None
+    last_error: str | None = None
+    last_error_at_unix_ns: int | None = None
+    consecutive_failures: int | None = None
+    poll_latency_ms: float | None = None
+    read_success_rate: float | None = None
+    poll_total: int | None = None
+    timeout_count: int | None = None
+    bad_quality_tag_count: int | None = None
+    reconnect_count: int | None = None
+
+
+class DeviceStatusSource(Protocol):
+    def devices(self) -> tuple[DeviceSnapshot, ...]:
+        """plan의 장비 전부(device_id 순)."""
+        ...
+
+    def device(self, device_id: str) -> DeviceSnapshot | None: ...

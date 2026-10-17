@@ -92,6 +92,8 @@ services/core/src/pureiron_core/
   `DeviceHealth`), 밖으로 낼 때는 frozen 스냅샷으로 복사한다(예: `Historian.status()` → `HistorianStatus`).
 - HTTP 경계 모델만 pydantic `BaseModel`이다. 도메인 상태를 API 모델로 옮기는 변환은 `api/`에서 한다
   (예: `HistorianStatus` → `api/health.py` `Historian`).
+  예외 하나: WS 메시지 모델은 `realtime/protocol.py`가 소유하고, 같은 모양의 REST 응답 모델(`AlarmOut`·
+  `DeviceOut`·`TagValueOut`)은 이를 재사용한다 — WS와 REST가 같은 스키마여야 하기 때문이다(M3b D10 계약 일치).
 - 라우터는 전역을 읽지 않고 `build_<x>_router(...)`가 받은 의존성(Protocol 타입)만 쓴다. `app.state`·
   모듈 전역 싱글톤·service locator 금지.
 - 다른 서비스(collector·updater·control-api)와 `packages/*`도 같은 원칙이다: 진입점(`main.py`·`cli.py`)에서
@@ -200,6 +202,8 @@ services/core/src/pureiron_core/
 - **임계 구역**: `TagStore`처럼 공유 상태를 바꾸는 메서드는 동기(`await` 없음)로 써서 이벤트 루프 안에서
   끊기지 않게 하고, 바뀐 결과(이벤트 목록)를 **반환**한다. DB I/O·이벤트 발행은 호출자가 그 뒤에 한다
   (불변 규칙 Lock discipline).
+- **bus 핸들러**: `EventBus.publish`는 핸들러를 순서대로 await 하므로 핸들러는 I/O를 await 하지 않는다 — 메모리
+  갱신·큐 적재만 하고, 새 이벤트는 직접 발행하지 않고 **돌려준다**(버스가 이어서 발행, M3b-2 D8).
 
 ## 9. 테스트
 
@@ -252,7 +256,7 @@ services/core/src/pureiron_core/
 | 9절 monkeypatch | `services/updater/tests/test_cli.py`(`cli.real_deps`), `deploy/tests/test_build_bundle.py`(`SIZE_LIMIT`), `packages/bundle-tools/tests/test_pib.py`·`test_keys_images_cli.py`(`BoundedTarInfo._base_proc_member`), `services/updater/tests/test_phases.py`(`pureiron_updater.gc.collect`) | 자기 코드 치환 → 주입 인자 |
 | 2절 예외 이유 주석 | 루트 `pyproject.toml` `"**/tests/**" = ["PLR0915"]` | 이유 주석 없음 |
 | 8절 로거 이름 | `getLogger("pureiron_updater")`, `getLogger("simulator")` | `__name__`으로 |
-| 5절 크기 단위 접미사 | `SIZE_LIMIT`(`deploy/bundle/build_bundle.py`), `METADATA_LIMIT`(`pureiron_bundle/pib.py`), `DEFAULT_LIMIT`(`historian/reader.py`, 행 수) | `_BYTES`·`_ROWS` 접미사 |
+| 5절 크기 단위 접미사 | `SIZE_LIMIT`(`deploy/bundle/build_bundle.py`), `METADATA_LIMIT`(`pureiron_bundle/pib.py`) | `_BYTES` 접미사 |
 | 5절 환경변수 접두 | updater `PUREIRON_POLL_INTERVAL_S`·`PUREIRON_CHECK_TIMEOUT_S`(서비스 전용인데 접두 없음) | **변경하지 않는다** — 현장 `.env`·compose와 맞물린 배포 계약 |
 | 7·9절 docstring | 모듈 docstring 없음: `services/control-api/src/pureiron_control/app.py`; 테스트 docstring 없음 17개(예: collector `test_modbus.py`·`test_plan.py`) | 손댈 때 채움 |
 

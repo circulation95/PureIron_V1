@@ -118,7 +118,10 @@ cli.py ──▶ runtime.SiteRuntime.build(settings) ──▶ app.create_app(rt
 | `historian` | recorder(deadband·max_interval, replay 우회) → writer(상한 버퍼·1s flush) → `tag_history`, reader(raw/1m/1h) | M3a(HTTP 노출은 M3b) |
 | `project` | `project_state`·edit lock, 정의 소스(`definitions_rev`) | 골격 + 정의(M3a), 정식 apply는 M5 |
 | `api` | `build_<x>_router` + pydantic 모델 | health·project |
-| `alarms`·`auth`·`audit`·`realtime`·`devices` | 알람 엔진·저널, 인증, 감사, WS, 장비 상태 API | M3b |
+| `alarms` | 4상태 알람 엔진(`tag.changed.*` 동기 평가)·저널(상한 큐 + writer)·ACK 트랜잭션·기동 복원 | M3b-2 |
+| `auth`·`audit` | 세션 인증·역할, 감사 기록·조회 | M3b-1 |
+| `realtime` | WS `/api/v1/ws` 연결·구독·태그 합치기·알람/장비 방송 | M3b-2 |
+| 장비 상태 | 새 도메인 없이 `acquisition.ports` `DeviceSnapshot`·`DeviceStatusSource`(`DeviceMonitor`) → `GET /devices` | M3b-2 |
 
 ## Core Domain Model Boundary (SoT)
 
@@ -150,7 +153,9 @@ HistoryWriter ─1s flush, INSERT … ON CONFLICT DO NOTHING─▶ site-db tag_h
 - Recorder는 일부 샘플을 거부한다(plan_rev가 앞선 batch, 현재 정의에 없는 tag_id의 live 샘플, int4 범위 밖 tag_id → `rejected_total`).
   상세 규칙은 [data-contracts](data-contracts.md)의 M3a 절.
 - 이력 기록은 `tag.changed` 구독이 아니라 Ingestor가 직접 넘기는 sink다(이벤트 루프의 reader 경로에 DB I/O가 없다).
-  느린 구독자(알람 DB·WS)가 생기는 M3b에서 별도 publisher task 여부를 결정한다(m3a3 plan D5).
+  M3b-2 결정(D8): 별도 publisher task를 두지 않는다. 대신 **bus 핸들러는 I/O를 await 하지 않는다** — 알람 엔진은
+  동기 평가 후 저널 행을 상한 큐에 넣고(writer task가 비움) 전이 이벤트를 돌려주며, WS는 연결별 메모리(태그 합치기·
+  상한 이벤트 큐)에만 넣는다. 그래서 느린 DB·클라이언트가 ingest 루프를 붙잡지 않는다.
 
 ## 이벤트 버스 · 잠금 규율
 
@@ -162,8 +167,14 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
 | `tag.changed.<path>` | acquisition(TagStore 결과) | 값·품질이 바뀐 태그 |
 | `device.changed.<device_id>` | acquisition `DeviceMonitor` | 장비 연결 상태 변화 |
 | `collector.session.changed` | acquisition server | collector 세션 수 |
+| `alarm.changed.<alarm_id>` | alarms(M3b-2, `tag.changed` 핸들러가 돌려준 전이·타이머·정의 변경·ACK) | 전이 뒤 `AlarmSnapshot` |
 
 - 구독은 fnmatch 패턴(`tag.changed.*`). 핸들러 예외는 기록만 하고 다른 구독자 전달을 막지 않는다.
+- **핸들러 규칙(M3b-2 D8)**: `publish`는 핸들러를 순서대로 await 한다(발행자 = ingest 루프·Ack 뒤). 핸들러는 I/O를
+  await 하지 않고 메모리 갱신·큐 적재만 한다. 핸들러가 내야 할 이벤트(알람 전이)는 **돌려주면** 버스가 지금
+  이벤트를 모든 구독자에게 전한 뒤 이어서 발행한다(너비 우선, 순서 결정적).
+- 기동 순서: db → historian → alarms(저널 복원·writer) → realtime → acquisition, 정지는 역순(수집 중단 → WS
+  1001 close → 알람 저널 최종 쓰기 → 이력 최종 쓰기 → db).
 - **잠금 규율**: TagStore를 바꾸는 메서드는 동기로 끝나고 이벤트 목록을 반환한다. DB I/O와 `publish`는 그 뒤, 바깥에서
   한다(불변 규칙 Lock discipline, [coding-style](coding-style.md) 8절).
 

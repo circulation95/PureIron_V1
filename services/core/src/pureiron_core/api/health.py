@@ -2,7 +2,8 @@
 
 `/readyz`는 수집 집계(`acquisition`: 장비 연결 수·태그 GOOD 비율)도 함께 낸다 — Updater `checking`
 단계의 GOOD 비율 기준(baseline - 2%p)이 이 값을 쓴다. `historian`(버퍼·쓰기 지연·drop)도 정보로만
-낸다 — DB 장애 중에도 수집·현재값은 계속되므로 준비 판정에 넣지 않는다.
+낸다 — DB 장애 중에도 수집·현재값은 계속되므로 준비 판정에 넣지 않는다. `alarms`(활성·미확인 수,
+저널 큐)·`realtime`(WS 연결 수)도 정보 필드다(M3b-2).
 """
 
 from __future__ import annotations
@@ -14,8 +15,10 @@ from pydantic import BaseModel, Field
 
 from pureiron_core import __version__
 from pureiron_core.acquisition.ports import AcquisitionStatus
+from pureiron_core.alarms.ports import AlarmStatusSource
 from pureiron_core.historian.ports import HistorianStatusSource
 from pureiron_core.platform.migrate import Envelope, SchemaUnavailableError
+from pureiron_core.realtime.ports import RealtimeStatusSource
 
 
 class DatabaseProbe(Protocol):
@@ -95,12 +98,29 @@ class Historian(BaseModel):
     )
 
 
+class Alarms(BaseModel):
+    """알람 상태 집계(준비 판정에는 쓰지 않음). 누적 값은 core 기동 후 기준."""
+
+    active_total: int = Field(description="ACTIVE_UNACKED + ACTIVE_ACKED")
+    unacked_total: int = Field(description="ACTIVE_UNACKED + CLEARED_UNACKED")
+    journal_queue_rows: int = Field(description="아직 DB에 쓰지 못한 알람 저널 행 수")
+    dropped_total: int = Field(description="저널 큐 상한을 넘어 버린(가장 오래된) 행 수")
+
+
+class Realtime(BaseModel):
+    """WS 연결 집계(준비 판정에는 쓰지 않음)."""
+
+    connections: int = Field(description="지금 열린 인증된 WS 연결 수")
+
+
 class Readiness(BaseModel):
     status: Literal["ready", "not_ready"]
     version: str
     checks: ReadinessChecks
     acquisition: Acquisition
     historian: Historian
+    alarms: Alarms
+    realtime: Realtime
 
 
 async def _schema_check(db_ok: bool, schema: SchemaProbe) -> SchemaEnvelopeCheck:
@@ -145,6 +165,8 @@ def build_health_router(
     schema: SchemaProbe,
     collector: AcquisitionStatus,
     historian: HistorianStatusSource,
+    alarms: AlarmStatusSource,
+    realtime: RealtimeStatusSource,
 ) -> APIRouter:
     router = APIRouter(tags=["ops"])
 
@@ -188,6 +210,7 @@ def build_health_router(
             ),
         )
         history = historian.status()
+        alarm = alarms.status()
         return Readiness(
             status="ready" if ready else "not_ready",
             version=__version__,
@@ -202,6 +225,13 @@ def build_health_router(
                 db_ok=history.db_ok,
                 rejected_total=history.rejected_total,
             ),
+            alarms=Alarms(
+                active_total=alarm.active_total,
+                unacked_total=alarm.unacked_total,
+                journal_queue_rows=alarm.journal_queue_rows,
+                dropped_total=alarm.dropped_total,
+            ),
+            realtime=Realtime(connections=realtime.status().connections),
         )
 
     return router

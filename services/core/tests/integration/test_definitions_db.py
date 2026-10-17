@@ -1,4 +1,5 @@
-"""apply-definitions: path 기준 upsert·retire, 같은 path는 같은 id, 변경 있을 때만 rev+1."""
+"""apply-definitions: path(알람은 alarm_id) 기준 upsert·retire, 같은 path는 같은 id, 변경 있을 때만
+rev+1."""
 
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ from .conftest import (
     JsonObject,
     SiteDb,
     Stack,
+    above_alarm,
     core_cli,
     holding_tag,
     modbus_device,
@@ -148,6 +150,61 @@ async def test_historian_settings_stored_with_rev(
         await db.close()
 
 
+async def test_alarms_upsert_retire_by_id_and_load(
+    conn: asyncpg.Connection[asyncpg.Record], site_db: SiteDb, tmp_path: Path
+) -> None:
+    """alarms/*.yaml: alarm_id 기준 upsert·retire, 바뀔 때만 rev+1, `Definitions.alarms`(D6)."""
+    root = tmp_path / "project"
+    plc = {"plc-1": modbus_device("plc-1", "10.0.0.5")}
+    tags = {"plc-1": _tags("plc-1", 2)}
+
+    def tree(alarms: list[JsonObject]) -> Path:
+        return write_project(root, plc, tags, alarms=alarms)
+
+    high = above_alarm("tank-high", "plc-1/r000", 80)
+    low: JsonObject = {"id": "tank-low", "tag": "plc-1/r001", "type": "below", "setpoint": 5}
+    first = await apply_definitions(conn, load_project(tree([high, low])))
+    assert (first.rev, first.alarms_added, first.alarms_updated, first.alarms_retired) == (
+        1,
+        2,
+        0,
+        0,
+    )
+    again = await apply_definitions(conn, load_project(tree([high, low])))
+    assert (again.rev, again.changed) == (1, False)
+
+    # 스키마 기본값만 더한 정의는 정규형이 같다 → 변화 없음
+    with_defaults = {**high, "deadband": 0, "on_delay_s": 0, "priority": "medium"}
+    same = await apply_definitions(conn, load_project(tree([with_defaults, low])))
+    assert same.changed is False
+
+    moved = above_alarm("tank-high", "plc-1/r001", 90, deadband=2, priority="critical")
+    second = await apply_definitions(conn, load_project(tree([moved])))
+    assert (second.rev, second.alarms_added, second.alarms_updated, second.alarms_retired) == (
+        2,
+        0,
+        1,
+        1,
+    )
+    db = Database(site_db.dsn, password=site_db.password, max_size=1)
+    try:
+        loaded = await PgDefinitionsSource(db).load()
+        assert loaded.rev == 2
+        assert [(a.alarm_id, a.tag_path, dict(a.definition)) for a in loaded.alarms] == [
+            ("tank-high", "plc-1/r001", moved)
+        ]
+        # 되살리면 같은 id 행이 retired_at만 풀린다(rev+1)
+        revived = await apply_definitions(conn, load_project(tree([moved, low])))
+        assert (revived.rev, revived.alarms_added, revived.alarms_updated) == (3, 0, 1)
+        assert [a.alarm_id for a in (await PgDefinitionsSource(db).load()).alarms] == [
+            "tank-high",
+            "tank-low",
+        ]
+    finally:
+        await db.close()
+    assert await conn.fetchval("SELECT count(*) FROM alarms") == 2
+
+
 async def test_rows_without_definition_are_not_planned(
     conn: asyncpg.Connection[asyncpg.Record], site_db: SiteDb
 ) -> None:
@@ -157,7 +214,7 @@ async def test_rows_without_definition_are_not_planned(
     db = Database(site_db.dsn, password=site_db.password, max_size=1)
     try:
         loaded = await PgDefinitionsSource(db).load()
-        assert (loaded.rev, loaded.devices, loaded.tags) == (0, (), ())
+        assert (loaded.rev, loaded.devices, loaded.tags, loaded.alarms) == (0, (), (), ())
     finally:
         await db.close()
 

@@ -17,25 +17,21 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
-from enum import StrEnum
+from dataclasses import dataclass, replace
+from typing import Literal
 
 from pureiron_core._gen import collector_pb2 as pb
+from pureiron_core.acquisition.ports import DEVICE_CHANGED_PREFIX, DeviceSnapshot, DeviceState
 from pureiron_core.platform.bus import Event
 from pureiron_core.tags.ports import TagStorePort
 
-DEVICE_CHANGED_PREFIX = "device.changed."
 SILENCE_POLLS = 3
-
-
-class DeviceState(StrEnum):
-    CONNECTED = "connected"
-    DISCONNECTED = "disconnected"
 
 
 @dataclass(slots=True)
 class _Device:
     device_id: str
+    protocol: str
     silence_s: float
     tag_ids: tuple[int, ...]
     last_signal: float
@@ -84,6 +80,7 @@ class DeviceMonitor:
             old = self._devices.get(device.device_id)
             devices[device.device_id] = _Device(
                 device_id=device.device_id,
+                protocol=device.protocol,
                 silence_s=silence_s,
                 tag_ids=tuple(tag_ids.get(device.device_id, ())),
                 last_signal=now,
@@ -166,6 +163,50 @@ class DeviceMonitor:
         device = self._devices.get(device_id)
         return device.health if device else None
 
+    def devices(self) -> tuple[DeviceSnapshot, ...]:
+        return tuple(_snapshot(self._devices[d]) for d in sorted(self._devices))
+
+    def device(self, device_id: str) -> DeviceSnapshot | None:
+        device = self._devices.get(device_id)
+        return _snapshot(device) if device is not None else None
+
     def summary(self) -> DeviceSummary:
         connected = sum(1 for d in self._devices.values() if d.state is DeviceState.CONNECTED)
         return DeviceSummary(total=len(self._devices), connected=connected)
+
+
+def _snapshot(device: _Device) -> DeviceSnapshot:
+    base = DeviceSnapshot(
+        device_id=device.device_id,
+        protocol=device.protocol,
+        state=device.state,
+        silent=device.silent,
+        tag_count=len(device.tag_ids),
+    )
+    health = device.health
+    if health is None:
+        return base
+    return replace(
+        base,
+        connected=health.connected,
+        status=health.status,
+        last_success_unix_ns=_opt(health, "last_success_unix_ns"),
+        last_error=health.last_error if health.HasField("last_error") else None,
+        last_error_at_unix_ns=_opt(health, "last_error_at_unix_ns"),
+        consecutive_failures=health.consecutive_failures,
+        poll_latency_ms=health.poll_latency_ms if health.HasField("poll_latency_ms") else None,
+        read_success_rate=(
+            health.read_success_rate if health.HasField("read_success_rate") else None
+        ),
+        poll_total=health.poll_total,
+        timeout_count=health.timeout_count,
+        bad_quality_tag_count=health.bad_quality_tag_count,
+        reconnect_count=health.reconnect_count,
+    )
+
+
+def _opt(
+    health: pb.DeviceHealth, field: Literal["last_success_unix_ns", "last_error_at_unix_ns"]
+) -> int | None:
+    """proto3 optional 시각(값이 없으면 None — 0과 구별)."""
+    return getattr(health, field) if health.HasField(field) else None

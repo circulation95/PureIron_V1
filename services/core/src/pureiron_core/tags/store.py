@@ -113,6 +113,10 @@ class TagStore:
     def get(self, tag_id: int) -> TagValue | None:
         return self._tags.get(tag_id)
 
+    def snapshot(self) -> tuple[TagValue, ...]:
+        # TagValue는 frozen이라 튜플로 묶은 것이 곧 복사본이다.
+        return tuple(self._tags[tag_id] for tag_id in sorted(self._tags))
+
     def summary(self) -> TagSummary:
         good = sum(1 for tag in self._tags.values() if tag.quality is Quality.GOOD)
         return TagSummary(total=len(self._tags), good=good)

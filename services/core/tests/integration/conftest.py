@@ -217,6 +217,7 @@ def write_project(
     tags: Mapping[str, list[JsonObject]],
     *,
     historian: JsonObject | None = None,
+    alarms: list[JsonObject] | None = None,
 ) -> Path:
     """고객 프로젝트 트리를 만든다(JSON은 YAML이기도 하다 — load_project가 그대로 읽는다).
 
@@ -234,6 +235,9 @@ def write_project(
         (root / "devices" / f"{device_id}.yaml").write_text(json.dumps(device), encoding="utf-8")
     for device_id, items in tags.items():
         (root / "tags" / f"{device_id}.yaml").write_text(json.dumps(items), encoding="utf-8")
+    if alarms is not None:
+        (root / "alarms").mkdir()
+        (root / "alarms" / "alarms.yaml").write_text(json.dumps(alarms), encoding="utf-8")
     return root
 
 
@@ -247,6 +251,10 @@ def holding_tag(path: str, device_id: str, address: int, data_type: str = "uint1
         "device": device_id,
         "modbus": {"register_type": "holding", "address": address, "data_type": data_type},
     }
+
+
+def above_alarm(alarm_id: str, tag: str, setpoint: float, **extra: object) -> JsonObject:
+    return {"id": alarm_id, "tag": tag, "type": "above", "setpoint": setpoint, **extra}
 
 
 def core_cli(
@@ -264,3 +272,71 @@ def core_cli(
         encoding="utf-8",
         check=False,
     )
+
+
+# --- M3b-2: 시뮬레이터 프로젝트·계정·WS -------------------------------------------------------
+
+CORE_API = f"http://127.0.0.1:{CORE_PORT}/api/v1"
+SIM_TAGS = 100
+# 시뮬레이터 사인파 1000 + 500·sin(t/10 + address)의 중간값 → 주기(~63s)마다 조건이 성립·해제된다.
+SIM_ALARM_SETPOINT = 1000.0
+SIM_ALARMS = [above_alarm("sim-r000-high", "sim/r000", SIM_ALARM_SETPOINT, priority="high")]
+IT_PASSWORD = "it-pass-1234"
+
+
+def apply_sim_project(stack: Stack, tmp_path: Path) -> None:
+    """시뮬레이터 holding 0..SIM_TAGS-1을 태그로, 알람 하나와 함께 apply(테스트끼리 같은 정의 →
+    같은 id·rev — 정의가 오가며 알람이 RETIRED·재생성되지 않게)."""
+    wait_http(f"{CORE_API}/readyz", timeout_s=120)
+    root = write_project(
+        tmp_path / "sim-project",
+        {"sim": modbus_device("sim", "simulator", 5020)},
+        {"sim": [holding_tag(f"sim/r{i:03d}", "sim", i) for i in range(SIM_TAGS)]},
+        alarms=SIM_ALARMS,
+    )
+    applied = core_cli(stack.cli_env("pureiron"), "apply-definitions", str(root), "--json")
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+
+
+def ensure_user(stack: Stack, username: str, role: str) -> None:
+    """CLI로 계정을 만든다(기본 계정 없음, D3). 이미 있으면(같은 compose 세션) 그대로 둔다."""
+    added = compose(
+        stack.compose_env,
+        "exec",
+        "-T",
+        "core",
+        "pureiron-core",
+        "users",
+        "add",
+        username,
+        "--role",
+        role,
+        check=False,
+        stdin=f"{IT_PASSWORD}\n",
+    )
+    assert added.returncode == 0 or "already exists" in added.stderr, added.stdout + added.stderr
+
+
+def login_token(username: str) -> str:
+    request = urllib.request.Request(
+        f"{CORE_API}/auth/login",
+        data=json.dumps({"username": username, "password": IT_PASSWORD}).encode(),
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        body: dict[str, object] = json.loads(response.read())
+    token = body["token"]
+    assert isinstance(token, str)
+    return token
+
+
+def api(method: str, path: str, token: str) -> tuple[int, dict[str, object]]:
+    request = urllib.request.Request(
+        f"{CORE_API}{path}", method=method, headers={"Authorization": f"Bearer {token}"}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return response.status, json.loads(response.read() or b"{}")
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read() or b"{}")

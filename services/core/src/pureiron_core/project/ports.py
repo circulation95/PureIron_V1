@@ -75,6 +75,15 @@ class TagDef:
 
 
 @dataclass(frozen=True, slots=True)
+class AlarmDef:
+    """`alarms/*.yaml` 항목 하나(M3b-2 D6). `definition`은 정규형(기본값 생략, 소비자가 채운다)."""
+
+    alarm_id: str
+    tag_path: str
+    definition: Mapping[str, object]
+
+
+@dataclass(frozen=True, slots=True)
 class Definitions:
     """한 시점의 활성(retired 아님) 정의. `rev`가 AcquisitionPlan.plan_rev다."""
 
@@ -83,6 +92,7 @@ class Definitions:
     tags: tuple[TagDef, ...] = ()
     # project.yaml `historian` 정규형(스키마 기본값 생략, 없으면 빈 값). 기본값은 소비자가 채운다.
     historian: Mapping[str, object] = field(default_factory=dict[str, object])
+    alarms: tuple[AlarmDef, ...] = ()
 
 
 class DefinitionsSource(Protocol):

@@ -32,3 +32,7 @@ class HistorianStatus:
 
 class HistorianStatusSource(Protocol):
     def status(self) -> HistorianStatus: ...
+
+
+class HistoryUnavailableError(Exception):
+    """site-db 문제로 이력을 읽지 못했다(API는 503)."""

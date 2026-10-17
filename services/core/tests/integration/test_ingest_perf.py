@@ -2,7 +2,9 @@
 
 `bash scripts/g1.sh perf-ingest`로만 실행한다(`integration-compose`는 `not perf`로 제외).
 시뮬레이터 레지스터 수는 compose 기동 전에 `PUREIRON_SIM_REGISTERS=2000`으로 넘긴다.
-결과: `artifacts/perf/<PUREIRON_PERF_RELEASE, 기본 r2>/ingest.json`.
+결과: `artifacts/perf/<PUREIRON_PERF_RELEASE, 기본 r3>/ingest.json`.
+r3(M3b-2)부터 알람 정의 `PERF_ALARMS`개(사인파 중간값 setpoint)와 모든 태그를 구독한 WS 연결
+1개를 붙인 상태로 잰다(bus 핸들러가 ingest를 늦추는지 — 계획 R1). WS 수신 통계도 남긴다.
 
 시간은 pytest 프로세스의 monotonic으로 잰다. Docker Desktop(WSL2)에서는 pytest·컨테이너가 같은 VM
 시계를 쓰고, 그 monotonic이 호스트보다 느릴 수 있다(M3a-3 W1 실측 -7%) — 그러면 초당 값은 "VM 초"
@@ -16,6 +18,7 @@ import json
 import os
 import statistics
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -25,14 +28,20 @@ from typing import cast
 
 import asyncpg
 import pytest
+from websockets.exceptions import ConnectionClosed
+from websockets.sync.client import connect
 
 from .conftest import (
     CORE_PORT,
     REPO,
     Stack,
+    above_alarm,
+    api,
     compose,
     core_cli,
+    ensure_user,
     holding_tag,
+    login_token,
     modbus_device,
     wait_http,
     write_project,
@@ -43,7 +52,8 @@ pytestmark = [pytest.mark.integration, pytest.mark.perf, pytest.mark.compose]
 CORE = f"http://127.0.0.1:{CORE_PORT}/api/v1"
 TAGS = int(os.environ.get("PUREIRON_PERF_TAGS", "2000"))
 MEASURE_S = float(os.environ.get("PUREIRON_PERF_MEASURE_S", "60"))
-RELEASE = os.environ.get("PUREIRON_PERF_RELEASE", "r2")
+RELEASE = os.environ.get("PUREIRON_PERF_RELEASE", "r3")
+PERF_ALARMS = 50
 STATS_EVERY_S = 5.0
 SERVICES = ("core", "collector", "site-db")
 STATS_FORMAT = "{{.ID}}\t{{.CPUPerc}}\t{{.MemUsage}}"
@@ -161,12 +171,69 @@ async def _window_rows(dsn: str, password: str, start: float, end: float) -> tup
     return int(row["n"]), int(row["tags"])
 
 
+class WsStats:
+    """WS 수신 통계(측정 스레드가 쓰고 테스트가 읽는다)."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.stop = threading.Event()
+        self.tag_updates = 0
+        self.values = 0
+        self.alarm_events = 0
+        self.close_code: int | None = None
+
+    def reset(self) -> None:
+        with self.lock:
+            self.tag_updates = self.values = self.alarm_events = 0
+
+    def snapshot(self, elapsed_s: float) -> dict[str, object]:
+        with self.lock:
+            return {
+                "tag_update_messages_per_s": round(self.tag_updates / elapsed_s, 1),
+                "tag_values_per_s": round(self.values / elapsed_s, 1),
+                "alarm_events": self.alarm_events,
+                "closed_code": self.close_code,
+            }
+
+
+def _ws_reader(token: str, stats: WsStats) -> None:
+    """모든 태그를 구독하고 받은 메시지를 센다(ping엔 pong)."""
+    _, body = api("GET", "/tags", token)
+    tag_ids = [t["tag_id"] for t in cast("list[dict[str, object]]", body["tags"])]
+    with connect(
+        f"ws://127.0.0.1:{CORE_PORT}/api/v1/ws",
+        additional_headers={"Cookie": f"pureiron_session={token}"},
+        max_size=None,
+    ) as ws:
+        ws.send(json.dumps({"type": "subscribe", "tag_ids": tag_ids}))
+        while not stats.stop.is_set():
+            try:
+                message = cast("dict[str, object]", json.loads(ws.recv(timeout=1)))
+            except TimeoutError:
+                continue
+            except ConnectionClosed:
+                stats.close_code = ws.close_code
+                return
+            with stats.lock:
+                if message["type"] == "tag_update":
+                    stats.tag_updates += 1
+                    stats.values += len(cast("list[object]", message["values"]))
+                elif message["type"] == "alarm_event":
+                    stats.alarm_events += 1
+            if message["type"] == "ping":
+                ws.send(json.dumps({"type": "pong"}))
+
+
 def test_ingest_2000_tags_1s(stack: Stack, tmp_path: Path) -> None:
     wait_http(f"{CORE}/readyz", timeout_s=120)
     root = write_project(
         tmp_path / "perf-project",
         {"sim": modbus_device("sim", "simulator", 5020)},
         {"sim": [holding_tag(f"sim/r{i:04d}", "sim", i) for i in range(TAGS)]},
+        alarms=[
+            above_alarm(f"perf-{i:02d}", f"sim/r{i * (TAGS // PERF_ALARMS):04d}", 1000.0)
+            for i in range(PERF_ALARMS)
+        ],
     )
     applied = core_cli(stack.cli_env("pureiron"), "apply-definitions", str(root), "--json")
     assert applied.returncode == 0, applied.stdout + applied.stderr
@@ -180,7 +247,12 @@ def test_ingest_2000_tags_1s(stack: Stack, tmp_path: Path) -> None:
         time.sleep(0.5)
     else:
         pytest.fail(f"{TAGS} tags did not become GOOD (PUREIRON_SIM_REGISTERS?): {acquisition}")
+    ensure_user(stack, "it-perf", "viewer")
+    ws_stats = WsStats()
+    ws_thread = threading.Thread(target=_ws_reader, args=(login_token("it-perf"), ws_stats))
+    ws_thread.start()
     time.sleep(5)  # 첫 plan 직후 과도 구간을 빼고 잰다
+    ws_stats.reset()
 
     containers = {
         name: compose(stack.compose_env, "ps", "-q", name).stdout.strip() for name in SERVICES
@@ -211,6 +283,9 @@ def test_ingest_2000_tags_1s(stack: Stack, tmp_path: Path) -> None:
         time.sleep(max(0.0, 1.0 - (time.monotonic() - now)))
     last = _readyz()
     elapsed = time.monotonic() - mono0
+    ws_snapshot = ws_stats.snapshot(elapsed)
+    ws_stats.stop.set()
+    ws_thread.join(timeout=10)
     wall1 = time.time()
     host1 = _host_seconds()
     time.sleep(3)  # 마지막 flush(1s 주기)가 끝난 뒤 DB를 센다
@@ -255,6 +330,8 @@ def test_ingest_2000_tags_1s(stack: Stack, tmp_path: Path) -> None:
             "window_tags": window_tags,
             "rows_per_minute": round(window_rows * 60 / (wall1 - wall0)),
         },
+        "alarms": {"definitions": PERF_ALARMS, **_section(last, "alarms")},
+        "ws": ws_snapshot,
         "containers": {
             name: {
                 "cpu_pct_mean": round(statistics.fmean(cpu[name]), 1) if cpu[name] else None,

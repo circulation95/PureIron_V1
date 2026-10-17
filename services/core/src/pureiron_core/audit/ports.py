@@ -31,6 +31,8 @@ class AuditAction(StrEnum):
     USERS_ENABLE = "users.enable"
     PROJECT_EDIT_LOCK_ACQUIRE = "project.edit_lock_acquire"
     PROJECT_EDIT_LOCK_RELEASE = "project.edit_lock_release"
+    ALARM_ACK = "alarm.ack"
+    ALARM_ACK_ALL = "alarm.ack_all"
 
 
 class AuditSource(StrEnum):

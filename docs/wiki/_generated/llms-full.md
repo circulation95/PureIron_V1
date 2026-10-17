@@ -1395,6 +1395,8 @@ PureIron의 REST prefix, WebSocket wire protocol, Chat SSE event, 내부 event b
 
 ## WebSocket (`/ws`)
 
+> legacy(`PureIron_ignition@legacy-final`) 계약이다. V1은 아래 [WebSocket `/api/v1/ws`](#websocket-apiv1ws-v1-m3b-2) 절(인증·tag_id 구독·알람/장비 방송).
+
 목적: tag value live update. REST definition CRUD와 분리한다.
 
 ### 연결 직후
@@ -1451,7 +1453,9 @@ PureIron_V1 core의 정본은 `services/core/src/pureiron_core/api/` 와 생성�
 - `GET /api/v1/readyz` — 준비 = site-db 연결 + 스키마 epoch envelope + collector 세션(아니면 503). 준비 판정에 쓰지 않는 정보 필드:
   - `acquisition`: `plan_rev`, 장비 수·연결 수, 태그 수·GOOD 수, `good_ratio`, `ingest{live, stale, future, replay}`(core 기동 후 누적 샘플 수 — live만 현재값에 반영, 나머지는 이력 전용)·`ingest{batches, heartbeats}`(받은 ValueBatch 수, 그중 빈 heartbeat 수 — 부하 측정의 batch/s).
   - `historian`: `buffer_rows`(쓰지 못한 버퍼 행, 쓰는 중 포함), `dropped_total`(상한 초과로 버린 행), `written_total`(INSERT에 넘긴 행, 중복 포함), `poisoned_total`(site-db가 행 내용 때문에 거부해 반분 격리 끝에 버린 행, M3b-0), `write_lag_s`(버퍼 최고령 행 대기 시간, 비면 null), `db_ok`(마지막 쓰기 성공), `rejected_total`(이력에서 버린 샘플 = batch `plan_rev`가 현재 rev보다 앞선 것 + 현재 정의에 없는 tag_id의 live 샘플(정의 기준 — plan에서 문제로 빠진 태그는 기록, [data-contracts](data-contracts.md) M3a-3 historian 현황) + int4 범위 밖 tag_id).
-- replay batch는 이력에만 기록되고 `tag.changed.*`를 발행하지 않는다. 이력 조회 HTTP API는 M3b.
+- replay batch는 이력에만 기록되고 `tag.changed.*`를 발행하지 않는다(알람·WS에도 가지 않는다). 이력 조회는 `GET /history`(M3b-2, 아래 절).
+  - `alarms`(M3b-2): `active_total`(ACTIVE_UNACKED + ACTIVE_ACKED), `unacked_total`(ACTIVE_UNACKED + CLEARED_UNACKED), `journal_queue_rows`(DB에 아직 못 쓴 저널 행), `dropped_total`(저널 큐 상한 초과로 버린 행). `realtime`: `connections`(인증된 WS 연결 수).
+  - **무인증 노출 정보**: `/readyz`는 인증 없이 열린다. 위 필드는 모두 집계 수(개수·비율·지연)뿐이고 태그 path·값, 알람 id·내용, 사용자 이름은 싣지 않는다 — 활성·미확인 알람 수의 변화 정도는 LAN에서 보인다는 것을 감수한 설계다(PR #26 리뷰 L-A3).
 
 ## V1 인증·감사 API (`/api/v1`, M3b-1 구현)
 
@@ -1471,22 +1475,48 @@ PureIron_V1 core의 정본은 `services/core/src/pureiron_core/api/` 와 생성�
 - **세션 무효 조건**: 로그아웃, 사용자 비활성화(CLI — 즉시, 다시 활성화해도 옛 세션은 폐기 상태), 관리자 비밀번호 재설정(그 사용자 전체), 유휴·절대 만료(`PUREIRON_AUTH_SESSION_*`).
 - **감사 action**: `auth.login`·`auth.login_failed`(입력한 username과 `detail.reason` = `unknown_user|bad_password|disabled`, 비밀번호는 남기지 않음. username 규칙에 맞지 않는 입력 — 예: 비밀번호를 username 칸에 넣은 실수 — 은 username 없이 `detail.username_invalid = true`만)·`auth.logout`·`auth.password_change`(source `api`), `users.add|passwd|disable|enable`(source `cli`, 행위자 `username` = null, `target` = 계정), `project.edit_lock_acquire|release`(source `updater`, `target` = owner). 감사 기록 실패는 경고 로그만 남기고 요청은 성공한다.
 
+## V1 알람·실시간·장비·이력 API (`/api/v1`, M3b-2 구현)
+
+정본은 `services/core/src/pureiron_core/api/{alarms,tags,devices,history,ws}.py`, WS 메시지는 `realtime/protocol.py`(OpenAPI components `WsServerMessage`·`WsClientMessage`로 생성). 모든 조회는 viewer+.
+
+| 메서드·경로 | 권한 | 동작 |
+|---|---|---|
+| `GET /tags` | viewer+ | `{tags:[{tag_id, path, device_id, value, quality, ts}]}` 현재값 스냅샷(tag_id 순). `quality` = `GOOD`·`BAD`·`UNCERTAIN`, NaN/Inf·값 없음은 `value: null`, 샘플이 없으면 `ts: null` |
+| `GET /alarms` | viewer+ | `{alarms:[AlarmOut]}` NORMAL이 아닌 알람(활성 + 해제됐지만 미확인), 우선순위 → 최근 전이 순 |
+| `GET /alarms/journal` | viewer+ | `?alarm_id&start&end&limit` → `{entries}` 최신순, `[start, end)`, `limit` 1~1000(기본 100) |
+| `POST /alarms/{alarm_id}/ack` | operator+ | 전이 행 + 감사 `alarm.ack`를 한 트랜잭션으로 쓴 뒤 상태 반영 → `AlarmOut`. 모르는 알람 404, **NORMAL·ACTIVE_ACKED는 409**(다른 사용자가 먼저 ACK했거나 화면이 오래됨 — no-op 200이면 감사 없는 확인이 성공처럼 보인다), site-db 장애 503. 기록하는 사이 해제만 됐으면 CLEARED_UNACKED → NORMAL로 반영(그 행을 더 쓴다), **새로 발생했으면 반영하지 않고 지금 상태(ACTIVE_UNACKED)로 200** — 운전원이 보지 못한 발생이므로 다시 ACK한다 |
+| `POST /alarms/ack-all` | operator+ | ACK할 수 있는 알람 전부를 한 트랜잭션(저널 행들 + 감사 `alarm.ack_all` 한 건, `detail{alarm_ids, count}`) → `{acknowledged:[AlarmOut]}`. 0건이면 기록 없이 200 |
+| `GET /devices` | viewer+ | `{devices:[DeviceOut]}`: `device_id, protocol, state(CONNECTED·DISCONNECTED — core 판정), silent(core 무신호), tag_count` + collector `DeviceHealth` 필드(`connected, status, last_success_at, last_error, last_error_at, consecutive_failures, poll_latency_ms, read_success_rate, poll_total, timeout_count, bad_quality_tag_count, reconnect_count` — health를 아직 못 받았으면 null) |
+| `GET /history` | viewer+ | `?tag_id=…(반복, 1~20개, 1~2^31-1)&start&end(시간대 필수)&resolution=auto\|raw\|1m\|1h&limit_rows(태그별, 1~20,000)` → `{resolution, series:[{tag_id, truncated, raw:[{time, value, quality}], buckets:[{time, avg, min, max, last, samples}]}]}`. auto = ≤1h raw · ≤24h 1m · 그 이상 1h. 구간 상한 raw 1h · 1m 7d · 1h 400d(넘으면 422). 1m·1h 첫 bucket은 start를 품은 `time_bucket` 경계부터 |
+
+`AlarmOut`: `alarm_id, tag_path, alarm_type(above·below = 프로젝트 정의 type), setpoint, deadband, on_delay_s, priority, description, state, value(마지막 전이를 만든 값), value_ts(그 샘플 시각, 복원한 알람은 null), changed_at, changed_by(ACK한 사용자, 조건 변화는 null)`. 상태 기계는 [data-contracts](data-contracts.md) M3b-2 절.
+
+### WebSocket `/api/v1/ws` (V1, M3b-2)
+
+- **인증**: 업그레이드 요청의 세션 쿠키 `pureiron_session`, 쿠키가 없으면 연결 후 5s 안의 첫 메시지 `{"type":"auth","token"}`. 실패 close **4401**, site-db 장애로 검증 불가 **1013**. 60s마다 세션을 다시 검증해 로그아웃·만료·비활성화면 4401(검증 자체가 DB 장애로 안 되면 연결 유지).
+- **Origin**: 업그레이드 요청에 `Origin`이 있고(브라우저) 그 host:port가 요청 `Host`와 다르면 **4403**(포트가 없으면 각자 scheme의 기본 포트). 같은 PC의 다른 포트 웹앱은 same-site라 Strict 쿠키가 실리므로(CSWSH) 막는다. `Origin`이 없는 비브라우저 클라이언트는 허용한다. 그래서 프록시는 브라우저의 Host를 그대로 넘겨야 한다: web nginx `proxy_set_header Host $http_host`(`$host`는 포트를 버린다), vite dev proxy는 `changeOrigin`을 켜지 않는다. 다른 이름으로 프록시하는 배치를 위한 허용 목록 env는 아직 없다.
+- **자원 상한**: 프레임 256 KiB(`WS_MAX_MESSAGE_BYTES`, 가장 큰 정상 메시지 subscribe 10,000개 ≈ 110 KB — 넘으면 uvicorn이 1009), 인증 중인 연결 동시 32개(`MAX_PENDING_AUTH`, 넘으면 1013).
+- **서버 → 클라이언트**(JSON 텍스트 프레임, `type`으로 구분): `hello{username, role}` · `tag_update{values:[TagValueOut]}`(구독한 태그만, `PUREIRON_REALTIME_BATCH_MS`(기본 250ms)마다 태그별 최신값만 합쳐서, 구독 직후 현재값은 곧바로 한 번) · `alarm_event{…AlarmOut}` · `device_update{…DeviceOut}`(알람·장비는 인증된 모든 연결에 방송, 깨어나는 즉시) · `ping`(20s마다).
+- **클라이언트 → 서버**: `subscribe{tag_ids}`·`unsubscribe{tag_ids}`(연결당 최대 10,000개) · `pong`. 형식이 어긋난 메시지는 무시한다.
+- **close code**: 1000 정상, 1001 core 정지, 1009 프레임 상한 초과, 1013 연결별 이벤트 큐(1,000) 초과·인증 시 site-db 장애·인증 대기 연결 상한 초과, 4401 인증 실패·세션 무효, 4403 Origin ≠ Host, 4408 pong이 60s 없음.
+- legacy WS와 달리 무인증 연결·`connection_status`·태그 path 구독은 없다(구독은 tag_id).
+
 ## 내부 이벤트 버스
 
-`backend/src/pureiron/events/bus.py`는 in-process async pub/sub이다. 외부 message broker 계약이 아니다.
+V1 core `platform/bus.py` `EventBus`는 core 프로세스 내부 async pub/sub이다(외부 broker 계약이 아니다). 구독은 fnmatch 패턴.
 
-현재 고정 topic:
+| 토픽 | 발행 | payload |
+|---|---|---|
+| `tag.changed.<path>` | acquisition(TagStore 결과, Ack 뒤) | `tag_id, path, device_id, value(NaN→null), quality(int), ts_ns` |
+| `device.changed.<device_id>` | acquisition `DeviceMonitor` | `device_id, state, reason` |
+| `collector.session.changed` | acquisition server | `sessions` |
+| `alarm.changed.<alarm_id>` | alarms(M3b-2) | `alarm` = 전이 뒤 `AlarmSnapshot` |
 
-- `tag.changed.{path}` — 특정 태그 값 변경
-- `tag.changed.all` — 모든 태그 값 변경 공통 topic
+- **`tag.changed.all`은 V1에 없다**(legacy 전용). 구독자는 `tag.changed.*`를 쓴다.
+- **핸들러 규칙(M3b-2 D8)**: `publish`는 핸들러를 순서대로 await 하므로 핸들러는 I/O를 await 하지 않는다 — 메모리 갱신·큐 적재만. 새 이벤트(알람 전이)는 직접 발행하지 않고 **돌려주면** 버스가 지금 이벤트를 모든 구독자에게 전한 뒤 이어서 발행한다.
+- definition 변경은 `tag.changed.*` 이벤트가 아니다. Device health는 tag event로 만들지 않는다(`/api/v1/devices`·WS `device_update`가 정본).
 
-발행자는 `TagStore.write_value()` 계열이다. 구독자는 WebSocket broadcaster, AlarmEngine, HistorianWriter 등이다.
-
-중요 규칙:
-
-- definition CRUD는 `tag.changed.*` 이벤트가 아니다. 이 이벤트는 값 변경용이다.
-- DB I/O와 `event_bus.publish()`는 TagStore lock 해제 후 실행한다.
-- Device health는 tag event로 만들지 않는다. `/api/devices`의 DriverHealth snapshot이 정본이다.
+legacy(`backend/src/pureiron/events/bus.py`)의 `tag.changed.all`·HistorianWriter 구독은 V1에 적용하지 않는다.
 
 데이터 흐름과 lock discipline은 [architecture](architecture.md#이벤트-버스--잠금-규율)를 따른다.
 
@@ -1591,7 +1621,10 @@ cli.py ──▶ runtime.SiteRuntime.build(settings) ──▶ app.create_app(rt
 | `historian` | recorder(deadband·max_interval, replay 우회) → writer(상한 버퍼·1s flush) → `tag_history`, reader(raw/1m/1h) | M3a(HTTP 노출은 M3b) |
 | `project` | `project_state`·edit lock, 정의 소스(`definitions_rev`) | 골격 + 정의(M3a), 정식 apply는 M5 |
 | `api` | `build_<x>_router` + pydantic 모델 | health·project |
-| `alarms`·`auth`·`audit`·`realtime`·`devices` | 알람 엔진·저널, 인증, 감사, WS, 장비 상태 API | M3b |
+| `alarms` | 4상태 알람 엔진(`tag.changed.*` 동기 평가)·저널(상한 큐 + writer)·ACK 트랜잭션·기동 복원 | M3b-2 |
+| `auth`·`audit` | 세션 인증·역할, 감사 기록·조회 | M3b-1 |
+| `realtime` | WS `/api/v1/ws` 연결·구독·태그 합치기·알람/장비 방송 | M3b-2 |
+| 장비 상태 | 새 도메인 없이 `acquisition.ports` `DeviceSnapshot`·`DeviceStatusSource`(`DeviceMonitor`) → `GET /devices` | M3b-2 |
 
 ## Core Domain Model Boundary (SoT)
 
@@ -1623,7 +1656,9 @@ HistoryWriter ─1s flush, INSERT … ON CONFLICT DO NOTHING─▶ site-db tag_h
 - Recorder는 일부 샘플을 거부한다(plan_rev가 앞선 batch, 현재 정의에 없는 tag_id의 live 샘플, int4 범위 밖 tag_id → `rejected_total`).
   상세 규칙은 [data-contracts](data-contracts.md)의 M3a 절.
 - 이력 기록은 `tag.changed` 구독이 아니라 Ingestor가 직접 넘기는 sink다(이벤트 루프의 reader 경로에 DB I/O가 없다).
-  느린 구독자(알람 DB·WS)가 생기는 M3b에서 별도 publisher task 여부를 결정한다(m3a3 plan D5).
+  M3b-2 결정(D8): 별도 publisher task를 두지 않는다. 대신 **bus 핸들러는 I/O를 await 하지 않는다** — 알람 엔진은
+  동기 평가 후 저널 행을 상한 큐에 넣고(writer task가 비움) 전이 이벤트를 돌려주며, WS는 연결별 메모리(태그 합치기·
+  상한 이벤트 큐)에만 넣는다. 그래서 느린 DB·클라이언트가 ingest 루프를 붙잡지 않는다.
 
 ## 이벤트 버스 · 잠금 규율
 
@@ -1635,8 +1670,14 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
 | `tag.changed.<path>` | acquisition(TagStore 결과) | 값·품질이 바뀐 태그 |
 | `device.changed.<device_id>` | acquisition `DeviceMonitor` | 장비 연결 상태 변화 |
 | `collector.session.changed` | acquisition server | collector 세션 수 |
+| `alarm.changed.<alarm_id>` | alarms(M3b-2, `tag.changed` 핸들러가 돌려준 전이·타이머·정의 변경·ACK) | 전이 뒤 `AlarmSnapshot` |
 
 - 구독은 fnmatch 패턴(`tag.changed.*`). 핸들러 예외는 기록만 하고 다른 구독자 전달을 막지 않는다.
+- **핸들러 규칙(M3b-2 D8)**: `publish`는 핸들러를 순서대로 await 한다(발행자 = ingest 루프·Ack 뒤). 핸들러는 I/O를
+  await 하지 않고 메모리 갱신·큐 적재만 한다. 핸들러가 내야 할 이벤트(알람 전이)는 **돌려주면** 버스가 지금
+  이벤트를 모든 구독자에게 전한 뒤 이어서 발행한다(너비 우선, 순서 결정적).
+- 기동 순서: db → historian → alarms(저널 복원·writer) → realtime → acquisition, 정지는 역순(수집 중단 → WS
+  1001 close → 알람 저널 최종 쓰기 → 이력 최종 쓰기 → db).
 - **잠금 규율**: TagStore를 바꾸는 메서드는 동기로 끝나고 이벤트 목록을 반환한다. DB I/O와 `publish`는 그 뒤, 바깥에서
   한다(불변 규칙 Lock discipline, [coding-style](coding-style.md) 8절).
 
@@ -1781,6 +1822,8 @@ services/core/src/pureiron_core/
   `DeviceHealth`), 밖으로 낼 때는 frozen 스냅샷으로 복사한다(예: `Historian.status()` → `HistorianStatus`).
 - HTTP 경계 모델만 pydantic `BaseModel`이다. 도메인 상태를 API 모델로 옮기는 변환은 `api/`에서 한다
   (예: `HistorianStatus` → `api/health.py` `Historian`).
+  예외 하나: WS 메시지 모델은 `realtime/protocol.py`가 소유하고, 같은 모양의 REST 응답 모델(`AlarmOut`·
+  `DeviceOut`·`TagValueOut`)은 이를 재사용한다 — WS와 REST가 같은 스키마여야 하기 때문이다(M3b D10 계약 일치).
 - 라우터는 전역을 읽지 않고 `build_<x>_router(...)`가 받은 의존성(Protocol 타입)만 쓴다. `app.state`·
   모듈 전역 싱글톤·service locator 금지.
 - 다른 서비스(collector·updater·control-api)와 `packages/*`도 같은 원칙이다: 진입점(`main.py`·`cli.py`)에서
@@ -1889,6 +1932,8 @@ services/core/src/pureiron_core/
 - **임계 구역**: `TagStore`처럼 공유 상태를 바꾸는 메서드는 동기(`await` 없음)로 써서 이벤트 루프 안에서
   끊기지 않게 하고, 바뀐 결과(이벤트 목록)를 **반환**한다. DB I/O·이벤트 발행은 호출자가 그 뒤에 한다
   (불변 규칙 Lock discipline).
+- **bus 핸들러**: `EventBus.publish`는 핸들러를 순서대로 await 하므로 핸들러는 I/O를 await 하지 않는다 — 메모리
+  갱신·큐 적재만 하고, 새 이벤트는 직접 발행하지 않고 **돌려준다**(버스가 이어서 발행, M3b-2 D8).
 
 ## 9. 테스트
 
@@ -1941,7 +1986,7 @@ services/core/src/pureiron_core/
 | 9절 monkeypatch | `services/updater/tests/test_cli.py`(`cli.real_deps`), `deploy/tests/test_build_bundle.py`(`SIZE_LIMIT`), `packages/bundle-tools/tests/test_pib.py`·`test_keys_images_cli.py`(`BoundedTarInfo._base_proc_member`), `services/updater/tests/test_phases.py`(`pureiron_updater.gc.collect`) | 자기 코드 치환 → 주입 인자 |
 | 2절 예외 이유 주석 | 루트 `pyproject.toml` `"**/tests/**" = ["PLR0915"]` | 이유 주석 없음 |
 | 8절 로거 이름 | `getLogger("pureiron_updater")`, `getLogger("simulator")` | `__name__`으로 |
-| 5절 크기 단위 접미사 | `SIZE_LIMIT`(`deploy/bundle/build_bundle.py`), `METADATA_LIMIT`(`pureiron_bundle/pib.py`), `DEFAULT_LIMIT`(`historian/reader.py`, 행 수) | `_BYTES`·`_ROWS` 접미사 |
+| 5절 크기 단위 접미사 | `SIZE_LIMIT`(`deploy/bundle/build_bundle.py`), `METADATA_LIMIT`(`pureiron_bundle/pib.py`) | `_BYTES` 접미사 |
 | 5절 환경변수 접두 | updater `PUREIRON_POLL_INTERVAL_S`·`PUREIRON_CHECK_TIMEOUT_S`(서비스 전용인데 접두 없음) | **변경하지 않는다** — 현장 `.env`·compose와 맞물린 배포 계약 |
 | 7·9절 docstring | 모듈 docstring 없음: `services/control-api/src/pureiron_control/app.py`; 테스트 docstring 없음 17개(예: collector `test_modbus.py`·`test_plan.py`) | 손댈 때 채움 |
 
@@ -2283,6 +2328,14 @@ window: { recurring: { tz: Asia/Seoul, days: [sat, sun], start: "02:00", end: "0
 - **0010_auth**: `users(user_id bigserial PK, username text NOT NULL UNIQUE, display_name, role smallint CHECK 0~3, password_hash, enabled DEFAULT true, created_at, updated_at)` — role 0 viewer·1 operator·2 engineer·3 admin. 계정은 지우지 않고 `enabled`만 바꾼다. `password_hash` = `scrypt$n$r$p$salt_b64$hash_b64`(표준 라이브러리 scrypt, 기본 n=2^14·r=8·p=1·16 B salt, 매개변수를 해시에 같이 둬 기본값을 올려도 옛 해시가 검증된다). `sessions(token_sha256 bytea PK, user_id → users, created_at, last_seen_at, expires_at, revoked_at)` + `(user_id)` 인덱스 — 토큰 원문은 저장하지 않는다. 로그인할 때 그 사용자의 절대 만료·폐기된 세션 행을 지운다. UNIQUE·REFERENCES·CHECK는 `CREATE TABLE` 안이라 migrate lint 허용 범위(제약 추가 검사는 `ALTER TABLE`만 본다). `audit_log.source`에는 CHECK를 두지 않는다 — 나중에 값을 더할 수 없게 되므로(ADD-only).
 - **0011_audit**: `audit_log(id bigserial PK, time timestamptz DEFAULT now(), username, action NOT NULL, target, detail jsonb DEFAULT '{}', source NOT NULL)` + `(time DESC)`·`(username, time DESC)` 인덱스. 추가만 하고 고치거나 지우지 않는다(보존 정책은 범위 밖). `detail`에는 비밀번호·토큰을 넣지 않는다. action·source 값은 [api-events](api-events.md) V1 인증·감사 절.
 - **기본 계정 없음**: migrate는 사용자를 만들지 않는다. compose dev·통합 테스트·VM 하네스는 `pureiron-core users add`(비밀번호는 stdin 또는 `--password-file`)로 만든다.
+
+### V1 구현 현황 (M3b-2 alarms·realtime, 2026-10-11)
+
+- **epoch 4 포인터 → `0012_alarms.sql`**(미release 확장). mid-crash 통합 테스트에 `0011-recorded`·`0012-rolled-back`을 더했다 — 0012가 기록되기 전에는 epoch 3.
+- **0012_alarms**: `alarms(alarm_id text PK, tag_path NOT NULL, definition jsonb NOT NULL, retired_at)` — `apply-definitions`가 project `alarms/*.yaml`을 alarm_id 기준 upsert, 빠진 정의는 `retired_at`만(되살리면 NULL), 바뀌면 `definitions_rev`+1(태그·장비와 같은 rev 스냅샷, `Definitions.alarms`). `definition`은 정규형 JSON(스키마 기본값 생략 → 소비자가 deadband 0·on_delay_s 0·priority medium을 채운다). `alarm_journal(id bigserial PK, time timestamptz DEFAULT now(), alarm_id, tag_path, from_state, to_state, value float8, username, note)` + `(alarm_id, time DESC)`·`(time DESC)` 인덱스. 저널은 이력·감사이고 현재 상태가 아니다(현재 상태 = core 알람 엔진 메모리).
+- **알람 상태 기계(D7)**: 4상태 `NORMAL`·`ACTIVE_UNACKED`·`ACTIVE_ACKED`·`CLEARED_UNACKED`(+ 저널·WS 전용 `RETIRED`). 조건 above `value >= setpoint`, below `value <= setpoint`. 해제는 deadband 적용(above `< setpoint - deadband`, below `> setpoint + deadband`, 그 사이는 유지). NORMAL·CLEARED_UNACKED --조건--> ACTIVE_UNACKED --ACK--> ACTIVE_ACKED --해제--> NORMAL, ACTIVE_UNACKED --해제--> CLEARED_UNACKED --ACK--> NORMAL(legacy의 CLEAR_ACKED·재ACK 없음). `on_delay_s` > 0이면 조건 성립 시 타이머(재진입 시 그대로, 조건이 깨지면 취소), 만료 시 TagStore 현재값이 GOOD이고 조건이 여전할 때만 활성. quality가 GOOD이 아니거나 값이 없거나 NaN/Inf면 평가 보류(상태 유지 — 통신 끊김을 해제로 보지 않음). 같은 태그는 above setpoint 오름차순 → below 내림차순으로 평가. 정의에서 빠진 알람은 `RETIRED` 한 행을 남기고 제거.
+- **복원**: core 기동 시 `alarms` 행(retired 포함)마다 저널 마지막 행(time·id 내림차순)의 `to_state`로 시작한다. site-db가 없으면 복원될 때까지 정의 적용·평가를 보류(주기 재시도) — 미확인 알람이 새 알람으로 다시 생기지 않게. core가 꺼진 동안 정의에서 빠진 미해결 알람은 복원 직후 `RETIRED`.
+- **저널 쓰기(D8)**: 조건 변화 전이는 `tag.changed` 핸들러가 메모리 큐(상한 10,000행, 넘치면 가장 오래된 것부터 버리고 `/readyz.alarms.dropped_total`)에 넣고 writer task가 1s마다 쓴다(실패하면 큐 앞으로 되돌려 재시도, 정지 시 제한 시간 안 최종 쓰기). **ACK는 큐를 거치지 않는다**: 전이 행과 `audit_log`(`alarm.ack`·`alarm.ack_all`)를 한 트랜잭션으로 쓰고 성공한 뒤에만 메모리 반영·`alarm.changed` 발행. 기록하는 사이 해제만 됐으면 지금 상태 기준 ACK 전이(CLEARED_UNACKED → NORMAL)를 지금 시각으로 저널 큐에 더한다(해제 행보다 뒤라 복원이 고르는 마지막 행 = 메모리 상태). 기록하는 사이 새로 발생(ACTIVE_UNACKED 진입 — 알람별 발생 번호로 판정)했으면 그 ACK는 반영하지 않는다: 운전원이 보지 못한 발생이고, 마지막 행이 그 발생 행이라 메모리와 같다. 기록된 ACK 행·감사는 확인 행위로 남는다.
 
 ---
 
@@ -3037,6 +3090,7 @@ PureIron 런타임 설정의 정본은 `backend/src/pureiron/config.py`의 `Sett
 | `PUREIRON_AUTH_SESSION_IDLE_S` | core | `43200`(12 h) | 세션 유휴 만료 — 마지막 사용(`sessions.last_seen_at`) 뒤 이 시간이 지나면 401(M3b-1). `last_seen_at` 갱신 간격 = `min(60 s, IDLE_S / 2)` — 짧은 값(예: 60)에서도 그보다 자주 쓰는 세션은 유지된다 |
 | `PUREIRON_AUTH_SESSION_ABSOLUTE_S` | core | `604800`(7 d) | 세션 절대 만료(로그인 기준, 사용 중이어도 끝남). 세션 쿠키 `Max-Age`도 이 값 |
 | `PUREIRON_AUTH_COOKIE_SECURE` | core | `false` | 세션 쿠키 `Secure` 속성(`true/false`, `1/0`, `yes/no`, `on/off`). 현장 web은 http라 기본 false — true면 브라우저가 http로는 쿠키를 보내지 않는다 |
+| `PUREIRON_REALTIME_BATCH_MS` | core | `250` | WS `tag_update` 합치기 주기(ms, 양의 정수). 구독한 태그의 변화는 이 주기마다 태그별 최신값만 보낸다(M3b-2). 알람·장비 이벤트는 주기와 무관하게 즉시 |
 | `PUREIRON_CORE_GRPC` | collector | `127.0.0.1:50051` | core gRPC 주소(compose: `core:50051`) |
 | `PUREIRON_COLLECTOR_HEARTBEAT_S` | collector | `1.0` | 빈 batch heartbeat 주기 |
 | `PUREIRON_COLLECTOR_RECONNECT_INITIAL_S` / `_MAX_S` | collector | `0.5` / `5` | 재연결 backoff. 상한은 링 보관 창(60 s)보다 훨씬 작아야 한다 — 0.5 s부터 두 배씩 30 s까지 늘면 35 s 단절 뒤 다음 시도가 ~66 s에 와서 분리 구간 앞부분이 링 창 밖으로 밀려 버려진다(M3a-3). LAN 재접속 비용은 작다 |
@@ -3389,7 +3443,7 @@ E2E/NF:
 | `no-customer-branching` | `(project_id\|site_id) == "…"` 리터럴, `deploy/lint/customer-names.txt` 이름 0건(제품 `src/`만) | 항상 |
 | `web` | `npm ci`, `tsc --noEmit`, `eslint --max-warnings 0`, `vite build` | 항상 |
 | `integration-compose` | 이미지 빌드 → compose(`pureiron-it`, `PUREIRON_IT_PROJECT`로 변경 가능) site-db → `migrate up` → 전체 기동 → `pytest -m "integration and not perf"`(readyz 200, migrate 종료코드, Timescale 객체, edit-lock 경쟁, historian DB, 시뮬레이터 100태그·collector kill, collector 30 s 네트워크 분리 replay) | 항상 |
-| `perf-ingest` | 이미지 빌드 → `PUREIRON_SIM_REGISTERS=2000` compose → 2,000태그·poll 1 s 60 s 측정 → `artifacts/perf/<PUREIRON_PERF_RELEASE:-r2>/ingest.json`(batch/s·샘플/s·write_lag p50/p95/max·buffer max·drop·CPU/RSS·분당 행). 기록만, 합격선 없음 | 수동 |
+| `perf-ingest` | 이미지 빌드 → `PUREIRON_SIM_REGISTERS=2000` compose → 2,000태그·poll 1 s 60 s 측정(r3부터 알람 정의 50개 + 전 태그 구독 WS 1개를 붙여서) → `artifacts/perf/<PUREIRON_PERF_RELEASE:-r3>/ingest.json`(batch/s·샘플/s·write_lag p50/p95/max·buffer max·drop·CPU/RSS·분당 행, r3부터 `alarms`·`ws` 수신 통계). 기록만, 합격선 없음 | 수동 |
 | `n-minus-1` | 현재 커밋 core를 `pureiron/core:ci-<sha>`로 빌드해 migrate한 DB에서, 직전 epoch release 기록(`deploy/releases/r<N>.json`, 번호 순)의 core-test 이미지를 실행. 이미지가 없으면 image store(`PUREIRON_IMAGE_STORE`, 기본 `~/pureiron/images/<release>/`)의 tar를 load하고 config digest를 기록과 대조. 테스트와 별개로 N-1 앱의 `migrate status --json`이 N 스키마에서 envelope 안인지 확인. `deploy/build/n_minus_1_waivers.json`의 테스트만 deselect(waiver 테스트는 따로 돌려 여전히 실패해야 하고, 본 실행은 통과 ≥ 1·deselect 수 == waiver 수). 현재 epoch 2(r1) × r0 core-test. epoch 1이면 notice 후 통과 | 마이그레이션·`db` 경로 변경 PR, master push, nightly, `full-gate` 라벨 |
 | `repro-build` | 캐시 없이 2회 빌드해 core·collector·web·simulator·core-test config digest 동일 확인(site-db 제외) | Dockerfile·`uv.lock`·`package-lock.json`·`deploy/build/` 변경 PR, master push, nightly, `full-gate` 라벨 |
 

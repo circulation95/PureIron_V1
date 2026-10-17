@@ -21,8 +21,10 @@ from typing import cast
 
 import asyncpg
 import uvicorn
+from fastapi import FastAPI
 
 from pureiron_core import cli_users
+from pureiron_core.api.ws import WS_MAX_MESSAGE_BYTES
 from pureiron_core.app import create_app
 from pureiron_core.auth.ports import AuthError
 from pureiron_core.platform import migrate
@@ -99,15 +101,22 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _serve(settings: Settings) -> int:
-    app = create_app(SiteRuntime.build(settings))
-    uvicorn.run(
+def http_config(app: FastAPI, *, host: str, port: int) -> uvicorn.Config:
+    """core HTTP·WS 서버 설정. WS 프레임 상한은 uvicorn 기본(16 MiB) 대신 `WS_MAX_MESSAGE_BYTES`
+    — 인증 전에도 프레임을 받으므로(첫 메시지 auth) 이 값이 비인증 메모리 사용의 상한이다."""
+    return uvicorn.Config(
         app,
-        host=settings.http_host,
-        port=settings.http_port,
+        host=host,
+        port=port,
         log_config=None,
         timeout_graceful_shutdown=HTTP_GRACEFUL_SHUTDOWN_S,
+        ws_max_size=WS_MAX_MESSAGE_BYTES,
     )
+
+
+def _serve(settings: Settings) -> int:
+    app = create_app(SiteRuntime.build(settings))
+    uvicorn.Server(http_config(app, host=settings.http_host, port=settings.http_port)).run()
     return 0
 
 
@@ -222,7 +231,8 @@ def _apply_definitions(args: argparse.Namespace, settings: Settings) -> int:
                 f"apply-definitions: rev={result.rev} changed={result.changed} "
                 f"devices +{result.devices_added} ~{result.devices_updated} "
                 f"-{result.devices_retired} tags +{result.tags_added} ~{result.tags_updated} "
-                f"-{result.tags_retired} historian {'~' if result.historian_changed else '='}"
+                f"-{result.tags_retired} alarms +{result.alarms_added} ~{result.alarms_updated} "
+                f"-{result.alarms_retired} historian {'~' if result.historian_changed else '='}"
             )
         return migrate.EXIT_OK
 

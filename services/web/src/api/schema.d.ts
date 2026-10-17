@@ -4,6 +4,74 @@
  */
 
 export interface paths {
+    "/api/v1/alarms": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Alarms */
+        get: operations["list_alarms"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/alarms/ack-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ack All */
+        post: operations["ack_all_alarms"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/alarms/journal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Journal */
+        get: operations["list_alarm_journal"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/alarms/{alarm_id}/ack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ack */
+        post: operations["ack_alarm"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/audit": {
         parameters: {
             query?: never;
@@ -94,6 +162,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Devices */
+        get: operations["list_devices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/healthz": {
         parameters: {
             query?: never;
@@ -103,6 +188,23 @@ export interface paths {
         };
         /** Healthz */
         get: operations["healthz"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get History */
+        get: operations["get_history"];
         put?: never;
         post?: never;
         delete?: never;
@@ -163,10 +265,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/tags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Tags */
+        get: operations["list_tags"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AckAllOut */
+        AckAllOut: {
+            /**
+             * Acknowledged
+             * @description 이번에 ACK한 알람(ACK 뒤 상태)
+             */
+            acknowledged: components["schemas"]["AlarmOut"][];
+        };
         /**
          * Acquisition
          * @description 수집 상태 집계(준비 판정에는 쓰지 않음 — 장비가 꺼진 현장도 ready). 태그 값은 담지 않는다.
@@ -185,6 +312,152 @@ export interface components {
             tags_good: number;
             /** Tags Total */
             tags_total: number;
+        };
+        /**
+         * AlarmEventMessage
+         * @description 알람 상태 전이(인증된 모든 연결에 방송). 필드는 전이 뒤 `AlarmOut`.
+         */
+        AlarmEventMessage: {
+            /** Alarm Id */
+            alarm_id: string;
+            /**
+             * Alarm Type
+             * @description 프로젝트 정의의 `type`
+             * @enum {string}
+             */
+            alarm_type: "above" | "below";
+            /**
+             * Changed At
+             * @description 마지막 전이 시각
+             */
+            changed_at: string | null;
+            /**
+             * Changed By
+             * @description 마지막 전이를 한 사용자(ACK). 조건 변화는 null
+             */
+            changed_by: string | null;
+            /** Deadband */
+            deadband: number;
+            /** Description */
+            description: string | null;
+            /** On Delay S */
+            on_delay_s: number;
+            /**
+             * Priority
+             * @enum {string}
+             */
+            priority: "low" | "medium" | "high" | "critical";
+            /** Setpoint */
+            setpoint: number;
+            /**
+             * State
+             * @description RETIRED = 정의에서 빠짐(WS 방송·저널에만 나온다)
+             * @enum {string}
+             */
+            state: "NORMAL" | "ACTIVE_UNACKED" | "ACTIVE_ACKED" | "CLEARED_UNACKED" | "RETIRED";
+            /** Tag Path */
+            tag_path: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "alarm_event";
+            /**
+             * Value
+             * @description 마지막 전이를 만든 값(ACK는 값을 바꾸지 않는다)
+             */
+            value: number | null;
+            /**
+             * Value Ts
+             * @description 그 값의 샘플 시각(복원한 알람은 null)
+             */
+            value_ts: string | null;
+        };
+        /** AlarmList */
+        AlarmList: {
+            /**
+             * Alarms
+             * @description NORMAL이 아닌 알람(활성 + 해제됐지만 미확인): 우선순위 높은 것 → 최근 전이 순
+             */
+            alarms: components["schemas"]["AlarmOut"][];
+        };
+        /** AlarmOut */
+        AlarmOut: {
+            /** Alarm Id */
+            alarm_id: string;
+            /**
+             * Alarm Type
+             * @description 프로젝트 정의의 `type`
+             * @enum {string}
+             */
+            alarm_type: "above" | "below";
+            /**
+             * Changed At
+             * @description 마지막 전이 시각
+             */
+            changed_at: string | null;
+            /**
+             * Changed By
+             * @description 마지막 전이를 한 사용자(ACK). 조건 변화는 null
+             */
+            changed_by: string | null;
+            /** Deadband */
+            deadband: number;
+            /** Description */
+            description: string | null;
+            /** On Delay S */
+            on_delay_s: number;
+            /**
+             * Priority
+             * @enum {string}
+             */
+            priority: "low" | "medium" | "high" | "critical";
+            /** Setpoint */
+            setpoint: number;
+            /**
+             * State
+             * @description RETIRED = 정의에서 빠짐(WS 방송·저널에만 나온다)
+             * @enum {string}
+             */
+            state: "NORMAL" | "ACTIVE_UNACKED" | "ACTIVE_ACKED" | "CLEARED_UNACKED" | "RETIRED";
+            /** Tag Path */
+            tag_path: string;
+            /**
+             * Value
+             * @description 마지막 전이를 만든 값(ACK는 값을 바꾸지 않는다)
+             */
+            value: number | null;
+            /**
+             * Value Ts
+             * @description 그 값의 샘플 시각(복원한 알람은 null)
+             */
+            value_ts: string | null;
+        };
+        /**
+         * Alarms
+         * @description 알람 상태 집계(준비 판정에는 쓰지 않음). 누적 값은 core 기동 후 기준.
+         */
+        Alarms: {
+            /**
+             * Active Total
+             * @description ACTIVE_UNACKED + ACTIVE_ACKED
+             */
+            active_total: number;
+            /**
+             * Dropped Total
+             * @description 저널 큐 상한을 넘어 버린(가장 오래된) 행 수
+             */
+            dropped_total: number;
+            /**
+             * Journal Queue Rows
+             * @description 아직 DB에 쓰지 못한 알람 저널 행 수
+             */
+            journal_queue_rows: number;
+            /**
+             * Unacked Total
+             * @description ACTIVE_UNACKED + CLEARED_UNACKED
+             */
+            unacked_total: number;
         };
         /** AuditEntryOut */
         AuditEntryOut: {
@@ -225,12 +498,154 @@ export interface components {
              */
             entries: components["schemas"]["AuditEntryOut"][];
         };
+        /**
+         * AuthMessage
+         * @description 세션 쿠키가 없는 클라이언트의 첫 메시지(연결 후 5s 안). 토큰 = 로그인 응답의 `token`.
+         */
+        AuthMessage: {
+            /** Token */
+            token: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "auth";
+        };
+        /** BucketOut */
+        BucketOut: {
+            /** Avg */
+            avg: number | null;
+            /** Last */
+            last: number | null;
+            /** Max */
+            max: number | null;
+            /** Min */
+            min: number | null;
+            /**
+             * Samples
+             * @description bucket 안 행 수(bool·NULL 행 포함 — avg 분모와 다르다)
+             */
+            samples: number;
+            /**
+             * Time
+             * Format: date-time
+             * @description bucket 시작 시각
+             */
+            time: string;
+        };
         /** Check */
         Check: {
             /** Detail */
             detail?: string | null;
             /** Ok */
             ok: boolean;
+        };
+        /** DeviceList */
+        DeviceList: {
+            /**
+             * Devices
+             * @description 현재 plan의 장비 전부(device_id 순)
+             */
+            devices: components["schemas"]["DeviceOut"][];
+        };
+        /**
+         * DeviceOut
+         * @description 장비 통신 상태(태그가 아니다). health 필드는 collector `DeviceHealth`, 못 받았으면 null.
+         */
+        DeviceOut: {
+            /** Bad Quality Tag Count */
+            bad_quality_tag_count: number | null;
+            /** Connected */
+            connected: boolean | null;
+            /** Consecutive Failures */
+            consecutive_failures: number | null;
+            /** Device Id */
+            device_id: string;
+            /** Last Error */
+            last_error: string | null;
+            /** Last Error At */
+            last_error_at: string | null;
+            /** Last Success At */
+            last_success_at: string | null;
+            /** Poll Latency Ms */
+            poll_latency_ms: number | null;
+            /** Poll Total */
+            poll_total: number | null;
+            /** Protocol */
+            protocol: string;
+            /** Read Success Rate */
+            read_success_rate: number | null;
+            /** Reconnect Count */
+            reconnect_count: number | null;
+            /**
+             * Silent
+             * @description core 무신호 판정(live 샘플이 max(3*poll, 5s) 동안 없음)
+             */
+            silent: boolean;
+            /**
+             * State
+             * @description core 판정: health가 connected이고 무신호가 아니면 CONNECTED
+             * @enum {string}
+             */
+            state: "CONNECTED" | "DISCONNECTED";
+            /** Status */
+            status: string | null;
+            /** Tag Count */
+            tag_count: number;
+            /** Timeout Count */
+            timeout_count: number | null;
+        };
+        /**
+         * DeviceUpdateMessage
+         * @description 장비 상태 변화(인증된 모든 연결에 방송).
+         */
+        DeviceUpdateMessage: {
+            /** Bad Quality Tag Count */
+            bad_quality_tag_count: number | null;
+            /** Connected */
+            connected: boolean | null;
+            /** Consecutive Failures */
+            consecutive_failures: number | null;
+            /** Device Id */
+            device_id: string;
+            /** Last Error */
+            last_error: string | null;
+            /** Last Error At */
+            last_error_at: string | null;
+            /** Last Success At */
+            last_success_at: string | null;
+            /** Poll Latency Ms */
+            poll_latency_ms: number | null;
+            /** Poll Total */
+            poll_total: number | null;
+            /** Protocol */
+            protocol: string;
+            /** Read Success Rate */
+            read_success_rate: number | null;
+            /** Reconnect Count */
+            reconnect_count: number | null;
+            /**
+             * Silent
+             * @description core 무신호 판정(live 샘플이 max(3*poll, 5s) 동안 없음)
+             */
+            silent: boolean;
+            /**
+             * State
+             * @description core 판정: health가 connected이고 무신호가 아니면 CONNECTED
+             * @enum {string}
+             */
+            state: "CONNECTED" | "DISCONNECTED";
+            /** Status */
+            status: string | null;
+            /** Tag Count */
+            tag_count: number;
+            /** Timeout Count */
+            timeout_count: number | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "device_update";
         };
         /** EditLockOut */
         EditLockOut: {
@@ -258,6 +673,21 @@ export interface components {
             status: "ok";
             /** Version */
             version: string;
+        };
+        /** HelloMessage */
+        HelloMessage: {
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "viewer" | "operator" | "engineer" | "admin";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "hello";
+            /** Username */
+            username: string;
         };
         /**
          * Historian
@@ -300,6 +730,40 @@ export interface components {
              */
             written_total: number;
         };
+        /** HistoryOut */
+        HistoryOut: {
+            /**
+             * Resolution
+             * @description 실제로 쓴 해상도(auto 해석 결과)
+             * @enum {string}
+             */
+            resolution: "raw" | "1m" | "1h";
+            /**
+             * Series
+             * @description 요청한 tag_id 순서(중복 제거)
+             */
+            series: components["schemas"]["HistorySeries"][];
+        };
+        /** HistorySeries */
+        HistorySeries: {
+            /**
+             * Buckets
+             * @description resolution=1m·1h일 때만 채운다
+             */
+            buckets: components["schemas"]["BucketOut"][];
+            /**
+             * Raw
+             * @description resolution=raw일 때만 채운다
+             */
+            raw: components["schemas"]["RawPointOut"][];
+            /** Tag Id */
+            tag_id: number;
+            /**
+             * Truncated
+             * @description limit_rows를 넘어 앞쪽 limit_rows개만 담았다
+             */
+            truncated: boolean;
+        };
         /**
          * IngestCounts
          * @description ingest 누적 샘플 수(core 기동 후). live만 현재값에 반영, 나머지는 이력 전용.
@@ -323,6 +787,44 @@ export interface components {
             replay: number;
             /** Stale */
             stale: number;
+        };
+        /** JournalEntryOut */
+        JournalEntryOut: {
+            /** Alarm Id */
+            alarm_id: string;
+            /** From State */
+            from_state: string;
+            /** Id */
+            id: number;
+            /** Note */
+            note: string | null;
+            /** Tag Path */
+            tag_path: string;
+            /**
+             * Time
+             * Format: date-time
+             */
+            time: string;
+            /**
+             * To State
+             * @description NORMAL·ACTIVE_UNACKED·ACTIVE_ACKED·CLEARED_UNACKED·RETIRED
+             */
+            to_state: string;
+            /**
+             * Username
+             * @description ACK한 사용자. 조건 변화로 생긴 전이는 null
+             */
+            username: string | null;
+            /** Value */
+            value: number | null;
+        };
+        /** JournalPage */
+        JournalPage: {
+            /**
+             * Entries
+             * @description 최신순
+             */
+            entries: components["schemas"]["JournalEntryOut"][];
         };
         /** LoginOut */
         LoginOut: {
@@ -364,6 +866,25 @@ export interface components {
             /** New Password */
             new_password: string;
         };
+        /**
+         * PingMessage
+         * @description 20s마다. 클라이언트는 `pong`으로 답한다(60s 동안 pong이 없으면 서버가 끊는다).
+         */
+        PingMessage: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "ping";
+        };
+        /** PongMessage */
+        PongMessage: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "pong";
+        };
         /** ProjectStateOut */
         ProjectStateOut: {
             /** Applied At */
@@ -385,11 +906,31 @@ export interface components {
             /** Version */
             version: string | null;
         };
+        /** RawPointOut */
+        RawPointOut: {
+            /**
+             * Quality
+             * @enum {string}
+             */
+            quality: "GOOD" | "BAD" | "UNCERTAIN";
+            /**
+             * Time
+             * Format: date-time
+             */
+            time: string;
+            /**
+             * Value
+             * @description 숫자 또는 bool. NaN·값 없는 BAD는 null
+             */
+            value: number | boolean | null;
+        };
         /** Readiness */
         Readiness: {
             acquisition: components["schemas"]["Acquisition"];
+            alarms: components["schemas"]["Alarms"];
             checks: components["schemas"]["ReadinessChecks"];
             historian: components["schemas"]["Historian"];
+            realtime: components["schemas"]["Realtime"];
             /**
              * Status
              * @enum {string}
@@ -403,6 +944,17 @@ export interface components {
             collector: components["schemas"]["Check"];
             db: components["schemas"]["Check"];
             schema_envelope: components["schemas"]["SchemaEnvelopeCheck"];
+        };
+        /**
+         * Realtime
+         * @description WS 연결 집계(준비 판정에는 쓰지 않음).
+         */
+        Realtime: {
+            /**
+             * Connections
+             * @description 지금 열린 인증된 WS 연결 수
+             */
+            connections: number;
         };
         /** @enum {string} */
         RoleName: "viewer" | "operator" | "engineer" | "admin";
@@ -419,6 +971,75 @@ export interface components {
             /** Ok */
             ok: boolean;
         };
+        /**
+         * SubscribeMessage
+         * @description 태그 구독 추가. 새로 구독한 태그의 현재값을 곧바로 `tag_update`로 한 번 보낸다.
+         */
+        SubscribeMessage: {
+            /** Tag Ids */
+            tag_ids: components["schemas"]["TagId"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "subscribe";
+        };
+        TagId: number;
+        /** TagList */
+        TagList: {
+            /**
+             * Tags
+             * @description 현재 plan의 태그 전부(tag_id 순)
+             */
+            tags: components["schemas"]["TagValueOut"][];
+        };
+        /**
+         * TagUpdateMessage
+         * @description 구독한 태그의 변화(배치 주기마다 합침 — 태그별 최신값만). 구독 직후 현재값도 이 메시지.
+         */
+        TagUpdateMessage: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "tag_update";
+            /** Values */
+            values: components["schemas"]["TagValueOut"][];
+        };
+        /** TagValueOut */
+        TagValueOut: {
+            /** Device Id */
+            device_id: string;
+            /** Path */
+            path: string;
+            /**
+             * Quality
+             * @enum {string}
+             */
+            quality: "GOOD" | "BAD" | "UNCERTAIN";
+            /** Tag Id */
+            tag_id: number;
+            /**
+             * Ts
+             * @description 샘플 시각(아직 샘플이 없으면 null)
+             */
+            ts: string | null;
+            /**
+             * Value
+             * @description NaN/Inf·값 없음은 null
+             */
+            value: number | boolean | null;
+        };
+        /** UnsubscribeMessage */
+        UnsubscribeMessage: {
+            /** Tag Ids */
+            tag_ids: components["schemas"]["TagId"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "unsubscribe";
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -432,6 +1053,16 @@ export interface components {
             /** Error Type */
             type: string;
         };
+        /**
+         * WsClientMessage
+         * @description 클라이언트가 보내는 WS 메시지. 형식이 어긋난 메시지는 무시한다.
+         */
+        WsClientMessage: components["schemas"]["AuthMessage"] | components["schemas"]["SubscribeMessage"] | components["schemas"]["UnsubscribeMessage"] | components["schemas"]["PongMessage"];
+        /**
+         * WsServerMessage
+         * @description 서버가 보내는 WS 메시지(JSON 텍스트 프레임 하나에 하나).
+         */
+        WsServerMessage: components["schemas"]["HelloMessage"] | components["schemas"]["TagUpdateMessage"] | components["schemas"]["AlarmEventMessage"] | components["schemas"]["DeviceUpdateMessage"] | components["schemas"]["PingMessage"];
     };
     responses: never;
     parameters: never;
@@ -441,6 +1072,197 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_alarms: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlarmList"];
+                };
+            };
+            /** @description not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description requires a higher role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    ack_all_alarms: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AckAllOut"];
+                };
+            };
+            /** @description not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description requires a higher role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description site-db unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_alarm_journal: {
+        parameters: {
+            query?: {
+                alarm_id?: string | null;
+                /** @description 포함(>=) */
+                start?: string | null;
+                /** @description 제외(<) */
+                end?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JournalPage"];
+                };
+            };
+            /** @description not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description requires a higher role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ack_alarm: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                alarm_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlarmOut"];
+                };
+            };
+            /** @description not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description requires a higher role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description unknown alarm */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description nothing to acknowledge (NORMAL·ACKED) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description site-db unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     list_audit: {
         parameters: {
             query?: {
@@ -622,6 +1444,33 @@ export interface operations {
             };
         };
     };
+    list_devices: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeviceList"];
+                };
+            };
+            /** @description not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     healthz: {
         parameters: {
             query?: never;
@@ -639,6 +1488,59 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Health"];
                 };
+            };
+        };
+    };
+    get_history: {
+        parameters: {
+            query: {
+                /** @description 반복 가능(최대 20개) */
+                tag_id: number[];
+                /** @description 포함(>=) */
+                start: string;
+                /** @description 제외(<) */
+                end: string;
+                resolution?: "auto" | "raw" | "1m" | "1h";
+                /** @description 태그별 행 상한 */
+                limit_rows?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoryOut"];
+                };
+            };
+            /** @description not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description site-db unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -764,6 +1666,33 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Readiness"];
                 };
+            };
+        };
+    };
+    list_tags: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TagList"];
+                };
+            };
+            /** @description not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
