@@ -293,6 +293,7 @@ window: { recurring: { tz: Asia/Seoul, days: [sat, sun], start: "02:00", end: "0
 
 - **r1 = epoch 2**(`deploy/releases/r1.json`, 2026.10.1): `tag_history_1h`(1시간 CAGG, 1분 CAGG와 같은 열 `avg·min·max·last·samples`). 1분 CAGG 위에 계층으로 쌓지 않고 원본 `tag_history`에서 직접 집계한다 — 1시간 refresh가 1분 policy 범위(1일)에 묶이지 않게(압축 chunk도 읽음). 앱 envelope는 [2, 3] — r0 앱(envelope [1, 2])은 epoch 2 DB에서 계속 ready다(롤백 경로).
 - **r2 = epoch 3**(`deploy/releases/r2.json`, 2026.10.2, S3): `0008`(장비·태그 정의 jsonb)·`0009`(historian 설정·CAGG 실시간 집계, 아래 M3a-3 절). 앱 envelope는 [3, 4] — r1 앱(envelope [2, 3])은 epoch 3 DB에서 계속 ready다(롤백 경로).
+- **r3 = epoch 4**(`deploy/releases/r3.json`, 2026.10.3, S4·M3b 마감): `0010`(사용자·세션)·`0011`(감사 기록)·`0012`(알람 정의·저널). 테이블만 더하고 기존 객체는 바꾸지 않는다. 앱 envelope는 [4, 5] — r2 앱(envelope [3, 4])은 epoch 4 DB에서 계속 ready다(롤백 경로. n-minus-1: r2 앱 `migrate status`가 cur=4·envelope 안·checksum ok·`unknown_applied` [10, 11, 12], r2 core-test는 실패 0·waiver 0 — 새 DB·compose 전용 테스트는 설계상 skip).
 - **CAGG 조회 계약**(1분·1시간 공통):
   - `samples` = bucket의 행 수(`count(*)`, `value_num`이 NULL인 bool·BAD 행 포함)라 `avg(value_num)`의 분모와 다르다. 가중 롤업에 쓰지 않는다(필요하면 다음 epoch에 `count(value_num)` 열을 더한다).
   - `materialized_only`(기본 true)라 policy가 아직 채우지 않은 구간은 원본으로 돌아가 읽지 않는다. 1시간 CAGG의 최신 구간은 `end_offset` 1시간 + 주기 1시간으로 최대 약 2시간 늦다 — 소비자(M3a historian)는 최근 구간을 1분 CAGG·원본과 합쳐 읽는다.
@@ -304,21 +305,8 @@ window: { recurring: { tz: Asia/Seoul, days: [sat, sun], start: "02:00", end: "0
 ### V1 구현 현황 (M2d Hyper-V VM 실측, 2026-10-05)
 
 - **하네스**: `tests/e2e`(PD-24) — Ubuntu 24.04 클라우드 이미지 → golden VHDX(읽기 전용) 위 차분 디스크, Gen2 + Secure Boot(MicrosoftUEFICertificateAuthority), cloud-init seed ISO, 내부 전용 vSwitch(전달 없음). 단계 `prepare → vm → install → scenarios → crash → report`, 판정·실행 방법의 정본은 [`tests/e2e/README.md`](../../../tests/e2e/README.md).
-- **plan M2 종료 조건 실측(run `20261005T055523Z`, 30/30 PASS)**:
-  - 폐쇄망 부트스트랩: runbook 2단계(root 셸, 메타데이터만 추출 → `bootstrap-verify.sh` sha256·root 지문) → `install.sh --offline-time-confirmed` → enroll → g1(r0) 51 s, `/readyz` 200, overlay2 + classic image store, 실행 이미지 `.Id` == r0 config digest.
-  - 거부(VM 수동 1회): 다른 현장 `E_SITE`·변조 `E_DIGEST`·낮은 gen `E_GEN` exit 1, 같은 gen 재빌드는 R-7대로 no-op exit 0 — 모두 core `StartedAt`·실행 이미지 불변. 커밋 전 거부 보고는 gen을 믿지 않아 `g unknown`이라 번들 sha256 12자로 찾는다. 먼저 빌드한 낮은 gen 번들은 cert 단계 `max_seen_created_at` 역행(`E_CERT`)에 먼저 걸린다.
-  - 압축 chunk 3개가 있는 epoch 1 DB에서 r0→r1 24 s(`switching` 11 s, `migrating` 2 s) → epoch 2·`tag_history_1h`, 이력 행 보존.
-  - r1′(collector 세션 없음) → `E_HEALTH`, 134 s 안에 r0 digest 복귀 + `failed`(5분 이내, `checking` 90 s·`rolling_back` 19 s).
-  - crash 18회(phase `fetched`~`rolling_back` × `systemctl kill -s KILL` / `Restart-VM -Type Reset`): 모두 15~106 s 안에 수렴 — 결과·`applied_gen`·실행 이미지·편집 잠금 해제·경보 없음·이력 행 보존. 감시자가 phase 저장 직후 서비스 cgroup을 얼리므로 `migrating`은 "기록 뒤·다음 기록 전"을 끊는다(SQL 중간 중단은 core 통합 테스트 몫).
-  - nftables 외부 접속 시도(설치 전 기준값·설치 이후 누적, 복원·리셋 직전마다 누적) 0. 외부 DNS 패킷은 모두 systemd-resolved가 보내므로 하네스는 resolved 디버그 로그의 조회 이름을 출처 증거로 남긴다.
-  - 번들 크기·빌드 시간은 `bundle-metrics.json`(install 80 MB, 현장 번들 739 MB 중 site-db 599 MB, 빌드 약 58 s).
-- **S3 r1→r2 실측(run `20261009T231040Z`, 30/30 PASS, missing 0, 2026-10-10)** — 같은 하네스, 쌍만 `release_pair.py`로 바꿈(fault `r2f`). 제품 결함·하네스 수정 없이 한 번에 통과:
-  - 폐쇄망 부트스트랩 + g1(r1) 56 s. c0 = epoch 2(1분·1시간 CAGG) + 압축 chunk 3 + 이력 7141행.
-  - r1→r2 25 s(`switching` 12 s, `migrating` 2 s) → epoch 3, 1분·1시간 CAGG 실시간 집계, `project_state.historian` 열, 압축 chunk·이력 행 보존. 그 위에서 낮은 gen `E_GEN`. c0에서 `E_SITE`·`E_DIGEST` 거부와 같은 gen no-op도 M2와 같다(core `StartedAt`·실행 이미지 불변).
-  - r2′ → `E_HEALTH`, 135 s 안에 r1 digest 복귀 + `failed`(`checking` 90 s·`rolling_back` 20 s). crash 단계의 r2→r1 시도 7회도 `succeeded`(헬스 통과) — r1 앱(envelope [2, 3])이 epoch 3 DB에서 ready인 롤백 경로 실측.
-  - crash 18회 모두 16~109 s 안에 수렴(`fetched`·`verified` 92~109 s, 나머지 16~38 s, M2는 15~106 s). nftables 외부 접속 시도 누적 0.
-  - 번들: install 80 MB, r2 현장 번들 739 MB(site-db 599 MB, core 61 MB), 빌드 약 55 s.
-- **실측이 찾은 제품 결함(이 PR에서 수정)**:
+- **실측 기록**: release 쌍별 `run.py all` 결과(M2 r0→r1 run `20261005T055523Z`·S3 r1→r2 run `20261009T231040Z`, 모두 30/30)는 시점 스냅샷이라 [vm-e2e-runs](../reports/vm-e2e-runs.md)에 둔다.
+- **M2 실측이 찾은 제품 결함(PR #11에서 수정)**:
   - **서비스가 실행한 롤백이 항상 `failed_manual`**: Updater unit `UMask=0027`로 백업 `project.json`이 root 0640 → 롤백의 `core project restore`(컨테이너 uid 10001, bind mount)가 읽지 못함. CLI(sudo, umask 0022)가 진행할 때만 통과해 단위·통합 테스트에 드러나지 않았다. core 이미지는 release별 동결이라 Updater가 `PUREIRON_SECRET_UID` 소유 0400 사본(`project.restore.json`)을 mount한다.
   - **TimescaleDB 텔레메트리**: 업스트림 기본값(`basic`)이 `telemetry.timescale.com`을 조회했다(폐쇄망 현장의 외부 접속 시도). site-db 이미지는 db-step release로만 바꾸므로 compose 기동 인자 `-c timescaledb.telemetry_level=off`로 끈다. compose는 번들마다 저장소에서 들어가 기존 release 번들에도 적용되며, 기존 현장은 이 compose를 처음 적용할 때(그리고 그 시도가 롤백되면 한 번 더) site-db 컨테이너가 다시 만들어진다(볼륨 유지).
 - **호스트 준비에서 확인한 것**: 한국어 Windows는 Hyper-V 통합 서비스 이름이 번역됨(ID로 선택), `powershell -Command` 종료 코드는 마지막 `$?`(SilentlyContinue '없음'도 1), WSL 페이지 캐시가 4 GiB VM 복원을 `0x8007000E`로 막음(시작·복원 전 회수), nft `fwd`는 예약어, docker0 IGMP(224/4)는 외부 아님, OS 잡음(pollinate·snapd·update-motd 릴리스 확인)은 seed에서 끈다.

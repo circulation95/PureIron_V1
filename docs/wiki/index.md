@@ -49,6 +49,7 @@ PureIron 문서의 **단일 정본(Source of Truth) 허브**. 사람과 LLM 에�
 |------|------|------|
 | 첫 계약 GTM/PoC | [first-contract](gtm/first-contract.md) | `gtm/` — 사업 결정 |
 | MVP 격차 audit | [mvp-gap](reports/mvp-gap.md) | `reports/` — 시점 스냅샷 |
+| Hyper-V VM 실측 기록(release 쌍별) | [vm-e2e-runs](reports/vm-e2e-runs.md) | `reports/` — 시점 스냅샷 |
 
 ## 생성물 (수기 편집 금지)
 
