@@ -193,7 +193,7 @@ job_web_e2e() {
   log "web-e2e"
   bash deploy/build/build_images.sh
   uv sync --all-packages --locked  # 스택 준비가 호스트 `uv run pureiron-core apply-definitions`를 쓴다
-  # 브라우저만 받는다(캐시되면 건너뜀). OS 의존 패키지는 CI가 `install --with-deps`로 먼저 깐다.
+  # 브라우저만 받는다(캐시되면 건너뜀). OS 의존 패키지는 runner 준비 때 `sudo npx playwright install-deps chromium`을 한 번 실행해 둔다(testing 11절).
   (cd services/web && npm ci --no-audit --no-fund && npx playwright install chromium && npx playwright test)
 }
 
