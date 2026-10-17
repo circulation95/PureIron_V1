@@ -217,12 +217,12 @@
     },
     {
       "audience": "both",
-      "bytes": 22763,
+      "bytes": 23467,
       "id": "sot-frontend",
       "last_verified": "2026-07-23",
       "path": "docs/wiki/sot/frontend.md",
       "section_count": 16,
-      "sha256": "24052153d759b5e3744e478e3378d28647f1897f6f2f1c62bdecb7aab994ef2e",
+      "sha256": "2812835d888c2f6c5425336e68be1849711162c84150689b4a84e96e04332b3b",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/package.json",
