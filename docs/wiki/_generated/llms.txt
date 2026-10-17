@@ -19,6 +19,7 @@
 
 ## Reports
 - [MVP Gap Audit — 첫 read-only PoC 기준 구현 격차](docs/wiki/reports/mvp-gap.md): 이 문서는 **첫 read-only PoC**([read-only-poc-proposal](../../sales/read-only-poc-proposal.md))를 실제로 수행하기 위해 현재 MVP 구현에서 부족한 부분을 코드/테스트/SOT 기준으로 점검한 **gap audit**이다.
+- [Hyper-V VM 실측 기록 — release 쌍별 M2d 하네스 결과](docs/wiki/reports/vm-e2e-runs.md): M2d 하네스(`tests/e2e`, PD-24)를 release 쌍(`tests/e2e/m2d/release_pair.py`)마다 한 번씩 `run.py all`로 돌린 결과다. 항목은 매번 30개(`run.expected_items()`)이고, 결과 파일은 `artifacts/e2e/m2d-<run>/results.json`·`bundle-metrics.json`(gitignore)이다.
 
 ## ADR
 - [ADR — 아키텍처 결정 기록](docs/wiki/adr/index.md): 이 문서는 PureIron의 **바꾸면 안 되는 핵심 결정과 그 이유**를 모아두는 ADR 정본이다.

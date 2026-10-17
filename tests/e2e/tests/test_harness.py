@@ -5,6 +5,8 @@ from __future__ import annotations
 import io
 import json
 import re
+import subprocess
+from datetime import UTC, datetime, timedelta
 from pathlib import Path, PureWindowsPath
 from typing import cast
 
@@ -185,6 +187,83 @@ def test_seed_enables_resolved_debug_for_dns_evidence() -> None:
     assert "SYSTEMD_LOG_LEVEL=debug" in text
 
 
+def test_relink_repairs_broken_and_stale_symlinks(tmp_path: Path) -> None:
+    old, new = tmp_path / "old.tar", tmp_path / "new.tar"
+    new.write_text("x", "utf-8")
+    link = tmp_path / "site-db.tar"
+    link.symlink_to(old)  # 끊긴 symlink — 예전에는 exists() False → symlink_to가 FileExistsError
+    bundles.relink(link, new)
+    assert link.readlink() == new
+    bundles.relink(link, new)  # 이미 맞으면 그대로
+    assert link.readlink() == new
+    store, other = tmp_path / "store", tmp_path / "other"
+    store.mkdir()
+    other.mkdir()
+    dir_link = tmp_path / "r2"
+    dir_link.symlink_to(other, target_is_directory=True)  # 다른 곳(이전 store)을 가리킴
+    bundles.relink(dir_link, store)
+    assert dir_link.readlink() == store
+    with pytest.raises(SystemExit):
+        bundles.relink(tmp_path / "x", tmp_path / "missing")
+    with pytest.raises(SystemExit):  # 진짜 파일은 지우지 않는다
+        bundles.relink(new, store)
+    assert not new.is_symlink()
+    assert new.read_text("utf-8") == "x"
+    with pytest.raises(SystemExit):  # 진짜 디렉터리(store 링크 자리)도 그대로 둔다
+        bundles.relink(other, store)
+    assert other.is_dir()
+    assert not other.is_symlink()
+
+
+class FakeDocker:
+    """`ensure_image` 주입용 — 태그별 로컬 digest와 tar를 load했을 때 남길 digest."""
+
+    def __init__(self, local: str | None, after_load: str) -> None:
+        self.local, self.after_load, self.loaded = local, after_load, 0
+
+    def digest_of(self, tag: str) -> str | None:
+        return self.local
+
+    def load(self, tar: Path) -> None:
+        self.loaded += 1
+        self.local = self.after_load
+
+
+@pytest.mark.parametrize(
+    ("local", "after_load", "loads"),
+    [
+        ("sha256:want", "sha256:want", 0),  # 이미 기록과 같다 → 적재하지 않는다
+        (None, "sha256:want", 1),  # 태그 없음 → store tar 적재
+        ("sha256:rebuilt", "sha256:want", 1),  # 같은 태그로 다시 빌드한 이미지 → 다시 적재
+    ],
+)
+def test_ensure_image_loads_only_when_digest_differs(
+    local: str | None, after_load: str, loads: int
+) -> None:
+    docker = FakeDocker(local, after_load)
+    bundles.ensure_image(
+        "pureiron/core:r3",
+        Path("core.tar"),
+        "sha256:want",
+        digest_of=docker.digest_of,
+        load=docker.load,
+    )
+    assert docker.loaded == loads
+
+
+def test_ensure_image_stops_when_store_tar_differs() -> None:
+    docker = FakeDocker("sha256:rebuilt", "sha256:other")
+    with pytest.raises(SystemExit):
+        bundles.ensure_image(
+            "pureiron/core:r3",
+            Path("core.tar"),
+            "sha256:want",
+            digest_of=docker.digest_of,
+            load=docker.load,
+        )
+    assert docker.loaded == 1
+
+
 RELEASE_RECORDS = Path(__file__).resolve().parents[3] / "deploy" / "releases"
 
 
@@ -200,16 +279,12 @@ def test_release_pair_is_one_epoch_step_with_derived_fault() -> None:
     assert RELEASES[BASE] == run.INSTALL_RELEASE
 
 
-def test_release_pair_matches_repo_records() -> None:
+@pytest.mark.parametrize("name", [BASE, NEXT])
+def test_release_pair_matches_repo_records(name: str) -> None:
     """저장소 release 기록이 쌍의 달력 버전·epoch와 같다(prepare가 VM 전에 같은 대조를 한다).
-    NEXT 기록은 release_record.py로 만든 뒤에만 있다."""
-    checked: list[str] = []
-    for name in (BASE, NEXT):
-        path = RELEASE_RECORDS / f"{name}.json"
-        if path.is_file():
-            run.check_record(name, json.loads(path.read_text(encoding="utf-8")))
-            checked.append(name)
-    assert BASE in checked
+    쌍을 바꾸는 커밋은 NEXT 기록(release_record.py)을 먼저 커밋해야 한다 — 없으면 실패."""
+    path = RELEASE_RECORDS / f"{name}.json"
+    run.check_record(name, json.loads(path.read_text(encoding="utf-8")))
 
 
 @pytest.mark.parametrize(
@@ -218,6 +293,19 @@ def test_release_pair_matches_repo_records() -> None:
         {"version": RELEASES[NEXT], "schema": {"epoch": EPOCHS[NEXT] - 1}},
         {"version": "2026.10.0", "schema": {"epoch": EPOCHS[NEXT]}},
         {"version": RELEASES[NEXT]},
+        # envelope가 [epoch, epoch + 1]이 아니면 롤백 판정의 전제가 기록과 어긋난다
+        {
+            "version": RELEASES[NEXT],
+            "schema": {
+                "epoch": EPOCHS[NEXT],
+                "app_expected": EPOCHS[NEXT],
+                "app_max_compatible": 9,
+            },
+        },
+        {
+            "version": RELEASES[NEXT],
+            "schema": {"epoch": EPOCHS[NEXT], "app_expected": EPOCHS[BASE]},
+        },
     ],
 )
 def test_check_record_rejects_other_release(record: dict[str, object]) -> None:
@@ -252,46 +340,127 @@ def test_crash_plan_releases() -> None:
 def test_expected_items_are_thirty_and_follow_pair() -> None:
     items = run.expected_items()
     assert len(items) == len(set(items)) == 30
-    assert items[2] == "install bundle bootstrap + g1(r1) on offline VM"
+    assert items[2] == "install bundle bootstrap + g1(r2) on offline VM"
     assert items[6:11] == [
-        "r1→r2 on compressed epoch-2 DB",
-        "r2 schema after upgrade",
+        "r2→r3 on compressed epoch-3 DB",
+        "r3 schema after upgrade",
         "reject lower gen",
-        "r2' health failure → rollback",
-        "rollback within 5 min to r1 digests",
+        "r3' health failure → rollback",
+        "rollback within 5 min to r2 digests",
     ]
     assert items[11] == "crash kill @ migrating"
     assert items[-1] == run.ITEM_NO_EXTERNAL
 
 
-# 로컬 TimescaleDB(site-db 2.30.2-pg16)에서 0001~0007 → 시드 → 0008·0009로 확인한 probe 값.
+# 로컬 TimescaleDB(site-db 2.30.2-pg16)에서 r2 core `migrate up`(0001~0009) → 시드(run.SEED_SQL)
+# → r3 core `migrate up`(0010~0012)로 확인한 probe 값. `columns`는 판정에 쓰는 열만 남겼다.
 C0_DB: dict[str, object] = {
-    "epoch": "2",
+    "epoch": "3",
     "caggs": "tag_history_1h,tag_history_1m",
     "compressed_chunks": "3",
     "tag_history_rows": "7141",
-    "realtime_caggs": "",
-    "historian_column": "0",
+    "realtime_caggs": "tag_history_1h,tag_history_1m",
+    "tables": "devices,project_state,schema_meta,schema_migrations,tag_history,tags",
+    "indexes": "devices_pkey,project_state_pkey,schema_meta_pkey,schema_migrations_pkey,"
+    "tag_history_tag_id_time_key,tag_history_time_idx,tags_path_key,tags_pkey",
+    "columns": "devices.definition,devices.id,project_state.definitions_rev,"
+    "project_state.historian,project_state.id,tags.definition,tags.id",
 }
 NEXT_DB: dict[str, object] = {
     **C0_DB,
-    "epoch": "3",
-    "realtime_caggs": "tag_history_1h,tag_history_1m",
-    "historian_column": "1",
+    "epoch": "4",
+    "tables": "alarm_journal,alarms,audit_log,devices,project_state,schema_meta,"
+    "schema_migrations,sessions,tag_history,tags,users",
+    "indexes": "alarm_journal_alarm_id_time_idx,alarm_journal_pkey,alarm_journal_time_idx,"
+    "alarms_pkey,audit_log_pkey,audit_log_time_idx,audit_log_username_time_idx,devices_pkey,"
+    "project_state_pkey,schema_meta_pkey,schema_migrations_pkey,sessions_pkey,"
+    "sessions_user_id_idx,tag_history_tag_id_time_key,tag_history_time_idx,tags_path_key,"
+    "tags_pkey,users_pkey,users_username_key",
 }
 
 
 def test_judge_c0() -> None:
     assert all(run.judge_c0(C0_DB).values())
-    assert not run.judge_c0({**C0_DB, "epoch": "1"})["epoch"]
+    assert not run.judge_c0({**C0_DB, "epoch": "2"})["epoch"]
     assert not run.judge_c0({**C0_DB, "compressed_chunks": "0"})["compressed_chunks"]
+    # BASE 산출물이 빠졌거나(epoch 2 DB) NEXT 테이블이 이미 있으면(업그레이드된 DB) c0가 아니다
+    assert not run.judge_c0({**C0_DB, "realtime_caggs": ""})["base_schema"]
+    assert not run.judge_c0({**C0_DB, "columns": "devices.id"})["base_schema"]
+    assert not run.judge_c0(NEXT_DB)["next_absent"]
     assert not any(run.judge_c0({"error": "site-db not running"}).values())
 
 
 def test_judge_next_schema() -> None:
     assert all(run.judge_next_schema(NEXT_DB).values())
-    # 업그레이드 전(BASE) 스키마는 epoch·0009 산출물에서 걸린다
+    # 업그레이드 전(BASE) 스키마는 epoch·0010~0012 산출물에서 걸린다
     failing = {k for k, ok in run.judge_next_schema(C0_DB).items() if not ok}
-    assert failing == {"epoch", "realtime_caggs", "historian_column"}
+    assert failing == {"epoch", "next_tables", "next_indexes"}
     partial = {**NEXT_DB, "realtime_caggs": "tag_history_1m"}
     assert not run.judge_next_schema(partial)["realtime_caggs"]
+    # 집합 비교: 이름의 부분 문자열(예전 판정)로는 통과하지 않는다
+    lookalike = {**NEXT_DB, "caggs": "tag_history_1h_old,tag_history_1m"}
+    assert not run.judge_next_schema(lookalike)["caggs"]
+    no_index = {**NEXT_DB, "indexes": str(NEXT_DB["indexes"]).replace(",sessions_user_id_idx", "")}
+    assert not run.judge_next_schema(no_index)["next_indexes"]
+    assert not run.judge_next_schema({**NEXT_DB, "columns": {"error": "x"}})["base_columns"]
+
+
+def test_names_splits_probe_lists() -> None:
+    assert run.names({"k": "a,b"}, "k") == {"a", "b"}
+    assert run.names({"k": ""}, "k") == frozenset()
+    assert run.names({"k": {"error": "x"}}, "k") == frozenset()
+    assert run.names({}, "k") == frozenset()
+
+
+OPEN_AT = datetime(2026, 10, 17, 12, 0, 0, tzinfo=UTC)
+
+
+def completed(rc: int, out: str = "", err: str = "") -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess[str]([], rc, out, err)
+
+
+def test_stage_for_window_records_each_try() -> None:
+    results = iter([completed(2), completed(0, "attempt: g3 verified")])
+    ok, info = run.stage_for_window(
+        lambda: next(results),
+        OPEN_AT,
+        watcher_alive=lambda: True,
+        now=lambda: OPEN_AT - timedelta(seconds=76.4),
+        pause_s=0,
+    )
+    assert ok
+    assert (info["rc"], info["tries"], info["margin_s"]) == (0, 2, 76.4)
+    attempts = cast(list[dict[str, object]], info["attempts"])
+    assert [a["rc"] for a in attempts] == [2, 0]
+    assert all(a["watcher_alive"] is True for a in attempts)
+    assert "stdout_tail" not in info
+
+
+@pytest.mark.parametrize(
+    ("rc", "margin"),
+    [(255, 70.0), (1, 70.0), (0, -3.0), (0, 0.0)],
+)
+def test_stage_for_window_false_keeps_evidence(rc: int, margin: float) -> None:
+    ok, info = run.stage_for_window(
+        lambda: completed(rc, "o" * 2000, "Connection reset"),
+        OPEN_AT,
+        watcher_alive=lambda: False,
+        now=lambda: OPEN_AT - timedelta(seconds=margin),
+        pause_s=0,
+    )
+    assert not ok
+    assert (info["rc"], info["tries"], info["margin_s"]) == (rc, 1, margin)
+    assert info["stderr_tail"] == "Connection reset"
+    assert len(str(info["stdout_tail"])) == run.TAIL_CHARS
+
+
+def test_stage_for_window_gives_up_after_busy_tries() -> None:
+    ok, info = run.stage_for_window(
+        lambda: completed(2, "", "error: another updater is running"),
+        OPEN_AT,
+        watcher_alive=lambda: True,
+        now=lambda: OPEN_AT - timedelta(seconds=10),
+        pause_s=0,
+    )
+    assert not ok
+    assert (info["rc"], info["tries"]) == (2, run.STAGE_TRIES)

@@ -4,8 +4,8 @@
     uv run python tests/e2e/m2d/run.py all --from crash   # 앞 단계 결과(context)를 이어서
     uv run python tests/e2e/m2d/run.py destroy            # VM·차분 디스크 삭제(golden은 둔다)
 
-release 쌍은 `release_pair.py`(`BASE`→`NEXT`, 헬스 실패 `FAULT`)가 정한다 — S3: r1(epoch 2)→r2
-(epoch 3), fault r2'(`r2f`). 아래의 BASE·NEXT·FAULT는 그 값이다.
+release 쌍은 `release_pair.py`(`BASE`→`NEXT`, 헬스 실패 `FAULT`)가 정한다 — S4: r2(epoch 3)→r3
+(epoch 4), fault r3'(`r3f`). 아래의 BASE·NEXT·FAULT는 그 값이다.
 
 단계(`STEPS`):
 1. `prepare` — WSL runner의 저장소 사본에서 FAULT 기록, 설치 번들(실빌드: deb 수집·Updater
@@ -14,7 +14,8 @@ release 쌍은 `release_pair.py`(`BASE`→`NEXT`, 헬스 실패 `FAULT`)가 정�
 3. `install` — runbook 2단계(전용 디렉터리에 메타데이터만 추출 → 지문·sha256 대조 →
    `bootstrap-verify.sh`) → `install.sh --offline-time-confirmed` → enroll → g1 apply → 서비스 시작.
    `/readyz` 200, classic image store(overlay2), 이미지 `.Id` == BASE config digest. 압축 chunk가
-   있는 이력을 넣고(DB epoch == BASE epoch 확인) 체크포인트 `c0`를 만든다.
+   있는 이력을 넣고(DB epoch == BASE epoch·BASE 산출물 있음·NEXT 테이블 없음 확인) 체크포인트
+   `c0`를 만든다.
 4. `scenarios` — `c0`에서 거부(다른 현장 `E_SITE`·변조 `E_DIGEST`) exit 1과 같은 gen 재빌드 no-op
    exit 0(R-7 멱등), 모두 core `StartedAt`·실행 이미지 불변. `c0`에서 BASE→NEXT(압축 DB 위 NEXT
    epoch migrate) 성공 + NEXT 스키마 확인 → 그 위에서 낮은 gen `E_GEN` 거부. `c0`에서 FAULT →
@@ -39,9 +40,11 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -51,7 +54,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "infra"))
 
 import golden
 import hyperv
-from release_pair import BASE, EPOCHS, FAULT, NEXT, RELEASES
+from release_pair import (
+    BASE,
+    BASE_COLUMNS,
+    CAGGS,
+    EPOCHS,
+    FAULT,
+    NEXT,
+    NEXT_INDEXES,
+    NEXT_TABLES,
+    RELEASES,
+)
 from vm import Vm, VmError
 
 REPO = Path(__file__).resolve().parents[3]
@@ -271,12 +284,22 @@ def digests_of(release_json: dict[str, object]) -> dict[str, str]:
 
 
 def check_record(name: str, record: dict[str, object]) -> None:
-    """release 기록이 쌍의 기대(달력 버전·스키마 epoch)와 같은지 — 다르면 잘못된 기반에서
-    30개를 돌리게 되므로 prepare에서 멈춘다."""
+    """release 기록이 쌍의 기대(달력 버전·스키마 epoch·앱 envelope [epoch, epoch + 1])와 같은지 —
+    다르면 잘못된 기반에서 30개를 돌리게 되므로 prepare에서 멈춘다. envelope는 롤백 판정(BASE
+    앱이 NEXT epoch DB에서 ready)의 전제다."""
     schema = cast(dict[str, object], record.get("schema") or {})
-    got = (record.get("version"), schema.get("epoch"))
-    if got != (RELEASES[name], EPOCHS[name]):
-        raise E2EError(f"{name}.json: (version, epoch) {got} != {(RELEASES[name], EPOCHS[name])}")
+    epoch = EPOCHS[name]
+    got = (
+        record.get("version"),
+        schema.get("epoch"),
+        schema.get("app_expected"),
+        schema.get("app_max_compatible"),
+    )
+    want = (RELEASES[name], epoch, epoch, epoch + 1)
+    if got != want:
+        raise E2EError(
+            f"{name}.json: (version, epoch, app_expected, app_max_compatible) {got} != {want}"
+        )
 
 
 def step_prepare(ctx: Context) -> None:
@@ -568,26 +591,39 @@ def db_of(snap: dict[str, object]) -> dict[str, object]:
     return cast(dict[str, object], snap.get("db") or {})
 
 
+def names(db: dict[str, object], key: str) -> frozenset[str]:
+    """probe의 쉼표 구분 이름 목록을 집합으로. 못 읽었으면(`{"error": ...}`) 빈 집합."""
+    value = db.get(key)
+    return frozenset(n for n in value.split(",") if n) if isinstance(value, str) else frozenset()
+
+
 def judge_c0(db: dict[str, object]) -> dict[str, bool]:
-    """체크포인트 c0 기반: BASE epoch, 압축 chunk가 있는 이력 — 업그레이드가 압축 DB 위에서
-    실제 마이그레이션을 하고 이력 보존(`rows_kept`)을 잴 수 있어야 한다."""
+    """체크포인트 c0 기반: BASE epoch와 그 산출물, 압축 chunk가 있는 이력, NEXT 산출물 없음 —
+    업그레이드가 압축 DB 위에서 실제 마이그레이션을 하고 이력 보존(`rows_kept`)을 잴 수 있어야
+    한다."""
+    tables = names(db, "tables")
     return {
         "epoch": db.get("epoch") == str(EPOCHS[BASE]),
+        "base_schema": names(db, "caggs") == CAGGS
+        and names(db, "realtime_caggs") == CAGGS
+        and names(db, "columns") >= BASE_COLUMNS,
+        "next_absent": bool(tables) and tables.isdisjoint(NEXT_TABLES),
         "compressed_chunks": as_int(db.get("compressed_chunks")) > 0,
         "seed_rows": as_int(db.get("tag_history_rows")) > 0,
     }
 
 
 def judge_next_schema(db: dict[str, object]) -> dict[str, bool]:
-    """업그레이드 뒤 NEXT(r2) 스키마: epoch, 1h CAGG·압축 chunk 유지, 0009 산출물(1m·1h CAGG
-    실시간 집계 `materialized_only = false`, `project_state.historian` 열)."""
-    realtime = set(str(db.get("realtime_caggs") or "").split(","))
+    """업그레이드 뒤 NEXT(r3) 스키마: epoch 4, 0010~0012 테이블·인덱스, BASE 산출물 유지(1분·1시간
+    CAGG와 실시간 집계, 0008·0009 열), 압축 chunk 유지."""
     return {
         "epoch": db.get("epoch") == str(EPOCHS[NEXT]),
-        "cagg_1h": "tag_history_1h" in str(db.get("caggs")),
+        "next_tables": names(db, "tables") >= NEXT_TABLES,
+        "next_indexes": names(db, "indexes") >= NEXT_INDEXES,
+        "caggs": names(db, "caggs") == CAGGS,
+        "realtime_caggs": names(db, "realtime_caggs") == CAGGS,
+        "base_columns": names(db, "columns") >= BASE_COLUMNS,
         "compressed_chunks": as_int(db.get("compressed_chunks")) > 0,
-        "realtime_caggs": {"tag_history_1m", "tag_history_1h"} <= realtime,
-        "historian_column": db.get("historian_column") == "1",
     }
 
 
@@ -822,6 +858,51 @@ def service_restarts(host: Vm) -> int:
     return as_int(out.strip())
 
 
+STAGE_TRIES = 30
+TAIL_CHARS = 800
+
+
+def stage_for_window(
+    apply: Callable[[], subprocess.CompletedProcess[str]],
+    open_at: datetime,
+    *,
+    watcher_alive: Callable[[], bool],
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    pause_s: float = 2,
+) -> tuple[bool, dict[str, object]]:
+    """창(`open_at`) 전에 CLI 스테이징을 끝냈는지와 그 진단 기록. 서비스 tick이 잠금을 잡고 있으면
+    `apply`가 exit 2라 잠시 뒤 다시 한다. 판정: 마지막 시도가 exit 0이고 끝난 시각이 `open_at`
+    전. 기록: 시도마다 rc·걸린 초·감시자 ssh가 아직 살아 있는지, 마지막 rc·시도 횟수·`open_at`
+    까지 남은 초(음수 = 창 뒤), 판정이 거짓이면 stdout·stderr 끝부분."""
+    tries: list[dict[str, object]] = []
+    result = subprocess.CompletedProcess[str]([], 2, "", "")
+    for _ in range(STAGE_TRIES):
+        started = time.monotonic()
+        result = apply()
+        tries.append(
+            {
+                "rc": result.returncode,
+                "s": round(time.monotonic() - started, 1),
+                "watcher_alive": watcher_alive(),
+            }
+        )
+        if result.returncode != 2:
+            break
+        time.sleep(pause_s)
+    margin_s = (open_at - now()).total_seconds()
+    ok = result.returncode == 0 and margin_s > 0
+    info: dict[str, object] = {
+        "rc": result.returncode,
+        "tries": len(tries),
+        "margin_s": round(margin_s, 1),
+        "attempts": tries,
+    }
+    if not ok:
+        info["stdout_tail"] = (result.stdout or "")[-TAIL_CHARS:]
+        info["stderr_tail"] = (result.stderr or "")[-TAIL_CHARS:]
+    return ok, info
+
+
 def crash_once(ctx: Context, case: CrashCase, *, gen: int) -> None:
     host = vm()
     phase, mode, release = case.phase, case.mode, case.release
@@ -843,16 +924,16 @@ def crash_once(ctx: Context, case: CrashCase, *, gen: int) -> None:
     apply_cmd = f"sudo pureiron-site apply {INCOMING}/{pib.name}"
     staged_in_time: bool | None = None
     stage_proc: subprocess.Popen[str] | None = None
+    stage_info: dict[str, object] = {"target": target, "ssh": shutil.which("ssh")}
     if target == "cli":
         stage_proc = host.start(apply_cmd, capture=False)
     else:
-        result = subprocess.CompletedProcess[str]([], 2, "", "")
-        for _ in range(30):  # 서비스 tick이 잠금을 잡고 있으면 exit 2
-            result = host.run(apply_cmd, check=False)
-            if result.returncode != 2:
-                break
-            time.sleep(2)
-        staged_in_time = result.returncode == 0 and datetime.now(UTC) < open_at
+        staged_in_time, info = stage_for_window(
+            lambda: host.run(apply_cmd, check=False),
+            open_at,
+            watcher_alive=lambda: watcher.poll() is None,
+        )
+        stage_info.update(info)
     line = watcher.stdout.readline().strip() if watcher.stdout else ""
     # 감시자는 HIT를 출력하고 곧 끝난다 — 리셋이 ssh를 끊기 전에 종료 코드를 받는다(rc 5 = 얼릴
     # 프로세스 없음).
@@ -863,7 +944,7 @@ def crash_once(ctx: Context, case: CrashCase, *, gen: int) -> None:
         hyperv.restart_force(VM_NAME)
         ctx.nft_last = {}
     if stage_proc is not None:
-        stage_proc.wait(timeout=1800)
+        stage_info["rc"] = stage_proc.wait(timeout=1800)  # CLI 대상은 감시자가 죽인다
     snap, waited = converge(vm(), gen)
     report = report_for(vm(), pib)
     want = ctx.digests[release if expect == "succeeded" else case.prev]
@@ -894,6 +975,7 @@ def crash_once(ctx: Context, case: CrashCase, *, gen: int) -> None:
         code=report.get("code"),
         converge_s=round(waited, 1),
         checks=checks,
+        stage=stage_info,
         alarm=updater_state(snap).get("alarm"),
         logs=report.get("logs") if not all(checks.values()) else None,
     )

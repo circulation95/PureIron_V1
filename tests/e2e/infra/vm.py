@@ -57,6 +57,7 @@ class Vm:
         """원격 셸 명령(`sudo`가 필요하면 명령에 직접 쓴다)."""
         result = subprocess.run(
             [_tool("ssh"), *self._opts(), f"{USER}@{self.ip}", command],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -73,10 +74,14 @@ class Vm:
 
     def start(self, command: str, *, capture: bool = True) -> subprocess.Popen[str]:
         """오래 도는 원격 명령(출력 줄을 읽으며 기다린다 — crash 감시자). 출력을 읽지 않을 명령은
-        `capture=False` — 읽지 않는 파이프가 차면 원격 쪽 write까지 멈춘다."""
+        `capture=False` — 읽지 않는 파이프가 차면 원격 쪽 write까지 멈춘다.
+
+        ssh는 모두 stdin을 닫고 띄운다(`ssh -n`과 같음) — 콘솔에서 띄운 실행이면 동시에 도는
+        ssh(감시자와 apply)가 같은 콘솔 stdin을 물려받는다(S4 1차 실측 crash 14건)."""
         out = subprocess.PIPE if capture else subprocess.DEVNULL
         return subprocess.Popen(
             [_tool("ssh"), *self._opts(), f"{USER}@{self.ip}", command],
+            stdin=subprocess.DEVNULL,
             stdout=out,
             stderr=subprocess.STDOUT,
             text=True,
@@ -87,6 +92,7 @@ class Vm:
     def put(self, local: Path, remote: str, *, timeout_s: float = 1800) -> None:
         result = subprocess.run(
             [_tool("scp"), *self._opts(), "-q", str(local), f"{USER}@{self.ip}:{remote}"],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=timeout_s,
