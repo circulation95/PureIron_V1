@@ -23,7 +23,7 @@ last_verified: 2026-07-23
 
 # Frontend SOT
 
-> **legacy(PureIron_ignition) 기준** — 이 문서의 현행 구현 사실(코드 경로·모듈·명령·테스트)은 [`PureIron_ignition@legacy-final`](https://github.com/circulation95/PureIron_ignition/tree/legacy-final) 기준이다. 이 repo(PureIron_V1)에는 legacy 코드가 없고, 새 구조의 목표 설계는 [ADR](../adr/index.md)에서 다룬다. V1 새 코드의 작성 규약은 [coding-style](coding-style.md) 10절이 우선한다.
+> **legacy(PureIron_ignition) 기준** — 이 문서의 현행 구현 사실(코드 경로·모듈·명령·테스트)은 [`PureIron_ignition@legacy-final`](https://github.com/circulation95/PureIron_ignition/tree/legacy-final) 기준이다. 이 repo(PureIron_V1)에는 legacy 코드가 없고, 새 구조의 목표 설계는 [ADR](../adr/index.md)에서 다룬다. V1 새 코드의 작성 규약은 [coding-style](coding-style.md) 10절이 우선한다. **V1 `services/web` 현행은 16절**이다.
 
 이 문서는 PureIron frontend의 **구조·상태·실시간·UI 작업 규칙**에 대한 정본이다. 상세 구현은 `frontend/src/**`가 정본이고, `frontend/AGENTS.md`와 `frontend/CLAUDE.md`는 도구별 operational cheat sheet다.
 
@@ -289,3 +289,44 @@ Frontend 작업은 화면이 크고 회귀 위험이 높다. 다음 원칙을 �
 - `dismissible=false`인 busy overlay는 Escape, backdrop, header close button으로 닫히지 않아야 한다.
 - migration은 대표 Desktop/Mobile keyboard E2E로 focus trap/restore, Escape, background `inert`, 중첩 overlay 순서를 검증한다.
 - 기존 화면 migration은 회귀 위험을 줄이기 위해 Device/Dashboard/Settings → Tag/UDT → Schedule/MES → Trend/ChatBot 순서의 작은 PR로 진행한다.
+
+## 16. V1 web (M3b)
+
+> 이 절은 **PureIron_V1 현행**이다(위 1~15절은 legacy 기준). 근거: plan M3b D10·D13·D14·§2.5, 규약은 [coding-style](coding-style.md) 10절.
+
+**스택**: Vite + React 19 + TypeScript strict, `openapi-fetch`(생성 타입), `react-router`(라우팅·로그인 보호), `uplot`(트렌드 canvas — 1h 원시 3,600점 × 여러 태그), `@playwright/test`(devDep). 상태 라이브러리·UI 키트는 없다(React state + WS 클라이언트 모듈, 스타일은 `src/styles.css`). 편집 화면·쓰기 UI는 없다(No config UI, PLC 쓰기는 M3c).
+
+| 경로 | 책임 |
+|---|---|
+| `src/App.tsx` | 경로 표. `/login` 밖은 모두 `Layout` 아래 |
+| `src/app/Layout.tsx` | `GET /auth/me`로 세션 확인, 상단 내비·사용자/역할·로그아웃·미확인 알람 배지·실시간 연결 상태, WS 연결 하나와 알람 목록 소유 |
+| `src/app/session.ts` · `alarms.ts` | 세션 context(`useSession`), 알람 목록 갱신 규칙(서버와 같은 집합·순서) |
+| `src/api/client.ts` | `openapi-fetch` 클라이언트(`credentials: "include"`), 401 → 로그인 이벤트, 역할 비교·실패 문구, 생성 타입 별칭 |
+| `src/api/schema.d.ts` | 생성물(`npm run gen:api`, contracts-drift가 검사). REST·WS 메시지 타입의 정본 |
+| `src/ws/client.ts` | `RealtimeClient` |
+| `src/pages/` | `Login` · `Overview`(태그) · `Alarms`(활성·ACK·저널) · `Trend` · `Devices` · `Audit` |
+| `e2e/` · `playwright.config.ts` | compose 스택 위 chromium 스모크 |
+
+**상태 규칙**
+- 비동기 화면 상태는 `Load<T>` = `{kind:"loading"} | {kind:"ok",value} | {kind:"error",message}`. 응답 타입을 손으로 다시 선언하지 않는다.
+- effect는 정리 함수(AbortController·WS 해제·ResizeObserver/uPlot 해제)를 돌려준다. 다시 불러올 때의 loading 전환은 effect가 아니라 이벤트 핸들러에서 한다.
+- 실패 문구는 HTTP 상태로 고른 고정 문구다(서버 문구를 그대로 보여주지 않음). 로그인 실패는 "아이디 또는 비밀번호가 올바르지 않습니다."
+- 401이 오면(로그인 요청 제외) `/login?next=<원래 경로>`로 보내고, 로그인 뒤 그 경로로 돌아간다(같은 사이트 경로만).
+- 역할별 표시: ACK·전체 ACK는 운전원 이상, 감사 로그는 엔지니어 이상(아래는 권한 없음 안내). 서버가 같은 규칙으로 403을 낸다.
+
+**WS** (`/api/v1/ws`, 쿠키 인증)
+- 로그인한 레이아웃이 연결 하나를 만들고 화면이 `on(type, handler)`·`subscribe(tagIds)`(참조 계수)로 나눠 쓴다. 해제 함수를 effect 정리에서 부른다.
+- 끊기면 0.5s부터 두 배씩 최대 10s 간격으로 재연결, `hello`를 받으면 구독 전체를 다시 보낸다. `ping`에는 `pong`. 서버는 20s마다 ping을 보내므로 50s 동안 아무 메시지도 없으면 죽은 연결로 보고 소켓을 버린 뒤 같은 backoff로 재연결한다.
+- 재연결(`hello`)마다 알람·장비 목록은 REST로 다시 받아 끊긴 동안 놓친 이벤트를 메운다(태그는 재구독 때 서버가 현재값을 보냄).
+- 알람 목록: 스냅샷 요청(제한 시간 10s) 중 도착한 `alarm_event`는 버퍼에 모았다가 스냅샷 적용 뒤 도착 순서대로 재생한다. `changed_at`은 이 합치기에서만 비교한다(같은 알람의 스냅샷이 더 새로우면 그 이벤트는 건너뜀). 그 뒤 실시간 이벤트는 비교 없이 순서대로 적용한다. ACK·ack-all 응답은 목록에 이미 있는 알람만 갱신한다. 재조회가 실패해도 기존 목록·미확인 배지를 유지하고 버퍼를 그 위에 재생한다.
+- close 4401 → 로그인으로, 4403(Origin ≠ Host) → 재연결하지 않음. 그래서 nginx는 `Host $http_host`(포트 포함), vite proxy는 `changeOrigin`을 켜지 않는다.
+
+**명령**
+
+```bash
+cd services/web && npm ci && npm run typecheck && npm run lint && npm run build
+npm run dev                      # http://localhost:3000 → core 127.0.0.1:18000 (PUREIRON_CORE_URL)
+bash scripts/g1.sh web-e2e       # 이미지 빌드 → pureiron-it compose(시뮬레이터 100태그 + 알람 1개, CLI 계정) → Playwright
+```
+
+e2e 결과·trace·화면 스크린샷은 `artifacts/web-e2e/`(`test-results/`·`report/`·`screens/`·`compose.log`). `PUREIRON_IT_KEEP=1`이면 스택을 내리지 않는다. 포트·프로젝트 이름은 core 통합 테스트와 같은 환경변수(`PUREIRON_IT_PROJECT`·`PUREIRON_DEV_*_PORT`·`PUREIRON_IT_WEB_PORT`)로 바꾼다.

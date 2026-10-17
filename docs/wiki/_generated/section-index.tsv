@@ -170,7 +170,7 @@ sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m2d-hyper-v-
 sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m3a-3-historian-2026-10-09	327	15	6629	h3	V1 구현 현황 (M3a-3 historian, 2026-10-09)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m3b-1-authaudit-2026-10-11	342	7	2164	h3	V1 구현 현황 (M3b-1 auth·audit, 2026-10-11)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m3b-2-alarmsrealtime-2026-10-11	349	7	3386	h3	V1 구현 현황 (M3b-2 alarms·realtime, 2026-10-11)
-sot-frontend	docs/wiki/sot/frontend.md	frontend-sot	24	268	17328	h1	Frontend SOT
+sot-frontend	docs/wiki/sot/frontend.md	frontend-sot	24	309	21942	h1	Frontend SOT
 sot-frontend	docs/wiki/sot/frontend.md	1-문서-경계	32	12	702	h2	1. 문서 경계
 sot-frontend	docs/wiki/sot/frontend.md	2-스택과-실행-명령	44	24	625	h2	2. 스택과 실행 명령
 sot-frontend	docs/wiki/sot/frontend.md	3-디렉터리-책임	68	20	1219	h2	3. 디렉터리 책임
@@ -184,7 +184,8 @@ sot-frontend	docs/wiki/sot/frontend.md	10-chatbot-sse-규칙	194	21	564	h2	10. C
 sot-frontend	docs/wiki/sot/frontend.md	11-operator-ui-규칙	215	23	935	h2	11. Operator UI 규칙
 sot-frontend	docs/wiki/sot/frontend.md	12-변경검증-원칙	238	19	926	h2	12. 변경·검증 원칙
 sot-frontend	docs/wiki/sot/frontend.md	13-design-system-primitive-계약	257	25	4881	h2	13. Design system primitive 계약
-sot-frontend	docs/wiki/sot/frontend.md	15-overlay-계약	282	10	1171	h2	15. Overlay 계약
+sot-frontend	docs/wiki/sot/frontend.md	15-overlay-계약	282	11	1172	h2	15. Overlay 계약
+sot-frontend	docs/wiki/sot/frontend.md	16-v1-web-m3b	293	40	4568	h2	16. V1 web (M3b)
 sot-mes-schedule	docs/wiki/sot/mes-schedule.md	messchedule-sot	15	88	8875	h1	MES/Schedule SOT
 sot-mes-schedule	docs/wiki/sot/mes-schedule.md	결정-상태-표기	25	10	456	h2	결정 상태 표기
 sot-mes-schedule	docs/wiki/sot/mes-schedule.md	1-내부-모델-vs-고객-노출-라벨-분리	35	14	1084	h2	1. 내부 모델 vs 고객 노출 라벨 분리
@@ -222,7 +223,7 @@ sot-runtime-config	docs/wiki/sot/runtime-config.md	지원-호스트-adr-027	100	
 sot-runtime-config	docs/wiki/sot/runtime-config.md	호스트-경로	105	11	625	h3	호스트 경로
 sot-runtime-config	docs/wiki/sot/runtime-config.md	실행-규칙	116	10	2250	h3	실행 규칙
 sot-runtime-config	docs/wiki/sot/runtime-config.md	v1-환경변수-m1m3a-구현	126	34	4749	h3	V1 환경변수 (M1~M3a 구현)
-sot-testing	docs/wiki/sot/testing.md	testing-sot	32	344	31927	h1	Testing SOT
+sot-testing	docs/wiki/sot/testing.md	testing-sot	32	346	33010	h1	Testing SOT
 sot-testing	docs/wiki/sot/testing.md	1-문서-경계	40	20	1306	h2	1. 문서 경계
 sot-testing	docs/wiki/sot/testing.md	2-기본-실행-명령	60	35	1204	h2	2. 기본 실행 명령
 sot-testing	docs/wiki/sot/testing.md	3-테스트-계층	95	73	9877	h2	3. 테스트 계층
@@ -239,4 +240,4 @@ sot-testing	docs/wiki/sot/testing.md	7-외부-의존성환경-기준	272	16	777	
 sot-testing	docs/wiki/sot/testing.md	8-테스트-작성-규칙	288	25	1603	h2	8. 테스트 작성 규칙
 sot-testing	docs/wiki/sot/testing.md	9-실패-처리-원칙	313	19	809	h2	9. 실패 처리 원칙
 sot-testing	docs/wiki/sot/testing.md	10-pr작업-완료-보고-형식	332	19	492	h2	10. PR/작업 완료 보고 형식
-sot-testing	docs/wiki/sot/testing.md	11-v1-g1-게이트-pureiron_v1-m1-구현	351	25	4295	h2	11. V1 G1 게이트 (PureIron_V1, M1 구현)
+sot-testing	docs/wiki/sot/testing.md	11-v1-g1-게이트-pureiron_v1-m1-구현	351	27	5378	h2	11. V1 G1 게이트 (PureIron_V1, M1 구현)

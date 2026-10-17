@@ -152,6 +152,30 @@ jobs:
       - if: failure()
         run: tail -n 200 artifacts/integration-compose.log || true
 
+  web-e2e:
+    needs: [plan, integration-compose]
+    runs-on: [self-hosted, g1]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: npm ci --no-audit --no-fund && npx playwright install chromium
+        working-directory: services/web
+      - run: bash scripts/g1.sh web-e2e
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: web-e2e-${{ github.run_id }}
+          path: artifacts/web-e2e/
+          retention-days: 7
+
   n-minus-1:
     needs: plan
     if: needs.plan.outputs.n_minus_1 == 'true'

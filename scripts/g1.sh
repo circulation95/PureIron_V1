@@ -8,6 +8,7 @@
 #            no-customer-branching integration-compose
 # 조건부:    n-minus-1 repro-build  (CI가 경로·라벨·schedule로 판단해 호출)
 # 보조:      contracts-gen(생성물 갱신), images(이미지 빌드),
+#            web-e2e(이미지 빌드 → compose 위 Playwright chromium 스모크 → artifacts/web-e2e/),
 #            perf-ingest(2,000태그 1s 부하 + 알람 50·WS 1 → artifacts/perf/<PUREIRON_PERF_RELEASE:-r3>/ingest.json,
 #            기록만 — 합격선 없음)
 #
@@ -188,6 +189,14 @@ job_integration_compose() {
   uv run pytest services/core/tests/integration -m "integration and not perf" -q
 }
 
+job_web_e2e() {
+  log "web-e2e"
+  bash deploy/build/build_images.sh
+  uv sync --all-packages --locked  # 스택 준비가 호스트 `uv run pureiron-core apply-definitions`를 쓴다
+  # 브라우저만 받는다(캐시되면 건너뜀). OS 의존 패키지는 runner 준비 때 `sudo npx playwright install-deps chromium`을 한 번 실행해 둔다(testing 11절).
+  (cd services/web && npm ci --no-audit --no-fund && npx playwright install chromium && npx playwright test)
+}
+
 job_perf_ingest() {
   log "perf-ingest (기록만, 합격선 없음)"
   bash deploy/build/build_images.sh
@@ -219,6 +228,7 @@ run_job() {
     web) job_web ;;
     images) job_images ;;
     integration-compose) job_integration_compose ;;
+    web-e2e) job_web_e2e ;;
     perf-ingest) job_perf_ingest ;;
     n-minus-1) job_n_minus_1 ;;
     repro-build) job_repro_build ;;
@@ -232,7 +242,7 @@ run_job() {
   esac
 }
 
-[ "$#" -gt 0 ] || { sed -n '2,13p' "$0"; exit 2; }
+[ "$#" -gt 0 ] || { sed -n '2,15p' "$0"; exit 2; }
 for job in "$@"; do
   run_job "$job"
 done
