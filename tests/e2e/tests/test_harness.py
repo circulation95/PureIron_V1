@@ -5,6 +5,8 @@ from __future__ import annotations
 import io
 import json
 import re
+import subprocess
+from datetime import UTC, datetime, timedelta
 from pathlib import Path, PureWindowsPath
 from typing import cast
 
@@ -340,3 +342,57 @@ def test_names_splits_probe_lists() -> None:
     assert run.names({"k": ""}, "k") == frozenset()
     assert run.names({"k": {"error": "x"}}, "k") == frozenset()
     assert run.names({}, "k") == frozenset()
+
+
+OPEN_AT = datetime(2026, 10, 17, 12, 0, 0, tzinfo=UTC)
+
+
+def completed(rc: int, out: str = "", err: str = "") -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess[str]([], rc, out, err)
+
+
+def test_stage_for_window_records_each_try() -> None:
+    results = iter([completed(2), completed(0, "attempt: g3 verified")])
+    ok, info = run.stage_for_window(
+        lambda: next(results),
+        OPEN_AT,
+        watcher_alive=lambda: True,
+        now=lambda: OPEN_AT - timedelta(seconds=76.4),
+        pause_s=0,
+    )
+    assert ok
+    assert (info["rc"], info["tries"], info["margin_s"]) == (0, 2, 76.4)
+    attempts = cast(list[dict[str, object]], info["attempts"])
+    assert [a["rc"] for a in attempts] == [2, 0]
+    assert all(a["watcher_alive"] is True for a in attempts)
+    assert "stdout_tail" not in info
+
+
+@pytest.mark.parametrize(
+    ("rc", "margin"),
+    [(255, 70.0), (1, 70.0), (0, -3.0), (0, 0.0)],
+)
+def test_stage_for_window_false_keeps_evidence(rc: int, margin: float) -> None:
+    ok, info = run.stage_for_window(
+        lambda: completed(rc, "o" * 2000, "Connection reset"),
+        OPEN_AT,
+        watcher_alive=lambda: False,
+        now=lambda: OPEN_AT - timedelta(seconds=margin),
+        pause_s=0,
+    )
+    assert not ok
+    assert (info["rc"], info["tries"], info["margin_s"]) == (rc, 1, margin)
+    assert info["stderr_tail"] == "Connection reset"
+    assert len(str(info["stdout_tail"])) == run.TAIL_CHARS
+
+
+def test_stage_for_window_gives_up_after_busy_tries() -> None:
+    ok, info = run.stage_for_window(
+        lambda: completed(2, "", "error: another updater is running"),
+        OPEN_AT,
+        watcher_alive=lambda: True,
+        now=lambda: OPEN_AT - timedelta(seconds=10),
+        pause_s=0,
+    )
+    assert not ok
+    assert (info["rc"], info["tries"]) == (2, run.STAGE_TRIES)

@@ -39,9 +39,11 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -845,6 +847,51 @@ def service_restarts(host: Vm) -> int:
     return as_int(out.strip())
 
 
+STAGE_TRIES = 30
+TAIL_CHARS = 800
+
+
+def stage_for_window(
+    apply: Callable[[], subprocess.CompletedProcess[str]],
+    open_at: datetime,
+    *,
+    watcher_alive: Callable[[], bool],
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    pause_s: float = 2,
+) -> tuple[bool, dict[str, object]]:
+    """창(`open_at`) 전에 CLI 스테이징을 끝냈는지와 그 진단 기록. 서비스 tick이 잠금을 잡고 있으면
+    `apply`가 exit 2라 잠시 뒤 다시 한다. 판정: 마지막 시도가 exit 0이고 끝난 시각이 `open_at`
+    전. 기록: 시도마다 rc·걸린 초·감시자 ssh가 아직 살아 있는지, 마지막 rc·시도 횟수·`open_at`
+    까지 남은 초(음수 = 창 뒤), 판정이 거짓이면 stdout·stderr 끝부분."""
+    tries: list[dict[str, object]] = []
+    result = subprocess.CompletedProcess[str]([], 2, "", "")
+    for _ in range(STAGE_TRIES):
+        started = time.monotonic()
+        result = apply()
+        tries.append(
+            {
+                "rc": result.returncode,
+                "s": round(time.monotonic() - started, 1),
+                "watcher_alive": watcher_alive(),
+            }
+        )
+        if result.returncode != 2:
+            break
+        time.sleep(pause_s)
+    margin_s = (open_at - now()).total_seconds()
+    ok = result.returncode == 0 and margin_s > 0
+    info: dict[str, object] = {
+        "rc": result.returncode,
+        "tries": len(tries),
+        "margin_s": round(margin_s, 1),
+        "attempts": tries,
+    }
+    if not ok:
+        info["stdout_tail"] = (result.stdout or "")[-TAIL_CHARS:]
+        info["stderr_tail"] = (result.stderr or "")[-TAIL_CHARS:]
+    return ok, info
+
+
 def crash_once(ctx: Context, case: CrashCase, *, gen: int) -> None:
     host = vm()
     phase, mode, release = case.phase, case.mode, case.release
@@ -866,16 +913,16 @@ def crash_once(ctx: Context, case: CrashCase, *, gen: int) -> None:
     apply_cmd = f"sudo pureiron-site apply {INCOMING}/{pib.name}"
     staged_in_time: bool | None = None
     stage_proc: subprocess.Popen[str] | None = None
+    stage_info: dict[str, object] = {"target": target, "ssh": shutil.which("ssh")}
     if target == "cli":
         stage_proc = host.start(apply_cmd, capture=False)
     else:
-        result = subprocess.CompletedProcess[str]([], 2, "", "")
-        for _ in range(30):  # 서비스 tick이 잠금을 잡고 있으면 exit 2
-            result = host.run(apply_cmd, check=False)
-            if result.returncode != 2:
-                break
-            time.sleep(2)
-        staged_in_time = result.returncode == 0 and datetime.now(UTC) < open_at
+        staged_in_time, info = stage_for_window(
+            lambda: host.run(apply_cmd, check=False),
+            open_at,
+            watcher_alive=lambda: watcher.poll() is None,
+        )
+        stage_info.update(info)
     line = watcher.stdout.readline().strip() if watcher.stdout else ""
     # 감시자는 HIT를 출력하고 곧 끝난다 — 리셋이 ssh를 끊기 전에 종료 코드를 받는다(rc 5 = 얼릴
     # 프로세스 없음).
@@ -886,7 +933,7 @@ def crash_once(ctx: Context, case: CrashCase, *, gen: int) -> None:
         hyperv.restart_force(VM_NAME)
         ctx.nft_last = {}
     if stage_proc is not None:
-        stage_proc.wait(timeout=1800)
+        stage_info["rc"] = stage_proc.wait(timeout=1800)  # CLI 대상은 감시자가 죽인다
     snap, waited = converge(vm(), gen)
     report = report_for(vm(), pib)
     want = ctx.digests[release if expect == "succeeded" else case.prev]
@@ -917,6 +964,7 @@ def crash_once(ctx: Context, case: CrashCase, *, gen: int) -> None:
         code=report.get("code"),
         converge_s=round(waited, 1),
         checks=checks,
+        stage=stage_info,
         alarm=updater_state(snap).get("alarm"),
         logs=report.get("logs") if not all(checks.values()) else None,
     )

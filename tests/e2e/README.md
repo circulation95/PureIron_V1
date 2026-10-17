@@ -101,6 +101,11 @@ false**(`last_result`는 `failed_manual`도 `failed`로 접는다) · `applied_g
 (reset이면 boot id 변경, 서비스 kill이면 `NRestarts` 증가) · service 대상이면 CLI 스테이징이 창 열림 전에 끝남
 (아니면 CLI가 phase를 직접 실행해 쉬는 서비스를 죽이는 거짓 통과가 된다).
 
+crash 결과의 `stage`는 스테이징 진단 기록이다: `target`, 쓴 ssh 클라이언트 경로(`ssh`), 마지막 `apply`의 `rc`,
+시도 횟수 `tries`(exit 2 = 서비스 tick과 잠금 경쟁이면 2 s 뒤 다시, 최대 30회), 창까지 남은 초 `margin_s`(음수 = 창 뒤),
+시도별 `attempts`(`rc`·걸린 초 `s`·그때 감시자 ssh가 살아 있었는지 `watcher_alive`). `staged_before_window`가
+거짓이면 마지막 시도의 `stdout_tail`·`stderr_tail`도 남는다. CLI 대상(`fetched`)은 감시자가 죽인 `apply`의 `rc`만 있다.
+
 crash 지점의 실제 의미: 감시자는 상태 파일이 그 phase로 **저장된 직후** 서비스 cgroup 전체를 `SIGSTOP`한다.
 컨테이너(dockerd 소유)는 계속 돌기 때문에 `migrating`(약 2 s)은 마이그레이션 SQL 도중이 아니라 "phase 기록 뒤,
 다음 기록 전"을 끊는다 — SQL 중간 중단은 core 통합 테스트(0006·0007 crash 상태)가 맡는다. `fetched`는 서명 검증
@@ -115,4 +120,4 @@ systemd-resolved가 보내므로(컨테이너 질의도 Docker 내장 DNS → re
 
 ## 단위 테스트
 
-`tests/e2e/tests/` — phase 순서·상태 읽기·nft 규칙·seed ISO 왕복·PowerShell 인용·수렴 판정·release 쌍(BASE·NEXT 기록 대조 필수·crash 순서·항목 30개·c0/NEXT 스키마 집합 판정)·store symlink 다시 연결. G1 `unit`에 포함된다.
+`tests/e2e/tests/` — phase 순서·상태 읽기·nft 규칙·seed ISO 왕복·PowerShell 인용·수렴 판정·release 쌍(BASE·NEXT 기록 대조 필수·crash 순서·항목 30개·c0/NEXT 스키마 집합 판정)·store symlink 다시 연결·스테이징 진단 기록(`stage_for_window`). G1 `unit`에 포함된다.
