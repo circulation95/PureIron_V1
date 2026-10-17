@@ -4,6 +4,8 @@
 //   4403 = Origin이 Host와 다름(프록시 설정 문제) → 다시 연결해도 같으므로 멈춘다.
 // - 그 밖의 끊김은 0.5s부터 두 배씩 최대 10s 간격으로 다시 연결하고, `hello`를 받으면 구독을 다시 보낸다.
 // - 서버 `ping`에는 곧바로 `pong`(60s 동안 pong이 없으면 서버가 끊는다).
+// - 서버는 20s마다 ping을 보내므로 SILENCE_TIMEOUT_MS(ping 2회 이상) 동안 아무 메시지도 없으면 죽은 연결로 보고
+//   소켓을 버린 뒤 같은 backoff 경로로 다시 연결한다.
 // - 메시지 타입은 schema.d.ts components(WsServerMessage·WsClientMessage)가 정본이다.
 import type { components } from "../api/schema";
 
@@ -25,6 +27,7 @@ type Handlers = { [K in keyof EventMap]: Set<(payload: EventMap[K]) => void> };
 
 const BACKOFF_START_MS = 500;
 const BACKOFF_MAX_MS = 10_000;
+const SILENCE_TIMEOUT_MS = 50_000;
 const CLOSE_NORMAL = 1000;
 const CLOSE_UNAUTHORIZED = 4401;
 const CLOSE_FORBIDDEN_ORIGIN = 4403;
@@ -48,6 +51,7 @@ export function wsUrl(location: Location): string {
 export class RealtimeClient {
   private socket: WebSocket | null = null;
   private retryTimer: number | null = null;
+  private silenceTimer: number | null = null;
   private backoffMs = BACKOFF_START_MS;
   private running = false;
   private state: ConnectionState = "closed";
@@ -84,6 +88,7 @@ export class RealtimeClient {
       window.clearTimeout(this.retryTimer);
       this.retryTimer = null;
     }
+    this.clearSilenceTimer();
     const socket = this.socket;
     this.socket = null;
     socket?.close(CLOSE_NORMAL);
@@ -124,11 +129,14 @@ export class RealtimeClient {
     this.setState("connecting");
     const socket = new WebSocket(this.url);
     this.socket = socket;
+    this.armSilenceTimer(socket);
     socket.onmessage = (event: MessageEvent) => {
+      this.armSilenceTimer(socket);
       if (typeof event.data === "string") this.receive(event.data);
     };
     socket.onclose = (event: CloseEvent) => {
       if (this.socket !== socket) return; // stop() 또는 새 연결이 이미 대신함
+      this.clearSilenceTimer();
       this.socket = null;
       this.setState("closed");
       if (!this.running) return;
@@ -143,6 +151,28 @@ export class RealtimeClient {
       }
       this.scheduleReconnect();
     };
+  }
+
+  private armSilenceTimer(socket: WebSocket): void {
+    this.clearSilenceTimer();
+    this.silenceTimer = window.setTimeout(() => {
+      this.silenceTimer = null;
+      if (this.socket !== socket) return;
+      // 반쯤 끊긴 연결은 close 핸드셰이크가 오래 걸릴 수 있어 핸들러를 떼고 바로 재연결한다.
+      this.socket = null;
+      socket.onmessage = null;
+      socket.onclose = null;
+      socket.close();
+      this.setState("closed");
+      if (this.running) this.scheduleReconnect();
+    }, SILENCE_TIMEOUT_MS);
+  }
+
+  private clearSilenceTimer(): void {
+    if (this.silenceTimer !== null) {
+      window.clearTimeout(this.silenceTimer);
+      this.silenceTimer = null;
+    }
   }
 
   private scheduleReconnect(): void {

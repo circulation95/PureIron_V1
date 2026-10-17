@@ -3,12 +3,20 @@ import { type SubmitEvent, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
 import { api } from "../api/client";
+import { isLoginPath } from "../app/Layout";
 
 type Submit = { kind: "idle" } | { kind: "sending" } | { kind: "error"; message: string };
 
-/** 같은 사이트 안 경로만 돌아갈 곳으로 받는다(`//evil.example` 같은 외부 이동 차단). */
+/** 같은 origin의 경로만 돌아갈 곳으로 받는다(`//evil.example` 같은 외부 이동 차단). `/login`으로는 돌아가지 않는다. */
 function safeNext(next: string | null): string {
-  return next !== null && next.startsWith("/") && !next.startsWith("//") ? next : "/";
+  if (next === null) return "/";
+  try {
+    const url = new URL(next, window.location.origin);
+    if (url.origin !== window.location.origin || isLoginPath(url.pathname)) return "/";
+    return url.pathname + url.search + url.hash;
+  } catch {
+    return "/";
+  }
 }
 
 export function Login() {

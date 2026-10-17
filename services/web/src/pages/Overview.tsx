@@ -26,6 +26,7 @@ export function Overview() {
     api
       .GET("/api/v1/tags", { signal: controller.signal })
       .then(({ data, response }) => {
+        if (controller.signal.aborted) return; // 정리 뒤에 구독하면 해제되지 않는다
         if (data === undefined) {
           setTags({ kind: "error", message: failureMessage(response) });
           return;

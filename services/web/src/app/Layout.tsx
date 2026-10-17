@@ -19,8 +19,14 @@ import { RealtimeClient, wsUrl } from "../ws/client";
 import { isUnacked, sortAlarms, upsertAlarm } from "./alarms";
 import { type Session, SessionContext } from "./session";
 
+/** `/login`과 그 하위. 여기서는 401 리다이렉트도 `?next=` 대상도 만들지 않는다(동시 401의 `?next=` 중첩 방지). */
+export function isLoginPath(pathname: string): boolean {
+  return pathname === "/login" || pathname.startsWith("/login/");
+}
+
 export function loginPath(next: string): string {
-  return next === "/" ? "/login" : `/login?next=${encodeURIComponent(next)}`;
+  const pathname = next.split(/[?#]/)[0] ?? next;
+  return next === "/" || isLoginPath(pathname) ? "/login" : `/login?next=${encodeURIComponent(next)}`;
 }
 
 export function Layout() {
@@ -29,6 +35,7 @@ export function Layout() {
 
   useEffect(() => {
     const toLogin = () => {
+      if (isLoginPath(window.location.pathname)) return;
       void navigate(loginPath(window.location.pathname + window.location.search), { replace: true });
     };
     authEvents.addEventListener(UNAUTHORIZED_EVENT, toLogin);
@@ -77,26 +84,41 @@ function SignedIn({ me }: { me: Me }) {
   useEffect(() => {
     const controller = new AbortController();
     let latest = 0;
+    // 목록 요청이 진행 중일 때 도착한 alarm_event는 버리지 않고 모았다가 스냅샷 적용 뒤에 재생한다.
+    // upsertAlarm이 changed_at이 더 늦은 쪽만 남기므로 오래된 스냅샷이 최신 이벤트를 덮어쓰지 않는다.
+    let inFlight = false;
+    let buffered: Alarm[] = [];
     // 처음 한 번 + 재연결(hello)마다: 끊긴 동안 놓친 alarm_event를 목록 전체로 메운다.
     const load = () => {
       const request = ++latest;
+      inFlight = true;
       api
         .GET("/api/v1/alarms", { signal: controller.signal })
         .then(({ data, response }) => {
           if (request !== latest) return;
+          const replay = buffered;
+          inFlight = false;
+          buffered = [];
           setAlarms(
             data === undefined
               ? { kind: "error", message: failureMessage(response) }
-              : { kind: "ok", value: sortAlarms(data.alarms) },
+              : { kind: "ok", value: replay.reduce(upsertAlarm, sortAlarms(data.alarms)) },
           );
         })
         .catch((err: unknown) => {
-          if (!controller.signal.aborted) setAlarms({ kind: "error", message: networkMessage(err) });
+          if (controller.signal.aborted || request !== latest) return;
+          inFlight = false;
+          buffered = [];
+          setAlarms({ kind: "error", message: networkMessage(err) });
         });
     };
     load();
     const offHello = realtime.on("hello", load);
     const offEvent = realtime.on("alarm_event", (alarm) => {
+      if (inFlight) {
+        buffered.push(alarm);
+        return;
+      }
       setAlarms((prev) => (prev.kind === "ok" ? { kind: "ok", value: upsertAlarm(prev.value, alarm) } : prev));
     });
     return () => {
@@ -117,11 +139,20 @@ function SignedIn({ me }: { me: Me }) {
     [me, realtime, connection, alarms, applyAlarms],
   );
 
+  const [logoutError, setLogoutError] = useState<string | null>(null);
+
+  // 실패하면 세션이 남아 있을 수 있으므로 이동하지 않고 알린다.
   const logout = () => {
-    const toLogin = () => {
-      void navigate("/login", { replace: true });
-    };
-    api.POST("/api/v1/auth/logout").then(toLogin, toLogin);
+    setLogoutError(null);
+    api
+      .POST("/api/v1/auth/logout")
+      .then(({ response }) => {
+        if (response.ok) void navigate("/login", { replace: true });
+        else setLogoutError(failureMessage(response));
+      })
+      .catch((err: unknown) => {
+        setLogoutError(networkMessage(err));
+      });
   };
 
   const unacked = alarms.kind === "ok" ? alarms.value.filter(isUnacked).length : 0;
@@ -156,6 +187,11 @@ function SignedIn({ me }: { me: Me }) {
           로그아웃
         </button>
       </header>
+      {logoutError !== null && (
+        <p className="error" role="alert">
+          로그아웃하지 못했습니다. {logoutError}
+        </p>
+      )}
       <main>
         <Outlet />
       </main>

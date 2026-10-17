@@ -81,6 +81,8 @@ test("조회자: ACK 버튼과 감사 로그가 보이지 않는다", async ({ p
   await page.goto("/alarms");
   await login(page, USERS.viewer);
   await expect(page.getByRole("heading", { name: "알람" })).toBeVisible();
+  // 목록 로드가 끝난 뒤에 검사한다(로딩 중에는 버튼이 원래 없어 통과해 버린다).
+  await expect(page.getByText(/개 · 미확인/)).toBeVisible();
   await expect(page.getByRole("button", { name: "전체 ACK" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "ACK", exact: true })).toHaveCount(0);
   await page.getByRole("link", { name: "감사 로그" }).click();

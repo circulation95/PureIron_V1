@@ -14,8 +14,13 @@ export function sortAlarms(alarms: readonly Alarm[]): Alarm[] {
   );
 }
 
-/** 전이 뒤 알람을 목록에 반영한다. NORMAL·RETIRED는 목록에서 뺀다. */
+/**
+ * 전이 뒤 알람을 목록에 반영한다. NORMAL·RETIRED는 목록에서 뺀다.
+ * 이미 더 늦은 전이(`changed_at`)가 반영돼 있으면 건너뛴다: 늦게 도착한 오래된 응답이 최신 이벤트를 덮어쓰지 않게.
+ */
 export function upsertAlarm(alarms: readonly Alarm[], alarm: Alarm): Alarm[] {
+  const current = alarms.find((a) => a.alarm_id === alarm.alarm_id);
+  if (current !== undefined && changedAtMs(current) > changedAtMs(alarm)) return [...alarms];
   const rest = alarms.filter((a) => a.alarm_id !== alarm.alarm_id);
   if (alarm.state === "NORMAL" || alarm.state === "RETIRED") return rest;
   return sortAlarms([...rest, alarm]);
