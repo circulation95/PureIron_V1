@@ -195,7 +195,7 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
   부팅 시 자동 실행하지 않는다(Updater `migrating` 단계 또는 운영자가 실행).
 - 마이그레이션을 포함한 release만 schema epoch를 +1 한다. 앱은 `app_expected ≤ 현재 epoch ≤ app_max_compatible`일 때만
   ready다 → 한 단계 이전 앱으로 롤백할 수 있다.
-- 현재: r0 = epoch 1, r1 = epoch 2, **r2 = epoch 3**(`0009`). M3b 마이그레이션은 `0010~`, epoch 4 = r3.
+- 현재: r0 = epoch 1, r1 = epoch 2, r2 = epoch 3(`0009`), **r3 = epoch 4**(`0010~0012`). 다음 migration은 `0013~`, epoch 5.
   세부(테이블·CAGG·lint 규칙·release 기록)는 [data-contracts](data-contracts.md).
 
 ## 배포 · 중앙 (ADR-022, ADR-023)
@@ -216,7 +216,7 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
 | M1 | 저장소 골격, core 조립·import 계약, G1 게이트(CI), compose | 완료 |
 | M2 | Updater·bundle-tools·install 번들, r0·r1, Hyper-V VM 실측 30/30 | 완료 |
 | M3a | collector(Modbus·링버퍼·replay), core tags·historian·정의, r2(epoch 3), VM 실측 r1→r2 30/30 | 완료 |
-| M3b | alarms·auth·audit·realtime·devices·history API, web 로그인 + 5화면, r3 | 다음 |
+| M3b | alarms·auth·audit·realtime·devices·history API, web 로그인 + 5화면, r3(epoch 4) | 진행(S4: r2→r3 VM 재검증 남음) |
 | M3c | PLC 쓰기 경로(ADR-013 가드레일) | 예정 |
 | M4 | control-api·control-web·fleet·release 파이프라인 | 예정 |
 | M5 | 프로젝트 수명주기(project-tools 완성, apply·드래프트 회수) | 예정 |

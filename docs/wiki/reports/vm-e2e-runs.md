@@ -8,6 +8,7 @@ sources:
   - tests/e2e/README.md
   - tests/e2e/m2d/run.py
   - tests/e2e/m2d/release_pair.py
+  - deploy/releases/r1.json
   - deploy/releases/r2.json
 last_verified: 2026-10-10
 ---

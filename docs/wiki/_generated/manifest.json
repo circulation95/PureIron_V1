@@ -95,17 +95,18 @@
     },
     {
       "audience": "both",
-      "bytes": 4372,
+      "bytes": 4400,
       "id": "report-vm-e2e-runs",
       "last_verified": "2026-10-10",
       "path": "docs/wiki/reports/vm-e2e-runs.md",
       "section_count": 3,
-      "sha256": "0aa378ce81766a25472afbc8a3e2753d672616694f7d23dcccd88344a98b4e15",
+      "sha256": "4051c3dcb0cc7272ddf7df12c261fb90b6679d6620b0e0fdbf51e3dfe5f740ce",
       "source_globs": [],
       "sources": [
         "tests/e2e/README.md",
         "tests/e2e/m2d/run.py",
         "tests/e2e/m2d/release_pair.py",
+        "deploy/releases/r1.json",
         "deploy/releases/r2.json"
       ],
       "status": "canonical",
@@ -149,12 +150,12 @@
     },
     {
       "audience": "both",
-      "bytes": 19039,
+      "bytes": 19097,
       "id": "sot-architecture",
       "last_verified": "2026-10-11",
       "path": "docs/wiki/sot/architecture.md",
       "section_count": 17,
-      "sha256": "ca54437cc15f4fba70e1dc9cf4705cb82b19d9f68affe2aec702c8dcbd29e58b",
+      "sha256": "6a52bf80bbf46dc13525e1186a31e4728c018080e1b2dde91b17749ae7ccdd5d",
       "source_globs": [],
       "sources": [
         "services/core/src/pureiron_core/runtime.py",
@@ -212,12 +213,12 @@
     },
     {
       "audience": "both",
-      "bytes": 51103,
+      "bytes": 51295,
       "id": "sot-data-contracts",
       "last_verified": "2026-08-22",
       "path": "docs/wiki/sot/data-contracts.md",
       "section_count": 24,
-      "sha256": "bfd393824d8183698a9da2260c542df70b927ba98cf04c14dfe6870cef6091eb",
+      "sha256": "e02d45fd872e225ffe50cc2b0c14a12efc4ed25dfa32707a8524d0fc6562724b",
       "source_globs": [
         "projects/demo-coffee/**/*.yaml",
         "projects/demo-coffee/**/*.json"
