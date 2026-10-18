@@ -20,7 +20,7 @@ services:
     environment:
       # holding 레지스터 수(사인파 0..N-1). 2,000태그 부하 측정은 PUREIRON_SIM_REGISTERS=2000.
       SIM_REGISTERS: ${PUREIRON_SIM_REGISTERS:-100}
-      # 쓰기 시험 메모리 칸 수: holding N..N+M-1·coil 0..M-1(끝 두 holding = 예외·무시 시험 주소).
+      # 쓰기 시험 메모리 칸 수 M: holding N..N+M-1(끝 두 칸 = 예외·무시 시험 주소)·coil 0..max(N,M)-1.
       SIM_MEMORY: ${PUREIRON_SIM_MEMORY:-100}
 
 networks:

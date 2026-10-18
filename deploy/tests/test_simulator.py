@@ -104,6 +104,13 @@ async def test_ignore_address_acks_but_keeps_old_value(client: AsyncModbusTcpCli
     assert (await client.read_holding_registers(IGNORE_AT - 1, count=2)).registers == [5, 0]
 
 
+async def test_coils_cover_the_sine_area_when_it_is_larger() -> None:
+    """부하 측정(SIM_REGISTERS=2000 > SIM_MEMORY) 때도 coil은 N칸 — 이전 칸 수를 줄이지 않는다."""
+    async with _serve(20, 4) as modbus:
+        assert not (await modbus.write_coil(19, True)).isError()
+        assert (await modbus.read_coils(19, count=1)).bits[0] is True
+
+
 def test_memory_needs_room_for_both_reject_addresses() -> None:
     with pytest.raises(ValueError, match="SIM_MEMORY"):
         device(SINE, 1)

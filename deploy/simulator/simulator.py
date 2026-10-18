@@ -4,8 +4,8 @@ holding·input register 0..N-1이 읽는 순간의 시각으로 사인파 값을
 통합 시험(M3a: 100태그 → 10s 내 GOOD, 2,000태그 부하)의 장비 대역이며,
 현장 번들에는 들어가지 않는다.
 
-쓰기 시험용 메모리(M3c-1 D17, `SIM_MEMORY` = M칸): holding N..N+M-1과 coil 0..M-1은 덮어쓰지
-않는 메모리다(쓴 값이 그대로 읽힌다). 거부 시험용으로 holding N+M-1 쓰기는 예외 응답
+쓰기 시험용 메모리(M3c-1 D17, `SIM_MEMORY` = M칸): holding N..N+M-1과 coil 0..max(N,M)-1은
+덮어쓰지 않는 메모리다(쓴 값이 그대로 읽힌다). 거부 시험용으로 holding N+M-1 쓰기는 예외 응답
 (ILLEGAL DATA VALUE), N+M-2 쓰기는 정상 응답하지만 값을 바꾸지 않는다(readback 불일치).
 
 pymodbus 3.15부터 `ModbusDeviceContext`·`ModbusSequentialDataBlock`은 deprecated(0번지 블록은
@@ -77,7 +77,8 @@ def device(registers: int, memory: int) -> SimDevice:
         raise ValueError(f"SIM_MEMORY must be at least {MIN_MEMORY}, got {memory}")
     holding = [SimData(0, values=[0] * (registers + memory), datatype=DataType.REGISTERS)]
     inputs = [SimData(0, values=[0] * registers, datatype=DataType.REGISTERS)]
-    coils = [SimData(0, values=[False] * memory, datatype=DataType.BITS)]
+    # coil은 전부 메모리다. 칸 수는 max(N, M) — 부하 측정(SIM_REGISTERS=2000)에서도 이전처럼 N칸.
+    coils = [SimData(0, values=[False] * max(registers, memory), datatype=DataType.BITS)]
     discrete = [SimData(0, values=[False] * registers, datatype=DataType.BITS)]
     return SimDevice(
         ALL_UNITS, simdata=(coils, discrete, holding, inputs), action=action(registers, memory)
@@ -91,7 +92,7 @@ async def main() -> None:
         REGISTERS,
         REGISTERS,
         REGISTERS + MEMORY - 1,
-        MEMORY - 1,
+        max(REGISTERS, MEMORY) - 1,
         REGISTERS + MEMORY - 1,
         REGISTERS + MEMORY - 2,
         PORT,
