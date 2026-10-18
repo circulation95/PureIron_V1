@@ -1,5 +1,6 @@
 """`/auth` 라우터와 SessionGuard: 쿠키·Bearer 인증, 401/403 경계, Set-Cookie 속성, 감사 기록,
-비밀번호 변경 검증, DB 장애 503, OpenAPI 보안 스키마 이름(세션 vs Updater)."""
+비밀번호 변경 검증, DB 장애 503, 로그인 실패 제한 429(plan M3c D16),
+OpenAPI 보안 스키마 이름(세션 vs Updater)."""
 
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ from pureiron_core.api.project import build_project_router
 from pureiron_core.audit.ports import AuditAction, AuditEntry, AuditSink, AuditSource
 from pureiron_core.audit.store import PgAuditStore
 from pureiron_core.auth.ports import Principal, Role
+from pureiron_core.auth.throttle import LoginThrottle
 from pureiron_core.platform.db import Database
 from pureiron_core.project.ports import ProjectState
 
@@ -33,7 +35,12 @@ class Api:
     app: FastAPI
 
 
-def _api(*, cookie_secure: bool = False, sink: AuditSink | None = None) -> Api:
+def _api(
+    *,
+    cookie_secure: bool = False,
+    sink: AuditSink | None = None,
+    throttle: LoginThrottle | None = None,
+) -> Api:
     fx = auth_fixture()
     audit = FakeAudit()
     guard = SessionGuard(fx.service)
@@ -43,6 +50,7 @@ def _api(*, cookie_secure: bool = False, sink: AuditSink | None = None) -> Api:
             auth=fx.service,
             audit=sink or audit,
             guard=guard,
+            throttle=throttle or LoginThrottle(),
             cookie_secure=cookie_secure,
             cookie_max_age_s=604_800,
         ),
@@ -74,6 +82,22 @@ def _login(api: Api, username: str = "alice", password: str = PASSWORD) -> str:
     assert response.status_code == 200, response.text
     token: str = response.json()["token"]
     return token
+
+
+def _attempt(api: Api, username: str = "alice", password: str = "wrong-secret-9") -> int:
+    # 새 클라이언트(쿠키 없음): 앞선 성공 로그인의 쿠키가 다음 시도에 실리지 않게.
+    response = TestClient(api.app).post(
+        "/api/v1/auth/login", json={"username": username, "password": password}
+    )
+    return response.status_code
+
+
+@dataclass
+class Monotonic:
+    now: float = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
 
 
 async def test_login_sets_strict_httponly_cookie_and_returns_same_token() -> None:
@@ -380,6 +404,59 @@ async def test_requests_succeed_when_audit_store_is_down() -> None:
         await unreachable.close()
 
 
+async def test_fifth_failure_throttles_username_for_ten_minutes() -> None:
+    clock = Monotonic()
+    api = _api(throttle=LoginThrottle(clock=clock))
+    await _user(api)
+    await _user(api, "bob")
+    assert [_attempt(api) for _ in range(5)] == [401] * 5
+    clock.now += 1.5
+    blocked = TestClient(api.app).post(
+        "/api/v1/auth/login", json={"username": "alice", "password": PASSWORD}
+    )
+    # 제한 중에는 맞는 비밀번호도 받지 않는다(추측을 계속 확인시켜 주지 않게).
+    assert (blocked.status_code, blocked.headers["retry-after"]) == (429, "599")
+    assert blocked.json() == {"detail": "too many failed logins, retry later"}
+    assert _attempt(api, "bob", PASSWORD) == 200  # 다른 username은 따로 센다
+    throttled = [e for e in api.audit.entries if e.action == AuditAction.AUTH_LOGIN_THROTTLED]
+    assert throttled == [
+        AuditEntry(
+            action=AuditAction.AUTH_LOGIN_THROTTLED,
+            source=AuditSource.API,
+            username="alice",
+            target="alice",
+            detail={"failures": 5, "window_s": 600.0, "block_s": 600.0},
+        )
+    ]
+    failed = [e for e in api.audit.entries if e.action == AuditAction.AUTH_LOGIN_FAILED]
+    assert len(failed) == 5  # 429는 감사 행을 더 쓰지 않는다
+    clock.now += 598.5  # 제한 시작 + 600s — 영구 잠금은 없다
+    assert _attempt(api, "alice", PASSWORD) == 200
+
+
+async def test_successful_login_resets_failure_count() -> None:
+    api = _api(throttle=LoginThrottle(clock=Monotonic()))
+    await _user(api)
+    assert [_attempt(api) for _ in range(4)] == [401] * 4
+    assert _attempt(api, password=PASSWORD) == 200
+    assert [_attempt(api) for _ in range(4)] == [401] * 4
+
+
+async def test_malformed_usernames_are_not_tracked() -> None:
+    """규칙 밖 username(비밀번호 오입력일 수 있다)은 계정이 될 수 없어 세지도 기억하지도 않는다."""
+    api = _api(throttle=LoginThrottle(clock=Monotonic()))
+    assert [_attempt(api, "My Secret Pass!") for _ in range(7)] == [401] * 7
+
+
+async def test_site_db_outage_is_not_counted_as_failure() -> None:
+    api = _api(throttle=LoginThrottle(clock=Monotonic()))
+    await _user(api)
+    api.fx.users.available = False
+    assert [_attempt(api, password=PASSWORD) for _ in range(6)] == [503] * 6
+    api.fx.users.available = True
+    assert _attempt(api, password=PASSWORD) == 200
+
+
 def test_openapi_names_session_and_updater_schemes_apart() -> None:
     api = _api()
     project = build_project_router(store=_NoProject(), updater_token="t", audit=FakeAudit())
@@ -403,6 +480,7 @@ def test_openapi_names_session_and_updater_schemes_apart() -> None:
     lock = spec["paths"]["/api/v1/project/edit-lock"]["post"]["security"]
     assert lock == [{"HTTPBearer": []}]
     assert "security" not in spec["paths"]["/api/v1/auth/login"]["post"]
+    assert "429" in spec["paths"]["/api/v1/auth/login"]["post"]["responses"]
 
 
 class _NoProject:

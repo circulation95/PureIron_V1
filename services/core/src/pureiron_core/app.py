@@ -55,6 +55,7 @@ def create_app(rt: SiteRuntime) -> FastAPI:
             auth=rt.auth,
             audit=rt.audit,
             guard=guard,
+            throttle=rt.login_throttle,
             cookie_secure=rt.settings.auth_cookie_secure,
             cookie_max_age_s=int(rt.settings.auth_session_absolute_s),
         ),
