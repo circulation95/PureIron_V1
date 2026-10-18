@@ -56,6 +56,9 @@ message TagPoint {
   oneof address {
     ModbusAddress modbus = 3;
   }
+  // core가 이 태그에 쓰기를 보낼 수 있다(project 쓰기 선언 + 현장 스위치 켜짐). false면 collector는
+  // 이 태그의 WriteRequest를 REJECTED로 답한다(2중 방어). 기본값 false = 읽기 전용.
+  bool writable = 5;
 }
 
 message ModbusAddress {
@@ -116,13 +119,19 @@ message Ack {
 }
 
 // 쓰기는 core만 보낸다(ADR-013 개정: 선언된 태그·현장별 활성화·사람 확인 또는 승인된 예약·readback·감사).
-// PLC 로직은 바꾸지 않는다. 쓰기 경로 구현 전까지 collector는 받으면 REJECTED로 답한다.
+// PLC 로직은 바꾸지 않는다 — collector는 값 쓰기 함수(coil FC5, 1워드 FC6, 2·4워드 FC16)만 쓰고
+// 자동 재시도하지 않는다. bool·coil 값은 value 0/1로 보낸다.
 message WriteRequest {
   string request_id = 1;
   uint32 tag_id = 2;
   double value = 3;
+  // core가 쓰기를 판단한 plan. collector가 적용 중인 plan_rev와 다르면 REJECTED.
+  uint64 plan_rev = 4;
 }
 
+// REJECTED = collector가 보내지 않았다(plan_rev 불일치·writable=false·모르는 태그·인코딩 불가).
+// FAILED = 장비에 보내지 못했거나 장비가 예외로 답했다(미연결·시간 초과·예외 응답).
+// OK = 장비가 쓰기에 정상 응답했다. 반영 여부 판정은 core가 readback으로 한다.
 message WriteResult {
   string request_id = 1;
   // 0(기본값)이 REJECTED — 값이 빠진 응답은 거부로 읽힌다(fail-safe).
@@ -133,4 +142,7 @@ message WriteResult {
   }
   Status status = 2;
   string error = 3;
+  // OK 직후 같은 주소를 다시 읽은 값(decode 결과, bool은 0/1). 재읽기에 실패하면 비어 있고 error에 이유.
+  optional double readback = 4;
+  optional int64 readback_ts_unix_ns = 5;
 }

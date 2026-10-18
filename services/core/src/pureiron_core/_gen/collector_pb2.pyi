@@ -206,8 +206,13 @@ class TagPoint(_message.Message):
     TAG_ID_FIELD_NUMBER: _builtins.int
     DEVICE_ID_FIELD_NUMBER: _builtins.int
     MODBUS_FIELD_NUMBER: _builtins.int
+    WRITABLE_FIELD_NUMBER: _builtins.int
     tag_id: _builtins.int
     device_id: _builtins.str
+    writable: _builtins.bool
+    """core가 이 태그에 쓰기를 보낼 수 있다(project 쓰기 선언 + 현장 스위치 켜짐). false면 collector는
+    이 태그의 WriteRequest를 REJECTED로 답한다(2중 방어). 기본값 false = 읽기 전용.
+    """
     @_builtins.property
     def modbus(self) -> Global___ModbusAddress: ...
     def __init__(
@@ -216,10 +221,11 @@ class TagPoint(_message.Message):
         tag_id: _builtins.int = ...,
         device_id: _builtins.str = ...,
         modbus: Global___ModbusAddress | None = ...,
+        writable: _builtins.bool = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _typing.Literal["address", b"address", "modbus", b"modbus"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["address", b"address", "device_id", b"device_id", "modbus", b"modbus", "tag_id", b"tag_id"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["address", b"address", "device_id", b"device_id", "modbus", b"modbus", "tag_id", b"tag_id", "writable", b"writable"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     _WhichOneofReturnType_address: _TypeAlias = _typing.Literal["modbus"]  # noqa: Y015
     _WhichOneofArgType_address: _TypeAlias = _typing.Literal["address", b"address"]  # noqa: Y015
@@ -428,7 +434,8 @@ Global___Ack: _TypeAlias = Ack  # noqa: Y015
 @_typing.final
 class WriteRequest(_message.Message):
     """쓰기는 core만 보낸다(ADR-013 개정: 선언된 태그·현장별 활성화·사람 확인 또는 승인된 예약·readback·감사).
-    PLC 로직은 바꾸지 않는다. 쓰기 경로 구현 전까지 collector는 받으면 REJECTED로 답한다.
+    PLC 로직은 바꾸지 않는다 — collector는 값 쓰기 함수(coil FC5, 1워드 FC6, 2·4워드 FC16)만 쓰고
+    자동 재시도하지 않는다. bool·coil 값은 value 0/1로 보낸다.
     """
 
     DESCRIPTOR: _descriptor.Descriptor
@@ -436,19 +443,23 @@ class WriteRequest(_message.Message):
     REQUEST_ID_FIELD_NUMBER: _builtins.int
     TAG_ID_FIELD_NUMBER: _builtins.int
     VALUE_FIELD_NUMBER: _builtins.int
+    PLAN_REV_FIELD_NUMBER: _builtins.int
     request_id: _builtins.str
     tag_id: _builtins.int
     value: _builtins.float
+    plan_rev: _builtins.int
+    """core가 쓰기를 판단한 plan. collector가 적용 중인 plan_rev와 다르면 REJECTED."""
     def __init__(
         self,
         *,
         request_id: _builtins.str = ...,
         tag_id: _builtins.int = ...,
         value: _builtins.float = ...,
+        plan_rev: _builtins.int = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _Never  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["request_id", b"request_id", "tag_id", b"tag_id", "value", b"value"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["plan_rev", b"plan_rev", "request_id", b"request_id", "tag_id", b"tag_id", "value", b"value"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     def WhichOneof(self, oneof_group: _Never) -> None: ...
 
@@ -456,6 +467,11 @@ Global___WriteRequest: _TypeAlias = WriteRequest  # noqa: Y015
 
 @_typing.final
 class WriteResult(_message.Message):
+    """REJECTED = collector가 보내지 않았다(plan_rev 불일치·writable=false·모르는 태그·인코딩 불가).
+    FAILED = 장비에 보내지 못했거나 장비가 예외로 답했다(미연결·시간 초과·예외 응답).
+    OK = 장비가 쓰기에 정상 응답했다. 반영 여부 판정은 core가 readback으로 한다.
+    """
+
     DESCRIPTOR: _descriptor.Descriptor
 
     class _Status:
@@ -478,20 +494,34 @@ class WriteResult(_message.Message):
     REQUEST_ID_FIELD_NUMBER: _builtins.int
     STATUS_FIELD_NUMBER: _builtins.int
     ERROR_FIELD_NUMBER: _builtins.int
+    READBACK_FIELD_NUMBER: _builtins.int
+    READBACK_TS_UNIX_NS_FIELD_NUMBER: _builtins.int
     request_id: _builtins.str
     status: Global___WriteResult.Status.ValueType
     error: _builtins.str
+    readback: _builtins.float
+    """OK 직후 같은 주소를 다시 읽은 값(decode 결과, bool은 0/1). 재읽기에 실패하면 비어 있고 error에 이유."""
+    readback_ts_unix_ns: _builtins.int
     def __init__(
         self,
         *,
         request_id: _builtins.str = ...,
         status: Global___WriteResult.Status.ValueType = ...,
         error: _builtins.str = ...,
+        readback: _builtins.float | None = ...,
+        readback_ts_unix_ns: _builtins.int | None = ...,
     ) -> None: ...
-    _HasFieldArgType: _TypeAlias = _Never  # noqa: Y015
+    _HasFieldArgType: _TypeAlias = _typing.Literal["_readback", b"_readback", "_readback_ts_unix_ns", b"_readback_ts_unix_ns", "readback", b"readback", "readback_ts_unix_ns", b"readback_ts_unix_ns"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["error", b"error", "request_id", b"request_id", "status", b"status"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_readback", b"_readback", "_readback_ts_unix_ns", b"_readback_ts_unix_ns", "error", b"error", "readback", b"readback", "readback_ts_unix_ns", b"readback_ts_unix_ns", "request_id", b"request_id", "status", b"status"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
-    def WhichOneof(self, oneof_group: _Never) -> None: ...
+    _WhichOneofReturnType__readback: _TypeAlias = _typing.Literal["readback"]  # noqa: Y015
+    _WhichOneofArgType__readback: _TypeAlias = _typing.Literal["_readback", b"_readback"]  # noqa: Y015
+    _WhichOneofReturnType__readback_ts_unix_ns: _TypeAlias = _typing.Literal["readback_ts_unix_ns"]  # noqa: Y015
+    _WhichOneofArgType__readback_ts_unix_ns: _TypeAlias = _typing.Literal["_readback_ts_unix_ns", b"_readback_ts_unix_ns"]  # noqa: Y015
+    @_typing.overload
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__readback) -> _WhichOneofReturnType__readback | None: ...
+    @_typing.overload
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__readback_ts_unix_ns) -> _WhichOneofReturnType__readback_ts_unix_ns | None: ...
 
 Global___WriteResult: _TypeAlias = WriteResult  # noqa: Y015
