@@ -134,12 +134,12 @@
     },
     {
       "audience": "both",
-      "bytes": 22637,
+      "bytes": 24739,
       "id": "sot-api-events",
       "last_verified": "2026-06-26",
       "path": "docs/wiki/sot/api-events.md",
       "section_count": 14,
-      "sha256": "79a66cc3a0d6dd3d59486f199771cd0d5681b76ec3bb283a0a088d30508342de",
+      "sha256": "167d610eb13cc440dd7e14168e0e9f46f41c959da0ea9991e0dff09dafdcc19a",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/main.py",
@@ -238,12 +238,12 @@
     },
     {
       "audience": "both",
-      "bytes": 23467,
+      "bytes": 24269,
       "id": "sot-frontend",
       "last_verified": "2026-07-23",
       "path": "docs/wiki/sot/frontend.md",
       "section_count": 16,
-      "sha256": "2812835d888c2f6c5425336e68be1849711162c84150689b4a84e96e04332b3b",
+      "sha256": "33aef5f976e3b510245ed402913161ba8a86a8a9358f8abea85dd52ed0ddac28",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/package.json",
