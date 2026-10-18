@@ -33,7 +33,7 @@ def create_app(rt: SiteRuntime) -> FastAPI:
             await rt.stop()
 
     app = FastAPI(title="PureIron core", version=__version__, lifespan=lifespan)
-    app.add_middleware(OriginGuard, login_path=f"{API_PREFIX}/auth/login")
+    app.add_middleware(OriginGuard)
     app.include_router(
         build_health_router(
             db=rt.db,
