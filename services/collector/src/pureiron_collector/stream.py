@@ -13,9 +13,10 @@ poll은 세션과 무관하게 계속 돈다 — core가 없는 동안의 batch�
   원래 plan_rev를 유지한다.
 
 쓰기(ADR-013 개정, M3c-1 D7): 가드레일 판단(선언·스위치·확인·허가 조건·감사)은 core가 한다.
-collector는 2중 방어로 plan_rev 불일치·`writable=false`·모르는 태그·인코딩 불가를 `REJECTED`로
-답하고, 통과한 쓰기는 그 장비 poller 큐에 넣는다(결과를 기다리는 동안에도 세션 읽기는 계속).
-세션이 끝나면 아직 보내지 않은 쓰기는 버린다 — core는 그 요청을 응답 없음으로 본다.
+collector는 2중 방어로 request_id 중복·plan_rev 누락/불일치·`timeout_ms` 누락·모르는 태그·
+`writable=false`·인코딩 불가·멈춘 poller를 `REJECTED`로 답하고, 통과한 쓰기는 받은 순간부터 잰
+기한과 함께 그 장비 poller 큐에 넣는다(결과를 기다리는 동안에도 세션 읽기는 계속, 이후 결과 규칙은
+`drivers/common.py`). 세션이 끝나면 아직 보내지 않은 쓰기는 버린다 — core는 응답 없음으로 본다.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ import contextlib
 import logging
 import math
 import time
+from collections import deque
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
 
@@ -33,8 +35,8 @@ from grpc import aio
 from pureiron_collector import __version__
 from pureiron_collector._gen import collector_pb2 as pb
 from pureiron_collector._gen import collector_pb2_grpc as pb_grpc
-from pureiron_collector.drivers.common import DevicePoller, DriverFactory
-from pureiron_collector.drivers.modbus import EncodeError, ModbusDevice, encode
+from pureiron_collector.drivers.common import DevicePoller, DriverFactory, EncodeError
+from pureiron_collector.drivers.modbus import ModbusDevice, encode
 from pureiron_collector.health import DeviceHealth
 from pureiron_collector.plan import ModbusPoint, parse_plan
 from pureiron_collector.ring import RingBuffer
@@ -44,6 +46,7 @@ log = logging.getLogger(__name__)
 
 HEARTBEAT_SEQ = 0  # 빈 heartbeat batch는 링버퍼에 넣지 않는다(core는 Ack(0)으로 답한다).
 STOP_TIMEOUT_S = 5.0
+RECENT_REQUESTS = 64  # 중복 검사용으로 기억하는 최근 쓰기 request_id 수
 
 type Outgoing = asyncio.Queue[pb.CollectorMsg]
 
@@ -61,6 +64,8 @@ class Acquisition:
         self._full = asyncio.Event()
         self._pollers: dict[str, tuple[DevicePoller, asyncio.Task[None]]] = {}
         self._points: dict[int, tuple[str, ModbusPoint]] = {}  # tag_id → (device_id, 주소)
+        # 최근 받은 쓰기 request_id — 같은 요청이 두 번 실행되지 않게(재전송·버그 방어).
+        self._recent_requests: deque[str] = deque(maxlen=RECENT_REQUESTS)
         self._live: Outgoing | None = None
 
     # --- 샘플 → batch -------------------------------------------------------------------
@@ -136,10 +141,22 @@ class Acquisition:
         return [poller.health.to_proto() for poller, _ in self._pollers.values()]
 
     # --- 쓰기 -------------------------------------------------------------------------
+    def _request_problem(self, request: pb.WriteRequest) -> str | None:
+        """요청 자체의 거부 이유(중복·plan_rev·기한 누락)."""
+        if request.request_id in self._recent_requests:
+            return f"duplicate request_id {request.request_id!r}"
+        self._recent_requests.append(request.request_id)
+        if request.plan_rev == 0 or not self._applied or request.plan_rev != self.plan_rev:
+            return f"plan_rev {request.plan_rev} does not match applied plan {self.plan_rev}"
+        if request.timeout_ms == 0:
+            return "missing timeout"
+        return None
+
     def _check_write(self, request: pb.WriteRequest) -> tuple[DevicePoller, ModbusPoint] | str:
         """보내기 전 2중 방어. 통과하면 (poller, 주소), 아니면 거부 이유."""
-        if not self._applied or request.plan_rev != self.plan_rev:
-            return f"plan_rev {request.plan_rev} does not match applied plan {self.plan_rev}"
+        problem = self._request_problem(request)
+        if problem is not None:
+            return problem
         target = self._points.get(request.tag_id)
         if target is None:
             return f"tag {request.tag_id} is not in the applied plan"
@@ -151,18 +168,20 @@ class Acquisition:
         except EncodeError as exc:
             return f"tag {request.tag_id}: {exc}"
         entry = self._pollers.get(device_id)
-        if entry is None:
+        if entry is None or entry[1].done():
             return f"device {device_id} is not polled"
         return entry[0], point
 
     async def write(self, request: pb.WriteRequest) -> pb.WriteResult:
+        # 기한은 받은 순간부터 잰다(상대 시간 — core와 시계가 달라도 된다).
+        deadline_s = time.monotonic() + request.timeout_ms / 1000
         checked = self._check_write(request)
         if isinstance(checked, str):
             log.warning("rejecting write request %s: %s", request.request_id, checked)
             result = pb.WriteResult(status=pb.WriteResult.REJECTED, error=checked)
         else:
             poller, point = checked
-            result = await poller.write(point, request.value)
+            result = await poller.write(point, request.value, deadline_s=deadline_s)
         result.request_id = request.request_id
         return result
 

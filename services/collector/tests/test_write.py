@@ -1,4 +1,4 @@
-"""collector 쓰기(M3c-1 D7): encode = decode의 역, 값 쓰기 FC만, poll 사이 직렬 실행, 2중 방어."""
+"""Modbus 쓰기 드라이버(M3c-1 D7): encode = decode의 역, 값 쓰기 FC만, 실제 서버로 쓰기·재읽기."""
 
 from __future__ import annotations
 
@@ -6,12 +6,10 @@ import asyncio
 import math
 import socket
 import struct
-from collections.abc import AsyncIterator, Callable, Sequence
-from dataclasses import replace
+from collections.abc import AsyncIterator, Sequence
 from typing import cast
 
 import pytest
-from grpc import aio
 from hypothesis import given
 from hypothesis import strategies as st
 from pymodbus.constants import ExcCodes
@@ -20,21 +18,11 @@ from pymodbus.simulator import DataType as SimType
 from pymodbus.simulator import SimData, SimDevice
 
 from pureiron_collector._gen import collector_pb2 as pb
-from pureiron_collector._gen import collector_pb2_grpc as pb_grpc
-from pureiron_collector.drivers.common import POLLER_STOPPED, DevicePoller, good
-from pureiron_collector.drivers.modbus import (
-    EncodeError,
-    ModbusClient,
-    ModbusDevice,
-    decode,
-    encode,
-)
-from pureiron_collector.health import DeviceHealth
+from pureiron_collector.drivers.common import EncodeError, ReadbackError
+from pureiron_collector.drivers.modbus import ModbusClient, ModbusDevice, decode, encode
 from pureiron_collector.plan import DataType, DevicePlan, ModbusPoint, Order, RegisterType
-from pureiron_collector.settings import CollectorSettings
-from pureiron_collector.stream import Acquisition, Collector
 
-OK, FAILED, REJECTED = pb.WriteResult.OK, pb.WriteResult.FAILED, pb.WriteResult.REJECTED
+OK, FAILED = pb.WriteResult.OK, pb.WriteResult.FAILED
 ORDERS: list[Order] = ["big", "little"]
 
 
@@ -246,11 +234,12 @@ async def test_write_uses_value_write_functions_and_reads_back(
         await driver.poll()  # 연결
         recorder.function_codes.clear()
         result = await driver.write(pt, value)
+        readback = await driver.read_back(pt)
     finally:
         await driver.close()
     assert (result.status, result.error) == (OK, "")
-    assert result.readback == value
-    assert result.readback_ts_unix_ns > 0
+    assert not result.HasField("readback")  # 재읽기는 poller가 따로 한다
+    assert readback == value
     assert set(recorder.function_codes) == function_codes
 
 
@@ -261,24 +250,28 @@ async def test_readback_reports_what_the_device_holds(server: tuple[int, Recorde
     try:
         await driver.poll()
         result = await driver.write(pt, 77.0)
+        readback = await driver.read_back(pt)
     finally:
         await driver.close()
     assert result.status == OK
-    assert result.readback == 0.0  # 장비가 무시한 쓰기 — 판정(MISMATCH)은 core 몫
+    assert readback == 0.0  # 장비가 무시한 쓰기 — 판정(MISMATCH)은 core 몫
 
 
-async def test_exception_response_is_failed(server: tuple[int, Recorder]) -> None:
+async def test_exception_responses_are_failed_write_and_readback_error(
+    server: tuple[int, Recorder],
+) -> None:
     port, _ = server
     pt = point(1, 5000)  # 서버 블록 밖 → ILLEGAL ADDRESS
     driver = ModbusDevice(device_plan(port, [point(2, 0)]))
     try:
         await driver.poll()
         result = await driver.write(pt, 1.0)
+        with pytest.raises(ReadbackError, match="device rejected readback"):
+            await driver.read_back(pt)
     finally:
         await driver.close()
     assert result.status == FAILED
     assert "device rejected write" in result.error
-    assert not result.HasField("readback")
 
 
 async def test_write_never_opens_a_connection(server: tuple[int, Recorder]) -> None:
@@ -286,218 +279,19 @@ async def test_write_never_opens_a_connection(server: tuple[int, Recorder]) -> N
     driver = ModbusDevice(device_plan(port, [point(1, 10)]))
     result = await driver.write(point(1, 10), 1.0)
     assert (result.status, result.error) == (FAILED, "device not connected")
+    with pytest.raises(ReadbackError, match="not connected"):
+        await driver.read_back(point(1, 10))
     assert recorder.function_codes == []
 
 
-# --- poller 쓰기 큐 -------------------------------------------------------------------
-class GateDriver:
-    """poll이 gate가 열릴 때까지 멈춘다. poll·write 순서를 events에 남긴다."""
-
-    def __init__(self, plan: DevicePlan, *, fail: Exception | None = None) -> None:
-        self.plan = plan
-        self.gate = asyncio.Event()
-        self.gate.set()
-        self.events: list[str] = []
-        self.written: list[float] = []
-        self.closed = 0
-        self._fail = fail
-
-    async def poll(self) -> list[pb.Sample]:
-        self.events.append("poll-start")
-        await self.gate.wait()
-        self.events.append("poll-end")
-        return [good(p.tag_id, 1.0, 1) for p in self.plan.points]
-
-    async def write(self, point: ModbusPoint, value: float) -> pb.WriteResult:
-        self.events.append("write")
-        if self._fail is not None:
-            raise self._fail
-        self.written.append(value)
-        return pb.WriteResult(status=OK, readback=value, readback_ts_unix_ns=1)
-
-    async def close(self) -> None:
-        self.closed += 1
-
-
-PLAN = DevicePlan("plc", "modbus_tcp", "h", 502, 1, 20, 500, (point(1, 0),))
-
-
-async def _until(predicate: Callable[[], bool], timeout_s: float = 2.0) -> None:
-    for _ in range(int(timeout_s / 0.005)):
-        if predicate():
-            return
-        await asyncio.sleep(0.005)
-    raise AssertionError("condition not reached in time")
-
-
-async def _blocked_poller(driver: GateDriver) -> tuple[DevicePoller, asyncio.Task[None], int]:
-    """연결된 뒤 poll 하나가 gate에 막힌 상태의 poller와 그 poll-start의 events 위치."""
-    poller = DevicePoller(PLAN, driver, DeviceHealth("plc", "modbus_tcp"), lambda _: None)
-    task = asyncio.create_task(poller.run())
-    await _until(lambda: poller.health.connected)
-    driver.gate.clear()
-    await _until(lambda: driver.events[-1] == "poll-start")
-    return poller, task, len(driver.events) - 1
-
-
-async def _stop(task: asyncio.Task[None]) -> None:
-    task.cancel()
-    await asyncio.gather(task, return_exceptions=True)
-
-
-async def test_write_runs_only_between_polls() -> None:
-    driver = GateDriver(PLAN)
-    poller, task, blocked = await _blocked_poller(driver)
+async def test_unencodable_value_raises_before_any_io(server: tuple[int, Recorder]) -> None:
+    port, recorder = server
+    driver = ModbusDevice(device_plan(port, [point(1, 10)]))
     try:
-        pending = asyncio.create_task(poller.write(PLAN.points[0], 5.0))
-        await asyncio.sleep(0.05)
-        assert driver.events[blocked:] == ["poll-start"]  # poll 도중에는 보내지 않는다
-        assert not pending.done()
-        driver.gate.set()
-        result = await asyncio.wait_for(pending, 2)
+        await driver.poll()
+        recorder.function_codes.clear()
+        with pytest.raises(EncodeError):
+            await driver.write(point(1, 10), 1.5)
     finally:
-        await _stop(task)
-    assert (result.status, result.readback) == (OK, 5.0)
-    assert driver.events[blocked : blocked + 3] == ["poll-start", "poll-end", "write"]
-
-
-async def test_disconnected_device_fails_immediately_without_queueing() -> None:
-    driver = GateDriver(PLAN)
-    poller = DevicePoller(PLAN, driver, DeviceHealth("plc", "modbus_tcp"), lambda _: None)
-    result = await poller.write(PLAN.points[0], 1.0)
-    assert (result.status, result.error) == (FAILED, "device not connected")
-    assert driver.events == []
-
-
-async def test_driver_error_is_failed_and_connection_is_closed() -> None:
-    driver = GateDriver(PLAN, fail=TimeoutError("no response"))
-    poller, task, _ = await _blocked_poller(driver)
-    try:
-        pending = asyncio.create_task(poller.write(PLAN.points[0], 1.0))
-        driver.gate.set()
-        result = await asyncio.wait_for(pending, 2)
-    finally:
-        await _stop(task)
-    assert (result.status, result.error) == (FAILED, "no response")
-    assert driver.closed >= 1
-    assert driver.events.count("write") == 1  # 재시도 없음
-
-
-async def test_abandoned_write_is_never_sent() -> None:
-    driver = GateDriver(PLAN)
-    poller, task, _ = await _blocked_poller(driver)
-    try:
-        pending = asyncio.create_task(poller.write(PLAN.points[0], 9.0))
-        await asyncio.sleep(0.01)
-        pending.cancel()
-        driver.gate.set()
-        await _until(lambda: driver.events.count("poll-end") >= 3)
-    finally:
-        await _stop(task)
-    assert "write" not in driver.events
-
-
-async def test_stopping_poller_rejects_queued_writes() -> None:
-    driver = GateDriver(PLAN)
-    poller, task, _ = await _blocked_poller(driver)
-    pending = asyncio.create_task(poller.write(PLAN.points[0], 1.0))
-    await asyncio.sleep(0.01)
-    await _stop(task)
-    result = await asyncio.wait_for(pending, 2)
-    assert (result.status, result.error) == (REJECTED, POLLER_STOPPED)
-    assert "write" not in driver.events
-
-
-# --- collector 2중 방어 ------------------------------------------------------------------
-SETTINGS = CollectorSettings("127.0.0.1:1", 0.05, 0.01, 0.02, batch_interval_s=0.02)
-
-
-def plan_msg(rev: int) -> pb.AcquisitionPlan:
-    def tag(tag_id: int, data_type: str, *, writable: bool) -> pb.TagPoint:
-        address = pb.ModbusAddress(register_type="holding", address=tag_id, data_type=data_type)
-        return pb.TagPoint(tag_id=tag_id, device_id="plc", modbus=address, writable=writable)
-
-    return pb.AcquisitionPlan(
-        plan_rev=rev,
-        default_poll_ms=20,
-        devices=[pb.Device(device_id="plc", protocol="modbus_tcp", host="h", port=502)],
-        tags=[tag(1, "uint16", writable=True), tag(2, "uint16", writable=False)],
-    )
-
-
-@pytest.fixture
-async def acquisition() -> AsyncIterator[Acquisition]:
-    acq = Acquisition(SETTINGS, GateDriver)
-    await acq.apply_plan(plan_msg(3))
-    await _until(lambda: all(h.connected for h in acq.health()))
-    try:
-        yield acq
-    finally:
-        await acq.stop_pollers()
-
-
-@pytest.mark.parametrize(
-    ("request_", "message"),
-    [
-        (pb.WriteRequest(request_id="r", tag_id=1, value=1.0, plan_rev=2), "plan_rev 2"),
-        (pb.WriteRequest(request_id="r", tag_id=9, value=1.0, plan_rev=3), "not in the applied"),
-        (pb.WriteRequest(request_id="r", tag_id=2, value=1.0, plan_rev=3), "not writable"),
-        (pb.WriteRequest(request_id="r", tag_id=1, value=1.5, plan_rev=3), "not an integer"),
-        (pb.WriteRequest(request_id="r", tag_id=1, value=-1.0, plan_rev=3), "outside uint16"),
-    ],
-)
-async def test_collector_rejects_before_sending(
-    acquisition: Acquisition, request_: pb.WriteRequest, message: str
-) -> None:
-    result = await acquisition.write(request_)
-    assert (result.request_id, result.status) == ("r", REJECTED)
-    assert message in result.error
-
-
-async def test_collector_sends_valid_write_and_keeps_request_id(acquisition: Acquisition) -> None:
-    request = pb.WriteRequest(request_id="w-7", tag_id=1, value=42.0, plan_rev=3)
-    result = await asyncio.wait_for(acquisition.write(request), 2)
-    assert (result.request_id, result.status, result.readback) == ("w-7", OK, 42.0)
-
-
-class WritingCore(pb_grpc.AcquisitionServicer):
-    """plan 뒤 쓰기 하나를 보내고 결과를 기다린다."""
-
-    def __init__(self) -> None:
-        self.result: asyncio.Future[pb.WriteResult] = asyncio.get_running_loop().create_future()
-
-    async def Session(
-        self,
-        request_iterator: AsyncIterator[pb.CollectorMsg],
-        context: aio.ServicerContext[pb.CollectorMsg, pb.CoreMsg],
-    ) -> AsyncIterator[pb.CoreMsg]:
-        async for message in request_iterator:
-            kind = message.WhichOneof("msg")
-            if kind == "hello":
-                yield pb.CoreMsg(plan=plan_msg(4))
-            elif kind == "health" and message.health.connected and not self.result.done():
-                request = pb.WriteRequest(request_id="s-1", tag_id=1, value=3.0, plan_rev=4)
-                yield pb.CoreMsg(write=request)
-            elif kind == "write_result" and not self.result.done():
-                self.result.set_result(message.write_result)
-            elif kind == "batch":
-                yield pb.CoreMsg(ack=pb.Ack(seq=message.batch.seq))
-
-
-async def test_session_answers_write_with_result_and_readback() -> None:
-    core = WritingCore()
-    server = aio.server()
-    pb_grpc.add_AcquisitionServicer_to_server(core, server)
-    port = server.add_insecure_port("127.0.0.1:0")
-    await server.start()
-    settings = replace(SETTINGS, core_target=f"127.0.0.1:{port}", health_interval_s=0.05)
-    collector = Collector(settings, driver_factory=GateDriver)
-    stop = asyncio.Event()
-    runner = asyncio.create_task(collector.run_forever(stop))
-    try:
-        result = await asyncio.wait_for(core.result, 5)
-    finally:
-        stop.set()
-        await asyncio.wait_for(runner, 5)
-        await server.stop(0)
-    assert (result.request_id, result.status, result.readback) == ("s-1", OK, 3.0)
+        await driver.close()
+    assert recorder.function_codes == []

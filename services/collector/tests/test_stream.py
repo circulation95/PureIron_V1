@@ -170,7 +170,10 @@ class FakeDriver:
         return [good(p.tag_id, float(self.polls), time.time_ns()) for p in self.plan.points]
 
     async def write(self, point: ModbusPoint, value: float) -> pb.WriteResult:
-        return pb.WriteResult(status=pb.WriteResult.OK, readback=value, readback_ts_unix_ns=1)
+        return pb.WriteResult(status=pb.WriteResult.OK)
+
+    async def read_back(self, point: ModbusPoint) -> float:
+        return float(self.polls)
 
     async def close(self) -> None:
         return None

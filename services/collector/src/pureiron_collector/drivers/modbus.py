@@ -20,11 +20,18 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from pymodbus.client import AsyncModbusTcpClient
-from pymodbus.exceptions import ModbusException, ModbusIOException
+from pymodbus.exceptions import ModbusIOException
 from pymodbus.pdu import ModbusPDU
 
 from pureiron_collector._gen import collector_pb2 as pb
-from pureiron_collector.drivers.common import Value, bad, good, raise_if_cancelling
+from pureiron_collector.drivers.common import (
+    EncodeError,
+    ReadbackError,
+    Value,
+    bad,
+    good,
+    write_result,
+)
 from pureiron_collector.plan import BIT_TYPES, DevicePlan, ModbusPoint, RegisterType, width
 
 log = logging.getLogger(__name__)
@@ -41,10 +48,6 @@ _INTEGER_BYTES = {
 }
 
 type Payload = bool | list[int]
-
-
-class EncodeError(ValueError):
-    """값을 이 태그의 형식으로 장비에 쓸 수 없다(보내기 전 거부)."""
 
 
 @dataclass(slots=True)
@@ -132,10 +135,6 @@ def encode(value: float, point: ModbusPoint) -> Payload:
     if point.word_order == "little":
         words.reverse()
     return words
-
-
-def _write_result(status: pb.WriteResult.Status.ValueType, error: str = "") -> pb.WriteResult:
-    return pb.WriteResult(status=status, error=error)
 
 
 class ModbusClient(Protocol):
@@ -274,36 +273,32 @@ class ModbusDevice:
         return await client.write_registers(point.address, payload, device_id=unit)
 
     async def write(self, point: ModbusPoint, value: float) -> pb.WriteResult:
-        """이미 연결된 경우에만 한 번 쓰고 같은 주소를 다시 읽는다(연결을 새로 열지 않음).
-
-        통신 예외(시간 초과·연결 끊김)는 그대로 올린다 — 호출자가 FAILED로 바꾸고 연결을 닫는다.
-        재읽기 실패는 쓰기 결과(OK)를 바꾸지 않고 readback 없이 error에 이유만 남긴다.
-        """
+        """이미 연결된 경우에만 한 번 보낸다(연결을 새로 열지 않음) — `Driver.write` 계약."""
         payload = encode(value, point)
         client = self._client
         if client is None or not client.connected:
-            return _write_result(pb.WriteResult.FAILED, "device not connected")
+            return write_result(pb.WriteResult.FAILED, "device not connected")
         response = await self._send(client, point, payload)
         if response.isError():
-            return _write_result(pb.WriteResult.FAILED, f"device rejected write: {response}")
-        result = _write_result(pb.WriteResult.OK)
+            return write_result(pb.WriteResult.FAILED, f"device rejected write: {response}")
+        return write_result(pb.WriteResult.OK)
+
+    async def read_back(self, point: ModbusPoint) -> float:
+        client = self._client
+        if client is None or not client.connected:
+            raise ReadbackError("device not connected")
+        response = await self._read(
+            client, Block(point.register_type, point.address, width(point), [point])
+        )
+        if response.isError():
+            raise ReadbackError(f"device rejected readback: {response}")
+        words: Sequence[int | bool] = (
+            response.bits if point.register_type in BIT_TYPES else response.registers
+        )
         try:
-            readback = await self._read(
-                client, Block(point.register_type, point.address, width(point), [point])
-            )
-            if readback.isError():
-                result.error = f"readback rejected: {readback}"
-                return result
-            words: Sequence[int | bool] = (
-                readback.bits if point.register_type in BIT_TYPES else readback.registers
-            )
-            result.readback = float(decode(words[: width(point)], point))
-        except (ModbusException, ValueError, IndexError, struct.error) as exc:
-            raise_if_cancelling(exc)
-            result.error = f"readback failed: {exc}"
-            return result
-        result.readback_ts_unix_ns = time.time_ns()
-        return result
+            return float(decode(words[: width(point)], point))
+        except (ValueError, IndexError, struct.error) as exc:
+            raise ReadbackError(f"cannot decode readback: {exc}") from exc
 
     async def close(self) -> None:
         if self._client is not None:
