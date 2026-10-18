@@ -1,13 +1,18 @@
-"""Modbus TCP 드라이버(legacy `drivers/modbus_client.py` 묶음 읽기·디코드 이식).
+"""Modbus TCP 드라이버(legacy `drivers/modbus_client.py` 묶음 읽기·디코드 이식) + 값 쓰기(M3c-1 D7).
 
 legacy와 다른 점: 묶음 읽기에 프로토콜 상한(레지스터 125, 비트 2,000 —
 Modbus Application Protocol v1.1b3 §6.1-6.4)을 둔다 — 2,000태그 연속 주소를 한 요청으로
 묶으면 장비가 거부한다. float64(4워드) 지원.
+
+쓰기(ADR-013 개정): 값 쓰기 함수만 쓴다 — coil FC5, holding 1워드 FC6, 2·4워드 FC16. 그 밖의 FC
+(프로그램·진단·파일)는 쓰지 않는다(PLC 로직 불변). 값은 `encode()`(= `decode()`의 역)로 만들고,
+쓰기가 정상 응답이면 같은 주소를 바로 다시 읽어 readback으로 싣는다. 재시도는 없다.
 """
 
 from __future__ import annotations
 
 import logging
+import math
 import struct
 import time
 from collections.abc import Awaitable, Callable, Sequence
@@ -15,17 +20,31 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from pymodbus.client import AsyncModbusTcpClient
-from pymodbus.exceptions import ModbusIOException
+from pymodbus.exceptions import ModbusException, ModbusIOException
 from pymodbus.pdu import ModbusPDU
 
 from pureiron_collector._gen import collector_pb2 as pb
-from pureiron_collector.drivers.common import Value, bad, good
+from pureiron_collector.drivers.common import Value, bad, good, raise_if_cancelling
 from pureiron_collector.plan import BIT_TYPES, DevicePlan, ModbusPoint, RegisterType, width
 
 log = logging.getLogger(__name__)
 
 MAX_REGISTERS = 125
 MAX_BITS = 2000
+WRITABLE_TYPES: frozenset[str] = frozenset({"holding", "coil"})
+# 정수 형식 → (바이트 수, 부호 있음)
+_INTEGER_BYTES = {
+    "int16": (2, True),
+    "uint16": (2, False),
+    "int32": (4, True),
+    "uint32": (4, False),
+}
+
+type Payload = bool | list[int]
+
+
+class EncodeError(ValueError):
+    """값을 이 태그의 형식으로 장비에 쓸 수 없다(보내기 전 거부)."""
 
 
 @dataclass(slots=True)
@@ -80,6 +99,45 @@ def decode(words: Sequence[int | bool], point: ModbusPoint) -> Value:
             return float(struct.unpack(">d", payload)[0])
 
 
+def encode(value: float, point: ModbusPoint) -> Payload:
+    """`decode()`의 역: coil은 bool, holding은 레지스터 값 목록(byte·word order 적용).
+
+    정수 형식은 범위 안의 정수만, bool 형식은 0/1만 받는다. NaN·무한대, float32 범위 밖은 거부한다
+    (반올림·잘라내기로 다른 값을 보내지 않는다). float32는 가장 가까운 float32로 반올림된다.
+    """
+    if point.register_type not in WRITABLE_TYPES:
+        raise EncodeError(f"register_type {point.register_type!r} is read-only")
+    if not math.isfinite(value):
+        raise EncodeError(f"{value!r} is not finite")
+    if point.register_type in BIT_TYPES or point.data_type == "bool":
+        if value not in {0.0, 1.0}:
+            raise EncodeError(f"{value!r} is not 0 or 1")
+        return value == 1.0 if point.register_type in BIT_TYPES else [int(value)]
+    if point.data_type in _INTEGER_BYTES:
+        size, signed = _INTEGER_BYTES[point.data_type]
+        if not float(value).is_integer():
+            raise EncodeError(f"{value!r} is not an integer ({point.data_type})")
+        try:
+            payload = int(value).to_bytes(size, "big", signed=signed)
+        except OverflowError as exc:
+            raise EncodeError(f"{value!r} is outside {point.data_type} range") from exc
+    else:
+        try:
+            payload = struct.pack(">f" if point.data_type == "float32" else ">d", value)
+        except OverflowError as exc:
+            raise EncodeError(f"{value!r} is outside {point.data_type} range") from exc
+    words = [
+        int.from_bytes(payload[i : i + 2], point.byte_order) for i in range(0, len(payload), 2)
+    ]
+    if point.word_order == "little":
+        words.reverse()
+    return words
+
+
+def _write_result(status: pb.WriteResult.Status.ValueType, error: str = "") -> pb.WriteResult:
+    return pb.WriteResult(status=status, error=error)
+
+
 class ModbusClient(Protocol):
     """테스트가 바꿔 끼울 수 있는 pymodbus 클라이언트 표면."""
 
@@ -104,6 +162,19 @@ class ModbusClient(Protocol):
 
     def read_discrete_inputs(
         self, address: int, *, count: int = 1, device_id: int = 1
+    ) -> Awaitable[ModbusPDU]: ...
+
+    # 쓰기는 값 쓰기 함수 3개만(FC5·FC6·FC16) — 이 표면에 다른 FC를 추가하지 않는다(PLC 로직 불변).
+    def write_coil(
+        self, address: int, value: bool, *, device_id: int = 1
+    ) -> Awaitable[ModbusPDU]: ...
+
+    def write_register(
+        self, address: int, value: int, *, device_id: int = 1
+    ) -> Awaitable[ModbusPDU]: ...
+
+    def write_registers(
+        self, address: int, values: list[int], *, device_id: int = 1
     ) -> Awaitable[ModbusPDU]: ...
 
 
@@ -193,6 +264,46 @@ class ModbusDevice:
                 else:
                     samples.append(good(point.tag_id, value, ts_ns))
         return samples
+
+    async def _send(self, client: ModbusClient, point: ModbusPoint, payload: Payload) -> ModbusPDU:
+        unit = self._plan.unit_id
+        if isinstance(payload, bool):
+            return await client.write_coil(point.address, payload, device_id=unit)
+        if len(payload) == 1:
+            return await client.write_register(point.address, payload[0], device_id=unit)
+        return await client.write_registers(point.address, payload, device_id=unit)
+
+    async def write(self, point: ModbusPoint, value: float) -> pb.WriteResult:
+        """이미 연결된 경우에만 한 번 쓰고 같은 주소를 다시 읽는다(연결을 새로 열지 않음).
+
+        통신 예외(시간 초과·연결 끊김)는 그대로 올린다 — 호출자가 FAILED로 바꾸고 연결을 닫는다.
+        재읽기 실패는 쓰기 결과(OK)를 바꾸지 않고 readback 없이 error에 이유만 남긴다.
+        """
+        payload = encode(value, point)
+        client = self._client
+        if client is None or not client.connected:
+            return _write_result(pb.WriteResult.FAILED, "device not connected")
+        response = await self._send(client, point, payload)
+        if response.isError():
+            return _write_result(pb.WriteResult.FAILED, f"device rejected write: {response}")
+        result = _write_result(pb.WriteResult.OK)
+        try:
+            readback = await self._read(
+                client, Block(point.register_type, point.address, width(point), [point])
+            )
+            if readback.isError():
+                result.error = f"readback rejected: {readback}"
+                return result
+            words: Sequence[int | bool] = (
+                readback.bits if point.register_type in BIT_TYPES else readback.registers
+            )
+            result.readback = float(decode(words[: width(point)], point))
+        except (ModbusException, ValueError, IndexError, struct.error) as exc:
+            raise_if_cancelling(exc)
+            result.error = f"readback failed: {exc}"
+            return result
+        result.readback_ts_unix_ns = time.time_ns()
+        return result
 
     async def close(self) -> None:
         if self._client is not None:

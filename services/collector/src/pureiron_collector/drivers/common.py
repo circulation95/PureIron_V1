@@ -2,19 +2,26 @@
 
 드라이버는 `poll()` 한 번에 장비의 모든 태그 샘플을 돌려준다. 장비와 통신이 안 되면 예외를 올리고,
 poll 루프가 그 장비의 모든 태그를 BAD로 내보낸 뒤 다음 주기에 다시 연결한다(registry·plugin 없음).
+
+쓰기(M3c-1 D7)는 장비별 큐에 넣고 **poll과 poll 사이에** 같은 poller task가 같은 연결로 하나씩
+실행한다 — 한 장비에 동시 트랜잭션이 없다. 장비가 연결돼 있지 않으면 큐에 넣지 않고 바로 FAILED,
+실행 전에 요청자가 포기한(취소한) 쓰기는 보내지 않는다. 재시도는 없다.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
+from collections import deque
 from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
 from typing import Protocol
 
 from pureiron_collector._gen import collector_pb2 as pb
 from pureiron_collector.health import DeviceHealth
-from pureiron_collector.plan import DevicePlan
+from pureiron_collector.plan import DevicePlan, ModbusPoint
 
 log = logging.getLogger(__name__)
 
@@ -25,6 +32,10 @@ type SampleSink = Callable[[Sequence[pb.Sample]], None]
 class Driver(Protocol):
     async def poll(self) -> list[pb.Sample]:
         """연결이 없으면 연결하고 한 번 읽는다. 통신 실패는 예외, 태그 단위 실패는 BAD 샘플."""
+        ...
+
+    async def write(self, point: ModbusPoint, value: float) -> pb.WriteResult:
+        """열린 연결로 한 번 쓰고 다시 읽는다(request_id는 호출자가 채움). 통신 실패는 예외."""
         ...
 
     async def close(self) -> None: ...
@@ -41,6 +52,30 @@ def good(tag_id: int, value: Value, ts_ns: int) -> pb.Sample:
 
 def bad(tag_ids: Iterable[int], ts_ns: int) -> list[pb.Sample]:
     return [pb.Sample(tag_id=tag_id, ts_unix_ns=ts_ns, quality=pb.BAD) for tag_id in tag_ids]
+
+
+def raise_if_cancelling(exc: BaseException) -> None:
+    """pymodbus는 응답 대기 중 받은 취소를 ModbusIOException으로 바꿔 던진다 — 취소로 되돌린다.
+
+    삼키면 task.cancel()이 사라져 stop_pollers·종료가 멈춘다.
+    """
+    task = asyncio.current_task()
+    if task is not None and task.cancelling():
+        raise asyncio.CancelledError from exc
+
+
+@dataclass(slots=True)
+class _Write:
+    point: ModbusPoint
+    value: float
+    result: asyncio.Future[pb.WriteResult]
+
+
+POLLER_STOPPED = "poller stopped before write (plan change or shutdown)"
+
+
+def _failed(error: str) -> pb.WriteResult:
+    return pb.WriteResult(status=pb.WriteResult.FAILED, error=error)
 
 
 MAX_RETRY_S = 30.0
@@ -69,6 +104,63 @@ class DevicePoller:
         self.health = health
         self._sink = sink
         self.health.tag_count = len(plan.points)
+        self._writes: deque[_Write] = deque()
+        self._wake = asyncio.Event()
+
+    async def write(self, point: ModbusPoint, value: float) -> pb.WriteResult:
+        """다음 poll 사이 구간에 실행될 쓰기를 기다린다. 취소하면 아직 안 보낸 쓰기는 버려진다."""
+        if not self.health.connected:
+            return _failed("device not connected")
+        job = _Write(point, value, asyncio.get_running_loop().create_future())
+        self._writes.append(job)
+        self._wake.set()
+        return await job.result
+
+    async def _run_write(self, job: _Write) -> None:
+        if job.result.done():
+            return  # 요청자가 기다리기를 그만뒀다 — 보내지 않는다.
+        result = _failed("write interrupted (poller stopped); outcome unknown")
+        try:
+            result = await self._driver.write(job.point, job.value)
+        except Exception as exc:
+            raise_if_cancelling(exc)
+            log.warning(
+                "device %s: write to tag %d failed: %s", self.plan.device_id, job.point.tag_id, exc
+            )
+            result = _failed(str(exc) or type(exc).__name__)
+            await self._driver.close()  # 연결 상태를 믿을 수 없다 — 다음 poll이 다시 연결한다.
+        finally:
+            if not job.result.done():
+                job.result.set_result(result)
+        log.info(
+            "device %s: write tag %d value %r -> %s %s",
+            self.plan.device_id,
+            job.point.tag_id,
+            job.value,
+            pb.WriteResult.Status.Name(result.status),
+            result.error,
+        )
+
+    async def _idle(self, delay_s: float) -> None:
+        """다음 poll까지 기다리며 들어오는 쓰기를 순서대로 실행한다."""
+        deadline = time.monotonic() + delay_s
+        while True:
+            while self._writes:
+                await self._run_write(self._writes.popleft())
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            self._wake.clear()
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._wake.wait(), remaining)
+
+    def _drop_writes(self) -> None:
+        while self._writes:
+            job = self._writes.popleft()
+            if not job.result.done():
+                job.result.set_result(
+                    pb.WriteResult(status=pb.WriteResult.REJECTED, error=POLLER_STOPPED)
+                )
 
     async def poll_once(self) -> bool:
         """한 번 읽는다. 성공하면 True."""
@@ -76,11 +168,7 @@ class DevicePoller:
         try:
             samples = await self._driver.poll()
         except Exception as exc:
-            # pymodbus는 응답 대기 중 받은 취소를 ModbusIOException으로 바꿔 던진다.
-            # 취소로 되돌린다 — 삼키면 task.cancel()이 사라져 stop_pollers·종료가 멈춘다.
-            task = asyncio.current_task()
-            if task is not None and task.cancelling():
-                raise asyncio.CancelledError from exc
+            raise_if_cancelling(exc)
             first = self.health.consecutive_failures == 0
             self.health.record_failure(exc)
             if first:
@@ -105,6 +193,7 @@ class DevicePoller:
                     delay = period - (time.monotonic() - started)
                 else:
                     delay = retry_delay(period, self.health.consecutive_failures)
-                await asyncio.sleep(max(0.0, delay))
+                await self._idle(max(0.0, delay))
         finally:
+            self._drop_writes()
             await self._driver.close()

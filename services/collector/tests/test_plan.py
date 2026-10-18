@@ -104,3 +104,15 @@ def test_parse_rejects_bad_devices_and_address_overflow() -> None:
         "tag 65534",
     ):
         assert needle in joined
+
+
+def test_writable_flag_is_carried_and_defaults_to_read_only() -> None:
+    writable = tag(1, "a")
+    writable.writable = True
+    plan = pb.AcquisitionPlan(
+        plan_rev=1,
+        devices=[pb.Device(device_id="a", protocol="modbus_tcp", host="h", port=502)],
+        tags=[writable, tag(2, "a")],
+    )
+    points = parse_plan(plan).devices[0].points
+    assert [(p.tag_id, p.writable) for p in points] == [(1, True), (2, False)]
