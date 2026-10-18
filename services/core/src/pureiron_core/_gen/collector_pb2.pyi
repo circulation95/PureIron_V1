@@ -444,11 +444,17 @@ class WriteRequest(_message.Message):
     TAG_ID_FIELD_NUMBER: _builtins.int
     VALUE_FIELD_NUMBER: _builtins.int
     PLAN_REV_FIELD_NUMBER: _builtins.int
+    TIMEOUT_MS_FIELD_NUMBER: _builtins.int
     request_id: _builtins.str
     tag_id: _builtins.int
     value: _builtins.float
     plan_rev: _builtins.int
-    """core가 쓰기를 판단한 plan. collector가 적용 중인 plan_rev와 다르면 REJECTED."""
+    """core가 쓰기를 판단한 plan. 0이거나 collector가 적용 중인 plan_rev와 다르면 REJECTED."""
+    timeout_ms: _builtins.int
+    """collector가 받은 순간부터 이 시간(ms, 상대) 안에 장비로 보내기 시작하지 못하면 보내지 않고 REJECTED.
+    0이면 REJECTED. core가 이 시간 + 장비 timeout_ms×2(쓰기·재읽기) + 여유보다 길게 기다리면,
+    core가 응답 없음으로 확정한 뒤 그 쓰기가 PLC에 닿는 일은 없다.
+    """
     def __init__(
         self,
         *,
@@ -456,10 +462,11 @@ class WriteRequest(_message.Message):
         tag_id: _builtins.int = ...,
         value: _builtins.float = ...,
         plan_rev: _builtins.int = ...,
+        timeout_ms: _builtins.int = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _Never  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["plan_rev", b"plan_rev", "request_id", b"request_id", "tag_id", b"tag_id", "value", b"value"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["plan_rev", b"plan_rev", "request_id", b"request_id", "tag_id", b"tag_id", "timeout_ms", b"timeout_ms", "value", b"value"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     def WhichOneof(self, oneof_group: _Never) -> None: ...
 
@@ -467,9 +474,8 @@ Global___WriteRequest: _TypeAlias = WriteRequest  # noqa: Y015
 
 @_typing.final
 class WriteResult(_message.Message):
-    """REJECTED = collector가 보내지 않았다(plan_rev 불일치·writable=false·모르는 태그·인코딩 불가).
-    FAILED = 장비에 보내지 못했거나 장비가 예외로 답했다(미연결·시간 초과·예외 응답).
-    OK = 장비가 쓰기에 정상 응답했다. 반영 여부 판정은 core가 readback으로 한다.
+    """단계별 결과: 보내기 전 = REJECTED, 확실히 안 써짐 = FAILED, 보낸 뒤 모름 = INDETERMINATE,
+    장비 정상 응답 = OK(재읽기 실패는 OK 그대로 + readback 비움 + error).
     """
 
     DESCRIPTOR: _descriptor.Descriptor
@@ -481,15 +487,29 @@ class WriteResult(_message.Message):
     class _StatusEnumTypeWrapper(_enum_type_wrapper._EnumTypeWrapper[WriteResult._Status.ValueType], _builtins.type):
         DESCRIPTOR: _descriptor.EnumDescriptor
         REJECTED: WriteResult._Status.ValueType  # 0
+        """collector가 보내지 않았다(plan_rev·timeout 누락, 모르는 태그, writable=false, 인코딩 불가,
+        기한 경과, 큐 가득·같은 태그 진행 중·request_id 중복, poller 정지).
+        """
         OK: WriteResult._Status.ValueType  # 1
+        """장비가 쓰기에 정상 응답했다. 반영 여부 판정은 core가 readback으로 한다."""
         FAILED: WriteResult._Status.ValueType  # 2
+        """확실히 안 써졌다: 장비 미연결(보내지 않음) 또는 Modbus 예외 응답."""
+        INDETERMINATE: WriteResult._Status.ValueType  # 3
+        """보낸 뒤 결과를 모른다: 응답 시간 초과·연결 끊김·보내는 도중 취소. 성공으로 읽지 않는다."""
 
     class Status(_Status, metaclass=_StatusEnumTypeWrapper):
         """0(기본값)이 REJECTED — 값이 빠진 응답은 거부로 읽힌다(fail-safe)."""
 
     REJECTED: WriteResult.Status.ValueType  # 0
+    """collector가 보내지 않았다(plan_rev·timeout 누락, 모르는 태그, writable=false, 인코딩 불가,
+    기한 경과, 큐 가득·같은 태그 진행 중·request_id 중복, poller 정지).
+    """
     OK: WriteResult.Status.ValueType  # 1
+    """장비가 쓰기에 정상 응답했다. 반영 여부 판정은 core가 readback으로 한다."""
     FAILED: WriteResult.Status.ValueType  # 2
+    """확실히 안 써졌다: 장비 미연결(보내지 않음) 또는 Modbus 예외 응답."""
+    INDETERMINATE: WriteResult.Status.ValueType  # 3
+    """보낸 뒤 결과를 모른다: 응답 시간 초과·연결 끊김·보내는 도중 취소. 성공으로 읽지 않는다."""
 
     REQUEST_ID_FIELD_NUMBER: _builtins.int
     STATUS_FIELD_NUMBER: _builtins.int

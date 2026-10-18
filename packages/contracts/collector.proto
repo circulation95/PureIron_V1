@@ -125,20 +125,29 @@ message WriteRequest {
   string request_id = 1;
   uint32 tag_id = 2;
   double value = 3;
-  // core가 쓰기를 판단한 plan. collector가 적용 중인 plan_rev와 다르면 REJECTED.
+  // core가 쓰기를 판단한 plan. 0이거나 collector가 적용 중인 plan_rev와 다르면 REJECTED.
   uint64 plan_rev = 4;
+  // collector가 받은 순간부터 이 시간(ms, 상대) 안에 장비로 보내기 시작하지 못하면 보내지 않고 REJECTED.
+  // 0이면 REJECTED. core가 이 시간 + 장비 timeout_ms×2(쓰기·재읽기) + 여유보다 길게 기다리면,
+  // core가 응답 없음으로 확정한 뒤 그 쓰기가 PLC에 닿는 일은 없다.
+  uint32 timeout_ms = 5;
 }
 
-// REJECTED = collector가 보내지 않았다(plan_rev 불일치·writable=false·모르는 태그·인코딩 불가).
-// FAILED = 장비에 보내지 못했거나 장비가 예외로 답했다(미연결·시간 초과·예외 응답).
-// OK = 장비가 쓰기에 정상 응답했다. 반영 여부 판정은 core가 readback으로 한다.
+// 단계별 결과: 보내기 전 = REJECTED, 확실히 안 써짐 = FAILED, 보낸 뒤 모름 = INDETERMINATE,
+// 장비 정상 응답 = OK(재읽기 실패는 OK 그대로 + readback 비움 + error).
 message WriteResult {
   string request_id = 1;
   // 0(기본값)이 REJECTED — 값이 빠진 응답은 거부로 읽힌다(fail-safe).
   enum Status {
+    // collector가 보내지 않았다(plan_rev·timeout 누락, 모르는 태그, writable=false, 인코딩 불가,
+    // 기한 경과, 큐 가득·같은 태그 진행 중·request_id 중복, poller 정지).
     REJECTED = 0;
+    // 장비가 쓰기에 정상 응답했다. 반영 여부 판정은 core가 readback으로 한다.
     OK = 1;
+    // 확실히 안 써졌다: 장비 미연결(보내지 않음) 또는 Modbus 예외 응답.
     FAILED = 2;
+    // 보낸 뒤 결과를 모른다: 응답 시간 초과·연결 끊김·보내는 도중 취소. 성공으로 읽지 않는다.
+    INDETERMINATE = 3;
   }
   Status status = 2;
   string error = 3;
