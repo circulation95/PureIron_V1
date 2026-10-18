@@ -8,8 +8,11 @@ poll 루프가 그 장비의 모든 태그를 BAD로 내보낸 뒤 다음 주기
 
 - 보내기 전(장비에 아무것도 가지 않음) → `REJECTED`: 큐 가득(`MAX_QUEUED_WRITES`)·같은 태그 진행 중·
   poller 정지, 요청자가 포기(취소), 기한(`deadline_s`) 경과, 인코딩 불가.
-- 확실히 안 써짐 → `FAILED`: 장비 미연결(큐에 넣지 않음), Modbus 예외 응답.
-- 보낸 뒤 모름 → `INDETERMINATE`: 응답 시간 초과·연결 끊김·보내는 도중 취소(연결을 닫는다).
+- 확실히 안 써짐 → `FAILED`: 장비 미연결(큐에 넣지 않음), 요청 거부형 Modbus 예외 응답
+  (01·02·03·06·0A — `modbus.NOT_WRITTEN_EXCEPTIONS`).
+- 보낸 뒤 모름 → `INDETERMINATE`: 응답 시간 초과·연결 끊김·보내는 도중 취소(연결을 닫는다), 실행
+  여부를 알 수 없는 예외 응답(04·05·0B·모르는 코드). 의심되면 INDETERMINATE — FAILED는 운전자가
+  다시 눌러도 되는 결과라 확실할 때만 쓴다.
 - 장비 정상 응답 → `OK`, 이어서 같은 주소 재읽기. 재읽기 실패·도중 취소는 OK 그대로 + readback 비움
   + error(이미 써졌으므로 거부·실패로 바꾸지 않는다).
 """
@@ -52,7 +55,7 @@ class Driver(Protocol):
         ...
 
     async def write(self, point: ModbusPoint, value: float) -> pb.WriteResult:
-        """열린 연결로 한 번만 보낸다(새로 연결하지 않음). 결과는 OK·FAILED(미연결·예외 응답).
+        """열린 연결로 한 번만 보낸다(새로 연결하지 않음). 결과는 OK·FAILED·INDETERMINATE.
 
         인코딩 불가는 보내기 전에 `EncodeError`, 통신 실패(보낸 뒤 모름)는 그 밖의 예외.
         """
@@ -130,6 +133,11 @@ class DevicePoller:
         self._current: _Write | None = None
         self._stopped = False
         self._wake = asyncio.Event()
+
+    @property
+    def pending_writes(self) -> int:
+        """대기·진행 중 쓰기 수(관찰용)."""
+        return len(self._pending())
 
     def _pending(self) -> list[_Write]:
         """아직 결과가 정해지지 않은 대기·진행 중 쓰기(요청자가 포기한 것은 빼고)."""

@@ -22,7 +22,11 @@ from pureiron_collector.drivers.common import EncodeError, ReadbackError
 from pureiron_collector.drivers.modbus import ModbusClient, ModbusDevice, decode, encode
 from pureiron_collector.plan import DataType, DevicePlan, ModbusPoint, Order, RegisterType
 
-OK, FAILED = pb.WriteResult.OK, pb.WriteResult.FAILED
+OK, FAILED, INDETERMINATE = (
+    pb.WriteResult.OK,
+    pb.WriteResult.FAILED,
+    pb.WriteResult.INDETERMINATE,
+)
 ORDERS: list[Order] = ["big", "little"]
 
 
@@ -164,6 +168,14 @@ def test_float32_rounds_to_nearest_representable() -> None:
 
 # --- 실제 Modbus 서버에 쓰기 -----------------------------------------------------------------
 IGNORED_ADDRESS = 40  # 서버가 쓰기를 받아들이지만 값을 바꾸지 않는 주소(readback 불일치)
+# 쓰기(FC6)에 이 예외 코드로 답하는 주소
+EXCEPTION_ADDRESSES = {
+    50: ExcCodes.ILLEGAL_VALUE,
+    51: ExcCodes.DEVICE_BUSY,
+    52: ExcCodes.DEVICE_FAILURE,
+    53: ExcCodes.ACKNOWLEDGE,
+    54: ExcCodes.GATEWAY_NO_RESPONSE,
+}
 
 
 def free_port() -> int:
@@ -188,6 +200,8 @@ class Recorder:
         set_values: list[int] | list[bool] | None,
     ) -> ExcCodes | None:
         self.function_codes.append(function_code)
+        if function_code == 6 and set_values and address in EXCEPTION_ADDRESSES:
+            return EXCEPTION_ADDRESSES[address]
         if function_code == 6 and address == IGNORED_ADDRESS and set_values:
             cast(list[int], set_values)[0] = current_registers[address - start_address]
         return None
@@ -271,6 +285,30 @@ async def test_exception_responses_are_failed_write_and_readback_error(
     finally:
         await driver.close()
     assert result.status == FAILED
+    assert "device rejected write" in result.error
+
+
+@pytest.mark.parametrize(
+    ("address", "status"),
+    [
+        (50, FAILED),  # 03 ILLEGAL DATA VALUE — 요청 거부
+        (51, FAILED),  # 06 BUSY — 실행 안 함
+        (52, INDETERMINATE),  # 04 DEVICE FAILURE — 실행 도중 실패했을 수 있음
+        (53, INDETERMINATE),  # 05 ACKNOWLEDGE — 처리 중
+        (54, INDETERMINATE),  # 0B GATEWAY TARGET 무응답 — 장비까지 갔는지 모름
+    ],
+)
+async def test_exception_codes_split_failed_and_indeterminate(
+    server: tuple[int, Recorder], address: int, status: int
+) -> None:
+    port, _ = server
+    driver = ModbusDevice(device_plan(port, [point(1, 0)]))
+    try:
+        await driver.poll()
+        result = await driver.write(point(1, address), 1.0)
+    finally:
+        await driver.close()
+    assert result.status == status
     assert "device rejected write" in result.error
 
 

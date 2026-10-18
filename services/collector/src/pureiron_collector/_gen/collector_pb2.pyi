@@ -451,9 +451,11 @@ class WriteRequest(_message.Message):
     plan_rev: _builtins.int
     """core가 쓰기를 판단한 plan. 0이거나 collector가 적용 중인 plan_rev와 다르면 REJECTED."""
     timeout_ms: _builtins.int
-    """collector가 받은 순간부터 이 시간(ms, 상대) 안에 장비로 보내기 시작하지 못하면 보내지 않고 REJECTED.
-    0이면 REJECTED. core가 이 시간 + 장비 timeout_ms×2(쓰기·재읽기) + 여유보다 길게 기다리면,
-    core가 응답 없음으로 확정한 뒤 그 쓰기가 PLC에 닿는 일은 없다.
+    """collector가 이 메시지를 처리한 순간부터 이 시간(ms, 상대) 안에 장비로 보내기 시작하지 못하면
+    보내지 않고 REJECTED. 0이거나 60000 초과면 REJECTED. 처리 시점은 수신보다 늦을 수 있다 — plan 적용
+    중에는 collector 수신 루프가 최대 5s(STOP_TIMEOUT_S) 멈춘다. 그래서 "core가 응답 없음으로 확정한
+    뒤 그 쓰기가 PLC에 닿지 않는다"는 core가 (1) 현재 plan_rev의 batch를 받은 뒤에만 쓰기를 보내고
+    (2) 응답 대기 시한을 이 시간 + 장비 timeout_ms×2(쓰기·재읽기) + 수신 지연 이상의 여유로 둘 때 성립한다.
     """
     def __init__(
         self,
@@ -475,7 +477,8 @@ Global___WriteRequest: _TypeAlias = WriteRequest  # noqa: Y015
 @_typing.final
 class WriteResult(_message.Message):
     """단계별 결과: 보내기 전 = REJECTED, 확실히 안 써짐 = FAILED, 보낸 뒤 모름 = INDETERMINATE,
-    장비 정상 응답 = OK(재읽기 실패는 OK 그대로 + readback 비움 + error).
+    장비 정상 응답 = OK(재읽기 실패는 OK 그대로 + readback 비움 + error). 의심되면 INDETERMINATE.
+    최근 처리한 request_id가 다시 오면 collector는 응답하지 않는다(그 id의 응답은 원래 요청 것 1건).
     """
 
     DESCRIPTOR: _descriptor.Descriptor
@@ -487,29 +490,37 @@ class WriteResult(_message.Message):
     class _StatusEnumTypeWrapper(_enum_type_wrapper._EnumTypeWrapper[WriteResult._Status.ValueType], _builtins.type):
         DESCRIPTOR: _descriptor.EnumDescriptor
         REJECTED: WriteResult._Status.ValueType  # 0
-        """collector가 보내지 않았다(plan_rev·timeout 누락, 모르는 태그, writable=false, 인코딩 불가,
-        기한 경과, 큐 가득·같은 태그 진행 중·request_id 중복, poller 정지).
+        """collector가 보내지 않았다(request_id·plan_rev·timeout 누락, timeout 상한 초과, 모르는 태그,
+        writable=false, 인코딩 불가, 기한 경과, 큐 가득·같은 태그 진행 중, poller 정지).
         """
         OK: WriteResult._Status.ValueType  # 1
         """장비가 쓰기에 정상 응답했다. 반영 여부 판정은 core가 readback으로 한다."""
         FAILED: WriteResult._Status.ValueType  # 2
-        """확실히 안 써졌다: 장비 미연결(보내지 않음) 또는 Modbus 예외 응답."""
+        """확실히 안 써졌다: 장비 미연결(보내지 않음) 또는 요청 거부형 Modbus 예외 응답
+        (01 ILLEGAL FUNCTION·02 ILLEGAL DATA ADDRESS·03 ILLEGAL DATA VALUE·06 BUSY·0A GATEWAY PATH).
+        """
         INDETERMINATE: WriteResult._Status.ValueType  # 3
-        """보낸 뒤 결과를 모른다: 응답 시간 초과·연결 끊김·보내는 도중 취소. 성공으로 읽지 않는다."""
+        """보낸 뒤 결과를 모른다: 응답 시간 초과·연결 끊김·보내는 도중 취소, 실행 여부를 알 수 없는
+        Modbus 예외 응답(04 DEVICE FAILURE·05 ACKNOWLEDGE·0B GATEWAY TARGET·모르는 코드). 성공으로 읽지 않는다.
+        """
 
     class Status(_Status, metaclass=_StatusEnumTypeWrapper):
         """0(기본값)이 REJECTED — 값이 빠진 응답은 거부로 읽힌다(fail-safe)."""
 
     REJECTED: WriteResult.Status.ValueType  # 0
-    """collector가 보내지 않았다(plan_rev·timeout 누락, 모르는 태그, writable=false, 인코딩 불가,
-    기한 경과, 큐 가득·같은 태그 진행 중·request_id 중복, poller 정지).
+    """collector가 보내지 않았다(request_id·plan_rev·timeout 누락, timeout 상한 초과, 모르는 태그,
+    writable=false, 인코딩 불가, 기한 경과, 큐 가득·같은 태그 진행 중, poller 정지).
     """
     OK: WriteResult.Status.ValueType  # 1
     """장비가 쓰기에 정상 응답했다. 반영 여부 판정은 core가 readback으로 한다."""
     FAILED: WriteResult.Status.ValueType  # 2
-    """확실히 안 써졌다: 장비 미연결(보내지 않음) 또는 Modbus 예외 응답."""
+    """확실히 안 써졌다: 장비 미연결(보내지 않음) 또는 요청 거부형 Modbus 예외 응답
+    (01 ILLEGAL FUNCTION·02 ILLEGAL DATA ADDRESS·03 ILLEGAL DATA VALUE·06 BUSY·0A GATEWAY PATH).
+    """
     INDETERMINATE: WriteResult.Status.ValueType  # 3
-    """보낸 뒤 결과를 모른다: 응답 시간 초과·연결 끊김·보내는 도중 취소. 성공으로 읽지 않는다."""
+    """보낸 뒤 결과를 모른다: 응답 시간 초과·연결 끊김·보내는 도중 취소, 실행 여부를 알 수 없는
+    Modbus 예외 응답(04 DEVICE FAILURE·05 ACKNOWLEDGE·0B GATEWAY TARGET·모르는 코드). 성공으로 읽지 않는다.
+    """
 
     REQUEST_ID_FIELD_NUMBER: _builtins.int
     STATUS_FIELD_NUMBER: _builtins.int

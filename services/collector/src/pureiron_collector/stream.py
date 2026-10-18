@@ -13,10 +13,12 @@ poll은 세션과 무관하게 계속 돈다 — core가 없는 동안의 batch�
   원래 plan_rev를 유지한다.
 
 쓰기(ADR-013 개정, M3c-1 D7): 가드레일 판단(선언·스위치·확인·허가 조건·감사)은 core가 한다.
-collector는 2중 방어로 request_id 중복·plan_rev 누락/불일치·`timeout_ms` 누락·모르는 태그·
-`writable=false`·인코딩 불가·멈춘 poller를 `REJECTED`로 답하고, 통과한 쓰기는 받은 순간부터 잰
-기한과 함께 그 장비 poller 큐에 넣는다(결과를 기다리는 동안에도 세션 읽기는 계속, 이후 결과 규칙은
-`drivers/common.py`). 세션이 끝나면 아직 보내지 않은 쓰기는 버린다 — core는 응답 없음으로 본다.
+collector는 2중 방어로 request_id 누락·plan_rev 누락/불일치·`timeout_ms` 누락/상한 초과·모르는
+태그·`writable=false`·인코딩 불가·멈춘 poller를 `REJECTED`로 답하고(최근 request_id 중복은 응답
+없이 무시), 통과한 쓰기는 이 메시지를 처리한 순간부터 잰 기한과 함께 그 장비 poller 큐에
+넣는다(결과를 기다리는 동안에도 세션 읽기는 계속, 이후 결과 규칙은 `drivers/common.py`). plan 적용
+중에는 수신 루프가 최대 `STOP_TIMEOUT_S` 멈출 수 있다 — 그동안 도착한 쓰기의 기한은 처리 시점부터
+잰다. 세션이 끝나면 아직 보내지 않은 쓰기는 버린다 — core는 응답 없음으로 본다.
 """
 
 from __future__ import annotations
@@ -47,6 +49,7 @@ log = logging.getLogger(__name__)
 HEARTBEAT_SEQ = 0  # 빈 heartbeat batch는 링버퍼에 넣지 않는다(core는 Ack(0)으로 답한다).
 STOP_TIMEOUT_S = 5.0
 RECENT_REQUESTS = 64  # 중복 검사용으로 기억하는 최근 쓰기 request_id 수
+MAX_WRITE_TIMEOUT_MS = 60_000  # 이보다 긴 기한은 거부 — 오래된 판단으로 PLC에 쓰지 않게
 
 type Outgoing = asyncio.Queue[pb.CollectorMsg]
 
@@ -140,16 +143,21 @@ class Acquisition:
     def health(self) -> list[pb.DeviceHealth]:
         return [poller.health.to_proto() for poller, _ in self._pollers.values()]
 
+    def pending_writes(self) -> int:
+        """모든 장비의 대기·진행 중 쓰기 수(관찰용)."""
+        return sum(poller.pending_writes for poller, _ in self._pollers.values())
+
     # --- 쓰기 -------------------------------------------------------------------------
     def _request_problem(self, request: pb.WriteRequest) -> str | None:
-        """요청 자체의 거부 이유(중복·plan_rev·기한 누락)."""
-        if request.request_id in self._recent_requests:
-            return f"duplicate request_id {request.request_id!r}"
-        self._recent_requests.append(request.request_id)
+        """요청 자체의 거부 이유(id·plan_rev·기한)."""
+        if not request.request_id:
+            return "missing request_id"
         if request.plan_rev == 0 or not self._applied or request.plan_rev != self.plan_rev:
             return f"plan_rev {request.plan_rev} does not match applied plan {self.plan_rev}"
         if request.timeout_ms == 0:
             return "missing timeout"
+        if request.timeout_ms > MAX_WRITE_TIMEOUT_MS:
+            return f"timeout_ms {request.timeout_ms} exceeds {MAX_WRITE_TIMEOUT_MS}"
         return None
 
     def _check_write(self, request: pb.WriteRequest) -> tuple[DevicePoller, ModbusPoint] | str:
@@ -172,9 +180,18 @@ class Acquisition:
             return f"device {device_id} is not polled"
         return entry[0], point
 
-    async def write(self, request: pb.WriteRequest) -> pb.WriteResult:
-        # 기한은 받은 순간부터 잰다(상대 시간 — core와 시계가 달라도 된다).
+    async def write(self, request: pb.WriteRequest) -> pb.WriteResult | None:
+        """결과를 돌려준다. 이미 받은 request_id면 None — 응답하지 않는다.
+
+        그 id의 응답은 원래 요청 것 1건뿐이어야 core가 결과를 헷갈리지 않는다.
+        """
+        # 기한은 이 메시지를 처리하는 순간부터 잰다(상대 시간 — core와 시계가 달라도 된다).
         deadline_s = time.monotonic() + request.timeout_ms / 1000
+        if request.request_id and request.request_id in self._recent_requests:
+            log.warning("ignoring duplicate write request %s (no response)", request.request_id)
+            return None
+        if request.request_id:
+            self._recent_requests.append(request.request_id)
         checked = self._check_write(request)
         if isinstance(checked, str):
             log.warning("rejecting write request %s: %s", request.request_id, checked)
@@ -276,7 +293,8 @@ class Collector:
 
     async def _write(self, request: pb.WriteRequest, outgoing: Outgoing) -> None:
         result = await self.acquisition.write(request)
-        outgoing.put_nowait(pb.CollectorMsg(write_result=result))
+        if result is not None:
+            outgoing.put_nowait(pb.CollectorMsg(write_result=result))
 
     async def _heartbeat(self, session: _Session) -> None:
         while True:

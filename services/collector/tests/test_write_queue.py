@@ -326,6 +326,7 @@ def request(request_id: str = "r", **fields: float) -> pb.WriteRequest:
         (request(plan_rev=2), "plan_rev 2 does not match"),
         (request(plan_rev=0), "plan_rev 0 does not match"),
         (request(timeout_ms=0), "missing timeout"),
+        (request(timeout_ms=60_001), "timeout_ms 60001 exceeds 60000"),
         (request(tag_id=9), "not in the applied"),
         (request(tag_id=2), "not writable"),
         (request(value=1.5), "not an integer"),
@@ -337,6 +338,7 @@ async def test_collector_rejects_before_sending(
 ) -> None:
     acq, drivers = acquisition
     result = await acq.write(request_)
+    assert result is not None
     assert (result.request_id, result.status) == ("r", REJECTED)
     assert message in result.error
     assert "write" not in drivers.made[0].events
@@ -348,10 +350,18 @@ async def test_collector_sends_valid_write_once_per_request_id(
     acq, drivers = acquisition
     first = await asyncio.wait_for(acq.write(request("w-7", value=42.0)), 2)
     again = await asyncio.wait_for(acq.write(request("w-7", value=42.0)), 2)
+    assert first is not None
     assert (first.request_id, first.status, first.readback) == ("w-7", OK, 42.0)
-    assert (again.request_id, again.status) == ("w-7", REJECTED)
-    assert "duplicate request_id" in again.error
+    assert again is None  # 중복은 응답하지 않는다 — 그 id의 응답은 원래 요청 것 1건
     assert drivers.made[0].events.count("write") == 1
+
+
+async def test_empty_request_id_is_rejected(acquisition: tuple[Acquisition, Drivers]) -> None:
+    acq, drivers = acquisition
+    result = await acq.write(request(""))
+    assert result is not None
+    assert (result.status, result.error) == (REJECTED, "missing request_id")
+    assert "write" not in drivers.made[0].events
 
 
 async def test_plan_change_rejects_queued_write(acquisition: tuple[Acquisition, Drivers]) -> None:
@@ -363,6 +373,7 @@ async def test_plan_change_rejects_queued_write(acquisition: tuple[Acquisition, 
     await asyncio.sleep(0.01)
     await acq.apply_plan(plan_msg(4))
     result = await asyncio.wait_for(pending, 2)
+    assert result is not None
     assert (result.status, result.error) == (REJECTED, POLLER_STOPPED)
     assert "write" not in driver.events
 
@@ -372,19 +383,22 @@ async def test_write_to_dead_poller_is_rejected(acquisition: tuple[Acquisition, 
     task = acq.pollers["plc"]
     await _stop(task)
     result = await asyncio.wait_for(acq.write(request()), 1)
+    assert result is not None
     assert (result.status, result.error) == (REJECTED, "device plc is not polled")
 
 
 # --- gRPC 세션 -------------------------------------------------------------------------
 class WritingCore(pb_grpc.AcquisitionServicer):
-    """plan을 보내고, `trigger`가 켜지면 쓰기 하나를 보내고 결과를 기록한다."""
+    """plan을 보내고, `trigger`가 켜지면 같은 쓰기를 `copies`번 보내고 결과를 모두 기록한다."""
 
-    def __init__(self, *, trigger_set: bool) -> None:
+    def __init__(self, *, trigger_set: bool, copies: int = 1) -> None:
         self.trigger = asyncio.Event()
         if trigger_set:
             self.trigger.set()
+        self.copies = copies
         self.sent = asyncio.Event()
         self.result: asyncio.Future[pb.WriteResult] = asyncio.get_running_loop().create_future()
+        self.results: list[pb.WriteResult] = []
 
     async def Session(
         self,
@@ -395,14 +409,17 @@ class WritingCore(pb_grpc.AcquisitionServicer):
             kind = message.WhichOneof("msg")
             if kind == "hello":
                 yield pb.CoreMsg(plan=plan_msg(4))
-            elif kind == "write_result" and not self.result.done():
-                self.result.set_result(message.write_result)
+            elif kind == "write_result":
+                self.results.append(message.write_result)
+                if not self.result.done():
+                    self.result.set_result(message.write_result)
             elif kind == "batch":
                 yield pb.CoreMsg(ack=pb.Ack(seq=message.batch.seq))
             ready = kind == "health" and message.health.connected and self.trigger.is_set()
             if ready and not self.sent.is_set():
                 self.sent.set()
-                yield pb.CoreMsg(write=request("s-1", value=3.0, plan_rev=4))
+                for _ in range(self.copies):
+                    yield pb.CoreMsg(write=request("s-1", value=3.0, plan_rev=4))
 
 
 async def _session(core: WritingCore) -> tuple[aio.Server, Collector, Drivers]:
@@ -429,6 +446,32 @@ async def test_session_answers_write_with_result_and_readback() -> None:
     assert (result.request_id, result.status, result.readback) == ("s-1", OK, 3.0)
 
 
+async def test_duplicate_request_id_gets_exactly_one_result() -> None:
+    """N1: 첫 요청이 poll에 막혀 있는 동안 같은 id가 다시 와도 응답은 원래 요청의 OK 1건."""
+    core = WritingCore(trigger_set=False, copies=2)
+    server, collector, drivers = await _session(core)
+    stop = asyncio.Event()
+    session = asyncio.create_task(collector.run_session(stop))
+    try:
+        await _until(lambda: bool(drivers.made) and "poll-end" in drivers.made[0].events)
+        driver = drivers.made[0]
+        driver.poll_gate.clear()
+        await _until(lambda: driver.events[-1] == "poll-start")
+        core.trigger.set()
+        await asyncio.wait_for(core.sent.wait(), 5)
+        await _until(lambda: collector.acquisition.pending_writes() == 1)
+        driver.poll_gate.set()
+        await asyncio.wait_for(core.result, 5)
+        await _until(lambda: driver.events.count("poll-end") >= 5)  # 늦은 두 번째 응답이 없는지
+    finally:
+        stop.set()
+        await asyncio.wait_for(session, 5)
+        await collector.acquisition.stop_pollers()
+        await server.stop(0)
+    assert [(r.request_id, r.status) for r in core.results] == [("s-1", OK)]
+    assert driver.events.count("write") == 1
+
+
 async def test_session_end_drops_queued_write() -> None:
     """세션이 끝나면 아직 보내지 않은 쓰기는 poller가 살아 있어도 보내지 않는다."""
     core = WritingCore(trigger_set=False)
@@ -442,7 +485,7 @@ async def test_session_end_drops_queued_write() -> None:
         await _until(lambda: driver.events[-1] == "poll-start")
         core.trigger.set()
         await asyncio.wait_for(core.sent.wait(), 5)
-        await asyncio.sleep(0.2)  # collector가 받아 큐에 넣을 시간
+        await _until(lambda: collector.acquisition.pending_writes() == 1)  # 큐에 들어갔다
         stop.set()
         await asyncio.wait_for(session, 5)
         driver.poll_gate.set()  # poller는 계속 돈다 — 큐의 쓰기는 버려졌어야 한다

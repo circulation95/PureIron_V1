@@ -39,6 +39,12 @@ log = logging.getLogger(__name__)
 MAX_REGISTERS = 125
 MAX_BITS = 2000
 WRITABLE_TYPES: frozenset[str] = frozenset({"holding", "coil"})
+# 쓰기를 실행하지 않았다고 확신할 수 있는 Modbus 예외 코드(요청 자체를 거부): ILLEGAL FUNCTION(01)·
+# ILLEGAL DATA ADDRESS(02)·ILLEGAL DATA VALUE(03)·SLAVE DEVICE BUSY(06)·
+# GATEWAY PATH UNAVAILABLE(0A).
+# 그 밖(04 DEVICE FAILURE — 실행 도중 실패, 05 ACKNOWLEDGE — 처리 중, 0B GATEWAY TARGET 무응답 —
+# 장비까지 갔는지 모름, 모르는 코드)은 써졌을 수 있다 → INDETERMINATE(의심되면 INDETERMINATE).
+NOT_WRITTEN_EXCEPTIONS: frozenset[int] = frozenset({0x01, 0x02, 0x03, 0x06, 0x0A})
 # 정수 형식 → (바이트 수, 부호 있음)
 _INTEGER_BYTES = {
     "int16": (2, True),
@@ -280,7 +286,12 @@ class ModbusDevice:
             return write_result(pb.WriteResult.FAILED, "device not connected")
         response = await self._send(client, point, payload)
         if response.isError():
-            return write_result(pb.WriteResult.FAILED, f"device rejected write: {response}")
+            status = (
+                pb.WriteResult.FAILED
+                if response.exception_code in NOT_WRITTEN_EXCEPTIONS
+                else pb.WriteResult.INDETERMINATE
+            )
+            return write_result(status, f"device rejected write: {response}")
         return write_result(pb.WriteResult.OK)
 
     async def read_back(self, point: ModbusPoint) -> float:
