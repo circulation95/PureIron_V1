@@ -15,3 +15,33 @@
     data_type: bool
     register_type: coil
   path: line1/running
+- description: 1라인 온도 설정값
+  device: plc-1
+  eu: °C
+  modbus:
+    address: 100
+    data_type: float32
+    register_type: holding
+  path: line1/temp_sp
+  write:
+    kind: setpoint
+    max: 90
+    min: 20
+- device: plc-1
+  modbus:
+    address: 11
+    data_type: bool
+    register_type: coil
+  path: line1/remote_ok
+- device: plc-1
+  modbus:
+    address: 10
+    data_type: bool
+    register_type: coil
+  path: line1/start
+  write:
+    kind: command
+    permissive:
+      - line1/remote_ok
+    values:
+      - true

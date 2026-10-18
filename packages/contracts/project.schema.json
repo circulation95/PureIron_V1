@@ -75,8 +75,46 @@
             "deadband": {"type": "number", "minimum": 0},
             "max_interval_s": {"type": "integer", "minimum": 1}
           }
-        }
+        },
+        "write": {"$ref": "#/$defs/tagWrite"}
       }
+    },
+    "tagWrite": {
+      "description": "쓰기 선언(ADR-013 1항). 없으면 읽기 전용. setpoint = 허용 범위 min·max 필수, command = 허용 값 values와 PLC 허가 조건 태그 permissive(1개 이상, 모두 참일 때만 보냄) 필수. role = 실행에 필요한 최소 역할. 형식·주소와의 일치(holding·coil만, 값이 data_type 범위 안, permissive가 bool 태그)는 project-tools가 교차 검사한다.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {"enum": ["setpoint", "command"]},
+        "min": {"type": "number"},
+        "max": {"type": "number"},
+        "values": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": ["number", "boolean"]}
+        },
+        "permissive": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/tagPath"}
+        },
+        "role": {"enum": ["operator", "engineer"], "default": "operator"}
+      },
+      "allOf": [
+        {
+          "if": {"required": ["kind"], "properties": {"kind": {"const": "setpoint"}}},
+          "then": {"required": ["min", "max"], "not": {"required": ["values"]}}
+        },
+        {
+          "if": {"required": ["kind"], "properties": {"kind": {"const": "command"}}},
+          "then": {
+            "required": ["values", "permissive"],
+            "not": {"anyOf": [{"required": ["min"]}, {"required": ["max"]}]}
+          }
+        }
+      ]
     },
     "tagList": {"description": "tags/<device>.yaml", "type": "array", "items": {"$ref": "#/$defs/tag"}},
     "alarm": {

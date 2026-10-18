@@ -17,6 +17,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from pureiron_project.canonical import CanonicalError, Json, dump, jcs, load
 from pureiron_project.schema import Kind, omit_defaults, validate
+from pureiron_project.writes import check_writes
 
 PROJECT_FILE = "project.yaml"
 CONTENT_DIRS: tuple[tuple[str, Kind], ...] = (
@@ -179,6 +180,11 @@ def _cross_check(files: list[ProjectFile], problems: list[str]) -> None:
     devices = _check_devices(files, problems)
     tags = _check_tags(files, devices, problems)
     _check_alarms(files, tags, problems)
+    problems.extend(
+        check_writes(
+            (f.relpath, tag) for f in files if f.kind is Kind.TAG_LIST for tag in _as_list(f.data)
+        )
+    )
 
 
 def load_project(root: Path) -> Project:
