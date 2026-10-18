@@ -113,8 +113,8 @@ def test_role_default_is_omitted_in_canonical_form() -> None:
         ),
         (
             "{register_type: holding, address: 0, data_type: bool}",
-            "{kind: setpoint, min: 0, max: 1}",
-            "setpoint needs a numeric data_type",
+            "{kind: command, values: [true], permissive: [ok]}",
+            "would overwrite all 16 bits",
         ),
         (
             "{register_type: holding, address: 0, data_type: int16}",
@@ -185,6 +185,32 @@ def test_valid_declarations_pass(acme: Path) -> None:
         + _tag("gate", _holding(8, "float32"), "{kind: setpoint, min: 0, max: 1, permissive: [ok]}")
     )
     assert _problems(acme, tags) == []
+
+
+def test_permissive_must_not_be_writable_itself(acme: Path) -> None:
+    """PureIron이 자기 허가 조건을 켜고 명령을 보내는 우회를 막는다(ADR-013 1항)."""
+    tags = _tag(
+        "remote",
+        "{register_type: coil, address: 3, data_type: bool}",
+        "{kind: command, values: [true], permissive: [ok]}",
+    ) + _tag("go", COIL, "{kind: command, values: [true], permissive: [remote]}")
+    assert _problems(acme, tags) == [
+        "tags/plc-1.yaml: tag 'go' write: permissive 'remote' is itself writable"
+    ]
+
+
+def test_writable_address_ranges_must_not_overlap(acme: Path) -> None:
+    tags = (
+        _tag("wide", _holding(100, "float32"), "{kind: setpoint, min: 0, max: 1}")
+        + _tag("narrow", _holding(101, "uint16"), "{kind: setpoint, min: 0, max: 1}")
+        + _tag("apart", _holding(102, "uint16"), "{kind: setpoint, min: 0, max: 1}")
+    )
+    assert _problems(acme, tags) == [
+        "tags/plc-1.yaml: tag 'wide' write: holding 100-101 overlaps writable tag 'narrow'"
+        " (101-101)",
+        "tags/plc-1.yaml: tag 'narrow' write: holding 101-101 overlaps writable tag 'wide'"
+        " (100-101)",
+    ]
 
 
 @pytest.mark.parametrize(
