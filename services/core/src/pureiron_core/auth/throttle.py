@@ -5,10 +5,14 @@
 - 영구 잠금은 하지 않는다: 누가 운전원 이름으로 틀린 비밀번호를 계속 넣어도 그 계정은
   `block_s`마다 다시 열린다(계정 DoS 방지). 성공하면 그 username의 실패 기록을 지운다.
 - 결과를 기다리는 시도도 실패처럼 센다(진행 중 + 실패 ≥ 상한이면 거부) — 동시에 보낸 추측
-  여러 개가 검사를 함께 통과하지 못하게. 결과를 끝내 알리지 못한 시도(연결 끊김 등)는
-  `window_s`가 지나면 저절로 빠진다.
-- 추적하는 username은 `max_tracked`개까지다. 넘으면 기록이 빈 항목을 먼저 지우고, 그래도
-  가득하면 가장 먼저 추적한 항목을 버린다(아무 이름이나 뿌려 core 메모리를 키우지 못하게).
+  여러 개가 검사를 함께 통과하지 못하게. 이렇게 거부할 때는 곧 끝날 시도를 기다리는 것이라
+  `busy_retry_s`(짧은 고정값)를 돌려준다. 결과를 끝내 알리지 못한 시도는 `window_s`가 지나면
+  저절로 빠진다(api는 예상 밖 예외에서도 `abandoned`를 부른다).
+- 추적하는 username은 `max_tracked`개까지다(아무 이름이나 뿌려 core 메모리를 키우지 못하게).
+  넘으면 기록이 빈 항목을 먼저 지우고, 그래도 가득하면 차단되지 않은 항목 중 가장 먼저 추적한
+  것을 버린다. **차단 중인 항목은 버리지 않는다** — 버리면 다른 이름을 뿌려 제한을 풀 수 있다.
+  버릴 항목이 없으면 새 username 시도를 받지 않는다(fail-closed, `busy_retry_s`).
+- username은 그대로 키로 쓴다. 계정 조회가 대소문자를 무시하게 바뀌면 이 키도 같이 정규화한다.
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ DEFAULT_MAX_FAILURES = 5
 DEFAULT_WINDOW_S = 600.0
 DEFAULT_BLOCK_S = 600.0
 DEFAULT_MAX_TRACKED = 10_000
+DEFAULT_BUSY_RETRY_S = 5.0
 
 
 @dataclass(slots=True)
@@ -55,11 +60,13 @@ class LoginThrottle:
         window_s: float = DEFAULT_WINDOW_S,
         block_s: float = DEFAULT_BLOCK_S,
         max_tracked: int = DEFAULT_MAX_TRACKED,
+        busy_retry_s: float = DEFAULT_BUSY_RETRY_S,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.max_failures = max_failures
         self.window_s = window_s
         self.block_s = block_s
+        self.busy_retry_s = busy_retry_s
         self._max_tracked = max_tracked
         self._clock = clock
         self._entries: dict[str, _Attempts] = {}
@@ -70,12 +77,14 @@ class LoginThrottle:
         entry = self._entries.get(username)
         if entry is None:
             entry = self._track(username, now)
+            if entry is None:
+                return self.busy_retry_s  # 추적 상한이 차단 항목으로 가득하다
         else:
             entry.expire(now, self.window_s)
             if entry.blocked_until is not None:
                 return entry.blocked_until - now
             if len(entry.failures) + len(entry.pending) >= self.max_failures:
-                return self.block_s  # 진행 중인 시도가 상한을 채웠다(동시 요청)
+                return self.busy_retry_s  # 진행 중인 시도가 상한을 채웠다(동시 요청)
         entry.pending.append(now)
         return None
 
@@ -100,7 +109,7 @@ class LoginThrottle:
                 del self._entries[username]
 
     def abandoned(self, username: str) -> None:
-        """결과를 알 수 없는 시도(site-db 장애)는 실패로 세지 않는다."""
+        """결과를 알 수 없는 시도(site-db 장애·예상 밖 예외)는 실패로 세지 않는다."""
         entry = self._finish(username, self._clock())
         if entry is not None and entry.idle:
             del self._entries[username]
@@ -114,14 +123,24 @@ class LoginThrottle:
             entry.pending.popleft()
         return entry
 
-    def _track(self, username: str, now: float) -> _Attempts:
-        if len(self._entries) >= self._max_tracked:
-            for name, entry in list(self._entries.items()):
-                entry.expire(now, self.window_s)
-                if entry.idle:
-                    del self._entries[name]
-            if len(self._entries) >= self._max_tracked:
-                del self._entries[next(iter(self._entries))]
+    def _track(self, username: str, now: float) -> _Attempts | None:
+        if len(self._entries) >= self._max_tracked and not self._make_room(now):
+            return None
         entry = _Attempts()
         self._entries[username] = entry
         return entry
+
+    def _make_room(self, now: float) -> bool:
+        for name, entry in list(self._entries.items()):
+            entry.expire(now, self.window_s)
+            if entry.idle:
+                del self._entries[name]
+        if len(self._entries) < self._max_tracked:
+            return True
+        oldest = next(
+            (name for name, entry in self._entries.items() if entry.blocked_until is None), None
+        )
+        if oldest is None:
+            return False
+        del self._entries[oldest]
+        return True

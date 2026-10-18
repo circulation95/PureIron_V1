@@ -457,6 +457,34 @@ async def test_site_db_outage_is_not_counted_as_failure() -> None:
     assert _attempt(api, password=PASSWORD) == 200
 
 
+async def test_unexpected_error_does_not_use_up_attempts() -> None:
+    """500(감싸지지 않은 예외) 뒤에 진행 중 시도가 남아 정상 사용자의 시도를 줄이지 않는다."""
+    api = _api(throttle=LoginThrottle(clock=Monotonic()))
+    await _user(api)
+    api.fx.users.crash = True
+    crashing = TestClient(api.app, raise_server_exceptions=False)
+    body = {"username": "alice", "password": PASSWORD}
+    statuses = [crashing.post("/api/v1/auth/login", json=body).status_code for _ in range(6)]
+    assert statuses == [500] * 6
+    api.fx.users.crash = False
+    assert [_attempt(api) for _ in range(4)] == [401] * 4
+    assert _attempt(api, password=PASSWORD) == 200
+
+
+async def test_concurrent_attempt_rejection_has_short_retry_after() -> None:
+    """결과를 기다리는 시도가 상한을 채우면 곧 끝날 것을 기다리는 짧은 Retry-After(5s)."""
+    throttle = LoginThrottle(clock=Monotonic())
+    api = _api(throttle=throttle)
+    await _user(api)
+    for _ in range(5):
+        assert throttle.begin("alice") is None  # 다른 요청들이 결과를 기다리는 중
+    response = TestClient(api.app).post(
+        "/api/v1/auth/login", json={"username": "alice", "password": PASSWORD}
+    )
+    assert (response.status_code, response.headers["retry-after"]) == (429, "5")
+    assert not [e for e in api.audit.entries if e.action == AuditAction.AUTH_LOGIN_THROTTLED]
+
+
 def test_openapi_names_session_and_updater_schemes_apart() -> None:
     api = _api()
     project = build_project_router(store=_NoProject(), updater_token="t", audit=FakeAudit())

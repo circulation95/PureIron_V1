@@ -28,6 +28,7 @@ from pureiron_core.auth.ports import (
     AuthUnavailableError,
     InvalidCredentialsError,
     InvalidPasswordError,
+    LoginResult,
     Principal,
     Role,
     SessionInvalidError,
@@ -170,6 +171,32 @@ async def _login_failed(
         )
 
 
+async def _throttled_login(
+    auth: AuthPort, audit: AuditSink, throttle: LoginThrottle, body: LoginRequest
+) -> LoginResult:
+    """실패 제한을 거친 `auth.login`. 실패는 401·429·503 HTTPException으로 바꿔 던진다."""
+    tracked = username_problem(body.username) is None
+    if tracked and (retry_after_s := throttle.begin(body.username)) is not None:
+        raise _throttled(retry_after_s)
+    try:
+        result = await auth.login(body.username, body.password)
+    except InvalidCredentialsError as exc:
+        await _login_failed(audit, throttle, body.username, exc.reason, tracked=tracked)
+        raise _unauthorized(str(exc)) from exc
+    except AuthUnavailableError as exc:
+        if tracked:
+            throttle.abandoned(body.username)
+        raise site_db_unavailable(exc) from exc
+    except BaseException:
+        # 예상 밖 예외(500)·취소: 진행 중 시도를 정리해 정상 사용자의 남은 시도를 줄이지 않는다.
+        if tracked:
+            throttle.abandoned(body.username)
+        raise
+    if tracked:
+        throttle.succeeded(body.username)
+    return result
+
+
 def _token(cookie: str | None, bearer: HTTPAuthorizationCredentials | None) -> str | None:
     return cookie or (bearer.credentials if bearer is not None else None)
 
@@ -246,20 +273,7 @@ def build_auth_router(
 
     @router.post("/login", operation_id="login", responses={**_UNAUTHORIZED, **_THROTTLED})
     async def login(body: LoginRequest, response: Response) -> LoginOut:
-        tracked = username_problem(body.username) is None
-        if tracked and (retry_after_s := throttle.begin(body.username)) is not None:
-            raise _throttled(retry_after_s)
-        try:
-            result = await auth.login(body.username, body.password)
-        except InvalidCredentialsError as exc:
-            await _login_failed(audit, throttle, body.username, exc.reason, tracked=tracked)
-            raise _unauthorized(str(exc)) from exc
-        except AuthUnavailableError as exc:
-            if tracked:
-                throttle.abandoned(body.username)
-            raise site_db_unavailable(exc) from exc
-        if tracked:
-            throttle.succeeded(body.username)
+        result = await _throttled_login(auth, audit, throttle, body)
         response.set_cookie(
             SESSION_COOKIE,
             result.token,
