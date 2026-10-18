@@ -80,7 +80,7 @@
       }
     },
     "tagWrite": {
-      "description": "쓰기 선언(ADR-013 1항). 없으면 읽기 전용. setpoint = 허용 범위 min·max 필수, command = 허용 값 values와 PLC 허가 조건 태그 permissive(1개 이상, 모두 참일 때만 보냄) 필수. role = 실행에 필요한 최소 역할. 형식·주소와의 일치(holding·coil만, holding bool 불가, 값이 data_type 범위 안, permissive가 쓰기 대상이 아닌 bool 태그, 쓰기 태그끼리 주소 겹침 없음)는 project-tools가 교차 검사한다.",
+      "description": "쓰기 선언(ADR-013 1항). 없으면 읽기 전용. setpoint = 허용 범위 min·max 필수, command = 허용 값 values와 PLC 허가 조건 태그 permissive(1개 이상, 모두 참일 때만 보냄) 필수. role = 실행에 필요한 최소 역할. 형식·주소와의 일치(holding·coil만, holding bool 불가, 값이 data_type 범위 안, permissive가 쓰기 대상이 아니고 주소도 쓰기 태그와 겹치지 않는 bool 태그, 쓰기 태그끼리 주소 겹침 없음)는 project-tools가 교차 검사한다.",
       "type": "object",
       "additionalProperties": false,
       "required": ["kind"],

@@ -3,7 +3,8 @@
 스키마(`$defs/tagWrite`)는 모양(kind별 필수 필드)만 본다. 여기서는 현장에 닿기 전에 막을 것을 본다:
 쓰기 가능한 register_type(holding·coil)인지, holding bool(레지스터 16비트 전체 덮어씀)이 아닌지,
 setpoint가 숫자 형식인지, 범위·허용 값이 data_type으로 인코딩 가능한지, permissive가 존재하는 bool
-태그이고 자기 자신도 쓰기 대상도 아닌지, 쓰기 태그끼리 주소 범위가 겹치지 않는지.
+태그이고 자기 자신도 쓰기 대상도 아니며 그 주소를 어떤 쓰기 태그도 덮지 않는지, 쓰기 태그끼리 주소
+범위가 겹치지 않는지.
 """
 
 from __future__ import annotations
@@ -124,20 +125,46 @@ def _span(tag: Tag) -> tuple[str, str, int, int] | None:
     return str(tag.get("device")), register_type, address, address + words - 1
 
 
+def _overlaps(a: tuple[str, str, int, int], b: tuple[str, str, int, int]) -> bool:
+    return a[:2] == b[:2] and a[2] <= b[3] and b[2] <= a[3]
+
+
 def _overlap_problems(writable: list[tuple[str, Tag]]) -> list[str]:
     """쓰기 태그끼리 주소 범위가 겹치면 한 쪽 쓰기가 다른 쪽 값을 바꾼다 — 둘 다 거부."""
     spans = [(relpath, tag, span) for relpath, tag in writable if (span := _span(tag)) is not None]
     problems: list[str] = []
-    for relpath, tag, (device, register_type, first, last) in spans:
+    for relpath, tag, span in spans:
         problems.extend(
-            f"{relpath}: tag {tag.get('path')!r} write: {register_type} {first}-{last}"
-            f" overlaps writable tag {other.get('path')!r} ({o_first}-{o_last})"
-            for _, other, (o_device, o_type, o_first, o_last) in spans
-            if other is not tag
-            and (o_device, o_type) == (device, register_type)
-            and first <= o_last
-            and o_first <= last
+            f"{relpath}: tag {tag.get('path')!r} write: {span[1]} {span[2]}-{span[3]}"
+            f" overlaps writable tag {other.get('path')!r} ({o_span[2]}-{o_span[3]})"
+            for _, other, o_span in spans
+            if other is not tag and _overlaps(span, o_span)
         )
+    return problems
+
+
+def _permissive_overlap_problems(
+    writable: list[tuple[str, Tag]], tags: Mapping[str, Tag]
+) -> list[str]:
+    """허가 조건 주소를 쓰기 태그가 덮을 수 있으면 PureIron이 허가 조건을 바꿀 수 있다 — 거부."""
+    spans = [(tag, span) for _, tag in writable if (span := _span(tag)) is not None]
+    problems: list[str] = []
+    for relpath, tag in writable:
+        write = tag.get("write")
+        permissive = write.get("permissive") if isinstance(write, dict) else None
+        if not isinstance(permissive, list):
+            continue
+        for path in permissive:
+            target = tags.get(str(path))
+            target_span = _span(target) if target is not None else None
+            if target is None or target_span is None:
+                continue
+            problems.extend(
+                f"{relpath}: tag {tag.get('path')!r} write: permissive {path!r} shares an address"
+                f" with writable tag {other.get('path')!r}"
+                for other, span in spans
+                if other is not target and _overlaps(target_span, span)
+            )
     return problems
 
 
@@ -156,4 +183,4 @@ def check_writes(tags: Iterable[tuple[str, Tag]]) -> list[str]:
             f"{relpath}: tag {tag.get('path')!r} write: {problem}"
             for problem in _declaration_problems(tag, write, by_path)
         )
-    return problems + _overlap_problems(writable)
+    return problems + _overlap_problems(writable) + _permissive_overlap_problems(writable, by_path)

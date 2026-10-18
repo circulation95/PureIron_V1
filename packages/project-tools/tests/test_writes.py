@@ -199,6 +199,26 @@ def test_permissive_must_not_be_writable_itself(acme: Path) -> None:
     ]
 
 
+def test_permissive_address_must_not_be_covered_by_a_writable_tag(acme: Path) -> None:
+    """허가 조건 coil 11(`ok`)을 다른 이름의 쓰기 태그가 같은 주소로 덮으면 우회가 된다."""
+    tags = (
+        _tag(
+            "alias",
+            "{register_type: coil, address: 11, data_type: bool}",
+            "{kind: command, values: [true], permissive: [other_ok]}",
+        )
+        + (
+            "- {path: other_ok, device: plc-1,"
+            " modbus: {register_type: coil, address: 12, data_type: bool}}\n"
+        )
+        + _tag("go", COIL, "{kind: command, values: [true], permissive: [ok]}")
+    )
+    assert _problems(acme, tags) == [
+        "tags/plc-1.yaml: tag 'go' write: permissive 'ok' shares an address with writable tag"
+        " 'alias'"
+    ]
+
+
 def test_writable_address_ranges_must_not_overlap(acme: Path) -> None:
     tags = (
         _tag("wide", _holding(100, "float32"), "{kind: setpoint, min: 0, max: 1}")
