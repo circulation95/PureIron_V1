@@ -3,11 +3,14 @@
 정의는 project-tools 정규형(스키마 기본값 생략)이라 기본값은 여기서 채운다(값은
 `packages/contracts/project.schema.json`의 `default`와 같다). collector는 `port=0`인 장비를
 거부하므로 포트가 비면 프로토콜 기본 포트(Modbus TCP 502)를 채운다.
+
+`TagPoint.writable`은 호출자가 넘긴 `writable_tag_ids`에 든 태그만 true다(plan M3c D6·D12 —
+`writes` 도메인이 쓰기 선언과 현장 스위치로 정한다, 스위치가 꺼지면 빈 집합 → 전부 false).
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from typing import cast
 
@@ -53,7 +56,7 @@ def _device(device: DeviceDef) -> pb.Device:
     )
 
 
-def _tag(tag: TagDef) -> pb.TagPoint | None:
+def _tag(tag: TagDef, *, writable: bool) -> pb.TagPoint | None:
     modbus = tag.definition.get("modbus")
     if not isinstance(modbus, dict):
         return None
@@ -68,10 +71,13 @@ def _tag(tag: TagDef) -> pb.TagPoint | None:
             byte_order=_str(address, "byte_order", DEFAULT_ORDER),
             word_order=_str(address, "word_order", DEFAULT_ORDER),
         ),
+        writable=writable,
     )
 
 
-def build_plan(definitions: Definitions) -> BuiltPlan:
+def build_plan(
+    definitions: Definitions, writable_tag_ids: Collection[int] = frozenset()
+) -> BuiltPlan:
     devices = [_device(device) for device in definitions.devices]
     known = {device.device_id for device in devices}
     problems: list[str] = []
@@ -81,7 +87,7 @@ def build_plan(definitions: Definitions) -> BuiltPlan:
         if tag.device_id not in known:
             problems.append(f"tag {tag.path!r}: device {tag.device_id!r} is not active")
             continue
-        point = _tag(tag)
+        point = _tag(tag, writable=tag.tag_id in writable_tag_ids)
         if point is None:
             problems.append(f"tag {tag.path!r}: no supported address")
             continue

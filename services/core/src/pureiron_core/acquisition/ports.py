@@ -3,6 +3,9 @@
 장비 상태는 태그가 아니다(Device health is not a tag): collector `DeviceHealth`를 core
 `DeviceMonitor`가 보관하고 `DeviceStatusSource`(`GET /devices`·WS `device_update`)로만 낸다(M3b D9).
 상태가 바뀌면 버스에 `device.changed.<device_id>`가 나간다.
+
+쓰기(plan M3c D12): `WriteChannel`은 collector 세션으로 `WriteRequest`를 보내고 `WriteResult`를
+기다리는 전송로일 뿐이다 — 가드레일(선언·스위치·검사·감사·판정)은 `writes` 도메인이 한다.
 """
 
 from __future__ import annotations
@@ -91,3 +94,73 @@ class DeviceStatusSource(Protocol):
         ...
 
     def device(self, device_id: str) -> DeviceSnapshot | None: ...
+
+
+# --- 쓰기 전송로(plan M3c D12) -------------------------------------------------------------
+
+
+class WriteReplyStatus(StrEnum):
+    """`WriteChannel.send` 결과. 앞 넷은 collector `WriteResult.Status` 그대로다.
+
+    - `REJECTED`: 장비에 보내지 않았다(collector 거부, 또는 core가 보낼 세션이 없어 보내지 않음).
+    - `INDETERMINATE`: collector가 보낸 뒤 결과를 모른다(모르는 status 값도 이것).
+    - `NO_RESPONSE`: core가 응답을 받지 못했다(대기 시한 초과·세션 종료).
+    """
+
+    REJECTED = "REJECTED"
+    OK = "OK"
+    FAILED = "FAILED"
+    INDETERMINATE = "INDETERMINATE"
+    NO_RESPONSE = "NO_RESPONSE"
+
+
+@dataclass(frozen=True, slots=True)
+class WriteCommand:
+    """collector에 보낼 쓰기 하나(`pb.WriteRequest`). bool은 `value` 0/1이다.
+
+    `request_id`는 쓰기마다 새 값이어야 한다 — collector는 최근 id가 다시 오면 응답하지 않는다.
+    `timeout_ms`(1..60000)는 collector가 처리한 순간부터 장비로 보내기 시작할 수 있는 기한이다.
+    """
+
+    request_id: str
+    tag_id: int
+    value: float
+    plan_rev: int
+    timeout_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class WriteReply:
+    status: WriteReplyStatus
+    error: str = ""
+    # OK일 때 collector가 같은 주소를 다시 읽은 값(bool은 0/1). 재읽기 실패면 None + error.
+    readback: float | None = None
+    readback_ts_ns: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class WritePathState:
+    """쓰기 실행 전 검사(D9)용 수집 쪽 사실 — 한 순간의 동기 스냅샷.
+
+    - `sessions`: 열린 collector 세션 수.
+    - `plan_rev`: core가 적용한 plan rev(아직 없으면 None).
+    - `reported_plan_rev`: 세션이 정확히 하나일 때 그 세션이 마지막으로 보낸 live batch(heartbeat
+      포함)의 plan_rev. collector는 plan 적용을 끝낸 뒤에야 새 rev로 batch를 보낸다(M3c-1 N3).
+    - `device_connected`: 장비가 core 판정으로 CONNECTED인가.
+    - `device_timeout_ms`: 현재 plan의 그 장비 `timeout_ms`(장비가 plan에 없으면 None).
+    """
+
+    sessions: int
+    plan_rev: int | None
+    reported_plan_rev: int | None
+    device_connected: bool
+    device_timeout_ms: int | None
+
+
+class WriteChannel(Protocol):
+    def write_path(self, device_id: str) -> WritePathState: ...
+
+    async def send(self, command: WriteCommand, *, wait_s: float) -> WriteReply:
+        """세션이 정확히 하나일 때만 보낸다(아니면 보내지 않고 REJECTED). `wait_s` 안에 결과가
+        없거나 그 세션이 끝나면 NO_RESPONSE. 예외를 내지 않는다."""
+        ...
