@@ -216,6 +216,22 @@ async def test_checks_changed_while_recording_intent_are_not_sent() -> None:
     assert fx.audit.actions() == [("tag.write", "SENDING"), ("tag.write", "REJECTED")]
 
 
+async def test_edit_lock_taken_while_recording_intent_is_not_sent() -> None:
+    fx = write_fixture()
+    prepared = await fx.service.prepare(OP, SETPOINT, 30.0, "r")
+
+    async def start_update(entry: AuditEntry) -> None:
+        if entry.detail.get("outcome") == "SENDING":
+            fx.project.owner = "updater"  # 의도 행을 쓰는 동안 업데이트가 시작됐다
+
+    fx.audit.during = start_update
+    report = await fx.service.confirm(OP, prepared.write_id)
+    assert report.outcome is WriteOutcome.REJECTED
+    assert report.error == "not sent: checks changed: no_edit_lock"
+    assert fx.channel.sent == []
+    assert fx.audit.actions() == [("tag.write", "SENDING"), ("tag.write", "REJECTED")]
+
+
 def _with_permissive(tag: TagDef) -> dict[str, object]:
     definition = dict(tag.definition)
     if tag.path == SETPOINT:

@@ -11,9 +11,9 @@
   `WriteUnavailableError`, 안 보냄). 결과 행(같은 write_id)·거부 행 `tag.write_rejected`는
   best-effort(실패는 경고 + 카운터). 스위치가 켜진 채 기동하면 `writes.enabled_at_boot` 1행을
   남기고, 그 행이 남기 전에는 보내지 않는다.
-- 검사는 edit-lock 조회 뒤 동기 구간에서 하고, 의도 행을 쓰는 동안 바뀌었을 수 있어 보내기
-  직전에 동기로 한 번 더 한다(그때 실패하면 보내지 않고 결과 행 REJECTED). 재시도는 하지 않는다
-  (ADR-013 5항).
+- 검사는 edit-lock 조회 뒤 동기 구간에서 하고, 의도 행을 쓰는 동안 바뀌었을 수 있어 의도 행
+  커밋 뒤 edit-lock을 다시 읽고(await) 보내기 직전에 동기로 한 번 더 한다(그때 실패하면 보내지
+  않고 결과 행 REJECTED). 재시도는 하지 않는다(ADR-013 5항).
 """
 
 from __future__ import annotations
@@ -356,7 +356,7 @@ class WritesService:
         }
         await self._ensure_boot_recorded()
         await self._record_strict(self._entry(principal, target, {**detail, "outcome": SENDING}))
-        reply = await self._send(principal, pending, target, lock, request_id)
+        reply = await self._send(principal, pending, target, request_id)
         outcome, error = policy.classify(target, pending.value, reply)
         self._outcomes[outcome] += 1
         result: dict[str, object] = {**detail, "outcome": outcome.value}
@@ -387,11 +387,12 @@ class WritesService:
         principal: Principal,
         pending: _Pending,
         target: WriteTarget,
-        lock: _EditLock,
         request_id: str,
     ) -> WriteReply:
-        # 의도 행을 쓰는 동안 허가 조건·품질·세션이 바뀌었을 수 있다 — 보내기 직전에 동기로 다시
-        # 본다(`send`는 첫 await 전에 큐에 넣으므로 이 검사와 전송 사이에 다른 코드가 끼지 않는다).
+        # 의도 행을 쓰는 동안 편집 잠금·허가 조건·품질·세션이 바뀌었을 수 있다 — 편집 잠금을 다시
+        # 읽고, 그 뒤 보내기 직전에 동기로 다시 본다(`send`는 첫 await 전에 큐에 넣으므로 이 검사와
+        # 전송 사이에 다른 코드가 끼지 않는다).
+        lock = await self._edit_lock()
         checks, _, _ = self._evaluate(
             principal, pending.tag_path, pending.value, lock, in_flight=False
         )
