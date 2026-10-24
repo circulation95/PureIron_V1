@@ -137,6 +137,7 @@ PureIron_V1 core의 정본은 `services/core/src/pureiron_core/api/` 와 생성�
   - `historian`: `buffer_rows`(쓰지 못한 버퍼 행, 쓰는 중 포함), `dropped_total`(상한 초과로 버린 행), `written_total`(INSERT에 넘긴 행, 중복 포함), `poisoned_total`(site-db가 행 내용 때문에 거부해 반분 격리 끝에 버린 행, M3b-0), `write_lag_s`(버퍼 최고령 행 대기 시간, 비면 null), `db_ok`(마지막 쓰기 성공), `rejected_total`(이력에서 버린 샘플 = batch `plan_rev`가 현재 rev보다 앞선 것 + 현재 정의에 없는 tag_id의 live 샘플(정의 기준 — plan에서 문제로 빠진 태그는 기록, [data-contracts](data-contracts.md) M3a-3 historian 현황) + int4 범위 밖 tag_id).
 - replay batch는 이력에만 기록되고 `tag.changed.*`를 발행하지 않는다(알람·WS에도 가지 않는다). 이력 조회는 `GET /history`(M3b-2, 아래 절).
   - `alarms`(M3b-2): `active_total`(ACTIVE_UNACKED + ACTIVE_ACKED), `unacked_total`(ACTIVE_UNACKED + CLEARED_UNACKED), `journal_queue_rows`(DB에 아직 못 쓴 저널 행), `dropped_total`(저널 큐 상한 초과로 버린 행). `realtime`: `connections`(인증된 WS 연결 수).
+  - `writes`(M3c-2): `enabled`(현장 쓰기 스위치), `in_flight`(확인·전송 중), `outcomes{confirmed, written, mismatch, failed, rejected, no_response}`(core 기동 후 confirm 결과 수 — confirm 때 검사 거부는 rejected, prepare 거부는 세지 않음), `audit_failures_total`(기록하지 못한 쓰기 감사 행). 켜진 스위치를 밖에서 볼 수 있게 내는 정보 필드다.
   - **무인증 노출 정보**: `/readyz`는 인증 없이 열린다. 위 필드는 모두 집계 수(개수·비율·지연)뿐이고 태그 path·값, 알람 id·내용, 사용자 이름은 싣지 않는다 — 활성·미확인 알람 수의 변화 정도는 LAN에서 보인다는 것을 감수한 설계다(PR #26 리뷰 L-A3).
 
 ## V1 인증·감사 API (`/api/v1`, M3b-1 구현)
@@ -184,6 +185,22 @@ PureIron_V1 core의 정본은 `services/core/src/pureiron_core/api/` 와 생성�
 - **클라이언트 → 서버**: `subscribe{tag_ids}`·`unsubscribe{tag_ids}`(연결당 최대 10,000개) · `pong`. 형식이 어긋난 메시지는 무시한다.
 - **close code**: 1000 정상, 1001 core 정지, 1009 프레임 상한 초과, 1013 연결별 이벤트 큐(1,000) 초과·인증 시 site-db 장애·인증 대기 연결 상한 초과, 4401 인증 실패·세션 무효, 4403 Origin ≠ Host, 4408 pong이 60s 없음.
 - legacy WS와 달리 무인증 연결·`connection_status`·태그 path 구독은 없다(구독은 tag_id).
+
+## V1 쓰기 API (`/api/v1`, M3c-2 구현)
+
+정본은 `services/core/src/pureiron_core/api/writes.py`·`writes/{ports,policy,service}.py`와 생성된 OpenAPI. ADR-013(개정) 가드레일의 core 쪽이다 — 사람 확인 쓰기만 있다(승인된 예약·AI 제안은 범위 밖, 감사 `origin`·`approved_by` 자리만 있음). 화면은 M3c-3.
+
+| 메서드·경로 | 권한 | 동작 |
+|---|---|---|
+| `GET /writes/targets` | viewer+ | `{enabled, confirm_ttl_s, targets:[{tag_id, path, device_id, kind(setpoint·command), role(operator·engineer), data_type, min, max, values, permissive}]}` — 스위치가 꺼져도 선언은 보인다(path 순) |
+| `POST /writes` | operator+ | prepare: `{tag_path, value, reason(1~200자, 공백만 불가)}` → 검사만 하고 **아무것도 보내지 않는다**. 통과 200 `{write_id, tag_id, tag_path, kind, value, current(TagValueOut), checks, expires_at}`, 하나라도 실패 **409** `{detail, write_id: null, checks}` + 감사 `tag.write_rejected`(stage prepare). `value`는 bit 형식(coil·bool)이면 `true/false`, 그 밖은 숫자 — 문자열은 바꾸지 않고 422, NaN·Inf 422 |
+| `POST /writes/{write_id}/confirm` | operator+ | prepare한 **본인만**, `expires_at` 전, **1회용**(원자적으로 꺼낸다 — 두 번째·다른 사용자·모르는 id는 404, 다른 사용자 시도는 꺼내지 않는다). 만료 410(꺼냄). 검사를 다시 해 실패하면 409(`write_id` 포함, stage confirm). 감사 의도 행을 못 쓰면 **503 `audit unavailable; write not sent`**. 보냈으면 200 `{write_id, tag_id, tag_path, kind, value, before, outcome, readback, readback_ts, error}` |
+
+- **실행 전 검사(prepare·confirm 둘 다, 응답 `checks` 순서 고정)**: `writes_enabled`(스위치) → `declared`(쓰기 선언 있음 — 없으면 이 둘만 낸다) → `role`(사용자 역할 ≥ 선언 role) → `value`(형식·setpoint 범위·command 허용 값) → `tag_good`(대상 GOOD) → `device_connected` → `single_collector_session`(세션 정확히 1개) → `plan_reported`(core plan rev = 정의 rev이고 collector가 그 rev로 live batch를 보고함 — plan 적용 중 수신 정지 창 차단) → `send_window`(장비 timeout으로 보내기 기한을 만들 수 있음) → `permissive`(허가 조건 태그 전부 GOOD·참) → `no_edit_lock`(site-db 편집 잠금 없음 — 못 읽으면 실패) → `not_in_flight`(같은 태그 진행 중 쓰기 없음). 실패 항목은 `ok: false`·`detail`(영어 이유).
+- **결과(`outcome`)**: `CONFIRMED` setpoint readback = 쓴 값(float32는 그 형식으로 반올림한 값과 비교) · `WRITTEN` 장비 ack — command의 성공이고, setpoint면 readback을 못 읽은 경우(`error`에 이유 — 확인되지 않음) · `MISMATCH` setpoint readback 불일치 · `FAILED` 확실히 안 써짐(장비 미연결·요청 거부형 예외 응답) · `REJECTED` 보내지 않음(collector 거부, 의도 행 기록 중 검사가 바뀜) · `NO_RESPONSE` **결과 모름, 현장 확인**(core 시한 초과·세션 종료·collector `INDETERMINATE`·모르는 status — 써졌을 수 있다). command는 PLC가 명령 비트를 바로 지울 수 있어 readback을 기록만 한다. 자동 재시도는 없다 — 다시 쓰려면 새 prepare(현재값을 다시 보여 준다).
+- **시한**: confirm은 collector 응답을 최대 `PUREIRON_WRITE_TIMEOUT_S`(기본 10s) 기다린다. collector `WriteRequest.timeout_ms` = 그 값 − 2s(수신 여유) − 2 × 장비 `timeout_ms`(기본 장비면 6000ms, 1000ms 미만이 되면 `send_window` 실패). request_id는 쓰기마다 새 값.
+- **감사**(source `api`, `username` = 실행자, `target` = 태그 path): `tag.write` 두 행 — 의도 행 `detail.outcome = "SENDING"`이 **커밋돼야** 보내고, 결과 행(같은 `write_id`, best-effort)에 결과·`readback`·`readback_ts_ns`·`error`. `detail` 공통 = `{write_id, request_id, tag_path, tag_id, kind, before{value, quality, ts_ns}, target, reason, origin: "human", approved_by}`. `tag.write_rejected`(best-effort) = `{write_id, stage(prepare·confirm), tag_path, tag_id, target, reason, outcome: "REJECTED", failed:[검사 이름], checks}`. 스위치를 켠 채 기동하면 `writes.enabled_at_boot`(`detail{confirm_ttl_s, write_timeout_s}`) 1행 — 이 행이 남기 전에는 보내지 않는다(site-db가 없으면 confirm 503). SENDING만 있고 결과 행이 없는 쓰기는 결과 모름(기록 실패 또는 core 중단)이다. 이력은 `GET /audit?action=tag.write`(engineer+).
+- WS 방송은 하지 않는다 — 값 변화는 기존 `tag_update`로 보인다.
 
 ## 내부 이벤트 버스
 

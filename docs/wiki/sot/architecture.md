@@ -101,7 +101,8 @@ cli.py ──▶ runtime.SiteRuntime.build(settings) ──▶ app.create_app(rt
               │     ├─ AcquisitionService ─ Ingestor · DeviceMonitor
               │     └─ PlanKeeper ─ PgDefinitionsSource(정의 → plan)
               ├─ historian: Historian ─ Recorder ─ HistoryWriter ─ PgRowStore
-              └─ project: PgProjectStateStore(project_state·edit lock)
+              ├─ project: PgProjectStateStore(project_state·edit lock)
+              └─ writes: WritesService ─ policy(선언·검사·판정) ─▶ AcquisitionService(WriteChannel)
 ```
 
 - 전역 싱글톤·`app.state`·service locator가 없다. 모든 객체는 `SiteRuntime.build`에서 만들어 생성자로 넘긴다.
@@ -122,6 +123,7 @@ cli.py ──▶ runtime.SiteRuntime.build(settings) ──▶ app.create_app(rt
 | `auth`·`audit` | 세션 인증·역할, 감사 기록·조회 | M3b-1 |
 | `realtime` | WS `/api/v1/ws` 연결·구독·태그 합치기·알람/장비 방송 | M3b-2 |
 | 장비 상태 | 새 도메인 없이 `acquisition.ports` `DeviceSnapshot`·`DeviceStatusSource`(`DeviceMonitor`) → `GET /devices` | M3b-2 |
+| `writes` | PLC 쓰기: 선언 해석·실행 전 검사·2단계 확인(prepare→confirm)·감사 의도/결과 행·readback 판정. 전송은 `acquisition.ports.WriteChannel` | M3c-2 |
 
 ## Core Domain Model Boundary (SoT)
 
@@ -157,6 +159,31 @@ HistoryWriter ─1s flush, INSERT … ON CONFLICT DO NOTHING─▶ site-db tag_h
   동기 평가 후 저널 행을 상한 큐에 넣고(writer task가 비움) 전이 이벤트를 돌려주며, WS는 연결별 메모리(태그 합치기·
   상한 이벤트 큐)에만 넣는다. 그래서 느린 DB·클라이언트가 ingest 루프를 붙잡지 않는다.
 
+## 쓰기 경로 (ADR-013 개정, M3c)
+
+```text
+web·스크립트 ─POST /writes(prepare)─▶ writes: 검사만(D9) → write_id·만료(TTL 60s)   ← 아무것도 안 보냄
+            ─POST /writes/{id}/confirm─▶ writes.confirm
+   ① 준비 표에서 원자적 pop(본인·TTL) + 같은 태그 진행 중 표 예약(동기)
+   ② edit-lock 조회(site-db, 제한 시간) → 동기 구간에서 D9 검사(TagStore·수집 스냅샷) ── 실패: 409 + tag.write_rejected
+   ③ 감사 의도 행 tag.write(outcome SENDING) 커밋 ── 실패: 503, 안 보냄
+   ④ 동기 재검사 → AcquisitionService.send: 세션 1개로 WriteRequest{request_id 새 값, plan_rev, timeout_ms}
+        collector: 2중 방어 → 장비 poller 큐(poll 사이) → FC5/6/16 → 재읽기 → WriteResult
+   ⑤ 판정(CONFIRMED·WRITTEN·MISMATCH·FAILED·REJECTED·NO_RESPONSE) → 결과 행 tag.write(같은 write_id, best-effort) → 200
+```
+
+- 쓰기는 core만 보낸다. 현장 스위치(`PUREIRON_WRITES_ENABLED`, 기본 꺼짐)가 꺼지면 plan `TagPoint.writable`은 전부 false고
+  모든 쓰기가 검사 `writes_enabled`로 거부된다(collector도 `writable=false`를 거부 — 2중 방어).
+- 쓰기 선언은 고객 project repo의 태그 `write` 블록이 정본이다(`tags.definition`에 원문 저장 — migration 없음). core
+  `writes/policy.py`가 다시 읽고 어긋나면 그 태그만 쓰기 불가로 둔다. plan `writable`은 PlanKeeper가 writes에 물어 정한다.
+- 검사는 TagStore 동기 스냅샷만 보고(Lock discipline), DB(edit-lock)는 그 앞에서 await 한다. 의도 행을 쓰는 동안
+  상태가 바뀔 수 있어 보내기 직전에 동기로 다시 본다.
+- 응답 대기 시한 = `PUREIRON_WRITE_TIMEOUT_S`(W), collector 보내기 기한 `timeout_ms` = W − 2s − 2 × 장비 timeout_ms.
+  core는 collector가 현재 plan_rev로 batch를 보고한 뒤에만 보내므로(plan 적용 중 수신 정지 창 차단), core가
+  NO_RESPONSE를 확정한 뒤에는 그 쓰기가 PLC에 닿지 않는다. 시한 초과·세션 종료·collector `INDETERMINATE`·모르는
+  status는 NO_RESPONSE("결과 모름, 현장 확인")다. 자동 재시도는 없다. 상세 계약은 [api-events](api-events.md) V1 쓰기
+  API 절, collector 쪽은 [data-contracts](data-contracts.md) M3c-1 절.
+
 ## 이벤트 버스 · 잠금 규율
 
 core 내부 `platform/bus.py` `EventBus`(ADR-010 유지 — core 프로세스 내부 범위)만 있다. 서비스 간 pub/sub은 없다.
@@ -173,8 +200,9 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
 - **핸들러 규칙(M3b-2 D8)**: `publish`는 핸들러를 순서대로 await 한다(발행자 = ingest 루프·Ack 뒤). 핸들러는 I/O를
   await 하지 않고 메모리 갱신·큐 적재만 한다. 핸들러가 내야 할 이벤트(알람 전이)는 **돌려주면** 버스가 지금
   이벤트를 모든 구독자에게 전한 뒤 이어서 발행한다(너비 우선, 순서 결정적).
-- 기동 순서: db → historian → alarms(저널 복원·writer) → realtime → acquisition, 정지는 역순(수집 중단 → WS
-  1001 close → 알람 저널 최종 쓰기 → 이력 최종 쓰기 → db).
+- 기동 순서: db → historian → alarms(저널 복원·writer) → realtime → writes(표만, 기동 감사 task) → acquisition,
+  정지는 역순(수집 중단 — 진행 중 쓰기는 세션 종료로 NO_RESPONSE → writes task 정리 → WS 1001 close → 알람 저널 최종
+  쓰기 → 이력 최종 쓰기 → db).
 - **잠금 규율**: TagStore를 바꾸는 메서드는 동기로 끝나고 이벤트 목록을 반환한다. DB I/O와 `publish`는 그 뒤, 바깥에서
   한다(불변 규칙 Lock discipline, [coding-style](coding-style.md) 8절).
 
@@ -217,7 +245,7 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
 | M2 | Updater·bundle-tools·install 번들, r0·r1, Hyper-V VM 실측 30/30 | 완료 |
 | M3a | collector(Modbus·링버퍼·replay), core tags·historian·정의, r2(epoch 3), VM 실측 r1→r2 30/30 | 완료 |
 | M3b | alarms·auth·audit·realtime·devices·history API, web 로그인 + 5화면, r3(epoch 4), VM 실측 r2→r3 30/30 | 완료 |
-| M3c | PLC 쓰기 경로(ADR-013 가드레일) | 예정 |
+| M3c | PLC 쓰기 경로(ADR-013 가드레일): M3c-0 REST Origin/CSRF·로그인 제한, M3c-1 계약·collector 쓰기·simulator, M3c-2 core 쓰기(writes·REST·감사) | 진행 중 — M3c-3 web 쓰기 화면 예정 |
 | M4 | control-api·control-web·fleet·release 파이프라인 | 예정 |
 | M5 | 프로젝트 수명주기(project-tools 완성, apply·드래프트 회수) | 예정 |
 
