@@ -19,6 +19,7 @@ source_modules =
     pureiron_core.project
     pureiron_core.realtime
     pureiron_core.tags
+    pureiron_core.writes
     pureiron_core.platform
 forbidden_modules =
     pureiron_core.runtime
@@ -29,7 +30,7 @@ name = (b) api > domain > platform
 type = layers
 layers =
     pureiron_core.api
-    pureiron_core.acquisition : pureiron_core.alarms : pureiron_core.audit : pureiron_core.auth : pureiron_core.historian : pureiron_core.project : pureiron_core.realtime : pureiron_core.tags
+    pureiron_core.acquisition : pureiron_core.alarms : pureiron_core.audit : pureiron_core.auth : pureiron_core.historian : pureiron_core.project : pureiron_core.realtime : pureiron_core.tags : pureiron_core.writes
     pureiron_core.platform
 
 [importlinter:contract:domain-ports]
@@ -44,6 +45,7 @@ modules =
     pureiron_core.project
     pureiron_core.realtime
     pureiron_core.tags
+    pureiron_core.writes
 ignore_imports =
     pureiron_core.** -> pureiron_core.*.ports
 unmatched_ignore_imports_alerting = none
