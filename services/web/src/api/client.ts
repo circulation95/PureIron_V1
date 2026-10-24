@@ -14,6 +14,13 @@ export type Device = Schemas["DeviceOut"];
 export type History = Schemas["HistoryOut"];
 export type HistorySeries = Schemas["HistorySeries"];
 export type AuditEntry = Schemas["AuditEntryOut"];
+export type WriteTargets = Schemas["WriteTargetsOut"];
+export type WriteTarget = Schemas["WriteTargetOut"];
+export type WritePrepared = Schemas["WritePreparedOut"];
+export type WriteResult = Schemas["WriteResultOut"];
+export type WriteCheck = Schemas["WriteCheckOut"];
+export type CheckName = Schemas["CheckName"];
+export type WriteOutcome = Schemas["WriteOutcome"];
 
 /** 비동기 화면 상태(coding-style 10절). */
 export type Load<T> = { kind: "loading" } | { kind: "ok"; value: T } | { kind: "error"; message: string };
