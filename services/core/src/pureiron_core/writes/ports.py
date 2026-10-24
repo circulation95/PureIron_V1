@@ -94,7 +94,7 @@ class PreparedWrite:
 
 @dataclass(frozen=True, slots=True)
 class WriteReport:
-    """`confirm` 결과. `before`는 보내기 직전 현재값, readback은 collector가 다시 읽은 값."""
+    """`confirm` 결과. `before`는 confirm 검사 시점 현재값, readback은 collector가 다시 읽은 값."""
 
     write_id: str
     target: WriteTarget

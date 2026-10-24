@@ -77,11 +77,13 @@ PLAN = DevicePlan("plc", "modbus_tcp", "h", 502, 1, 20, 500, (point(1),))
 
 
 async def _until(predicate: Callable[[], bool], timeout_s: float = 2.0) -> None:
-    for _ in range(int(timeout_s / 0.005)):
-        if predicate():
-            return
+    # 반복 횟수가 아니라 시각으로 센다: Windows(시계 해상도 15.6ms)에서는 sleep(0.005)가 바로
+    # 깨어나 횟수 기준 2s가 거의 0s가 된다.
+    deadline = time.monotonic() + timeout_s
+    while not predicate():
+        if time.monotonic() >= deadline:
+            raise AssertionError("condition not reached in time")
         await asyncio.sleep(0.005)
-    raise AssertionError("condition not reached in time")
 
 
 async def _blocked_poller(driver: GateDriver) -> tuple[DevicePoller, asyncio.Task[None], int]:
@@ -225,7 +227,7 @@ async def test_abandoned_write_is_never_sent() -> None:
     poller, task, _ = await _blocked_poller(driver)
     try:
         pending = asyncio.create_task(poller.write(point(1), 9.0, deadline_s=_later()))
-        await asyncio.sleep(0.01)
+        await _until(lambda: poller.pending_writes == 1)  # 큐에 들어갔다
         pending.cancel()
         driver.poll_gate.set()
         await _until(lambda: driver.events.count("poll-end") >= 3)

@@ -241,6 +241,7 @@ class AcquisitionService(pb_grpc.AcquisitionServicer):
         )
 
     async def send(self, command: WriteCommand, *, wait_s: float) -> WriteReply:
+        # put_nowait까지 await 금지: 쓰기 서비스의 재검사가 이 첫 await 전 큐 투입에 기댄다.
         if len(self._sessions) != 1:
             return WriteReply(
                 WriteReplyStatus.REJECTED,

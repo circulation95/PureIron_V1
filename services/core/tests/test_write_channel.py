@@ -13,6 +13,7 @@ from collections.abc import Callable, Sequence
 from grpc import aio
 
 from pureiron_core._gen import collector_pb2 as pb
+from pureiron_core.acquisition.plan import build_plan
 from pureiron_core.acquisition.ports import WriteCommand, WriteReply, WriteReplyStatus
 from pureiron_core.acquisition.server import PlanKeeper
 from pureiron_core.project.ports import Definitions
@@ -74,6 +75,24 @@ async def test_send_delivers_request_and_returns_matching_result() -> None:
             )
         )
         assert await sent == WriteReply(WriteReplyStatus.OK, "", 42.5, 123)
+        await collector.close()
+
+
+async def test_send_queues_request_before_its_first_await() -> None:
+    # 쓰기 서비스의 전송 직전 재검사는 `send`가 첫 await 전에 큐에 넣는다는 데 기댄다. eager로
+    # 시작한 `send` 바로 뒤(양보 없이) 넣은 plan보다 쓰기가 먼저 나가야 한다.
+    async with start_core() as core, aio.insecure_channel(core.target) as channel:
+        collector = await _connected(core, channel)
+        built = build_plan(sample_definitions(rev=3))
+        loop = asyncio.get_running_loop()
+        sent = asyncio.eager_task_factory(loop, core.service.send(_command(), wait_s=5.0))
+        await core.service.set_plan(built.plan, built.keys)  # 본문에 await가 없어 양보하지 않는다
+        first, second = await collector.read(), await collector.read()
+        assert (first.WhichOneof("msg"), second.WhichOneof("msg")) == ("write", "plan")
+        collector.send(
+            pb.CollectorMsg(write_result=pb.WriteResult(request_id="w-1", status=pb.WriteResult.OK))
+        )
+        assert (await sent).status is WriteReplyStatus.OK
         await collector.close()
 
 
