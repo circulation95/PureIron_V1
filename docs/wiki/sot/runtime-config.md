@@ -147,6 +147,9 @@ PureIron 런타임 설정의 정본은 `backend/src/pureiron/config.py`의 `Sett
 | `PUREIRON_AUTH_SESSION_ABSOLUTE_S` | core | `604800`(7 d) | 세션 절대 만료(로그인 기준, 사용 중이어도 끝남). 세션 쿠키 `Max-Age`도 이 값 |
 | `PUREIRON_AUTH_COOKIE_SECURE` | core | `false` | 세션 쿠키 `Secure` 속성(`true/false`, `1/0`, `yes/no`, `on/off`). 현장 web은 http라 기본 false — true면 브라우저가 http로는 쿠키를 보내지 않는다 |
 | `PUREIRON_REALTIME_BATCH_MS` | core | `250` | WS `tag_update` 합치기 주기(ms, 양의 정수). 구독한 태그의 변화는 이 주기마다 태그별 최신값만 보낸다(M3b-2). 알람·장비 이벤트는 주기와 무관하게 즉시 |
+| `PUREIRON_WRITES_ENABLED` | core·compose | `false` | 현장 PLC 쓰기 스위치(ADR-013 2항, M3c-2). 꺼지면 plan `writable` 전부 false·모든 쓰기 거부. 켜고 기동하면 감사 `writes.enabled_at_boot` 1행 + `/readyz.writes.enabled`. compose는 `${PUREIRON_WRITES_ENABLED:-false}`로 core에 넘긴다 |
+| `PUREIRON_WRITE_CONFIRM_TTL_S` | core | `60` | 쓰기 prepare 뒤 confirm까지 허용 시간(초, 최대 3600) |
+| `PUREIRON_WRITE_TIMEOUT_S` | core | `10` | confirm이 collector 쓰기 결과를 기다리는 시한(초, 최대 60 = collector `timeout_ms` 상한). 넘으면 `NO_RESPONSE`. collector 보내기 기한 = 이 값 − 2s − 2 × 장비 `timeout_ms` |
 | `PUREIRON_CORE_GRPC` | collector | `127.0.0.1:50051` | core gRPC 주소(compose: `core:50051`) |
 | `PUREIRON_COLLECTOR_HEARTBEAT_S` | collector | `1.0` | 빈 batch heartbeat 주기 |
 | `PUREIRON_COLLECTOR_RECONNECT_INITIAL_S` / `_MAX_S` | collector | `0.5` / `5` | 재연결 backoff. 상한은 링 보관 창(60 s)보다 훨씬 작아야 한다 — 0.5 s부터 두 배씩 30 s까지 늘면 35 s 단절 뒤 다음 시도가 ~66 s에 와서 분리 구간 앞부분이 링 창 밖으로 밀려 버려진다(M3a-3). LAN 재접속 비용은 작다 |

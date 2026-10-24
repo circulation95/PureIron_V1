@@ -82,6 +82,7 @@ class Core:
     devices: DeviceMonitor
     history: RecordingHistory
     ingestor: Ingestor
+    service: AcquisitionService
     server: AcquisitionServer
     events: list[Event] = field(default_factory=list[Event])
 
@@ -103,7 +104,7 @@ async def start_core(
     service = AcquisitionService(bus, tags, devices, ingestor, session_silence_s=session_silence_s)
     keeper = PlanKeeper(source, service.set_plan, refresh_s=0.05)
     server = AcquisitionServer(service, keeper, host="127.0.0.1", port=0, watchdog_interval_s=0.05)
-    built = Core(source, tags, devices, history, ingestor, server)
+    built = Core(source, tags, devices, history, ingestor, service, server)
 
     async def record(event: Event) -> None:
         built.events.append(event)

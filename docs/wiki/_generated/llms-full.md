@@ -342,6 +342,8 @@ PureIron은 **PLC 로직(프로그램)을 수정·다운로드하지 않는다.*
 - 영업 문구는 "PLC 로직은 바꾸지 않는다, 기본은 읽기 전용, 쓰기는 고객이 승인한 항목만"으로 정확히 바꿔야 한다. "읽기만 한다"는 첫 PoC 범위의 설명으로만 쓴다.
 - 쓰기 구현 시점은 Foundation 플랜의 별도 마일스톤에서 정한다. 그 전까지 collector는 `WriteRequest`를 받으면 `REJECTED`로 답한다(미구현).
 
+**구현 상태 (2026-10-24, M3c-2)**: 사람 확인 경로(3항 첫째)가 구현됐다 — 선언(1항)은 project 스키마 `write` 블록(M3c-1), 현장 스위치(2항)는 core env `PUREIRON_WRITES_ENABLED`(기본 꺼짐, 기동 감사 1행), 2단계 확인은 setpoint·command 모두 서버 측 prepare→confirm(같은 사용자·TTL·1회용), 실행 전 검사(4항)·readback 판정·무재시도(5항)·감사 의도/결과 행(6항)은 core `writes` 도메인이다. 예약 실행·AI 제안(3항 둘째·셋째)은 계약 자리만 있다. **7항과 결과 분류의 정합**: "응답이 없거나 상태 값이 빠진 경우는 거부로 읽는다"는 그 쓰기를 **성공으로 읽지 않고 자동으로 다시 보내지 않는다**는 뜻으로 지킨다 — 상태 값이 빠진 응답은 proto 기본값 `REJECTED`(0)라 그대로 거부다. 다만 응답 없음(시한 초과·세션 종료)과 collector `INDETERMINATE`는 이미 PLC에 닿았을 수 있어 화면·감사에 `REJECTED`(= 안 감)로 적지 않고 `NO_RESPONSE`("결과 모름, 현장 확인")로 적는다 — 안 갔다고 적으면 운전자가 다시 눌러 이중 쓰기가 된다. core는 collector가 현재 plan_rev로 batch를 보고한 뒤에만 보내고 응답 대기 시한 ≥ `timeout_ms` + 2 × 장비 timeout + 여유로 두므로, (여유 2s ≥ core→collector 수신 지연일 때) core가 응답 없음을 확정한 뒤에는 그 쓰기가 PLC에 닿지 않는다(늦게 써지는 일이 없다). 상세는 [api-events](../sot/api-events.md) V1 쓰기 API 절.
+
 **이전 결정 (2026-10-04 이전)**: "PureIron v1은 기존 PLC 제어 로직을 대체하지 않는다. 관제, 알람, 이력, 트렌드, 작업지시, Agent 보조 계층을 얹는다." Foundation 재설계 시점에는 `WriteRequest`를 계약만 두고 비활성으로 유지했다. 이번 개정은 "로직 불변"은 유지하고 "쓰기 전면 금지"만 가드레일 아래 허용으로 바꾼다.
 
 **관련 SOT**: [product](../sot/product.md), [architecture](../sot/architecture.md), [mes-schedule](../sot/mes-schedule.md), [agent-rules](../sot/agent-rules.md#불변-규칙)
@@ -1501,6 +1503,7 @@ PureIron_V1 core의 정본은 `services/core/src/pureiron_core/api/` 와 생성�
   - `historian`: `buffer_rows`(쓰지 못한 버퍼 행, 쓰는 중 포함), `dropped_total`(상한 초과로 버린 행), `written_total`(INSERT에 넘긴 행, 중복 포함), `poisoned_total`(site-db가 행 내용 때문에 거부해 반분 격리 끝에 버린 행, M3b-0), `write_lag_s`(버퍼 최고령 행 대기 시간, 비면 null), `db_ok`(마지막 쓰기 성공), `rejected_total`(이력에서 버린 샘플 = batch `plan_rev`가 현재 rev보다 앞선 것 + 현재 정의에 없는 tag_id의 live 샘플(정의 기준 — plan에서 문제로 빠진 태그는 기록, [data-contracts](data-contracts.md) M3a-3 historian 현황) + int4 범위 밖 tag_id).
 - replay batch는 이력에만 기록되고 `tag.changed.*`를 발행하지 않는다(알람·WS에도 가지 않는다). 이력 조회는 `GET /history`(M3b-2, 아래 절).
   - `alarms`(M3b-2): `active_total`(ACTIVE_UNACKED + ACTIVE_ACKED), `unacked_total`(ACTIVE_UNACKED + CLEARED_UNACKED), `journal_queue_rows`(DB에 아직 못 쓴 저널 행), `dropped_total`(저널 큐 상한 초과로 버린 행). `realtime`: `connections`(인증된 WS 연결 수).
+  - `writes`(M3c-2): `enabled`(현장 쓰기 스위치), `in_flight`(확인·전송 중), `outcomes{confirmed, written, mismatch, failed, rejected, no_response}`(core 기동 후 confirm 결과 수 — confirm 때 검사 거부는 rejected, prepare 거부는 세지 않음), `audit_failures_total`(기록하지 못한 쓰기 감사 행). 켜진 스위치를 밖에서 볼 수 있게 내는 정보 필드다.
   - **무인증 노출 정보**: `/readyz`는 인증 없이 열린다. 위 필드는 모두 집계 수(개수·비율·지연)뿐이고 태그 path·값, 알람 id·내용, 사용자 이름은 싣지 않는다 — 활성·미확인 알람 수의 변화 정도는 LAN에서 보인다는 것을 감수한 설계다(PR #26 리뷰 L-A3).
 
 ## V1 인증·감사 API (`/api/v1`, M3b-1 구현)
@@ -1548,6 +1551,22 @@ PureIron_V1 core의 정본은 `services/core/src/pureiron_core/api/` 와 생성�
 - **클라이언트 → 서버**: `subscribe{tag_ids}`·`unsubscribe{tag_ids}`(연결당 최대 10,000개) · `pong`. 형식이 어긋난 메시지는 무시한다.
 - **close code**: 1000 정상, 1001 core 정지, 1009 프레임 상한 초과, 1013 연결별 이벤트 큐(1,000) 초과·인증 시 site-db 장애·인증 대기 연결 상한 초과, 4401 인증 실패·세션 무효, 4403 Origin ≠ Host, 4408 pong이 60s 없음.
 - legacy WS와 달리 무인증 연결·`connection_status`·태그 path 구독은 없다(구독은 tag_id).
+
+## V1 쓰기 API (`/api/v1`, M3c-2 구현)
+
+정본은 `services/core/src/pureiron_core/api/writes.py`·`writes/{ports,policy,service}.py`와 생성된 OpenAPI. ADR-013(개정) 가드레일의 core 쪽이다 — 사람 확인 쓰기만 있다(승인된 예약·AI 제안은 범위 밖, 감사 `origin`·`approved_by` 자리만 있음). 화면은 M3c-3.
+
+| 메서드·경로 | 권한 | 동작 |
+|---|---|---|
+| `GET /writes/targets` | viewer+ | `{enabled, confirm_ttl_s, targets:[{tag_id, path, device_id, kind(setpoint·command), role(operator·engineer), data_type, min, max, values, permissive}]}` — 스위치가 꺼져도 선언은 보인다(path 순) |
+| `POST /writes` | operator+ | prepare: `{tag_path, value, reason(1~200자, 공백만 불가)}` → 검사만 하고 **아무것도 보내지 않는다**. 통과 200 `{write_id, tag_id, tag_path, kind, value, current(TagValueOut), checks, expires_at}`, 하나라도 실패 **409** `{detail, write_id: null, checks}` + 감사 `tag.write_rejected`(stage prepare). `value`는 bit 형식(coil·bool)이면 `true/false`, 그 밖은 숫자 — 문자열은 바꾸지 않고 422, NaN·Inf 422 |
+| `POST /writes/{write_id}/confirm` | operator+ | prepare한 **본인만**, `expires_at` 전, **1회용**(원자적으로 꺼낸다 — 두 번째·다른 사용자·모르는 id는 404, 다른 사용자 시도는 꺼내지 않는다). 만료 410(꺼냄). 검사를 다시 해 실패하면 409(`write_id` 포함, stage confirm). 감사 의도 행을 못 쓰면 **503 `audit unavailable; write not sent`**. 보냈으면 200 `{write_id, tag_id, tag_path, kind, value, before, outcome, readback, readback_ts, error}` |
+
+- **실행 전 검사(prepare·confirm 둘 다, 응답 `checks` 순서 고정)**: `writes_enabled`(스위치) → `declared`(쓰기 선언 있음 — 없으면 이 둘만 낸다) → `role`(사용자 역할 ≥ 선언 role) → `value`(형식·setpoint 범위·command 허용 값) → `tag_good`(대상 GOOD) → `device_connected` → `single_collector_session`(세션 정확히 1개) → `plan_reported`(core plan rev = 정의 rev이고 collector가 그 rev로 live batch를 보고함 — plan 적용 중 수신 정지 창 차단) → `send_window`(장비 timeout으로 보내기 기한을 만들 수 있음) → `permissive`(허가 조건 태그 전부 GOOD·참) → `no_edit_lock`(site-db 편집 잠금 없음 — 못 읽으면 실패) → `not_in_flight`(같은 태그 진행 중 쓰기 없음). 실패 항목은 `ok: false`·`detail`(영어 이유).
+- **결과(`outcome`)**: `CONFIRMED` setpoint readback = 쓴 값(float32는 그 형식으로 반올림한 값과 비교) · `WRITTEN` 장비 ack — command의 성공이고, setpoint면 readback을 못 읽은 경우(`error`에 이유 — 확인되지 않음) · `MISMATCH` setpoint readback 불일치 · `FAILED` 확실히 안 써짐(장비 미연결·요청 거부형 예외 응답) · `REJECTED` 보내지 않음(collector 거부, 의도 행 기록 중 검사가 바뀜 — 편집 잠금은 의도 행 커밋 뒤 다시 읽는다 — 또는 그 사이 쓰기 선언이 바뀜 `definitions changed`) · `NO_RESPONSE` **결과 모름, 현장 확인**(core 시한 초과·세션 종료·collector `INDETERMINATE`·모르는 status — 써졌을 수 있다). command는 PLC가 명령 비트를 바로 지울 수 있어 readback을 기록만 한다. 자동 재시도는 없다 — 다시 쓰려면 새 prepare(현재값을 다시 보여 준다).
+- **시한**: confirm은 collector 응답을 최대 `PUREIRON_WRITE_TIMEOUT_S`(기본 10s) 기다린다. collector `WriteRequest.timeout_ms` = 그 값 − 2s(수신 여유) − 2 × 장비 `timeout_ms`(기본 장비면 6000ms, 1000ms 미만이 되면 `send_window` 실패). request_id는 쓰기마다 새 값.
+- **감사**(source `api`, `username` = 실행자, `target` = 태그 path): `tag.write` 두 행 — 의도 행 `detail.outcome = "SENDING"`이 **커밋돼야** 보내고, 결과 행(같은 `write_id`, best-effort)에 결과·`readback`·`readback_ts_ns`·`error`(readback이 NaN/Inf면 `readback`은 null, 원래 값은 문자열 `readback_raw`). `detail` 공통 = `{write_id, request_id, tag_path, tag_id, kind, before{value, quality, ts_ns}, target, reason, origin: "human", approved_by}`. `tag.write_rejected`(best-effort) = `{write_id, stage(prepare·confirm), tag_path, tag_id, target, reason, outcome: "REJECTED", failed:[검사 이름], checks}`. 스위치를 켠 채 기동하면 `writes.enabled_at_boot`(`detail{confirm_ttl_s, write_timeout_s}`) 1행 — 이 행이 남기 전에는 보내지 않는다(site-db가 없으면 confirm 503). SENDING만 있고 결과 행이 없는 쓰기는 결과 모름(기록 실패 또는 core 중단)이다. 이력은 `GET /audit?action=tag.write`(engineer+).
+- WS 방송은 하지 않는다 — 값 변화는 기존 `tag_update`로 보인다.
 
 ## 내부 이벤트 버스
 
@@ -1652,7 +1671,8 @@ cli.py ──▶ runtime.SiteRuntime.build(settings) ──▶ app.create_app(rt
               │     ├─ AcquisitionService ─ Ingestor · DeviceMonitor
               │     └─ PlanKeeper ─ PgDefinitionsSource(정의 → plan)
               ├─ historian: Historian ─ Recorder ─ HistoryWriter ─ PgRowStore
-              └─ project: PgProjectStateStore(project_state·edit lock)
+              ├─ project: PgProjectStateStore(project_state·edit lock)
+              └─ writes: WritesService ─ policy(선언·검사·판정) ─▶ AcquisitionService(WriteChannel)
 ```
 
 - 전역 싱글톤·`app.state`·service locator가 없다. 모든 객체는 `SiteRuntime.build`에서 만들어 생성자로 넘긴다.
@@ -1673,6 +1693,7 @@ cli.py ──▶ runtime.SiteRuntime.build(settings) ──▶ app.create_app(rt
 | `auth`·`audit` | 세션 인증·역할, 감사 기록·조회 | M3b-1 |
 | `realtime` | WS `/api/v1/ws` 연결·구독·태그 합치기·알람/장비 방송 | M3b-2 |
 | 장비 상태 | 새 도메인 없이 `acquisition.ports` `DeviceSnapshot`·`DeviceStatusSource`(`DeviceMonitor`) → `GET /devices` | M3b-2 |
+| `writes` | PLC 쓰기: 선언 해석·실행 전 검사·2단계 확인(prepare→confirm)·감사 의도/결과 행·readback 판정. 전송은 `acquisition.ports.WriteChannel` | M3c-2 |
 
 ## Core Domain Model Boundary (SoT)
 
@@ -1708,6 +1729,31 @@ HistoryWriter ─1s flush, INSERT … ON CONFLICT DO NOTHING─▶ site-db tag_h
   동기 평가 후 저널 행을 상한 큐에 넣고(writer task가 비움) 전이 이벤트를 돌려주며, WS는 연결별 메모리(태그 합치기·
   상한 이벤트 큐)에만 넣는다. 그래서 느린 DB·클라이언트가 ingest 루프를 붙잡지 않는다.
 
+## 쓰기 경로 (ADR-013 개정, M3c)
+
+```text
+web·스크립트 ─POST /writes(prepare)─▶ writes: 검사만(D9) → write_id·만료(TTL 60s)   ← 아무것도 안 보냄
+            ─POST /writes/{id}/confirm─▶ writes.confirm
+   ① 준비 표에서 원자적 pop(본인·TTL) + 같은 태그 진행 중 표 예약(동기)
+   ② edit-lock 조회(site-db, 제한 시간) → 동기 구간에서 D9 검사(TagStore·수집 스냅샷) ── 실패: 409 + tag.write_rejected
+   ③ 감사 의도 행 tag.write(outcome SENDING) 커밋 ── 실패: 503, 안 보냄
+   ④ 동기 재검사 → AcquisitionService.send: 세션 1개로 WriteRequest{request_id 새 값, plan_rev, timeout_ms}
+        collector: 2중 방어 → 장비 poller 큐(poll 사이) → FC5/6/16 → 재읽기 → WriteResult
+   ⑤ 판정(CONFIRMED·WRITTEN·MISMATCH·FAILED·REJECTED·NO_RESPONSE) → 결과 행 tag.write(같은 write_id, best-effort) → 200
+```
+
+- 쓰기는 core만 보낸다. 현장 스위치(`PUREIRON_WRITES_ENABLED`, 기본 꺼짐)가 꺼지면 plan `TagPoint.writable`은 전부 false고
+  모든 쓰기가 검사 `writes_enabled`로 거부된다(collector도 `writable=false`를 거부 — 2중 방어).
+- 쓰기 선언은 고객 project repo의 태그 `write` 블록이 정본이다(`tags.definition`에 원문 저장 — migration 없음). core
+  `writes/policy.py`가 다시 읽고 어긋나면 그 태그만 쓰기 불가로 둔다. plan `writable`은 PlanKeeper가 writes에 물어 정한다.
+- 검사는 TagStore 동기 스냅샷만 보고(Lock discipline), DB(edit-lock)는 그 앞에서 await 한다. 의도 행을 쓰는 동안
+  상태가 바뀔 수 있어 보내기 직전에 동기로 다시 본다.
+- 응답 대기 시한 = `PUREIRON_WRITE_TIMEOUT_S`(W), collector 보내기 기한 `timeout_ms` = W − 2s − 2 × 장비 timeout_ms.
+  core는 collector가 현재 plan_rev로 batch를 보고한 뒤에만 보내므로(plan 적용 중 수신 정지 창 차단), core가
+  NO_RESPONSE를 확정한 뒤에는 그 쓰기가 PLC에 닿지 않는다. 시한 초과·세션 종료·collector `INDETERMINATE`·모르는
+  status는 NO_RESPONSE("결과 모름, 현장 확인")다. 자동 재시도는 없다. 상세 계약은 [api-events](api-events.md) V1 쓰기
+  API 절, collector 쪽은 [data-contracts](data-contracts.md) M3c-1 절.
+
 ## 이벤트 버스 · 잠금 규율
 
 core 내부 `platform/bus.py` `EventBus`(ADR-010 유지 — core 프로세스 내부 범위)만 있다. 서비스 간 pub/sub은 없다.
@@ -1724,8 +1770,9 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
 - **핸들러 규칙(M3b-2 D8)**: `publish`는 핸들러를 순서대로 await 한다(발행자 = ingest 루프·Ack 뒤). 핸들러는 I/O를
   await 하지 않고 메모리 갱신·큐 적재만 한다. 핸들러가 내야 할 이벤트(알람 전이)는 **돌려주면** 버스가 지금
   이벤트를 모든 구독자에게 전한 뒤 이어서 발행한다(너비 우선, 순서 결정적).
-- 기동 순서: db → historian → alarms(저널 복원·writer) → realtime → acquisition, 정지는 역순(수집 중단 → WS
-  1001 close → 알람 저널 최종 쓰기 → 이력 최종 쓰기 → db).
+- 기동 순서: db → historian → alarms(저널 복원·writer) → realtime → writes(표만, 기동 감사 task) → acquisition,
+  정지는 역순(수집 중단 — 진행 중 쓰기는 세션 종료로 NO_RESPONSE → writes task 정리 → WS 1001 close → 알람 저널 최종
+  쓰기 → 이력 최종 쓰기 → db).
 - **잠금 규율**: TagStore를 바꾸는 메서드는 동기로 끝나고 이벤트 목록을 반환한다. DB I/O와 `publish`는 그 뒤, 바깥에서
   한다(불변 규칙 Lock discipline, [coding-style](coding-style.md) 8절).
 
@@ -1768,7 +1815,7 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
 | M2 | Updater·bundle-tools·install 번들, r0·r1, Hyper-V VM 실측 30/30 | 완료 |
 | M3a | collector(Modbus·링버퍼·replay), core tags·historian·정의, r2(epoch 3), VM 실측 r1→r2 30/30 | 완료 |
 | M3b | alarms·auth·audit·realtime·devices·history API, web 로그인 + 5화면, r3(epoch 4), VM 실측 r2→r3 30/30 | 완료 |
-| M3c | PLC 쓰기 경로(ADR-013 가드레일) | 예정 |
+| M3c | PLC 쓰기 경로(ADR-013 가드레일): M3c-0 REST Origin/CSRF·로그인 제한, M3c-1 계약·collector 쓰기·simulator, M3c-2 core 쓰기(writes·REST·감사) | 진행 중 — M3c-3 web 쓰기 화면 예정 |
 | M4 | control-api·control-web·fleet·release 파이프라인 | 예정 |
 | M5 | 프로젝트 수명주기(project-tools 완성, apply·드래프트 회수) | 예정 |
 
@@ -1853,7 +1900,7 @@ services/core/src/pureiron_core/
   cli.py          진입점(pureiron-core). runtime·app을 import하는 곳
   cli_<명령>.py    진입점 하위 명령(예: cli_users.py). cli.py가 등록만 한다 — runtime·app은 import하지 않는다
   api/            HTTP 계층: build_<x>_router(deps) + pydantic 응답 모델
-  <domain>/       acquisition · historian · project · tags (M3b: alarms · auth · audit · realtime · devices)
+  <domain>/       acquisition · historian · project · tags (M3b: alarms · auth · audit · realtime · devices, M3c: writes)
     ports.py      다른 모듈이 기대도 되는 유일한 표면: 상태 dataclass · Protocol · 공개 예외
     service.py    수명주기(start/stop)와 status 집계 — 필요할 때만
     <역할>.py      구현: writer · recorder · reader · store · ingest …
@@ -2375,7 +2422,7 @@ window: { recurring: { tz: Asia/Seoul, days: [sat, sun], start: "02:00", end: "0
 
 ### V1 구현 현황 (M3c-1 쓰기 계약·collector, 2026-10-18)
 
-ADR-013(개정) 쓰기 경로의 계약과 collector 실행부다. core 쓰기 서비스·REST·감사(현장 스위치 `PUREIRON_WRITES_ENABLED`, 2단계 확인, 실행 전 검사, readback 판정)는 M3c-2 — 그 전까지 core는 `WriteRequest`를 보내지 않고 plan의 `writable`은 전부 false다. migration 없음(쓰기 선언은 `tags.definition jsonb` 원문에 같이 저장된다) → epoch 그대로.
+ADR-013(개정) 쓰기 경로의 계약과 collector 실행부다. core 쓰기 서비스·REST·감사(현장 스위치 `PUREIRON_WRITES_ENABLED`, 2단계 확인, 실행 전 검사, readback 판정)는 M3c-2([api-events](api-events.md) V1 쓰기 API 절) — 스위치가 꺼진 현장(기본)에서는 core가 `WriteRequest`를 보내지 않고 plan의 `writable`은 전부 false다. migration 없음(쓰기 선언은 `tags.definition jsonb` 원문에 같이 저장된다) → epoch 그대로.
 
 - **쓰기 선언(project 스키마 `$defs/tagWrite`, 태그의 선택 필드 `write`)** — 없으면 읽기 전용.
 
@@ -2408,7 +2455,7 @@ ADR-013(개정) 쓰기 경로의 계약과 collector 실행부다. core 쓰기 �
 
   OK면 같은 주소를 바로 다시 읽은 값(decode 결과, bool은 0/1)과 시각을 `readback`·`readback_ts_unix_ns`에 싣는다. 재읽기가 예외 응답·통신 실패·도중 취소로 끝나면 OK 그대로 둘 다 비우고 `error`에 이유를 남긴다(이미 써졌으므로 거부·실패로 바꾸지 않는다). 판정(설정값 = readback 일치, 명령 = 장비 응답 기준)은 core(M3c-2)가 한다 — float32는 선언 형식으로 인코딩→디코딩한 값(가장 가까운 float32)과 비교해야 거짓 불일치가 없다. core는 `INDETERMINATE`와 모르는 status를 응답 없음(결과 모름)으로 다룬다.
 - **기한(`timeout_ms`)과 응답 없음의 성질**: collector는 쓰기 메시지를 **처리하는 순간** `deadline = monotonic + timeout_ms`를 잡고(수신 시각이 아니다), 장비로 보내기 **직전**에 다시 확인해 지났으면 보내지 않는다(REJECTED). 보낸 쓰기는 쓰기(장비 `timeout_ms`)와 재읽기(장비 `timeout_ms`) 안에 끝난다. 처리 시점은 수신보다 늦을 수 있다 — plan 적용 중에는 collector 수신 루프가 최대 `STOP_TIMEOUT_S`(5 s, poller 정지 대기) 멈춘다. 그래서 **core가 응답 없음을 확정한 뒤에는 그 쓰기가 PLC에 닿지 않는다**는 성질은 다음 두 조건에서 성립한다: (1) core는 collector가 현재 plan_rev의 batch를 보낸 뒤에만 쓰기를 보낸다(= plan 적용이 끝났다, M3c-2 D9), (2) core 응답 대기 시한 ≥ `timeout_ms + 2 × 장비 timeout_ms + 여유`, 여유 ≥ 수신 지연. 그러면 ADR-013 7항 "응답 없음 = 거부로 읽음"이 실제로도 성립한다. 세션이 끝나면 아직 보내지 않은 쓰기는 취소돼 보내지 않는다.
-- **collector 실행**: 쓰기 함수는 coil FC5, holding 1워드 FC6, 2·4워드 FC16뿐이다(PLC 로직 불변 — `ModbusClient` 표면 고정 테스트). 값은 `encode()`(= `decode()`의 역, byte·word order 포함). 장비별 `DevicePoller`가 쓰기 큐를 **poll과 poll 사이**에 같은 task·같은 연결로 하나씩 실행해 한 장비에 동시 트랜잭션이 없다. 자동 재시도 없음. 결과를 기다리는 동안에도 세션은 Ack·plan을 계속 읽는다.
+- **collector 실행**: 쓰기 함수는 coil FC5, holding 1워드 FC6, 2·4워드 FC16뿐이다(PLC 로직 불변 — `ModbusClient` 표면 고정 테스트). 값은 `encode()`(= `decode()`의 역, byte·word order 포함). 장비별 `DevicePoller`가 쓰기 큐를 **poll과 poll 사이**에 같은 task·같은 연결로 하나씩 실행해 한 장비에 동시 트랜잭션이 없다. 자동 재시도 없음. 결과를 기다리는 동안에도 세션은 Ack·plan을 계속 읽는다. 같은 plan_rev의 plan이 다시 오면(재연결) poller는 그대로 두고 쓰기 표(tag_id → 주소·`writable`)만 새 plan으로 바꾼다 — 현장 스위치는 정의 rev를 바꾸지 않으므로 스위치를 바꿔 다시 띄운 core의 `writable`이 반영돼야 한다(M3c-2).
 - **dev 시뮬레이터(`SIM_MEMORY`, 기본 100)**: holding N..N+M-1(N = `SIM_REGISTERS`)과 coil 0..max(N, M)-1은 사인파로 덮어쓰지 않는 메모리. 거부 시험 주소: holding N+M-1 쓰기 → 예외 응답(ILLEGAL DATA VALUE), N+M-2 쓰기 → 정상 응답하지만 값 유지(readback 불일치). compose 기본값이면 메모리 holding 100..199, 예외 199, 무시 198. 허가 조건 coil은 시험 하네스가 직접 바꾼다.
 
 ---
@@ -3208,6 +3255,9 @@ PureIron 런타임 설정의 정본은 `backend/src/pureiron/config.py`의 `Sett
 | `PUREIRON_AUTH_SESSION_ABSOLUTE_S` | core | `604800`(7 d) | 세션 절대 만료(로그인 기준, 사용 중이어도 끝남). 세션 쿠키 `Max-Age`도 이 값 |
 | `PUREIRON_AUTH_COOKIE_SECURE` | core | `false` | 세션 쿠키 `Secure` 속성(`true/false`, `1/0`, `yes/no`, `on/off`). 현장 web은 http라 기본 false — true면 브라우저가 http로는 쿠키를 보내지 않는다 |
 | `PUREIRON_REALTIME_BATCH_MS` | core | `250` | WS `tag_update` 합치기 주기(ms, 양의 정수). 구독한 태그의 변화는 이 주기마다 태그별 최신값만 보낸다(M3b-2). 알람·장비 이벤트는 주기와 무관하게 즉시 |
+| `PUREIRON_WRITES_ENABLED` | core·compose | `false` | 현장 PLC 쓰기 스위치(ADR-013 2항, M3c-2). 꺼지면 plan `writable` 전부 false·모든 쓰기 거부. 켜고 기동하면 감사 `writes.enabled_at_boot` 1행 + `/readyz.writes.enabled`. compose는 `${PUREIRON_WRITES_ENABLED:-false}`로 core에 넘긴다 |
+| `PUREIRON_WRITE_CONFIRM_TTL_S` | core | `60` | 쓰기 prepare 뒤 confirm까지 허용 시간(초, 최대 3600) |
+| `PUREIRON_WRITE_TIMEOUT_S` | core | `10` | confirm이 collector 쓰기 결과를 기다리는 시한(초, 최대 60 = collector `timeout_ms` 상한). 넘으면 `NO_RESPONSE`. collector 보내기 기한 = 이 값 − 2s − 2 × 장비 `timeout_ms` |
 | `PUREIRON_CORE_GRPC` | collector | `127.0.0.1:50051` | core gRPC 주소(compose: `core:50051`) |
 | `PUREIRON_COLLECTOR_HEARTBEAT_S` | collector | `1.0` | 빈 batch heartbeat 주기 |
 | `PUREIRON_COLLECTOR_RECONNECT_INITIAL_S` / `_MAX_S` | collector | `0.5` / `5` | 재연결 backoff. 상한은 링 보관 창(60 s)보다 훨씬 작아야 한다 — 0.5 s부터 두 배씩 30 s까지 늘면 35 s 단절 뒤 다음 시도가 ~66 s에 와서 분리 구간 앞부분이 링 창 밖으로 밀려 버려진다(M3a-3). LAN 재접속 비용은 작다 |

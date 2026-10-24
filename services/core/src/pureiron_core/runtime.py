@@ -29,6 +29,7 @@ from pureiron_core.project.stub import PgProjectStateStore
 from pureiron_core.realtime.service import RealtimeService
 from pureiron_core.settings import Settings, read_secret
 from pureiron_core.tags.store import TagStore
+from pureiron_core.writes.service import WritesService
 
 
 @dataclass(slots=True)
@@ -50,6 +51,7 @@ class SiteRuntime:
     devices: DeviceMonitor
     realtime: RealtimeService
     history: PgHistoryReader
+    writes: WritesService
 
     @classmethod
     def build(cls, settings: Settings) -> SiteRuntime:
@@ -71,6 +73,16 @@ class SiteRuntime:
         service = AcquisitionService(
             bus, tags, devices, ingestor, session_silence_s=settings.session_silence_s
         )
+        project = PgProjectStateStore(db)
+        writes = WritesService(
+            service,
+            tags,
+            project,
+            audit,
+            enabled=settings.writes_enabled,
+            confirm_ttl_s=settings.write_confirm_ttl_s,
+            write_timeout_s=settings.write_timeout_s,
+        )
         auth = AuthService(
             PgUserStore(db),
             PgSessionStore(db),
@@ -81,7 +93,12 @@ class SiteRuntime:
             PgDefinitionsSource(db),
             service.set_plan,
             refresh_s=settings.plan_refresh_s,
-            on_definitions=(recorder.set_definitions, alarms.set_definitions),
+            on_definitions=(
+                recorder.set_definitions,
+                alarms.set_definitions,
+                writes.set_definitions,
+            ),
+            writable=writes.writable_tag_ids,
         )
         return cls(
             settings=settings,
@@ -94,7 +111,7 @@ class SiteRuntime:
             acquisition=AcquisitionServer(
                 service, keeper, host=settings.grpc_host, port=settings.grpc_port
             ),
-            project=PgProjectStateStore(db),
+            project=project,
             updater_token=read_secret(settings.updater_token_file),
             auth=auth,
             login_throttle=LoginThrottle(),
@@ -103,20 +120,24 @@ class SiteRuntime:
             devices=devices,
             realtime=RealtimeService(bus, tags, devices, auth, batch_ms=settings.realtime_batch_ms),
             history=PgHistoryReader(db),
+            writes=writes,
         )
 
     async def start(self) -> None:
         # 알람·realtime은 수집보다 먼저: 저널 복원·구독이 첫 샘플보다 앞서야 한다(plan M3b §2.1).
+        # writes는 표만 있고(기동 감사 task 하나) 수집 전에 둔다 — 첫 plan의 writable을 정한다.
         await self.db.start()
         self.historian.start()
         await self.alarms.start()
         await self.realtime.start()
+        await self.writes.start()
         await self.acquisition.start()
 
     async def stop(self) -> None:
-        # 수집을 먼저 멈춰 새 행·이벤트를 막고 → WS 연결을 닫고 → 남은 알람 저널·이력을 쓴 뒤(각각
-        # 제한 시간) DB를 닫는다.
+        # 수집을 먼저 멈춰 새 행·이벤트를 막고(진행 중 쓰기는 세션 종료로 NO_RESPONSE) → WS 연결을
+        # 닫고 → 남은 알람 저널·이력을 쓴 뒤(각각 제한 시간) DB를 닫는다.
         await self.acquisition.stop()
+        await self.writes.stop()
         await self.realtime.stop()
         await self.alarms.stop()
         await self.historian.stop()

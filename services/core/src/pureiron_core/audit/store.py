@@ -2,7 +2,8 @@
 
 `PgAuditStore`는 `AuditLog`(best-effort `record` — 실패 시 경고 로그, 예외 없음 — 와 `query`)와
 `AuditWriter`(`record_with(conn, …)` — 호출자 트랜잭션 안에서 쓰고 asyncpg 예외를 그대로 올린다,
-M3b-2 알람 ACK = 저널·감사 같은 트랜잭션)를 구현한다.
+M3b-2 알람 ACK = 저널·감사 같은 트랜잭션)와 `StrictAuditSink`(`record_strict` — 커밋되면 돌아오고
+실패하면 `AuditUnavailableError`, M3c 쓰기 의도 행)를 구현한다.
 조회는 최신순·`[start, end)`.
 """
 
@@ -66,6 +67,13 @@ class PgAuditStore:
             entry.source.value,
             timeout=_WRITE_TIMEOUT_S,
         )
+
+    async def record_strict(self, entry: AuditEntry) -> None:
+        try:
+            async with self._db.connection() as conn:
+                await self.record_with(conn, entry)  # 트랜잭션 밖 단일 INSERT = 돌아오면 커밋됨
+        except (DatabaseUnavailableError, asyncpg.PostgresError, asyncpg.InterfaceError) as exc:
+            raise AuditUnavailableError(f"site-db error: {exc}") from exc
 
     async def record(self, entry: AuditEntry) -> None:
         try:

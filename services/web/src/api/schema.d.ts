@@ -282,6 +282,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/writes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Prepare */
+        post: operations["prepare_write"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/writes/targets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Targets */
+        get: operations["list_write_targets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/writes/{write_id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm */
+        post: operations["confirm_write"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -540,6 +591,12 @@ export interface components {
             /** Ok */
             ok: boolean;
         };
+        /**
+         * CheckName
+         * @description 실행 전 검사(D9) 항목. 이름은 "통과하려면 참이어야 하는 조건"이다.
+         * @enum {string}
+         */
+        CheckName: "writes_enabled" | "declared" | "role" | "value" | "tag_good" | "device_connected" | "single_collector_session" | "plan_reported" | "send_window" | "permissive" | "no_edit_lock" | "not_in_flight";
         /** DeviceList */
         DeviceList: {
             /**
@@ -938,6 +995,7 @@ export interface components {
             status: "ready" | "not_ready";
             /** Version */
             version: string;
+            writes: components["schemas"]["Writes"];
         };
         /** ReadinessChecks */
         ReadinessChecks: {
@@ -1052,6 +1110,222 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /** WriteCheckOut */
+        WriteCheckOut: {
+            /**
+             * Detail
+             * @description 실패 이유(통과하면 null)
+             */
+            detail: string | null;
+            name: components["schemas"]["CheckName"];
+            /** Ok */
+            ok: boolean;
+        };
+        /**
+         * WriteOutcome
+         * @description 쓰기 결과(D10). 감사 `detail.outcome`·API 응답 값.
+         * @enum {string}
+         */
+        WriteOutcome: "CONFIRMED" | "WRITTEN" | "MISMATCH" | "FAILED" | "REJECTED" | "NO_RESPONSE";
+        /**
+         * WriteOutcomes
+         * @description confirm 결과 수(core 기동 후). confirm 때 검사 거부는 rejected에 든다(prepare 거부는
+         *     세지 않는다).
+         */
+        WriteOutcomes: {
+            /** Confirmed */
+            confirmed: number;
+            /** Failed */
+            failed: number;
+            /** Mismatch */
+            mismatch: number;
+            /** No Response */
+            no_response: number;
+            /** Rejected */
+            rejected: number;
+            /** Written */
+            written: number;
+        };
+        /** WritePreparedOut */
+        WritePreparedOut: {
+            /**
+             * Checks
+             * @description 실행 전 검사(모두 통과)
+             */
+            checks: components["schemas"]["WriteCheckOut"][];
+            /** @description 지금 현재값(태그가 plan에 없으면 null) */
+            current: components["schemas"]["TagValueOut"] | null;
+            /**
+             * Expires At
+             * Format: date-time
+             * @description 이 시각까지 같은 사용자가 confirm해야 한다
+             */
+            expires_at: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "setpoint" | "command";
+            /** Tag Id */
+            tag_id: number;
+            /** Tag Path */
+            tag_path: string;
+            /**
+             * Value
+             * @description 목표값
+             */
+            value: boolean | number;
+            /**
+             * Write Id
+             * @description confirm에 쓰는 1회용 id
+             */
+            write_id: string;
+        };
+        /** WriteRejectedOut */
+        WriteRejectedOut: {
+            /**
+             * Checks
+             * @description 검사 전부(실패한 것은 ok=false·detail)
+             */
+            checks: components["schemas"]["WriteCheckOut"][];
+            /** Detail */
+            detail: string;
+            /**
+             * Write Id
+             * @description confirm에서 거부됐으면 그 id(다시 쓸 수 없다)
+             */
+            write_id: string | null;
+        };
+        /** WriteRequestIn */
+        WriteRequestIn: {
+            /**
+             * Reason
+             * @description 사유(감사에 남는다)
+             */
+            reason: string;
+            /** Tag Path */
+            tag_path: string;
+            /** @description 목표값. bit 형식(coil·bool)은 true/false, 그 밖은 숫자 */
+            value: components["schemas"]["WriteValue"];
+        };
+        /** WriteResultOut */
+        WriteResultOut: {
+            /** @description 보내기 직전 현재값 */
+            before: components["schemas"]["TagValueOut"] | null;
+            /** Error */
+            error: string | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "setpoint" | "command";
+            /** @description CONFIRMED(설정값 readback 일치)·WRITTEN(장비 ack — 명령, 또는 readback을 못 읽은 설정값)·MISMATCH(readback 불일치)·FAILED(확실히 안 써짐)·REJECTED(보내지 않음)·NO_RESPONSE(결과 모름 — 써졌을 수 있다, 현장 확인. 자동 재시도 없음) */
+            outcome: components["schemas"]["WriteOutcome"];
+            /**
+             * Readback
+             * @description 장비를 다시 읽은 값(bool은 0/1)
+             */
+            readback: number | null;
+            /** Readback Ts */
+            readback_ts: string | null;
+            /** Tag Id */
+            tag_id: number;
+            /** Tag Path */
+            tag_path: string;
+            /**
+             * Value
+             * @description 목표값
+             */
+            value: boolean | number;
+            /** Write Id */
+            write_id: string;
+        };
+        /** WriteTargetOut */
+        WriteTargetOut: {
+            /**
+             * Data Type
+             * @description Modbus data_type(bool이면 값은 true/false)
+             */
+            data_type: string;
+            /** Device Id */
+            device_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "setpoint" | "command";
+            /**
+             * Max
+             * @description setpoint 허용 범위 상한(command는 null)
+             */
+            max: number | null;
+            /**
+             * Min
+             * @description setpoint 허용 범위 하한(command는 null)
+             */
+            min: number | null;
+            /** Path */
+            path: string;
+            /**
+             * Permissive
+             * @description 허가 조건 태그 path — 전부 GOOD·참이어야 보낸다
+             */
+            permissive: string[];
+            /**
+             * Role
+             * @description 실행에 필요한 최소 역할
+             * @enum {string}
+             */
+            role: "operator" | "engineer";
+            /** Tag Id */
+            tag_id: number;
+            /**
+             * Values
+             * @description command 허용 값(setpoint는 빈 목록)
+             */
+            values: (boolean | number)[];
+        };
+        /** WriteTargetsOut */
+        WriteTargetsOut: {
+            /**
+             * Confirm Ttl S
+             * @description prepare 뒤 confirm까지 허용 시간
+             */
+            confirm_ttl_s: number;
+            /**
+             * Enabled
+             * @description 현장 스위치 PUREIRON_WRITES_ENABLED(꺼지면 모든 쓰기 거부)
+             */
+            enabled: boolean;
+            /**
+             * Targets
+             * @description 선언된 쓰기 태그(path 순)
+             */
+            targets: components["schemas"]["WriteTargetOut"][];
+        };
+        WriteValue: boolean | number;
+        /**
+         * Writes
+         * @description PLC 쓰기 상태(준비 판정에는 쓰지 않음). 태그 path·값은 싣지 않는다.
+         */
+        Writes: {
+            /**
+             * Audit Failures Total
+             * @description 기록하지 못한 쓰기 감사 행 수(의도 행 실패 = 보내지 않음, 결과·거부 행 실패 = 손실)
+             */
+            audit_failures_total: number;
+            /**
+             * Enabled
+             * @description 현장 쓰기 스위치 PUREIRON_WRITES_ENABLED
+             */
+            enabled: boolean;
+            /**
+             * In Flight
+             * @description 지금 확인·전송 중인 쓰기 수
+             */
+            in_flight: number;
+            outcomes: components["schemas"]["WriteOutcomes"];
         };
         /**
          * WsClientMessage
@@ -1696,6 +1970,171 @@ export interface operations {
             };
             /** @description not authenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    prepare_write: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WriteRequestIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WritePreparedOut"];
+                };
+            };
+            /** @description not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description requires a higher role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 실행 전 검사 실패 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteRejectedOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_write_targets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteTargetsOut"];
+                };
+            };
+            /** @description not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description requires a higher role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    confirm_write: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                write_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteResultOut"];
+                };
+            };
+            /** @description not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description requires a higher role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 준비된 쓰기 없음(이미 확인됨·다른 사용자가 준비함·모르는 id) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 실행 전 검사 실패 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteRejectedOut"];
+                };
+            };
+            /** @description 확인 시간 초과 — 다시 prepare */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description 감사 기록 실패 — 보내지 않음 */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

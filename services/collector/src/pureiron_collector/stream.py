@@ -40,7 +40,7 @@ from pureiron_collector._gen import collector_pb2_grpc as pb_grpc
 from pureiron_collector.drivers.common import DevicePoller, DriverFactory, EncodeError
 from pureiron_collector.drivers.modbus import ModbusDevice, encode
 from pureiron_collector.health import DeviceHealth
-from pureiron_collector.plan import ModbusPoint, parse_plan
+from pureiron_collector.plan import ModbusPoint, ParsedPlan, parse_plan
 from pureiron_collector.ring import RingBuffer
 from pureiron_collector.settings import CollectorSettings
 
@@ -94,20 +94,21 @@ class Acquisition:
 
     # --- plan → poller -----------------------------------------------------------------
     async def apply_plan(self, plan: pb.AcquisitionPlan) -> None:
-        if self._applied and plan.plan_rev == self.plan_rev:
-            return  # 같은 plan으로 재연결 — poll을 끊지 않는다.
         parsed = parse_plan(plan)
+        if self._applied and plan.plan_rev == self.plan_rev:
+            # 같은 plan으로 재연결 — poll을 끊지 않는다. 다만 `writable`은 정의 rev가 아니라
+            # core 현장 스위치(core 재기동)로도 바뀌므로 쓰기 표는 새 plan으로 바꾼다(M3c-2: 켜고
+            # 다시 띄운 core의 쓰기가 옛 writable=false로 거부되지 않게, 끈 core 뒤에 옛 true가
+            # 남지 않게).
+            self._points = _point_index(parsed)
+            return
         for problem in parsed.problems:
             log.warning("plan rev %d: %s", parsed.plan_rev, problem)
         self.flush()  # 이전 plan으로 읽은 샘플은 이전 plan_rev로 내보낸다.
         await self.stop_pollers()
         self.plan_rev = parsed.plan_rev
         self._applied = True
-        self._points = {
-            point.tag_id: (device.device_id, point)
-            for device in parsed.devices
-            for point in device.points
-        }
+        self._points = _point_index(parsed)
         for device in parsed.devices:
             poller = DevicePoller(
                 device,
@@ -219,6 +220,15 @@ class Acquisition:
 
     def detach(self) -> None:
         self._live = None
+
+
+def _point_index(parsed: ParsedPlan) -> dict[int, tuple[str, ModbusPoint]]:
+    """tag_id → (device_id, 주소) — 쓰기 검사용."""
+    return {
+        point.tag_id: (device.device_id, point)
+        for device in parsed.devices
+        for point in device.points
+    }
 
 
 def _log_crash(task: asyncio.Task[None]) -> None:

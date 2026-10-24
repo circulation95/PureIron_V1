@@ -24,6 +24,7 @@ from pureiron_core.platform.migrate import (
 )
 from pureiron_core.project.ports import EditLockConflictError, ProjectState
 from pureiron_core.realtime.ports import RealtimeStatus
+from pureiron_core.writes.ports import WriteOutcome, WritesStatus
 
 from .conftest import MIGRATIONS, FakeAudit
 
@@ -99,6 +100,18 @@ class FakeRealtime:
         return RealtimeStatus(connections=self.connections)
 
 
+@dataclass
+class FakeWrites:
+    current: WritesStatus = field(
+        default_factory=lambda: WritesStatus(
+            enabled=False, in_flight=0, outcomes={}, audit_failures_total=0
+        )
+    )
+
+    def status(self) -> WritesStatus:
+        return self.current
+
+
 def _health_client(
     db: FakeDb,
     schema: FakeSchema,
@@ -107,6 +120,7 @@ def _health_client(
     *,
     alarms: FakeAlarms | None = None,
     realtime: FakeRealtime | None = None,
+    writes: FakeWrites | None = None,
 ) -> TestClient:
     app = FastAPI()
     app.include_router(
@@ -117,10 +131,40 @@ def _health_client(
             historian=historian or FakeHistorian(),
             alarms=alarms or FakeAlarms(),
             realtime=realtime or FakeRealtime(),
+            writes=writes or FakeWrites(),
         ),
         prefix="/api/v1",
     )
     return TestClient(app)
+
+
+def test_readyz_writes_are_informational() -> None:
+    """쓰기 스위치·결과 수는 정보로만 나간다(M3c-2) — 켜진 스위치를 밖에서 볼 수 있게."""
+    writes = FakeWrites(
+        WritesStatus(
+            enabled=True,
+            in_flight=1,
+            outcomes={WriteOutcome.CONFIRMED: 2, WriteOutcome.NO_RESPONSE: 1},
+            audit_failures_total=3,
+        )
+    )
+    response = _health_client(FakeDb(), FakeSchema(), FakeCollector(), writes=writes).get(
+        "/api/v1/readyz"
+    )
+    assert response.status_code == 200
+    assert response.json()["writes"] == {
+        "enabled": True,
+        "in_flight": 1,
+        "outcomes": {
+            "confirmed": 2,
+            "written": 0,
+            "mismatch": 0,
+            "failed": 0,
+            "rejected": 0,
+            "no_response": 1,
+        },
+        "audit_failures_total": 3,
+    }
 
 
 def test_readyz_alarms_and_realtime_are_informational() -> None:

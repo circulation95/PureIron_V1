@@ -3,7 +3,8 @@
 `/readyz`는 수집 집계(`acquisition`: 장비 연결 수·태그 GOOD 비율)도 함께 낸다 — Updater `checking`
 단계의 GOOD 비율 기준(baseline - 2%p)이 이 값을 쓴다. `historian`(버퍼·쓰기 지연·drop)도 정보로만
 낸다 — DB 장애 중에도 수집·현재값은 계속되므로 준비 판정에 넣지 않는다. `alarms`(활성·미확인 수,
-저널 큐)·`realtime`(WS 연결 수)도 정보 필드다(M3b-2).
+저널 큐)·`realtime`(WS 연결 수)도 정보 필드다(M3b-2). `writes`(현장 쓰기 스위치·진행 중·결과 수·
+감사 실패 수, M3c-2)도 정보 필드다 — 켜진 스위치를 밖에서 볼 수 있게(plan M3c D3·R6).
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from pureiron_core.alarms.ports import AlarmStatusSource
 from pureiron_core.historian.ports import HistorianStatusSource
 from pureiron_core.platform.migrate import Envelope, SchemaUnavailableError
 from pureiron_core.realtime.ports import RealtimeStatusSource
+from pureiron_core.writes.ports import WriteOutcome, WritesStatusSource
 
 
 class DatabaseProbe(Protocol):
@@ -113,6 +115,30 @@ class Realtime(BaseModel):
     connections: int = Field(description="지금 열린 인증된 WS 연결 수")
 
 
+class WriteOutcomes(BaseModel):
+    """confirm 결과 수(core 기동 후). confirm 때 검사 거부는 rejected에 든다(prepare 거부는
+    세지 않는다)."""
+
+    confirmed: int
+    written: int
+    mismatch: int
+    failed: int
+    rejected: int
+    no_response: int
+
+
+class Writes(BaseModel):
+    """PLC 쓰기 상태(준비 판정에는 쓰지 않음). 태그 path·값은 싣지 않는다."""
+
+    enabled: bool = Field(description="현장 쓰기 스위치 PUREIRON_WRITES_ENABLED")
+    in_flight: int = Field(description="지금 확인·전송 중인 쓰기 수")
+    outcomes: WriteOutcomes
+    audit_failures_total: int = Field(
+        description="기록하지 못한 쓰기 감사 행 수(의도 행 실패 = 보내지 않음, 결과·거부 행 "
+        "실패 = 손실)"
+    )
+
+
 class Readiness(BaseModel):
     status: Literal["ready", "not_ready"]
     version: str
@@ -121,6 +147,7 @@ class Readiness(BaseModel):
     historian: Historian
     alarms: Alarms
     realtime: Realtime
+    writes: Writes
 
 
 async def _schema_check(db_ok: bool, schema: SchemaProbe) -> SchemaEnvelopeCheck:
@@ -167,6 +194,7 @@ def build_health_router(
     historian: HistorianStatusSource,
     alarms: AlarmStatusSource,
     realtime: RealtimeStatusSource,
+    writes: WritesStatusSource,
 ) -> APIRouter:
     router = APIRouter(tags=["ops"])
 
@@ -211,6 +239,7 @@ def build_health_router(
         )
         history = historian.status()
         alarm = alarms.status()
+        write = writes.status()
         return Readiness(
             status="ready" if ready else "not_ready",
             version=__version__,
@@ -232,6 +261,19 @@ def build_health_router(
                 dropped_total=alarm.dropped_total,
             ),
             realtime=Realtime(connections=realtime.status().connections),
+            writes=Writes(
+                enabled=write.enabled,
+                in_flight=write.in_flight,
+                outcomes=WriteOutcomes(
+                    confirmed=write.outcomes.get(WriteOutcome.CONFIRMED, 0),
+                    written=write.outcomes.get(WriteOutcome.WRITTEN, 0),
+                    mismatch=write.outcomes.get(WriteOutcome.MISMATCH, 0),
+                    failed=write.outcomes.get(WriteOutcome.FAILED, 0),
+                    rejected=write.outcomes.get(WriteOutcome.REJECTED, 0),
+                    no_response=write.outcomes.get(WriteOutcome.NO_RESPONSE, 0),
+                ),
+                audit_failures_total=write.audit_failures_total,
+            ),
         )
 
     return router

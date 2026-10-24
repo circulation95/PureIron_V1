@@ -64,6 +64,19 @@ def _session_s(environ: Mapping[str, str], key: str, default: float) -> float:
     return value
 
 
+# 쓰기 응답 대기 시한 상한 = collector `WriteRequest.timeout_ms` 상한(60000ms, M3c-1 계약).
+MAX_WRITE_TIMEOUT_S = 60.0
+# 2단계 확인 TTL 상한: 오래 묵은 확인 화면의 값으로 쓰지 않게(1시간 넘는 확인은 오설정).
+MAX_WRITE_CONFIRM_TTL_S = 3600.0
+
+
+def _bounded_s(environ: Mapping[str, str], key: str, default: float, maximum: float) -> float:
+    value = _float(environ, key, default)
+    if value > maximum:
+        raise SettingsError(f"{key} must be at most {maximum:g} seconds, got {value:g}")
+    return value
+
+
 _TRUE = frozenset({"1", "true", "yes", "on"})
 _FALSE = frozenset({"0", "false", "no", "off"})
 
@@ -121,6 +134,13 @@ class Settings:
     auth_cookie_secure: bool = False
     # WS `tag_update` 합치기 주기(태그별 최신값만 이 주기마다 보낸다).
     realtime_batch_ms: int = 250
+    # 현장 쓰기 스위치(ADR-013 2항, plan M3c D3). 꺼지면 plan `writable`은 전부 false, 쓰기는 거부.
+    writes_enabled: bool = False
+    # prepare 뒤 confirm까지 허용 시간(D8).
+    write_confirm_ttl_s: float = 60.0
+    # confirm이 collector 응답을 기다리는 시한(넘으면 NO_RESPONSE). collector 보내기 기한
+    # `timeout_ms`는 여기서 여유와 장비 timeout의 2배를 뺀 값이다(writes/policy.py).
+    write_timeout_s: float = 10.0
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str]) -> Settings:
@@ -151,4 +171,11 @@ class Settings:
             ),
             auth_cookie_secure=_bool(environ, "PUREIRON_AUTH_COOKIE_SECURE", False),
             realtime_batch_ms=_positive_int(environ, "PUREIRON_REALTIME_BATCH_MS", 250),
+            writes_enabled=_bool(environ, "PUREIRON_WRITES_ENABLED", False),
+            write_confirm_ttl_s=_bounded_s(
+                environ, "PUREIRON_WRITE_CONFIRM_TTL_S", 60.0, MAX_WRITE_CONFIRM_TTL_S
+            ),
+            write_timeout_s=_bounded_s(
+                environ, "PUREIRON_WRITE_TIMEOUT_S", 10.0, MAX_WRITE_TIMEOUT_S
+            ),
         )

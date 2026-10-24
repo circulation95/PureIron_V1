@@ -77,11 +77,13 @@ PLAN = DevicePlan("plc", "modbus_tcp", "h", 502, 1, 20, 500, (point(1),))
 
 
 async def _until(predicate: Callable[[], bool], timeout_s: float = 2.0) -> None:
-    for _ in range(int(timeout_s / 0.005)):
-        if predicate():
-            return
+    # 반복 횟수가 아니라 시각으로 센다: Windows(시계 해상도 15.6ms)에서는 sleep(0.005)가 바로
+    # 깨어나 횟수 기준 2s가 거의 0s가 된다.
+    deadline = time.monotonic() + timeout_s
+    while not predicate():
+        if time.monotonic() >= deadline:
+            raise AssertionError("condition not reached in time")
         await asyncio.sleep(0.005)
-    raise AssertionError("condition not reached in time")
 
 
 async def _blocked_poller(driver: GateDriver) -> tuple[DevicePoller, asyncio.Task[None], int]:
@@ -225,7 +227,7 @@ async def test_abandoned_write_is_never_sent() -> None:
     poller, task, _ = await _blocked_poller(driver)
     try:
         pending = asyncio.create_task(poller.write(point(1), 9.0, deadline_s=_later()))
-        await asyncio.sleep(0.01)
+        await _until(lambda: poller.pending_writes == 1)  # 큐에 들어갔다
         pending.cancel()
         driver.poll_gate.set()
         await _until(lambda: driver.events.count("poll-end") >= 3)
@@ -271,7 +273,7 @@ async def test_queue_limit_and_one_write_per_tag() -> None:
 SETTINGS = CollectorSettings("127.0.0.1:1", 0.05, 0.01, 0.02, batch_interval_s=0.02)
 
 
-def plan_msg(rev: int) -> pb.AcquisitionPlan:
+def plan_msg(rev: int, *, writable: bool = True) -> pb.AcquisitionPlan:
     def tag(tag_id: int, *, writable: bool) -> pb.TagPoint:
         address = pb.ModbusAddress(register_type="holding", address=tag_id, data_type="uint16")
         return pb.TagPoint(tag_id=tag_id, device_id="plc", modbus=address, writable=writable)
@@ -280,7 +282,7 @@ def plan_msg(rev: int) -> pb.AcquisitionPlan:
         plan_rev=rev,
         default_poll_ms=20,
         devices=[pb.Device(device_id="plc", protocol="modbus_tcp", host="h", port=502)],
-        tags=[tag(1, writable=True), tag(2, writable=False)],
+        tags=[tag(1, writable=writable), tag(2, writable=False)],
     )
 
 
@@ -376,6 +378,25 @@ async def test_plan_change_rejects_queued_write(acquisition: tuple[Acquisition, 
     assert result is not None
     assert (result.status, result.error) == (REJECTED, POLLER_STOPPED)
     assert "write" not in driver.events
+
+
+async def test_same_rev_plan_updates_writable_without_restarting_pollers(
+    acquisition: tuple[Acquisition, Drivers],
+) -> None:
+    """core가 현장 스위치만 바꿔 다시 뜨면 같은 rev로 writable만 다른 plan이 온다(M3c-2)."""
+    acq, drivers = acquisition
+    before = dict(acq.pollers)
+    await acq.apply_plan(plan_msg(3, writable=False))
+    assert acq.pollers == before  # poll은 끊지 않는다
+    rejected = await asyncio.wait_for(acq.write(request("off")), 2)
+    assert rejected is not None
+    assert (rejected.status, "not writable" in rejected.error) == (REJECTED, True)
+    await acq.apply_plan(plan_msg(3, writable=True))
+    accepted = await asyncio.wait_for(acq.write(request("on", value=7.0)), 2)
+    assert accepted is not None
+    assert (accepted.status, accepted.readback) == (OK, 7.0)
+    assert drivers.made[0].events.count("write") == 1
+    assert acq.pollers == before
 
 
 async def test_write_to_dead_poller_is_rejected(acquisition: tuple[Acquisition, Drivers]) -> None:
