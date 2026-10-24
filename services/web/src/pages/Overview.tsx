@@ -12,7 +12,7 @@ import {
   type WriteTargets,
 } from "../api/client";
 import { useSession } from "../app/session";
-import { writableTarget } from "../app/writes";
+import { writableTargets } from "../app/writes";
 import { formatTime, formatValue } from "../format";
 import { WriteDialog } from "./WriteDialog";
 
@@ -24,13 +24,9 @@ function merge(tags: Tags, values: readonly TagValue[]): Tags {
   return next;
 }
 
-function writesSummary(
-  targets: WriteTargets,
-  rows: readonly TagValue[],
-  writable: (tagId: number) => WriteTarget | undefined,
-): string {
-  if (!targets.enabled) return "현장 쓰기 꺼짐";
-  return `쓰기 가능 ${String(rows.filter((tag) => writable(tag.tag_id) !== undefined).length)}개`;
+function writesSummary(enabled: boolean, rows: readonly TagValue[], writable: ReadonlyMap<number, WriteTarget>): string {
+  if (!enabled) return "현장 쓰기 꺼짐";
+  return `쓰기 가능 ${String(rows.filter((tag) => writable.has(tag.tag_id)).length)}개`;
 }
 
 export function Overview() {
@@ -89,15 +85,15 @@ export function Overview() {
   const rows = [...tags.value.values()];
   const good = rows.filter((tag) => tag.quality === "GOOD").length;
   // 쓰기 대상을 못 불러오면 버튼을 하나도 보이지 않는다(누를 수 없는 버튼을 보이지 않음).
-  const writable = (tagId: number) =>
-    targets.kind === "ok" ? writableTarget(targets.value, tagId, me.role) : undefined;
-  const anyWritable = rows.some((tag) => writable(tag.tag_id) !== undefined);
+  const writable: ReadonlyMap<number, WriteTarget> =
+    targets.kind === "ok" ? writableTargets(targets.value, me.role) : new Map();
+  const anyWritable = rows.some((tag) => writable.has(tag.tag_id));
   return (
     <section>
       <h1>태그 현황</h1>
       <p className="summary">
         전체 {rows.length}개 · GOOD {good}개 · 그 밖 {rows.length - good}개
-        {targets.kind === "ok" ? <> · {writesSummary(targets.value, rows, writable)}</> : null}
+        {targets.kind === "ok" ? <> · {writesSummary(targets.value.enabled, rows, writable)}</> : null}
       </p>
       {targets.kind === "error" ? (
         <p className="notice" role="note">
@@ -120,7 +116,7 @@ export function Overview() {
           </thead>
           <tbody>
             {rows.map((tag) => {
-              const target = writable(tag.tag_id);
+              const target = writable.get(tag.tag_id);
               return (
                 <tr key={tag.tag_id} data-tag-path={tag.path}>
                   <td>{tag.path}</td>

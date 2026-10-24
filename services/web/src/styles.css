@@ -94,3 +94,5 @@ td.detail { white-space: normal; font-family: ui-monospace, monospace; font-size
 .outcome.tone-ok { border-color: var(--ok); background: #1a7f3714; }
 .outcome.tone-warn { border-color: var(--warn); background: #b26a0014; }
 .outcome.tone-bad { border-color: var(--bad); background: #c628281a; }
+.write-actions .danger { background: var(--bad); color: #fff; border: 1px solid var(--bad); }
+.write-actions .danger:disabled { opacity: 0.5; }

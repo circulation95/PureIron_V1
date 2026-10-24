@@ -317,9 +317,10 @@ Frontend 작업은 화면이 크고 회귀 위험이 높다. 다음 원칙을 �
 
 **PLC 쓰기 화면** (M3c-3, API는 [api-events](api-events.md) 쓰기 절, 근거 ADR-013·plan M3c D8·D10)
 - 버튼: `GET /writes/targets`가 `enabled=true`이고 그 태그가 선언돼 있고 사용자 역할 ≥ 선언 `role`일 때만 행에 `쓰기` 버튼. 대상 조회가 실패하면 버튼을 하나도 보이지 않고 안내 1줄. 요약 줄에 `쓰기 가능 N개` 또는 `현장 쓰기 꺼짐`.
-- 대화상자(`<dialog>` `showModal`, 진행 중에는 Esc로 닫히지 않음): 장비·현재값(품질·시각)·허용 범위(설정값) 또는 허용 값·허가 조건(명령) → 목표값·사유(1~200자) → `검사`(`POST /writes`, 아무것도 안 보냄) → 통과 검사 목록·확인 기한 → `실행`(`POST /writes/{id}/confirm`). **명령은 "정말 실행합니까?" 확인을 한 번 더** 받는다. 범위 밖 값도 화면이 막지 않는다 — 서버 검사 `value`가 거부하고 그 결과를 보여준다. 검사 거부(409)는 실패한 검사 이름·이유를 보여주고 다시 입력으로.
+- 대화상자(`<dialog>` `showModal`): 장비·현재값(실시간, 검사 뒤에는 검사 시점 값도)·허용 범위(설정값) 또는 허용 값·허가 조건(명령) → 목표값·사유(1~200자) → `검사`(`POST /writes`, 아무것도 안 보냄) → 통과 검사 목록·확인 기한 → `실행`(`POST /writes/{id}/confirm`, 같은 write_id는 한 번만 보냄). **명령은 "정말 실행합니까?" 확인을 한 번 더** 받는다 — 확인 버튼 `명령 실행`은 1단계 `실행`과 다른 자리에 1s 막힌 채 나오고 포커스는 `취소`로 간다(`실행` 더블클릭·Enter 연타가 확인을 건너뛰지 않게).
+- 검사·전송 중에는 닫을 수 없다: Esc는 `keydown`에서 막고 `closedby="none"`, 그래도 브라우저가 닫으면(Chromium은 반복 Esc의 cancel을 막지 못하게 한다) 다시 연다. 전송 중에는 화면 이동(뒤로 가기 포함, react-router `useBlocker`)을 막고 새로고침·탭 닫기에는 `beforeunload` 경고를 띄운다. 결과는 대화상자 안에만 있으므로 그래도 떠나면 남지 않는다 — 현재값으로 확인한다. 범위 밖 값도 화면이 막지 않는다 — 서버 검사 `value`가 거부하고 그 결과를 보여준다. 검사 거부(409)는 실패한 검사 이름·이유를 보여주고 다시 입력으로.
 - 결과 문구: `CONFIRMED` "적용 확인" · 명령 `WRITTEN` "장비 수신" · **설정값 `WRITTEN`(readback 없음) "장비 수신, 값 미확인 — 현재값 확인"(경고)** · `MISMATCH` "값 불일치" · `FAILED` "쓰지 못했습니다" · `REJECTED` "보내지 않았습니다" · **`NO_RESPONSE`·모르는 값 "응답 없음 — 결과를 알 수 없습니다. 써졌을 수 있으니 현장 확인, 자동으로 다시 보내지 않음"(경고)**.
-- confirm 실패: 410 → "확인 시간이 지났습니다"(다시 검사), 404 → 이미 처리됐거나 없는 요청(현재값·감사 로그로 확인), 503 → 감사 기록 실패로 보내지 않음, **네트워크 오류·그 밖 5xx → `NO_RESPONSE`와 같은 "결과 모름"**(confirm이 core에 닿았는지 모른다 — "실패"로 쓰면 다시 눌러 이중 쓰기). 다시 보내기 버튼은 없다.
+- confirm 실패(`app/writes.ts` `confirmFailure`): 409 → 보내기 직전 검사 거부(실패 검사 표시), 410 → "확인 시간이 지났습니다"(다시 검사), 404 → 이미 처리됐거나 없는 요청(현재값 확인, 필요하면 엔지니어에게 감사 로그 `tag.write` 요청), 503은 core detail이 `audit unavailable; write not sent`·`site-db unavailable`일 때만 "보내지 않음"(이유별), **네트워크 오류·그 밖 503·5xx·모양이 다른 200 본문 → `NO_RESPONSE`와 같은 "결과 모름"**(confirm이 core에 닿았는지 모른다 — "실패"로 쓰면 다시 눌러 이중 쓰기). 다시 보내기 버튼은 없다.
 
 **WS** (`/api/v1/ws`, 쿠키 인증)
 - 로그인한 레이아웃이 연결 하나를 만들고 화면이 `on(type, handler)`·`subscribe(tagIds)`(참조 계수)로 나눠 쓴다. 해제 함수를 effect 정리에서 부른다.
@@ -335,7 +336,7 @@ Frontend 작업은 화면이 크고 회귀 위험이 높다. 다음 원칙을 �
 ```bash
 cd services/web && npm ci && npm run typecheck && npm run lint && npm run build
 npm run dev                      # http://localhost:3000 → core 127.0.0.1:18000 (PUREIRON_CORE_URL)
-bash scripts/g1.sh web-e2e       # 이미지 빌드 → pureiron-it compose(쓰기 스위치 켬, 시뮬레이터 100태그 + 쓰기 선언 3개 + 알람 1개, CLI 계정) → Playwright
+bash scripts/g1.sh web-e2e       # 이미지 빌드 → pureiron-it compose(쓰기 스위치 켬, 시뮬레이터 100태그 + 쓰기 선언 2개·허가 조건 coil 1개 + 알람 1개, CLI 계정) → Playwright
 ```
 
 e2e 결과·trace·화면 스크린샷은 `artifacts/web-e2e/`(`test-results/`·`report/`·`screens/`·`compose.log`). `PUREIRON_IT_KEEP=1`이면 스택을 내리지 않는다. 포트·프로젝트 이름은 core 통합 테스트와 같은 환경변수(`PUREIRON_IT_PROJECT`·`PUREIRON_DEV_*_PORT`·`PUREIRON_IT_WEB_PORT`)로 바꾼다.

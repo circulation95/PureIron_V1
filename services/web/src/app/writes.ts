@@ -1,14 +1,22 @@
-// PLC 쓰기 화면의 표시 규칙(plan M3c D10·M3c-3 E1·E4·E5): 버튼 표시 조건, 검사 이름, 결과 문구.
+// PLC 쓰기 화면의 표시 규칙(plan M3c D10·M3c-3 E1·E4·E5): 버튼 표시 조건, 검사 이름, 결과 문구,
+// confirm 실패 응답의 분류.
 // 결과 판정은 core가 정본이고 여기는 그 결과를 운전자가 오해하지 않게 그리는 규칙만 둔다 —
 // "결과 모름"(NO_RESPONSE)과 "값 미확인"(설정값 WRITTEN)을 성공으로 읽게 하지 않는다.
-import { type CheckName, hasRole, type Role, type WriteResult, type WriteTarget, type WriteTargets } from "../api/client";
+import {
+  type CheckName,
+  hasRole,
+  type Role,
+  type WriteCheck,
+  type WriteResult,
+  type WriteTarget,
+  type WriteTargets,
+} from "../api/client";
 import { formatValue } from "../format";
 
-/** 스위치가 켜져 있고 선언된 쓰기 태그이며 사용자 역할이 선언 role 이상일 때만 쓰기 버튼을 보인다. */
-export function writableTarget(targets: WriteTargets, tagId: number, role: Role): WriteTarget | undefined {
-  if (!targets.enabled) return undefined;
-  const target = targets.targets.find((t) => t.tag_id === tagId);
-  return target !== undefined && hasRole(role, target.role) ? target : undefined;
+/** 쓰기 버튼을 보일 태그(tag_id → 선언): 스위치가 켜져 있고 사용자 역할이 선언 role 이상인 것만. */
+export function writableTargets(targets: WriteTargets, role: Role): ReadonlyMap<number, WriteTarget> {
+  if (!targets.enabled) return new Map();
+  return new Map(targets.targets.filter((t) => hasRole(role, t.role)).map((t) => [t.tag_id, t]));
 }
 
 export const CHECK_LABELS: Record<CheckName, string> = {
@@ -71,5 +79,65 @@ export function outcomeView(result: WriteResult): OutcomeView {
     case "NO_RESPONSE":
     default: // 계약에 새 값이 생겨도 성공으로 읽지 않는다
       return UNKNOWN_RESULT;
+  }
+}
+
+// core가 confirm 503에 싣는 detail(`api/writes.py` AUDIT_UNAVAILABLE, `api/errors.py` 세션 가드). 둘 다
+// 보내기 전에만 난다. 그 밖의 503(앞단 프록시 등)은 보냈는지 모른다.
+const NOT_SENT_503: ReadonlyMap<string, string> = new Map([
+  ["audit unavailable; write not sent", "감사 기록에 실패해 장비로 보내지 않았습니다."],
+  ["site-db unavailable", "현장 DB에 연결할 수 없어 장비로 보내지 않았습니다."],
+]);
+
+function detailOf(body: unknown): string | null {
+  if (typeof body !== "object" || body === null || !("detail" in body)) return null;
+  return typeof body.detail === "string" ? body.detail : null;
+}
+
+/** 결과 응답 모양 확인 — 프록시·버전 불일치로 다른 본문이 와도 "결과 모름"으로 그린다. */
+export function isWriteResult(body: unknown): body is WriteResult {
+  return (
+    typeof body === "object" &&
+    body !== null &&
+    "outcome" in body &&
+    typeof body.outcome === "string" &&
+    "kind" in body &&
+    "before" in body
+  );
+}
+
+/** confirm이 결과 없이 끝났을 때 화면이 할 일(plan M3c-3 E5). */
+export type ConfirmFailure =
+  | { kind: "rejected"; checks: WriteCheck[] } // 보내기 직전 검사 거부(409) — 안 보냄
+  | { kind: "expired" } // 410 — 안 보냄, 다시 검사
+  | { kind: "error"; message: string } // 핸들러 전 거부 또는 이미 처리된 요청
+  | { kind: "outcome"; view: OutcomeView };
+
+export function confirmFailure(status: number, body: unknown, checks: WriteCheck[]): ConfirmFailure {
+  switch (status) {
+    case 409:
+      return { kind: "rejected", checks };
+    case 410:
+      return { kind: "expired" };
+    case 404:
+      return {
+        kind: "error",
+        message:
+          "이미 처리됐거나 없는 요청입니다. 현재값을 확인하고, 필요하면 엔지니어에게 감사 로그(tag.write) 확인을 요청하세요.",
+      };
+    case 401:
+      return { kind: "error", message: "로그인이 필요합니다. 보내지 않았습니다." };
+    case 403:
+      return { kind: "error", message: "이 작업을 할 권한이 없습니다. 보내지 않았습니다." };
+    case 422:
+      return { kind: "error", message: "요청 값이 올바르지 않습니다. 보내지 않았습니다." };
+    case 503: {
+      const reason = NOT_SENT_503.get(detailOf(body) ?? "");
+      if (reason !== undefined) return { kind: "outcome", view: { tone: "bad", title: "보내지 않았습니다", detail: reason } };
+      return { kind: "outcome", view: UNKNOWN_RESULT };
+    }
+    default:
+      // 그 밖의 실패(게이트웨이 시간 초과 등)는 서버가 보냈는지 모른다.
+      return { kind: "outcome", view: UNKNOWN_RESULT };
   }
 }

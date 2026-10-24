@@ -2,7 +2,9 @@
 // 허가 조건 거짓 → 검사 거부, 명령 확인 2단계 → 장비 수신. 실제 스택에서 결정적으로 만들 수 없는 결과
 // (설정값 readback 없음 = "장비 수신, 값 미확인"(M3c-2 리뷰 LOW-3), 응답 유실 = "결과 모름")는 confirm 응답만
 // 바꿔 화면 문구를 본다 — 그때 confirm 요청은 core에 닿지 않는다(판정 정본은 core 단위 테스트).
-import { expect, type Locator, type Page, test } from "@playwright/test";
+// 리뷰 회귀(M3c-3 HIGH-1·HIGH-2·LOW-1·LOW-4): 명령 더블클릭·Enter 연타는 2단계를 건너뛰지 않고, 보내는
+// 중 Esc를 반복해도 대화상자가 남아 결과를 보이며, confirm 실패 응답(409·410·404·503)은 정해진 문구로 간다.
+import { expect, type Locator, type Page, type Route, test } from "@playwright/test";
 
 import type { WriteResult } from "../src/api/client";
 import { setPermissive, USERS, WRITES } from "./stack";
@@ -26,6 +28,31 @@ async function expectTag(page: Page, path: string, value: string): Promise<void>
   const tag = row(page, path);
   await expect(tag.locator("td.num")).toHaveText(value, { timeout: TAGS_GOOD_WAIT_MS });
   await expect(tag.locator(".quality")).toHaveText("GOOD");
+}
+
+/** confirm 요청을 core로 보내지 않고 `reply`로 답한다. 돌려준 함수는 지금까지 받은 confirm 수. */
+async function fakeConfirm(page: Page, reply: (route: Route, writeId: string) => Promise<void>): Promise<() => number> {
+  let hits = 0;
+  await page.route(CONFIRM_ROUTE, async (route) => {
+    hits += 1;
+    await reply(route, new URL(route.request().url()).pathname.split("/").at(-2) ?? "");
+  });
+  return () => hits;
+}
+
+function setpointResult(writeId: string, outcome: WriteResult["outcome"]): WriteResult {
+  return {
+    write_id: writeId,
+    tag_id: 0,
+    tag_path: WRITES.setpoint,
+    kind: "setpoint",
+    value: 10,
+    before: null,
+    outcome,
+    readback: null,
+    readback_ts: null,
+    error: outcome === "WRITTEN" ? "readback unavailable" : null,
+  };
 }
 
 async function prepare(page: Page, path: string, reason: string, value?: string): Promise<Locator> {
@@ -89,21 +116,10 @@ test("결과 문구: 설정값 readback 없음은 '값 미확인', confirm 응�
   await openOverview(page, USERS.operator);
   await expect(row(page, WRITES.setpoint).locator(".quality")).toHaveText("GOOD", { timeout: TAGS_GOOD_WAIT_MS });
 
-  await page.route(CONFIRM_ROUTE, async (route) => {
-    const writeId = new URL(route.request().url()).pathname.split("/").at(-2) ?? "";
-    const result: WriteResult = {
-      write_id: writeId,
-      tag_id: 0,
-      tag_path: WRITES.setpoint,
-      kind: "setpoint",
-      value: 10,
-      before: null,
-      outcome: "WRITTEN",
-      readback: null,
-      readback_ts: null,
-      error: "readback unavailable",
-    };
-    await route.fulfill({ status: 200, json: result });
+  let gatewayTimeout = false;
+  const hits = await fakeConfirm(page, async (route, writeId) => {
+    if (gatewayTimeout) await route.fulfill({ status: 504, body: "" });
+    else await route.fulfill({ status: 200, json: setpointResult(writeId, "WRITTEN") });
   });
   let dialog = await prepare(page, WRITES.setpoint, "e2e 문구 확인", "10");
   await dialog.getByRole("button", { name: "실행", exact: true }).click();
@@ -111,11 +127,87 @@ test("결과 문구: 설정값 readback 없음은 '값 미확인', confirm 응�
   await screenshot(page, "10-write-unverified");
   await dialog.getByRole("button", { name: "닫기" }).click();
 
-  await page.unroute(CONFIRM_ROUTE);
-  await page.route(CONFIRM_ROUTE, (route) => route.fulfill({ status: 504, body: "" }));
+  gatewayTimeout = true;
   dialog = await prepare(page, WRITES.setpoint, "e2e 문구 확인", "11");
   await dialog.getByRole("button", { name: "실행", exact: true }).click();
   await expect(dialog.getByRole("alert")).toContainText("응답 없음 — 결과를 알 수 없습니다");
   await expect(dialog.getByRole("alert")).toContainText("자동으로 다시 보내지 않습니다");
   await screenshot(page, "11-write-no-response");
+  expect(hits()).toBe(2); // 두 confirm 모두 대체됐다(core에 가지 않음)
+});
+
+test("명령 실행 더블클릭·Enter 연타는 2단계 확인을 건너뛰지 않는다", async ({ page }) => {
+  setPermissive(true);
+  await openOverview(page, USERS.operator);
+  await expectTag(page, WRITES.permissive, "참");
+  const hits = await fakeConfirm(page, (route) => route.fulfill({ status: 500, body: "" }));
+
+  let dialog = await prepare(page, WRITES.command, "e2e 더블클릭");
+  await dialog.getByRole("button", { name: "실행", exact: true }).dblclick();
+  await expect(dialog.getByRole("alert")).toContainText("정말 실행합니까?");
+  await expect(dialog.getByRole("button", { name: "명령 실행" })).toBeEnabled(); // 잠깐 막혔다가 풀린다
+  expect(hits()).toBe(0);
+  await dialog.getByRole("button", { name: "취소" }).click();
+  await expect(dialog).toHaveCount(0);
+
+  dialog = await prepare(page, WRITES.command, "e2e Enter 연타");
+  await dialog.getByRole("button", { name: "실행", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter"); // 포커스가 `취소`로 옮겨져 있어 닫힌다
+  await expect(dialog).toHaveCount(0);
+  expect(hits()).toBe(0);
+});
+
+test("보내는 중 Esc를 반복해도 대화상자가 남아 결과를 보인다", async ({ page }) => {
+  await openOverview(page, USERS.operator);
+  await expect(row(page, WRITES.setpoint).locator(".quality")).toHaveText("GOOD", { timeout: TAGS_GOOD_WAIT_MS });
+  let release: () => void = () => undefined;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await fakeConfirm(page, async (route, writeId) => {
+    await released;
+    await route.fulfill({ status: 200, json: setpointResult(writeId, "NO_RESPONSE") });
+  });
+
+  const dialog = await prepare(page, WRITES.setpoint, "e2e Esc", "12");
+  await dialog.getByRole("button", { name: "실행", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "실행 중…" })).toBeDisabled();
+  for (let i = 0; i < 4; i += 1) await page.keyboard.press("Escape");
+  await expect(dialog).toBeVisible();
+  release();
+  await expect(dialog.getByRole("alert")).toContainText("응답 없음 — 결과를 알 수 없습니다");
+});
+
+test("confirm 실패 응답: 409·410·404·503은 정해진 문구로 간다", async ({ page }) => {
+  await openOverview(page, USERS.operator);
+  await expect(row(page, WRITES.setpoint).locator(".quality")).toHaveText("GOOD", { timeout: TAGS_GOOD_WAIT_MS });
+  let reply: { status: number; json: unknown } = { status: 500, json: {} };
+  await fakeConfirm(page, (route) => route.fulfill(reply));
+
+  const cases: { status: number; json: unknown; text: string; close: string }[] = [
+    {
+      status: 409,
+      json: { detail: "write rejected by checks", write_id: null, checks: [{ name: "tag_good", ok: false, detail: "BAD" }] },
+      text: "보내기 직전 검사에서 거부되어 보내지 않았습니다.",
+      close: "닫기",
+    },
+    { status: 410, json: { detail: "expired" }, text: "확인 시간이 지났습니다. 다시 검사하세요.", close: "취소" },
+    { status: 404, json: { detail: "not found" }, text: "이미 처리됐거나 없는 요청입니다.", close: "닫기" },
+    {
+      status: 503,
+      json: { detail: "audit unavailable; write not sent" },
+      text: "감사 기록에 실패해 장비로 보내지 않았습니다.",
+      close: "닫기",
+    },
+    { status: 503, json: { detail: "upstream unavailable" }, text: "응답 없음 — 결과를 알 수 없습니다", close: "닫기" },
+  ];
+  for (const item of cases) {
+    reply = { status: item.status, json: item.json };
+    const dialog = await prepare(page, WRITES.setpoint, `e2e confirm ${String(item.status)}`, "13");
+    await dialog.getByRole("button", { name: "실행", exact: true }).click();
+    await expect(dialog.getByRole("alert")).toContainText(item.text);
+    await dialog.getByRole("button", { name: item.close }).click();
+    await expect(dialog).toHaveCount(0);
+  }
 });

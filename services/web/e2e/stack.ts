@@ -151,7 +151,10 @@ async function login(username: string): Promise<string> {
     signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
   });
   if (!response.ok) throw new Error(`login ${username} failed: ${String(response.status)}`);
-  const body = (await response.json()) as { token: string };
+  const body: unknown = await response.json();
+  if (typeof body !== "object" || body === null || !("token" in body) || typeof body.token !== "string") {
+    throw new Error(`login ${username}: no token in response`);
+  }
   return body.token;
 }
 
