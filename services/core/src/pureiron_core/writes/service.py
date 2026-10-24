@@ -393,9 +393,12 @@ class WritesService:
         # 읽고, 그 뒤 보내기 직전에 동기로 다시 본다(`send`는 첫 await 전에 큐에 넣으므로 이 검사와
         # 전송 사이에 다른 코드가 끼지 않는다).
         lock = await self._edit_lock()
-        checks, _, _ = self._evaluate(
+        checks, latest, _ = self._evaluate(
             principal, pending.tag_path, pending.value, lock, in_flight=False
         )
+        if latest != target:
+            # 판정·감사·명령은 첫 검사의 target을 쓴다 — 선언이 바뀌었으면 섞어 보내지 않는다.
+            return WriteReply(WriteReplyStatus.REJECTED, "not sent: definitions changed")
         if blocked := policy.failed(checks):
             names = ", ".join(c.name.value for c in blocked)
             return WriteReply(WriteReplyStatus.REJECTED, f"not sent: checks changed: {names}")

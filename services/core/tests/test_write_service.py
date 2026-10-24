@@ -232,6 +232,39 @@ async def test_edit_lock_taken_while_recording_intent_is_not_sent() -> None:
     assert fx.audit.actions() == [("tag.write", "SENDING"), ("tag.write", "REJECTED")]
 
 
+async def test_definitions_changed_while_recording_intent_are_not_sent() -> None:
+    fx = write_fixture()
+    prepared = await fx.service.prepare(OP, SETPOINT, 30.0, "r")
+    rev = REV + 1
+    narrowed = replace(
+        write_definitions(rev),
+        tags=tuple(
+            TagDef(t.tag_id, t.path, t.device_id, _with_max(t, 80))
+            for t in write_definitions(rev).tags
+        ),
+    )
+
+    async def apply_new_rev(entry: AuditEntry) -> None:
+        # 의도 행을 쓰는 동안 새 rev가 적용되고 collector도 그 rev를 보고했다(검사는 전부 통과).
+        if entry.detail.get("outcome") == "SENDING":
+            fx.service.set_definitions(narrowed)
+            fx.channel.path = replace(fx.channel.path, plan_rev=rev, reported_plan_rev=rev)
+
+    fx.audit.during = apply_new_rev
+    report = await fx.service.confirm(OP, prepared.write_id)
+    assert report.outcome is WriteOutcome.REJECTED
+    assert report.error == "not sent: definitions changed"
+    assert fx.channel.sent == []
+    assert fx.audit.actions() == [("tag.write", "SENDING"), ("tag.write", "REJECTED")]
+
+
+def _with_max(tag: TagDef, maximum: float) -> dict[str, object]:
+    definition = dict(tag.definition)
+    if tag.path == SETPOINT:
+        definition["write"] = {"kind": "setpoint", "min": 20, "max": maximum}
+    return definition
+
+
 def _with_permissive(tag: TagDef) -> dict[str, object]:
     definition = dict(tag.definition)
     if tag.path == SETPOINT:
