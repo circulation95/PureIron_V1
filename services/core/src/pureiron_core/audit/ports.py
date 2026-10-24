@@ -23,6 +23,7 @@ MAX_QUERY_ROWS = 1000
 class AuditAction(StrEnum):
     AUTH_LOGIN = "auth.login"
     AUTH_LOGIN_FAILED = "auth.login_failed"
+    AUTH_LOGIN_THROTTLED = "auth.login_throttled"
     AUTH_LOGOUT = "auth.logout"
     AUTH_PASSWORD_CHANGE = "auth.password_change"
     USERS_ADD = "users.add"

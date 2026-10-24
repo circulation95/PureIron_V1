@@ -30,8 +30,12 @@ class FakeUsers:
     available: bool = True
     # 쓰기만 실패시킨다(읽기·세션은 정상) — 부분 실패 순서 검증용.
     fail_writes: bool = False
+    # 감싸지지 않은 예외(500 경로) — 로그인 실패 제한이 진행 중 시도를 정리하는지 검증용.
+    crash: bool = False
 
     def check(self) -> None:
+        if self.crash:
+            raise RuntimeError("unexpected store failure")
         if not self.available:
             raise AuthUnavailableError("site-db error: down")
 

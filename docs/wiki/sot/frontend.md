@@ -319,7 +319,9 @@ Frontend 작업은 화면이 크고 회귀 위험이 높다. 다음 원칙을 �
 - 끊기면 0.5s부터 두 배씩 최대 10s 간격으로 재연결, `hello`를 받으면 구독 전체를 다시 보낸다. `ping`에는 `pong`. 서버는 20s마다 ping을 보내므로 50s 동안 아무 메시지도 없으면 죽은 연결로 보고 소켓을 버린 뒤 같은 backoff로 재연결한다.
 - 재연결(`hello`)마다 알람·장비 목록은 REST로 다시 받아 끊긴 동안 놓친 이벤트를 메운다(태그는 재구독 때 서버가 현재값을 보냄).
 - 알람 목록: 스냅샷 요청(제한 시간 10s) 중 도착한 `alarm_event`는 버퍼에 모았다가 스냅샷 적용 뒤 도착 순서대로 재생한다. `changed_at`은 이 합치기에서만 비교한다(같은 알람의 스냅샷이 더 새로우면 그 이벤트는 건너뜀). 그 뒤 실시간 이벤트는 비교 없이 순서대로 적용한다. ACK·ack-all 응답은 목록에 이미 있는 알람만 갱신한다. 재조회가 실패해도 기존 목록·미확인 배지를 유지하고 버퍼를 그 위에 재생한다.
-- close 4401 → 로그인으로, 4403(Origin ≠ Host) → 재연결하지 않음. 그래서 nginx는 `Host $http_host`(포트 포함), vite proxy는 `changeOrigin`을 켜지 않는다.
+- close 4401 → 로그인으로, 4403(Origin ≠ Host) → 재연결하지 않음. 그래서 nginx는 `Host $http_host`(포트 포함), vite proxy는 `changeOrigin`을 켜지 않는다. REST 쓰기 요청(쿠키 또는 Origin이 실린 안전하지 않은 메서드)도 같은 조건으로 403 `E_ORIGIN`을 낸다(M3c-0, [api-events](api-events.md) "REST Origin 검사") — 브라우저 fetch가 `Origin`을 스스로 싣는다.
+
+**nginx 보안 헤더** (M3c-0, `services/web/nginx.conf` server 수준 `add_header … always`): `Content-Security-Policy: frame-ancestors 'none'`·`X-Frame-Options: DENY`(다른 사이트가 화면을 frame에 넣는 clickjacking 차단)·`X-Content-Type-Options: nosniff`·`Referrer-Policy: same-origin`. nginx는 location에 `add_header`가 하나라도 있으면 server 수준 값을 상속하지 않으므로, location에 헤더를 더할 때는 네 줄을 함께 적는다. 로그인 429(실패 제한)는 기존 "지금은 로그인할 수 없습니다" 문구로 보인다.
 
 **명령**
 

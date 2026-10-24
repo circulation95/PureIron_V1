@@ -180,3 +180,17 @@ def test_create_app_starts_without_site_db(tmp_path: Path) -> None:
         assert client.get("/api/v1/auth/me", headers=bearer).status_code == 503
         login = client.post("/api/v1/auth/login", json={"username": "a", "password": "b"})
         assert login.status_code == 503
+
+
+def test_create_app_guards_cookie_posts_by_origin(tmp_path: Path) -> None:
+    """조립된 앱에 Origin 검사(plan M3c D14)가 걸려 있다: 쿠키 + Origin 없음 → 403."""
+    app = create_app(SiteRuntime.build(_settings(tmp_path)))
+    client = TestClient(app, cookies={"pureiron_session": "any"})
+    rejected = client.post("/api/v1/auth/logout")
+    assert (rejected.status_code, rejected.json()) == (403, {"detail": "E_ORIGIN"})
+    cross = TestClient(app).post(
+        "/api/v1/auth/login",
+        json={"username": "a", "password": "b"},
+        headers={"Origin": "http://testserver:3000"},
+    )
+    assert cross.status_code == 403

@@ -15,6 +15,7 @@ from pureiron_core.alarms.service import AlarmService
 from pureiron_core.audit.store import PgAuditStore
 from pureiron_core.auth.service import AuthService
 from pureiron_core.auth.sessions import PgSessionStore
+from pureiron_core.auth.throttle import LoginThrottle
 from pureiron_core.auth.users import PgUserStore
 from pureiron_core.historian.reader import PgHistoryReader
 from pureiron_core.historian.recorder import Recorder
@@ -43,6 +44,7 @@ class SiteRuntime:
     project: PgProjectStateStore
     updater_token: str | None
     auth: AuthService
+    login_throttle: LoginThrottle
     audit: PgAuditStore
     alarms: AlarmService
     devices: DeviceMonitor
@@ -95,6 +97,7 @@ class SiteRuntime:
             project=PgProjectStateStore(db),
             updater_token=read_secret(settings.updater_token_file),
             auth=auth,
+            login_throttle=LoginThrottle(),
             audit=audit,
             alarms=alarms,
             devices=devices,

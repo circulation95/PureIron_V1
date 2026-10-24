@@ -1352,6 +1352,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description 같은 username의 로그인 실패가 많아 잠시 받지 않는다(`Retry-After`초 뒤에) */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     logout: {
