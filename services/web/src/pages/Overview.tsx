@@ -24,6 +24,15 @@ function merge(tags: Tags, values: readonly TagValue[]): Tags {
   return next;
 }
 
+function writesSummary(
+  targets: WriteTargets,
+  rows: readonly TagValue[],
+  writable: (tagId: number) => WriteTarget | undefined,
+): string {
+  if (!targets.enabled) return "현장 쓰기 꺼짐";
+  return `쓰기 가능 ${String(rows.filter((tag) => writable(tag.tag_id) !== undefined).length)}개`;
+}
+
 export function Overview() {
   const { me, realtime } = useSession();
   const [tags, setTags] = useState<Load<Tags>>({ kind: "loading" });
@@ -88,6 +97,7 @@ export function Overview() {
       <h1>태그 현황</h1>
       <p className="summary">
         전체 {rows.length}개 · GOOD {good}개 · 그 밖 {rows.length - good}개
+        {targets.kind === "ok" ? <> · {writesSummary(targets.value, rows, writable)}</> : null}
       </p>
       {targets.kind === "error" ? (
         <p className="notice" role="note">
