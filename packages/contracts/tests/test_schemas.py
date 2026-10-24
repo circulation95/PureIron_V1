@@ -152,7 +152,24 @@ def test_project_file_kinds_validate() -> None:
                 "device": "plc-1",
                 "modbus": {"register_type": "holding", "address": 0, "data_type": "float32"},
                 "record": {"deadband": 0.5, "max_interval_s": 60},
-            }
+            },
+            {
+                "path": "line1/temp_sp",
+                "device": "plc-1",
+                "modbus": {"register_type": "holding", "address": 100, "data_type": "float32"},
+                "write": {"kind": "setpoint", "min": 20, "max": 90},
+            },
+            {
+                "path": "line1/start",
+                "device": "plc-1",
+                "modbus": {"register_type": "coil", "address": 10, "data_type": "bool"},
+                "write": {
+                    "kind": "command",
+                    "values": [True],
+                    "permissive": ["line1/remote_ok", "line1/auto_mode"],
+                    "role": "operator",
+                },
+            },
         ]
     )
     _validator("project", "#/$defs/alarmList").validate(
@@ -199,6 +216,13 @@ def test_project_file_kinds_validate() -> None:
                 "credentials": "plain",
             },
             "#/$defs/device",
+        ),
+        ("project", {"kind": "setpoint", "min": 0}, "#/$defs/tagWrite"),
+        ("project", {"kind": "command", "values": [True]}, "#/$defs/tagWrite"),
+        (
+            "project",
+            {"kind": "command", "values": [True], "permissive": [], "role": "operator"},
+            "#/$defs/tagWrite",
         ),
     ],
 )

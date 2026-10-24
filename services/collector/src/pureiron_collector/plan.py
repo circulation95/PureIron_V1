@@ -33,6 +33,8 @@ class ModbusPoint:
     data_type: DataType
     byte_order: Order
     word_order: Order
+    # core가 이 태그에 WriteRequest를 보낼 수 있다(TagPoint.writable). 아니면 collector가 REJECTED.
+    writable: bool = False
 
 
 BIT_TYPES: frozenset[str] = frozenset({"coil", "discrete"})
@@ -91,6 +93,7 @@ def _point(tag: pb.TagPoint) -> ModbusPoint | str:
         data_type=cast(DataType, address.data_type),
         byte_order=byte_order,
         word_order=word_order,
+        writable=tag.writable,
     )
     if point.address + width(point) > ADDRESS_SPACE:
         return f"tag {tag.tag_id}: address {point.address} out of range"

@@ -2255,7 +2255,7 @@ name: "ACME Line 1"
 absorbs: { site-a: 3 }        # 회수한 현장 드래프트 rev (선택)
 historian: { retention_days: 365, default_deadband: 0.0, default_max_interval_s: 60 }
 # devices/<id>.yaml : { id, protocol: modbus_tcp, host, port, unit_id, poll_ms, timeout_ms, credentials?: "secret://…" }
-# tags/<device>.yaml: [{ path, device, modbus:{register_type,address,data_type,byte_order,word_order}, eu?, description?, record?:{deadband,max_interval_s} }]
+# tags/<device>.yaml: [{ path, device, modbus:{register_type,address,data_type,byte_order,word_order}, eu?, description?, record?:{deadband,max_interval_s}, write?:{kind,…} }]
 # alarms/*.yaml     : [{ id, tag, type: above|below, setpoint, deadband, on_delay_s, priority, description? }]
 ```
 
@@ -2372,6 +2372,44 @@ window: { recurring: { tz: Asia/Seoul, days: [sat, sun], start: "02:00", end: "0
 - **알람 상태 기계(D7)**: 4상태 `NORMAL`·`ACTIVE_UNACKED`·`ACTIVE_ACKED`·`CLEARED_UNACKED`(+ 저널·WS 전용 `RETIRED`). 조건 above `value >= setpoint`, below `value <= setpoint`. 해제는 deadband 적용(above `< setpoint - deadband`, below `> setpoint + deadband`, 그 사이는 유지). NORMAL·CLEARED_UNACKED --조건--> ACTIVE_UNACKED --ACK--> ACTIVE_ACKED --해제--> NORMAL, ACTIVE_UNACKED --해제--> CLEARED_UNACKED --ACK--> NORMAL(legacy의 CLEAR_ACKED·재ACK 없음). `on_delay_s` > 0이면 조건 성립 시 타이머(재진입 시 그대로, 조건이 깨지면 취소), 만료 시 TagStore 현재값이 GOOD이고 조건이 여전할 때만 활성. quality가 GOOD이 아니거나 값이 없거나 NaN/Inf면 평가 보류(상태 유지 — 통신 끊김을 해제로 보지 않음). 같은 태그는 above setpoint 오름차순 → below 내림차순으로 평가. 정의에서 빠진 알람은 `RETIRED` 한 행을 남기고 제거.
 - **복원**: core 기동 시 `alarms` 행(retired 포함)마다 저널 마지막 행(time·id 내림차순)의 `to_state`로 시작한다. site-db가 없으면 복원될 때까지 정의 적용·평가를 보류(주기 재시도) — 미확인 알람이 새 알람으로 다시 생기지 않게. core가 꺼진 동안 정의에서 빠진 미해결 알람은 복원 직후 `RETIRED`.
 - **저널 쓰기(D8)**: 조건 변화 전이는 `tag.changed` 핸들러가 메모리 큐(상한 10,000행, 넘치면 가장 오래된 것부터 버리고 `/readyz.alarms.dropped_total`)에 넣고 writer task가 1s마다 쓴다(실패하면 큐 앞으로 되돌려 재시도, 정지 시 제한 시간 안 최종 쓰기). **ACK는 큐를 거치지 않는다**: 전이 행과 `audit_log`(`alarm.ack`·`alarm.ack_all`)를 한 트랜잭션으로 쓰고 성공한 뒤에만 메모리 반영·`alarm.changed` 발행. 기록하는 사이 해제만 됐으면 지금 상태 기준 ACK 전이(CLEARED_UNACKED → NORMAL)를 지금 시각으로 저널 큐에 더한다(해제 행보다 뒤라 복원이 고르는 마지막 행 = 메모리 상태). 기록하는 사이 새로 발생(ACTIVE_UNACKED 진입 — 알람별 발생 번호로 판정)했으면 그 ACK는 반영하지 않는다: 운전원이 보지 못한 발생이고, 마지막 행이 그 발생 행이라 메모리와 같다. 기록된 ACK 행·감사는 확인 행위로 남는다.
+
+### V1 구현 현황 (M3c-1 쓰기 계약·collector, 2026-10-18)
+
+ADR-013(개정) 쓰기 경로의 계약과 collector 실행부다. core 쓰기 서비스·REST·감사(현장 스위치 `PUREIRON_WRITES_ENABLED`, 2단계 확인, 실행 전 검사, readback 판정)는 M3c-2 — 그 전까지 core는 `WriteRequest`를 보내지 않고 plan의 `writable`은 전부 false다. migration 없음(쓰기 선언은 `tags.definition jsonb` 원문에 같이 저장된다) → epoch 그대로.
+
+- **쓰기 선언(project 스키마 `$defs/tagWrite`, 태그의 선택 필드 `write`)** — 없으면 읽기 전용.
+
+  ```yaml
+  - path: line1/temp_sp
+    device: plc-1
+    modbus: {register_type: holding, address: 100, data_type: float32}
+    write: {kind: setpoint, min: 20, max: 90}
+  - path: line1/start
+    device: plc-1
+    modbus: {register_type: coil, address: 10, data_type: bool}
+    write: {kind: command, values: [true], permissive: [line1/remote_ok, line1/auto_mode], role: operator}
+  ```
+
+  - `kind: setpoint` = 설정값·운전 조건: `min`·`max` 필수, `values` 금지. `permissive`는 선택.
+  - `kind: command` = 운전 명령: `values`(허용 값, 1개 이상)·`permissive`(PLC 허가 조건 태그 path, 1개 이상 — 전부 GOOD·참일 때만 보낸다) 필수, `min`·`max` 금지.
+  - `role: operator|engineer`(기본 operator, 정규형에서 생략) = 실행에 필요한 최소 역할.
+  - project-tools 교차 검사(현장 도달 전 거부): `register_type`은 holding·coil만(input·discrete는 읽기 전용), holding + `data_type: bool`은 불가(FC6이 레지스터 16비트 전체를 덮어쓴다 — coil 또는 uint16 command로 선언), setpoint는 숫자 형식이고 `min ≤ max`·범위가 data_type으로 인코딩 가능, command 값은 형식 범위 안(bit 형식은 bool만, 정수 형식은 범위 안 정수, float32는 ±3.4028e38 안), permissive는 존재하는 bool 태그(coil·discrete 또는 `data_type: bool`)이고 자기 자신이 아니며 **그 자신이 쓰기 대상(`write` 있음)이 아니고 그 주소를 어떤 쓰기 태그도 덮지 않음**(같은 장비·register_type 주소 범위 비교 — PureIron이 자기 허가 조건을 켜는 우회 방지), 같은 장비·register_type의 쓰기 태그끼리 주소 범위가 겹치지 않음. 승인 기록은 고객 project repo의 PR 리뷰다(ADR-013 2항).
+- **proto(호환 추가만, `buf breaking` 통과)**: `TagPoint.writable = 5`(기본 false), `WriteRequest.plan_rev = 4`·`timeout_ms = 5`(uint32, 상대 시간), `WriteResult.readback = 4`(optional double)·`readback_ts_unix_ns = 5`(optional int64), `WriteResult.Status.INDETERMINATE = 3`. bool·coil 쓰기 값은 `WriteRequest.value` 0/1.
+- **WriteResult 의미(단계별)** — 결과는 "장비에 무엇이 갔는가"로 정한다. **의심되면 `INDETERMINATE`**: `FAILED`는 운전자가 다시 눌러도 되는 결과라 실행되지 않았다고 확신할 때만 쓴다.
+
+  | status | 언제 | 장비에 |
+  |---|---|---|
+  | `REJECTED`(0, 기본값 — 빠진 응답도 거부로 읽힌다) | 보내기 전: request_id 비어 있음, `plan_rev` 0·불일치, `timeout_ms` 0·60000 초과, plan에 없는 태그, `writable=false`, 인코딩 불가(범위 밖 정수·비정수·NaN/무한대·float32 범위 밖·bool 0/1 외), 장비별 대기 8건 초과, 같은 태그 대기·진행 중, 기한 경과(`expired before send`), poller 정지(plan 교체·종료) | 안 감 |
+  | `FAILED` | 장비 미연결(큐에 넣지 않고 즉시, 새 연결을 열지 않음), 요청 거부형 Modbus 예외 응답: 01 ILLEGAL FUNCTION·02 ILLEGAL DATA ADDRESS·03 ILLEGAL DATA VALUE·06 SLAVE DEVICE BUSY·0A GATEWAY PATH UNAVAILABLE | 확실히 안 써짐 |
+  | `INDETERMINATE` | 보낸 뒤 응답 시간 초과·연결 끊김·보내는 도중 취소(연결을 닫고 다음 poll이 다시 연결), 실행 여부를 알 수 없는 Modbus 예외 응답: 04 SLAVE DEVICE FAILURE(실행 도중 실패)·05 ACKNOWLEDGE(처리 중)·0B GATEWAY TARGET FAILED TO RESPOND·모르는 코드 | 써졌을 수도 있음 — 성공으로 읽지 않는다 |
+  | `OK` | 장비가 정상 응답 — 반영 여부는 판정하지 않는다 | 써짐(ack) |
+
+  최근 처리한 request_id(64개)가 다시 오면 collector는 **응답하지 않는다**(경고 로그만) — 그 id의 응답은 원래 요청 것 1건뿐이다. core는 쓰기마다 새 request_id를 쓴다.
+
+  OK면 같은 주소를 바로 다시 읽은 값(decode 결과, bool은 0/1)과 시각을 `readback`·`readback_ts_unix_ns`에 싣는다. 재읽기가 예외 응답·통신 실패·도중 취소로 끝나면 OK 그대로 둘 다 비우고 `error`에 이유를 남긴다(이미 써졌으므로 거부·실패로 바꾸지 않는다). 판정(설정값 = readback 일치, 명령 = 장비 응답 기준)은 core(M3c-2)가 한다 — float32는 선언 형식으로 인코딩→디코딩한 값(가장 가까운 float32)과 비교해야 거짓 불일치가 없다. core는 `INDETERMINATE`와 모르는 status를 응답 없음(결과 모름)으로 다룬다.
+- **기한(`timeout_ms`)과 응답 없음의 성질**: collector는 쓰기 메시지를 **처리하는 순간** `deadline = monotonic + timeout_ms`를 잡고(수신 시각이 아니다), 장비로 보내기 **직전**에 다시 확인해 지났으면 보내지 않는다(REJECTED). 보낸 쓰기는 쓰기(장비 `timeout_ms`)와 재읽기(장비 `timeout_ms`) 안에 끝난다. 처리 시점은 수신보다 늦을 수 있다 — plan 적용 중에는 collector 수신 루프가 최대 `STOP_TIMEOUT_S`(5 s, poller 정지 대기) 멈춘다. 그래서 **core가 응답 없음을 확정한 뒤에는 그 쓰기가 PLC에 닿지 않는다**는 성질은 다음 두 조건에서 성립한다: (1) core는 collector가 현재 plan_rev의 batch를 보낸 뒤에만 쓰기를 보낸다(= plan 적용이 끝났다, M3c-2 D9), (2) core 응답 대기 시한 ≥ `timeout_ms + 2 × 장비 timeout_ms + 여유`, 여유 ≥ 수신 지연. 그러면 ADR-013 7항 "응답 없음 = 거부로 읽음"이 실제로도 성립한다. 세션이 끝나면 아직 보내지 않은 쓰기는 취소돼 보내지 않는다.
+- **collector 실행**: 쓰기 함수는 coil FC5, holding 1워드 FC6, 2·4워드 FC16뿐이다(PLC 로직 불변 — `ModbusClient` 표면 고정 테스트). 값은 `encode()`(= `decode()`의 역, byte·word order 포함). 장비별 `DevicePoller`가 쓰기 큐를 **poll과 poll 사이**에 같은 task·같은 연결로 하나씩 실행해 한 장비에 동시 트랜잭션이 없다. 자동 재시도 없음. 결과를 기다리는 동안에도 세션은 Ack·plan을 계속 읽는다.
+- **dev 시뮬레이터(`SIM_MEMORY`, 기본 100)**: holding N..N+M-1(N = `SIM_REGISTERS`)과 coil 0..max(N, M)-1은 사인파로 덮어쓰지 않는 메모리. 거부 시험 주소: holding N+M-1 쓰기 → 예외 응답(ILLEGAL DATA VALUE), N+M-2 쓰기 → 정상 응답하지만 값 유지(readback 불일치). compose 기본값이면 메모리 holding 100..199, 예외 199, 무시 198. 허가 조건 coil은 시험 하네스가 직접 바꾼다.
 
 ---
 

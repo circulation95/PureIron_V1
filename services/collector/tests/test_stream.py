@@ -16,7 +16,7 @@ from pureiron_collector._gen import collector_pb2_grpc as pb_grpc
 from pureiron_collector.drivers.common import DevicePoller, good, retry_delay
 from pureiron_collector.drivers.modbus import ModbusDevice
 from pureiron_collector.health import DeviceHealth
-from pureiron_collector.plan import DevicePlan, parse_plan
+from pureiron_collector.plan import DevicePlan, ModbusPoint, parse_plan
 from pureiron_collector.settings import CollectorSettings, SettingsError
 from pureiron_collector.stream import HEARTBEAT_SEQ, Acquisition, Backoff, Collector
 
@@ -81,8 +81,10 @@ async def test_session_hello_plan_write_rejected_and_heartbeat() -> None:
     assert hello.hello.last_plan_rev == 0
     assert collector.acquisition.plan_rev == 7
 
+    # plan_rev가 빠진(0) 쓰기는 적용 중인 plan(7)과 달라 보내지 않는다.
     results = [m.write_result for m in core.received if m.WhichOneof("msg") == "write_result"]
     assert [(r.request_id, r.status) for r in results] == [("w-1", pb.WriteResult.REJECTED)]
+    assert "plan_rev 0" in results[0].error
     # plan에 장비가 없으므로 batch는 빈 heartbeat뿐이다(seq 0, 링버퍼에 들어가지 않음).
     seqs = [m.batch.seq for m in core.received if m.WhichOneof("msg") == "batch"]
     assert seqs
@@ -166,6 +168,12 @@ class FakeDriver:
     async def poll(self) -> list[pb.Sample]:
         self.polls += 1
         return [good(p.tag_id, float(self.polls), time.time_ns()) for p in self.plan.points]
+
+    async def write(self, point: ModbusPoint, value: float) -> pb.WriteResult:
+        return pb.WriteResult(status=pb.WriteResult.OK)
+
+    async def read_back(self, point: ModbusPoint) -> float:
+        return float(self.polls)
 
     async def close(self) -> None:
         return None

@@ -2,11 +2,13 @@
   "include": [
     "build",
     "bundle",
+    "simulator",
     "tests"
   ],
   "extraPaths": [
     "build",
-    "bundle"
+    "bundle",
+    "simulator"
   ],
   "pythonVersion": "3.12",
   "typeCheckingMode": "strict"

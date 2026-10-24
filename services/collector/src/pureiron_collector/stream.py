@@ -12,8 +12,13 @@ poll은 세션과 무관하게 계속 돈다 — core가 없는 동안의 batch�
 - seq는 collector 프로세스마다 1부터 다시 시작하고, 링버퍼 drop으로 비는 구간이 있다. replay batch는
   원래 plan_rev를 유지한다.
 
-PLC 쓰기 경로는 ADR-013(개정) 가드레일과 함께 별도 마일스톤에서
-구현한다 — 그 전까지 `WriteRequest`는 `REJECTED`.
+쓰기(ADR-013 개정, M3c-1 D7): 가드레일 판단(선언·스위치·확인·허가 조건·감사)은 core가 한다.
+collector는 2중 방어로 request_id 누락·plan_rev 누락/불일치·`timeout_ms` 누락/상한 초과·모르는
+태그·`writable=false`·인코딩 불가·멈춘 poller를 `REJECTED`로 답하고(최근 request_id 중복은 응답
+없이 무시), 통과한 쓰기는 이 메시지를 처리한 순간부터 잰 기한과 함께 그 장비 poller 큐에
+넣는다(결과를 기다리는 동안에도 세션 읽기는 계속, 이후 결과 규칙은 `drivers/common.py`). plan 적용
+중에는 수신 루프가 최대 `STOP_TIMEOUT_S` 멈출 수 있다 — 그동안 도착한 쓰기의 기한은 처리 시점부터
+잰다. 세션이 끝나면 아직 보내지 않은 쓰기는 버린다 — core는 응답 없음으로 본다.
 """
 
 from __future__ import annotations
@@ -23,26 +28,28 @@ import contextlib
 import logging
 import math
 import time
+from collections import deque
 from collections.abc import AsyncIterator, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from grpc import aio
 
 from pureiron_collector import __version__
 from pureiron_collector._gen import collector_pb2 as pb
 from pureiron_collector._gen import collector_pb2_grpc as pb_grpc
-from pureiron_collector.drivers.common import DevicePoller, DriverFactory
-from pureiron_collector.drivers.modbus import ModbusDevice
+from pureiron_collector.drivers.common import DevicePoller, DriverFactory, EncodeError
+from pureiron_collector.drivers.modbus import ModbusDevice, encode
 from pureiron_collector.health import DeviceHealth
-from pureiron_collector.plan import parse_plan
+from pureiron_collector.plan import ModbusPoint, parse_plan
 from pureiron_collector.ring import RingBuffer
 from pureiron_collector.settings import CollectorSettings
 
 log = logging.getLogger(__name__)
 
-WRITE_DISABLED = "write path not implemented yet (ADR-013 guardrails pending)"
 HEARTBEAT_SEQ = 0  # 빈 heartbeat batch는 링버퍼에 넣지 않는다(core는 Ack(0)으로 답한다).
 STOP_TIMEOUT_S = 5.0
+RECENT_REQUESTS = 64  # 중복 검사용으로 기억하는 최근 쓰기 request_id 수
+MAX_WRITE_TIMEOUT_MS = 60_000  # 이보다 긴 기한은 거부 — 오래된 판단으로 PLC에 쓰지 않게
 
 type Outgoing = asyncio.Queue[pb.CollectorMsg]
 
@@ -59,6 +66,9 @@ class Acquisition:
         self._buffer: list[pb.Sample] = []
         self._full = asyncio.Event()
         self._pollers: dict[str, tuple[DevicePoller, asyncio.Task[None]]] = {}
+        self._points: dict[int, tuple[str, ModbusPoint]] = {}  # tag_id → (device_id, 주소)
+        # 최근 받은 쓰기 request_id — 같은 요청이 두 번 실행되지 않게(재전송·버그 방어).
+        self._recent_requests: deque[str] = deque(maxlen=RECENT_REQUESTS)
         self._live: Outgoing | None = None
 
     # --- 샘플 → batch -------------------------------------------------------------------
@@ -93,6 +103,11 @@ class Acquisition:
         await self.stop_pollers()
         self.plan_rev = parsed.plan_rev
         self._applied = True
+        self._points = {
+            point.tag_id: (device.device_id, point)
+            for device in parsed.devices
+            for point in device.points
+        }
         for device in parsed.devices:
             poller = DevicePoller(
                 device,
@@ -127,6 +142,65 @@ class Acquisition:
 
     def health(self) -> list[pb.DeviceHealth]:
         return [poller.health.to_proto() for poller, _ in self._pollers.values()]
+
+    def pending_writes(self) -> int:
+        """모든 장비의 대기·진행 중 쓰기 수(관찰용)."""
+        return sum(poller.pending_writes for poller, _ in self._pollers.values())
+
+    # --- 쓰기 -------------------------------------------------------------------------
+    def _request_problem(self, request: pb.WriteRequest) -> str | None:
+        """요청 자체의 거부 이유(id·plan_rev·기한)."""
+        if not request.request_id:
+            return "missing request_id"
+        if request.plan_rev == 0 or not self._applied or request.plan_rev != self.plan_rev:
+            return f"plan_rev {request.plan_rev} does not match applied plan {self.plan_rev}"
+        if request.timeout_ms == 0:
+            return "missing timeout"
+        if request.timeout_ms > MAX_WRITE_TIMEOUT_MS:
+            return f"timeout_ms {request.timeout_ms} exceeds {MAX_WRITE_TIMEOUT_MS}"
+        return None
+
+    def _check_write(self, request: pb.WriteRequest) -> tuple[DevicePoller, ModbusPoint] | str:
+        """보내기 전 2중 방어. 통과하면 (poller, 주소), 아니면 거부 이유."""
+        problem = self._request_problem(request)
+        if problem is not None:
+            return problem
+        target = self._points.get(request.tag_id)
+        if target is None:
+            return f"tag {request.tag_id} is not in the applied plan"
+        device_id, point = target
+        if not point.writable:
+            return f"tag {request.tag_id} is not writable"
+        try:
+            encode(request.value, point)
+        except EncodeError as exc:
+            return f"tag {request.tag_id}: {exc}"
+        entry = self._pollers.get(device_id)
+        if entry is None or entry[1].done():
+            return f"device {device_id} is not polled"
+        return entry[0], point
+
+    async def write(self, request: pb.WriteRequest) -> pb.WriteResult | None:
+        """결과를 돌려준다. 이미 받은 request_id면 None — 응답하지 않는다.
+
+        그 id의 응답은 원래 요청 것 1건뿐이어야 core가 결과를 헷갈리지 않는다.
+        """
+        # 기한은 이 메시지를 처리하는 순간부터 잰다(상대 시간 — core와 시계가 달라도 된다).
+        deadline_s = time.monotonic() + request.timeout_ms / 1000
+        if request.request_id and request.request_id in self._recent_requests:
+            log.warning("ignoring duplicate write request %s (no response)", request.request_id)
+            return None
+        if request.request_id:
+            self._recent_requests.append(request.request_id)
+        checked = self._check_write(request)
+        if isinstance(checked, str):
+            log.warning("rejecting write request %s: %s", request.request_id, checked)
+            result = pb.WriteResult(status=pb.WriteResult.REJECTED, error=checked)
+        else:
+            poller, point = checked
+            result = await poller.write(point, request.value, deadline_s=deadline_s)
+        result.request_id = request.request_id
+        return result
 
     # --- 세션 연결 ---------------------------------------------------------------------
     def attach(self, outgoing: Outgoing) -> None:
@@ -177,15 +251,7 @@ type ChannelFactory = Callable[[str], aio.Channel]
 class _Session:
     outgoing: Outgoing
     last_rx: float  # core 메시지를 마지막으로 받은(또는 처리를 끝낸) 시각
-
-
-def _reject(write: pb.WriteRequest) -> pb.CollectorMsg:
-    log.warning("rejecting write request %s: %s", write.request_id, WRITE_DISABLED)
-    return pb.CollectorMsg(
-        write_result=pb.WriteResult(
-            request_id=write.request_id, status=pb.WriteResult.REJECTED, error=WRITE_DISABLED
-        )
-    )
+    writes: set[asyncio.Task[None]] = field(default_factory=set[asyncio.Task[None]])
 
 
 class Collector:
@@ -208,18 +274,27 @@ class Collector:
             )
         )
 
-    async def _handle(self, message: pb.CoreMsg, outgoing: Outgoing) -> bool:
+    async def _handle(self, message: pb.CoreMsg, session: _Session) -> bool:
         """메시지 하나를 처리한다. plan이었으면 True."""
         kind = message.WhichOneof("msg")
         if kind == "plan":
             await self.acquisition.apply_plan(message.plan)
-            self.acquisition.attach(outgoing)
+            self.acquisition.attach(session.outgoing)
             return True
         if kind == "ack":
             self.acquisition.ring.ack(message.ack.seq)
         elif kind == "write":
-            outgoing.put_nowait(_reject(message.write))
+            # 장비 응답을 기다리는 동안에도 Ack·plan을 읽도록 따로 돌린다(세션이 끝나면 취소).
+            task = asyncio.create_task(self._write(message.write, session.outgoing))
+            session.writes.add(task)
+            task.add_done_callback(session.writes.discard)
+            task.add_done_callback(_log_crash)
         return False
+
+    async def _write(self, request: pb.WriteRequest, outgoing: Outgoing) -> None:
+        result = await self.acquisition.write(request)
+        if result is not None:
+            outgoing.put_nowait(pb.CollectorMsg(write_result=result))
 
     async def _heartbeat(self, session: _Session) -> None:
         while True:
@@ -273,16 +348,17 @@ class Collector:
                     if not isinstance(message, pb.CoreMsg):
                         break
                     session.last_rx = math.inf  # 처리 중에는 watchdog이 판정하지 않는다.
-                    got_plan = await self._handle(message, session.outgoing) or got_plan
+                    got_plan = await self._handle(message, session) or got_plan
                     # plan 적용(stop_pollers)처럼 처리에 걸린 시간을 core 침묵으로 세지 않는다.
                     session.last_rx = time.monotonic()
             finally:
                 self.acquisition.detach()
-                for task in (*side_tasks, watchdog):
+                writes = list(session.writes)
+                for task in (*side_tasks, watchdog, *writes):
                     task.cancel()
                 stopper.cancel()
                 call.cancel()
-                await asyncio.gather(*side_tasks, watchdog, return_exceptions=True)
+                await asyncio.gather(*side_tasks, watchdog, *writes, return_exceptions=True)
                 await asyncio.gather(stopper, return_exceptions=True)
         return got_plan
 
