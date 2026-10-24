@@ -14,6 +14,7 @@ from pureiron_core.api.auth import SessionGuard, build_auth_router
 from pureiron_core.api.devices import build_devices_router
 from pureiron_core.api.health import build_health_router
 from pureiron_core.api.history import build_history_router
+from pureiron_core.api.origin import OriginGuard
 from pureiron_core.api.project import build_project_router
 from pureiron_core.api.tags import build_tags_router
 from pureiron_core.api.ws import build_ws_router, ws_schema_components
@@ -32,6 +33,7 @@ def create_app(rt: SiteRuntime) -> FastAPI:
             await rt.stop()
 
     app = FastAPI(title="PureIron core", version=__version__, lifespan=lifespan)
+    app.add_middleware(OriginGuard)
     app.include_router(
         build_health_router(
             db=rt.db,
@@ -53,6 +55,7 @@ def create_app(rt: SiteRuntime) -> FastAPI:
             auth=rt.auth,
             audit=rt.audit,
             guard=guard,
+            throttle=rt.login_throttle,
             cookie_secure=rt.settings.auth_cookie_secure,
             cookie_max_age_s=int(rt.settings.auth_session_absolute_s),
         ),

@@ -2447,6 +2447,9 @@
               }
             },
             "description": "Validation Error"
+          },
+          "429": {
+            "description": "같은 username의 로그인 실패가 많아 잠시 받지 않는다(`Retry-After`초 뒤에)"
           }
         },
         "summary": "Login",

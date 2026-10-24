@@ -3,12 +3,14 @@
 세션 토큰은 로그인 응답의 HttpOnly·SameSite=Strict 쿠키(`pureiron_session`, 브라우저)와 응답
 본문 `token`(비브라우저 → `Authorization: Bearer`) 두 가지로 받는다. 둘 다 오면 쿠키를 쓴다.
 미인증은 401, 역할 부족은 403. 계정 생성·비활성화는 CLI 전용이라 여기에 없다(D3).
-감사 기록은 best-effort다.
+감사 기록은 best-effort다. 로그인 실패 제한(plan M3c D16)은 `auth.throttle.LoginThrottle`이
+세고, 제한 중인 username은 비밀번호를 확인하지 않고 429 + `Retry-After`로 끝낸다.
 """
 
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -26,10 +28,12 @@ from pureiron_core.auth.ports import (
     AuthUnavailableError,
     InvalidCredentialsError,
     InvalidPasswordError,
+    LoginResult,
     Principal,
     Role,
     SessionInvalidError,
 )
+from pureiron_core.auth.throttle import LoginThrottle
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +64,11 @@ _ROLE_NAMES: dict[Role, RoleName] = {
 }
 _UNAUTHORIZED: dict[int | str, dict[str, object]] = {
     status.HTTP_401_UNAUTHORIZED: {"description": "not authenticated"}
+}
+_THROTTLED: dict[int | str, dict[str, object]] = {
+    status.HTTP_429_TOO_MANY_REQUESTS: {
+        "description": "같은 username의 로그인 실패가 많아 잠시 받지 않는다(`Retry-After`초 뒤에)"
+    }
 }
 
 
@@ -112,6 +121,80 @@ def _unauthorized(detail: str) -> HTTPException:
     return HTTPException(
         status.HTTP_401_UNAUTHORIZED, detail=detail, headers={"WWW-Authenticate": "Bearer"}
     )
+
+
+def _throttled(retry_after_s: float) -> HTTPException:
+    return HTTPException(
+        status.HTTP_429_TOO_MANY_REQUESTS,
+        detail="too many failed logins, retry later",
+        headers={"Retry-After": str(max(1, math.ceil(retry_after_s)))},
+    )
+
+
+async def _login_failed(
+    audit: AuditSink, throttle: LoginThrottle, username: str, reason: str, *, tracked: bool
+) -> None:
+    """실패 감사 + 실패 제한 기록. 규칙에 맞지 않는 username(예: username 칸에 넣은 비밀번호)은
+    계정이 될 수 없다 — 감사에는 이름 없이 남기고, 실패 제한(메모리)에도 넣지 않는다."""
+    if not tracked:
+        await audit.record(
+            AuditEntry(
+                action=AuditAction.AUTH_LOGIN_FAILED,
+                source=AuditSource.API,
+                detail={"reason": reason, "username_invalid": True},
+            )
+        )
+        return
+    throttle_started = throttle.failed(username)
+    await audit.record(
+        AuditEntry(
+            action=AuditAction.AUTH_LOGIN_FAILED,
+            source=AuditSource.API,
+            username=username,
+            target=username,
+            detail={"reason": reason},
+        )
+    )
+    if throttle_started:
+        await audit.record(
+            AuditEntry(
+                action=AuditAction.AUTH_LOGIN_THROTTLED,
+                source=AuditSource.API,
+                username=username,
+                target=username,
+                detail={
+                    "failures": throttle.max_failures,
+                    "window_s": throttle.window_s,
+                    "block_s": throttle.block_s,
+                },
+            )
+        )
+
+
+async def _throttled_login(
+    auth: AuthPort, audit: AuditSink, throttle: LoginThrottle, body: LoginRequest
+) -> LoginResult:
+    """실패 제한을 거친 `auth.login`. 실패는 401·429·503 HTTPException으로 바꿔 던진다."""
+    tracked = username_problem(body.username) is None
+    if tracked and (retry_after_s := throttle.begin(body.username)) is not None:
+        raise _throttled(retry_after_s)
+    try:
+        result = await auth.login(body.username, body.password)
+    except InvalidCredentialsError as exc:
+        await _login_failed(audit, throttle, body.username, exc.reason, tracked=tracked)
+        raise _unauthorized(str(exc)) from exc
+    except AuthUnavailableError as exc:
+        if tracked:
+            throttle.abandoned(body.username)
+        raise site_db_unavailable(exc) from exc
+    except BaseException:
+        # 예상 밖 예외(500)·취소: 진행 중 시도를 정리해 정상 사용자의 남은 시도를 줄이지 않는다.
+        if tracked:
+            throttle.abandoned(body.username)
+        raise
+    if tracked:
+        throttle.succeeded(body.username)
+    return result
 
 
 def _token(cookie: str | None, bearer: HTTPAuthorizationCredentials | None) -> str | None:
@@ -170,6 +253,7 @@ def build_auth_router(
     auth: AuthPort,
     audit: AuditSink,
     guard: SessionGuard,
+    throttle: LoginThrottle,
     cookie_secure: bool,
     cookie_max_age_s: int,
 ) -> APIRouter:
@@ -187,25 +271,9 @@ def build_auth_router(
             )
         )
 
-    @router.post("/login", operation_id="login", responses=_UNAUTHORIZED)
+    @router.post("/login", operation_id="login", responses={**_UNAUTHORIZED, **_THROTTLED})
     async def login(body: LoginRequest, response: Response) -> LoginOut:
-        try:
-            result = await auth.login(body.username, body.password)
-        except InvalidCredentialsError as exc:
-            # 규칙에 맞지 않는 입력(예: username 칸에 넣은 비밀번호)은 감사에 남기지 않는다.
-            if username_problem(body.username) is None:
-                await record(AuditAction.AUTH_LOGIN_FAILED, body.username, reason=exc.reason)
-            else:
-                await audit.record(
-                    AuditEntry(
-                        action=AuditAction.AUTH_LOGIN_FAILED,
-                        source=AuditSource.API,
-                        detail={"reason": exc.reason, "username_invalid": True},
-                    )
-                )
-            raise _unauthorized(str(exc)) from exc
-        except AuthUnavailableError as exc:
-            raise site_db_unavailable(exc) from exc
+        result = await _throttled_login(auth, audit, throttle, body)
         response.set_cookie(
             SESSION_COOKIE,
             result.token,
