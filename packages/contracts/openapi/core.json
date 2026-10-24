@@ -593,6 +593,25 @@
         "title": "Check",
         "type": "object"
       },
+      "CheckName": {
+        "description": "실행 전 검사(D9) 항목. 이름은 \"통과하려면 참이어야 하는 조건\"이다.",
+        "enum": [
+          "writes_enabled",
+          "declared",
+          "role",
+          "value",
+          "tag_good",
+          "device_connected",
+          "single_collector_session",
+          "plan_reported",
+          "send_window",
+          "permissive",
+          "no_edit_lock",
+          "not_in_flight"
+        ],
+        "title": "CheckName",
+        "type": "string"
+      },
       "DeviceList": {
         "properties": {
           "devices": {
@@ -1642,6 +1661,9 @@
           "version": {
             "title": "Version",
             "type": "string"
+          },
+          "writes": {
+            "$ref": "#/components/schemas/Writes"
           }
         },
         "required": [
@@ -1651,7 +1673,8 @@
           "acquisition",
           "historian",
           "alarms",
-          "realtime"
+          "realtime",
+          "writes"
         ],
         "title": "Readiness",
         "type": "object"
@@ -1941,6 +1964,494 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "WriteCheckOut": {
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "실패 이유(통과하면 null)",
+            "title": "Detail"
+          },
+          "name": {
+            "$ref": "#/components/schemas/CheckName"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "ok",
+          "detail"
+        ],
+        "title": "WriteCheckOut",
+        "type": "object"
+      },
+      "WriteOutcome": {
+        "description": "쓰기 결과(D10). 감사 `detail.outcome`·API 응답 값.",
+        "enum": [
+          "CONFIRMED",
+          "WRITTEN",
+          "MISMATCH",
+          "FAILED",
+          "REJECTED",
+          "NO_RESPONSE"
+        ],
+        "title": "WriteOutcome",
+        "type": "string"
+      },
+      "WriteOutcomes": {
+        "description": "confirm 결과 수(core 기동 후). confirm 때 검사 거부는 rejected에 든다(prepare 거부는\n세지 않는다).",
+        "properties": {
+          "confirmed": {
+            "title": "Confirmed",
+            "type": "integer"
+          },
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "mismatch": {
+            "title": "Mismatch",
+            "type": "integer"
+          },
+          "no_response": {
+            "title": "No Response",
+            "type": "integer"
+          },
+          "rejected": {
+            "title": "Rejected",
+            "type": "integer"
+          },
+          "written": {
+            "title": "Written",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "confirmed",
+          "written",
+          "mismatch",
+          "failed",
+          "rejected",
+          "no_response"
+        ],
+        "title": "WriteOutcomes",
+        "type": "object"
+      },
+      "WritePreparedOut": {
+        "properties": {
+          "checks": {
+            "description": "실행 전 검사(모두 통과)",
+            "items": {
+              "$ref": "#/components/schemas/WriteCheckOut"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "current": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TagValueOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "지금 현재값(태그가 plan에 없으면 null)"
+          },
+          "expires_at": {
+            "description": "이 시각까지 같은 사용자가 confirm해야 한다",
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "setpoint",
+              "command"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "tag_id": {
+            "title": "Tag Id",
+            "type": "integer"
+          },
+          "tag_path": {
+            "title": "Tag Path",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "description": "목표값",
+            "title": "Value"
+          },
+          "write_id": {
+            "description": "confirm에 쓰는 1회용 id",
+            "title": "Write Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "write_id",
+          "tag_id",
+          "tag_path",
+          "kind",
+          "value",
+          "current",
+          "checks",
+          "expires_at"
+        ],
+        "title": "WritePreparedOut",
+        "type": "object"
+      },
+      "WriteRejectedOut": {
+        "properties": {
+          "checks": {
+            "description": "검사 전부(실패한 것은 ok=false·detail)",
+            "items": {
+              "$ref": "#/components/schemas/WriteCheckOut"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "write_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "confirm에서 거부됐으면 그 id(다시 쓸 수 없다)",
+            "title": "Write Id"
+          }
+        },
+        "required": [
+          "detail",
+          "write_id",
+          "checks"
+        ],
+        "title": "WriteRejectedOut",
+        "type": "object"
+      },
+      "WriteRequestIn": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "description": "사유(감사에 남는다)",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "tag_path": {
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9_./-]{0,254}$",
+            "title": "Tag Path",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/WriteValue",
+            "description": "목표값. bit 형식(coil·bool)은 true/false, 그 밖은 숫자"
+          }
+        },
+        "required": [
+          "tag_path",
+          "value",
+          "reason"
+        ],
+        "title": "WriteRequestIn",
+        "type": "object"
+      },
+      "WriteResultOut": {
+        "properties": {
+          "before": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TagValueOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "보내기 직전 현재값"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "kind": {
+            "enum": [
+              "setpoint",
+              "command"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/WriteOutcome",
+            "description": "CONFIRMED(설정값 readback 일치)·WRITTEN(장비 ack — 명령, 또는 readback을 못 읽은 설정값)·MISMATCH(readback 불일치)·FAILED(확실히 안 써짐)·REJECTED(보내지 않음)·NO_RESPONSE(결과 모름 — 써졌을 수 있다, 현장 확인. 자동 재시도 없음)"
+          },
+          "readback": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "장비를 다시 읽은 값(bool은 0/1)",
+            "title": "Readback"
+          },
+          "readback_ts": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Readback Ts"
+          },
+          "tag_id": {
+            "title": "Tag Id",
+            "type": "integer"
+          },
+          "tag_path": {
+            "title": "Tag Path",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "description": "목표값",
+            "title": "Value"
+          },
+          "write_id": {
+            "title": "Write Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "write_id",
+          "tag_id",
+          "tag_path",
+          "kind",
+          "value",
+          "before",
+          "outcome",
+          "readback",
+          "readback_ts",
+          "error"
+        ],
+        "title": "WriteResultOut",
+        "type": "object"
+      },
+      "WriteTargetOut": {
+        "properties": {
+          "data_type": {
+            "description": "Modbus data_type(bool이면 값은 true/false)",
+            "title": "Data Type",
+            "type": "string"
+          },
+          "device_id": {
+            "title": "Device Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "setpoint",
+              "command"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "setpoint 허용 범위 상한(command는 null)",
+            "title": "Max"
+          },
+          "min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "setpoint 허용 범위 하한(command는 null)",
+            "title": "Min"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "permissive": {
+            "description": "허가 조건 태그 path — 전부 GOOD·참이어야 보낸다",
+            "items": {
+              "type": "string"
+            },
+            "title": "Permissive",
+            "type": "array"
+          },
+          "role": {
+            "description": "실행에 필요한 최소 역할",
+            "enum": [
+              "operator",
+              "engineer"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "tag_id": {
+            "title": "Tag Id",
+            "type": "integer"
+          },
+          "values": {
+            "description": "command 허용 값(setpoint는 빈 목록)",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            "title": "Values",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tag_id",
+          "path",
+          "device_id",
+          "kind",
+          "role",
+          "data_type",
+          "min",
+          "max",
+          "values",
+          "permissive"
+        ],
+        "title": "WriteTargetOut",
+        "type": "object"
+      },
+      "WriteTargetsOut": {
+        "properties": {
+          "confirm_ttl_s": {
+            "description": "prepare 뒤 confirm까지 허용 시간",
+            "title": "Confirm Ttl S",
+            "type": "number"
+          },
+          "enabled": {
+            "description": "현장 스위치 PUREIRON_WRITES_ENABLED(꺼지면 모든 쓰기 거부)",
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "targets": {
+            "description": "선언된 쓰기 태그(path 순)",
+            "items": {
+              "$ref": "#/components/schemas/WriteTargetOut"
+            },
+            "title": "Targets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "enabled",
+          "confirm_ttl_s",
+          "targets"
+        ],
+        "title": "WriteTargetsOut",
+        "type": "object"
+      },
+      "WriteValue": {
+        "anyOf": [
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "number"
+          }
+        ]
+      },
+      "Writes": {
+        "description": "PLC 쓰기 상태(준비 판정에는 쓰지 않음). 태그 path·값은 싣지 않는다.",
+        "properties": {
+          "audit_failures_total": {
+            "description": "기록하지 못한 쓰기 감사 행 수(의도 행 실패 = 보내지 않음, 결과·거부 행 실패 = 손실)",
+            "title": "Audit Failures Total",
+            "type": "integer"
+          },
+          "enabled": {
+            "description": "현장 쓰기 스위치 PUREIRON_WRITES_ENABLED",
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "in_flight": {
+            "description": "지금 확인·전송 중인 쓰기 수",
+            "title": "In Flight",
+            "type": "integer"
+          },
+          "outcomes": {
+            "$ref": "#/components/schemas/WriteOutcomes"
+          }
+        },
+        "required": [
+          "enabled",
+          "in_flight",
+          "outcomes",
+          "audit_failures_total"
+        ],
+        "title": "Writes",
         "type": "object"
       },
       "WsClientMessage": {
@@ -2906,6 +3417,182 @@
         "summary": "List Tags",
         "tags": [
           "tags"
+        ]
+      }
+    },
+    "/api/v1/writes": {
+      "post": {
+        "operationId": "prepare_write",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WriteRequestIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WritePreparedOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "not authenticated"
+          },
+          "403": {
+            "description": "requires a higher role"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteRejectedOut"
+                }
+              }
+            },
+            "description": "실행 전 검사 실패"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          },
+          {
+            "SessionBearer": []
+          }
+        ],
+        "summary": "Prepare",
+        "tags": [
+          "writes"
+        ]
+      }
+    },
+    "/api/v1/writes/targets": {
+      "get": {
+        "operationId": "list_write_targets",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteTargetsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "not authenticated"
+          },
+          "403": {
+            "description": "requires a higher role"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          },
+          {
+            "SessionBearer": []
+          }
+        ],
+        "summary": "List Targets",
+        "tags": [
+          "writes"
+        ]
+      }
+    },
+    "/api/v1/writes/{write_id}/confirm": {
+      "post": {
+        "operationId": "confirm_write",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "write_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{32}$",
+              "title": "Write Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteResultOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "not authenticated"
+          },
+          "403": {
+            "description": "requires a higher role"
+          },
+          "404": {
+            "description": "준비된 쓰기 없음(이미 확인됨·다른 사용자가 준비함·모르는 id)"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteRejectedOut"
+                }
+              }
+            },
+            "description": "실행 전 검사 실패"
+          },
+          "410": {
+            "description": "확인 시간 초과 — 다시 prepare"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "감사 기록 실패 — 보내지 않음"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          },
+          {
+            "SessionBearer": []
+          }
+        ],
+        "summary": "Confirm",
+        "tags": [
+          "writes"
         ]
       }
     }

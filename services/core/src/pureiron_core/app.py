@@ -17,6 +17,7 @@ from pureiron_core.api.history import build_history_router
 from pureiron_core.api.origin import OriginGuard
 from pureiron_core.api.project import build_project_router
 from pureiron_core.api.tags import build_tags_router
+from pureiron_core.api.writes import build_writes_router
 from pureiron_core.api.ws import build_ws_router, ws_schema_components
 from pureiron_core.runtime import SiteRuntime
 
@@ -42,6 +43,7 @@ def create_app(rt: SiteRuntime) -> FastAPI:
             historian=rt.historian,
             alarms=rt.alarms,
             realtime=rt.realtime,
+            writes=rt.writes,
         ),
         prefix=API_PREFIX,
     )
@@ -66,6 +68,7 @@ def create_app(rt: SiteRuntime) -> FastAPI:
     app.include_router(build_alarms_router(alarms=rt.alarms, guard=guard), prefix=API_PREFIX)
     app.include_router(build_devices_router(devices=rt.devices, guard=guard), prefix=API_PREFIX)
     app.include_router(build_history_router(history=rt.history, guard=guard), prefix=API_PREFIX)
+    app.include_router(build_writes_router(writes=rt.writes, guard=guard), prefix=API_PREFIX)
     app.include_router(build_ws_router(auth=rt.auth, realtime=rt.realtime), prefix=API_PREFIX)
     _add_ws_schemas(app)
     return app

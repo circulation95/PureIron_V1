@@ -94,6 +94,36 @@ def test_realtime_batch_setting() -> None:
         Settings.from_env({"PUREIRON_REALTIME_BATCH_MS": "0"})
 
 
+def test_write_settings_default_off_and_bounds() -> None:
+    defaults = Settings.from_env({})
+    assert (defaults.writes_enabled, defaults.write_confirm_ttl_s, defaults.write_timeout_s) == (
+        False,
+        60.0,
+        10.0,
+    )
+    tuned = Settings.from_env(
+        {
+            "PUREIRON_WRITES_ENABLED": "true",
+            "PUREIRON_WRITE_CONFIRM_TTL_S": "30",
+            "PUREIRON_WRITE_TIMEOUT_S": "60",
+        }
+    )
+    assert (tuned.writes_enabled, tuned.write_confirm_ttl_s, tuned.write_timeout_s) == (
+        True,
+        30.0,
+        60.0,
+    )
+    with pytest.raises(SettingsError, match="PUREIRON_WRITES_ENABLED"):
+        Settings.from_env({"PUREIRON_WRITES_ENABLED": "sometimes"})
+    # collector `timeout_ms` 상한(60000ms)을 넘는 시한은 기동 시 거부한다.
+    with pytest.raises(SettingsError, match="PUREIRON_WRITE_TIMEOUT_S must be at most 60"):
+        Settings.from_env({"PUREIRON_WRITE_TIMEOUT_S": "61"})
+    with pytest.raises(SettingsError, match="PUREIRON_WRITE_CONFIRM_TTL_S must be at most"):
+        Settings.from_env({"PUREIRON_WRITE_CONFIRM_TTL_S": "3601"})
+    with pytest.raises(SettingsError, match="PUREIRON_WRITE_TIMEOUT_S"):
+        Settings.from_env({"PUREIRON_WRITE_TIMEOUT_S": "0"})
+
+
 def test_settings_errors(tmp_path: Path) -> None:
     with pytest.raises(SettingsError, match="PUREIRON_GRPC_PORT"):
         Settings.from_env({"PUREIRON_GRPC_PORT": "x"})
@@ -173,6 +203,8 @@ def test_create_app_starts_without_site_db(tmp_path: Path) -> None:
         # 이력은 받은 것이 없다(빈 버퍼 — DB가 없어도 정지 시 최종 flush가 막히지 않음)
         historian = ready.json()["historian"]
         assert (historian["buffer_rows"], historian["written_total"]) == (0, 0)
+        # 쓰기 스위치 기본 꺼짐(M3c-2)
+        assert ready.json()["writes"]["enabled"] is False
         assert client.get("/api/v1/project").status_code == 503
         # 인증 경로도 죽지 않는다: 토큰 없음은 DB 없이 401, DB가 필요한 검증·로그인은 503.
         assert client.get("/api/v1/auth/me").status_code == 401
@@ -180,6 +212,15 @@ def test_create_app_starts_without_site_db(tmp_path: Path) -> None:
         assert client.get("/api/v1/auth/me", headers=bearer).status_code == 503
         login = client.post("/api/v1/auth/login", json={"username": "a", "password": "b"})
         assert login.status_code == 503
+
+
+def test_switched_on_core_starts_without_site_db(tmp_path: Path) -> None:
+    """스위치가 켜진 채 site-db 없이 기동해도 죽지 않는다(기동 감사 행은 나중에 다시 시도)."""
+    app = create_app(SiteRuntime.build(_settings(tmp_path, PUREIRON_WRITES_ENABLED="true")))
+    with TestClient(app) as client:
+        writes = client.get("/api/v1/readyz").json()["writes"]
+        assert (writes["enabled"], writes["in_flight"]) == (True, 0)
+        assert client.get("/api/v1/writes/targets").status_code == 401
 
 
 def test_create_app_guards_cookie_posts_by_origin(tmp_path: Path) -> None:

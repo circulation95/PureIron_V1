@@ -425,6 +425,9 @@ class WritesService:
             await self._audit.record_strict(entry)
         except AuditUnavailableError as exc:
             self._audit_failures += 1
+            log.warning(
+                "audit %s for %s failed; not proceeding: %s", entry.action, entry.target, exc
+            )
             raise WriteUnavailableError(f"audit record failed; write not sent: {exc}") from exc
 
     async def _record_quietly(self, entry: AuditEntry) -> None:
