@@ -4,6 +4,7 @@ Protocol을 직접 만족한다)."""
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -161,6 +162,9 @@ class FakeStrictAudit:
 
     async def record_strict(self, entry: AuditEntry) -> None:
         self.attempts.append(entry.action)
+        # PgAuditStore와 같이 직렬화하되 NaN/Inf는 거부한다 — jsonb가 받지 않는 값이 테스트에서
+        # 바로 드러나게.
+        json.dumps(dict(entry.detail), sort_keys=True, default=str, allow_nan=False)
         if self.during is not None:
             await self.during(entry)
         if self.down or entry.action in self.failing:

@@ -361,8 +361,12 @@ class WritesService:
         self._outcomes[outcome] += 1
         result: dict[str, object] = {**detail, "outcome": outcome.value}
         if reply.readback is not None:
-            result["readback"] = reply.readback
+            # NaN/Inf readback(장비 레지스터 값)은 jsonb에 넣을 수 없다 — null로 바꾸고 원래 값은
+            # 문자열로 남긴다(안 그러면 결과 행이 매번 기록되지 않는다).
+            result["readback"] = json_value(reply.readback)
             result["readback_ts_ns"] = reply.readback_ts_ns
+            if result["readback"] is None:
+                result["readback_raw"] = repr(reply.readback)
         if error is not None:
             result["error"] = error
         await self._record_quietly(self._entry(principal, target, result))

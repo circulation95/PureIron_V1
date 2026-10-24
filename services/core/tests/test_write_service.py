@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from dataclasses import replace
 
 import pytest
@@ -305,6 +306,22 @@ async def test_no_response_and_failed_outcomes_are_reported() -> None:
         assert fx.audit.entries[-1].detail["outcome"] == expected.value
     outcomes = fx.service.status().outcomes
     assert (outcomes[WriteOutcome.NO_RESPONSE], outcomes[WriteOutcome.FAILED]) == (2, 1)
+
+
+async def test_non_finite_readback_is_mismatch_and_result_row_is_kept() -> None:
+    # 레지스터가 NaN/Inf로 남아도 결과 행은 jsonb에 들어가야 한다(fake 감사는 allow_nan=False).
+    fx = write_fixture()
+    for raw in (math.nan, math.inf):
+        fx.channel.reply = WriteReply(WriteReplyStatus.OK, readback=raw, readback_ts_ns=7)
+        prepared = await fx.service.prepare(OP, SETPOINT, 30.0, "r")
+        report = await fx.service.confirm(OP, prepared.write_id)
+        assert report.outcome is WriteOutcome.MISMATCH
+        result = fx.audit.rows()[-1].detail
+        assert result["outcome"] == "MISMATCH"
+        assert (result["readback"], result["readback_raw"]) == (None, repr(raw))
+        assert result["readback_ts_ns"] == 7
+    assert fx.service.status().audit_failures_total == 0
+    assert fx.audit.actions() == [("tag.write", "SENDING"), ("tag.write", "MISMATCH")] * 2
 
 
 async def test_switch_off_rejects_and_plan_is_read_only() -> None:
