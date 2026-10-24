@@ -3,12 +3,12 @@
   "docs": [
     {
       "audience": "both",
-      "bytes": 47822,
+      "bytes": 47876,
       "id": "adr-index",
       "last_verified": "2026-10-04",
       "path": "docs/wiki/adr/index.md",
       "section_count": 33,
-      "sha256": "2d4ea9bbdab14d51ba01994bf071eecdedb0f06b2b04f32b3eba2cbb3b255fcd",
+      "sha256": "14293647109321ccf95ba8f13ef84041a1742135be0d01816ea1256fefa4b0ff",
       "source_globs": [],
       "sources": [
         "docs/wiki/sot/product.md",
@@ -134,12 +134,12 @@
     },
     {
       "audience": "both",
-      "bytes": 30681,
+      "bytes": 30892,
       "id": "sot-api-events",
       "last_verified": "2026-06-26",
       "path": "docs/wiki/sot/api-events.md",
       "section_count": 15,
-      "sha256": "1bda76c27375783ca9e49696ab9209c7c5201bef9942486792b3d6186543cf71",
+      "sha256": "8b368b97afbce4afce70cc37dd591cc28f833d0ad2da69cf23be2958f1c4eefb",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/main.py",
