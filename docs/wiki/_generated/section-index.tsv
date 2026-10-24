@@ -177,7 +177,7 @@ sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m3a-3-histor
 sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m3b-1-authaudit-2026-10-11	330	7	2305	h3	V1 구현 현황 (M3b-1 auth·audit, 2026-10-11)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m3b-2-alarmsrealtime-2026-10-11	337	8	3427	h3	V1 구현 현황 (M3b-2 alarms·realtime, 2026-10-11)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m3c-1-쓰기-계약collector-2026-10-18	345	37	7507	h3	V1 구현 현황 (M3c-1 쓰기 계약·collector, 2026-10-18)
-sot-frontend	docs/wiki/sot/frontend.md	frontend-sot	24	319	26031	h1	Frontend SOT
+sot-frontend	docs/wiki/sot/frontend.md	frontend-sot	24	319	26104	h1	Frontend SOT
 sot-frontend	docs/wiki/sot/frontend.md	1-문서-경계	32	12	702	h2	1. 문서 경계
 sot-frontend	docs/wiki/sot/frontend.md	2-스택과-실행-명령	44	24	625	h2	2. 스택과 실행 명령
 sot-frontend	docs/wiki/sot/frontend.md	3-디렉터리-책임	68	20	1219	h2	3. 디렉터리 책임
@@ -192,7 +192,7 @@ sot-frontend	docs/wiki/sot/frontend.md	11-operator-ui-규칙	215	23	935	h2	11. O
 sot-frontend	docs/wiki/sot/frontend.md	12-변경검증-원칙	238	19	926	h2	12. 변경·검증 원칙
 sot-frontend	docs/wiki/sot/frontend.md	13-design-system-primitive-계약	257	25	4881	h2	13. Design system primitive 계약
 sot-frontend	docs/wiki/sot/frontend.md	15-overlay-계약	282	11	1172	h2	15. Overlay 계약
-sot-frontend	docs/wiki/sot/frontend.md	16-v1-web-m3b	293	50	8657	h2	16. V1 web (M3b)
+sot-frontend	docs/wiki/sot/frontend.md	16-v1-web-m3b	293	50	8730	h2	16. V1 web (M3b)
 sot-mes-schedule	docs/wiki/sot/mes-schedule.md	messchedule-sot	15	88	8875	h1	MES/Schedule SOT
 sot-mes-schedule	docs/wiki/sot/mes-schedule.md	결정-상태-표기	25	10	456	h2	결정 상태 표기
 sot-mes-schedule	docs/wiki/sot/mes-schedule.md	1-내부-모델-vs-고객-노출-라벨-분리	35	14	1084	h2	1. 내부 모델 vs 고객 노출 라벨 분리

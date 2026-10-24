@@ -102,7 +102,12 @@ export function isWriteResult(body: unknown): body is WriteResult {
     "outcome" in body &&
     typeof body.outcome === "string" &&
     "kind" in body &&
-    "before" in body
+    "value" in body &&
+    (typeof body.value === "number" || typeof body.value === "boolean") &&
+    "readback" in body &&
+    (body.readback === null || typeof body.readback === "number") &&
+    "before" in body &&
+    (body.before === null || (typeof body.before === "object" && "value" in body.before))
   );
 }
 

@@ -298,6 +298,7 @@ function PreparedStep({ target, step, onAgain, onSend, onCancel }: PreparedStepP
 export function WriteDialog({ target, current, onClose }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const sentId = useRef<string | null>(null); // 같은 write_id를 두 번 보내지 않는다
+  const closeRequested = useRef(false); // 사용자가 닫기를 골랐는지(아니면 브라우저가 닫아도 다시 연다)
   const [step, setStep] = useState<Step>({ kind: "input", message: null });
   const [draft, setDraft] = useState<Draft>({ text: "", command: 0, reason: "" });
   const sending = step.kind === "sending";
@@ -312,7 +313,8 @@ export function WriteDialog({ target, current, onClose }: Props) {
   }, []);
 
   // 보내는 중에는 화면 이동(뒤로 가기 포함)을 막고, 새로고침·탭 닫기에는 브라우저 경고를 띄운다.
-  const blocker = useBlocker(sending);
+  // 로그인 화면 이동(401)은 막지 않는다 — 막으면 세션 만료 뒤에도 이 화면에 갇힌다.
+  const blocker = useBlocker(({ nextLocation }) => sending && nextLocation.pathname !== "/login");
   useEffect(() => {
     if (blocker.state === "blocked") blocker.reset();
   }, [blocker]);
@@ -381,8 +383,12 @@ export function WriteDialog({ target, current, onClose }: Props) {
       });
   };
 
+  const finish = () => {
+    closeRequested.current = true;
+    onClose();
+  };
   const close = () => {
-    if (!busy) onClose();
+    if (!busy) finish();
   };
 
   return (
@@ -401,8 +407,8 @@ export function WriteDialog({ target, current, onClose }: Props) {
       onClose={() => {
         const element = dialog.current;
         if (element === null || element.open) return; // StrictMode 재실행 등으로 다시 열린 뒤 도착한 close
-        if (busy) element.showModal(); // 브라우저가 강제로 닫아도 결과를 보여야 한다
-        else onClose();
+        // 사용자가 고르지 않은 닫힘(반복 Esc에 브라우저가 강제로 닫음 등)이면 다시 연다 — 결과를 보여야 한다.
+        if (!closeRequested.current) element.showModal();
       }}
     >
       <h2 id="write-dialog-title">
@@ -433,7 +439,7 @@ export function WriteDialog({ target, current, onClose }: Props) {
           </p>
           <Checks checks={step.checks.filter((c) => !c.ok)} />
           <div className="write-actions">
-            <button type="button" onClick={onClose}>
+            <button type="button" onClick={finish}>
               닫기
             </button>
             <button
@@ -477,7 +483,7 @@ export function WriteDialog({ target, current, onClose }: Props) {
       ) : null}
       {step.kind === "done" || step.kind === "outcome" || step.kind === "error" ? (
         <div className="write-actions">
-          <button type="button" onClick={onClose}>
+          <button type="button" onClick={finish}>
             닫기
           </button>
         </div>
