@@ -294,7 +294,7 @@ Frontend 작업은 화면이 크고 회귀 위험이 높다. 다음 원칙을 �
 
 > 이 절은 **PureIron_V1 현행**이다(위 1~15절은 legacy 기준). 근거: plan M3b D10·D13·D14·§2.5, 규약은 [coding-style](coding-style.md) 10절.
 
-**스택**: Vite + React 19 + TypeScript strict, `openapi-fetch`(생성 타입), `react-router`(라우팅·로그인 보호), `uplot`(트렌드 canvas — 1h 원시 3,600점 × 여러 태그), `@playwright/test`(devDep). 상태 라이브러리·UI 키트는 없다(React state + WS 클라이언트 모듈, 스타일은 `src/styles.css`). 편집 화면·쓰기 UI는 없다(No config UI, PLC 쓰기는 M3c).
+**스택**: Vite + React 19 + TypeScript strict, `openapi-fetch`(생성 타입), `react-router`(라우팅·로그인 보호), `uplot`(트렌드 canvas — 1h 원시 3,600점 × 여러 태그), `@playwright/test`(devDep). 상태 라이브러리·UI 키트는 없다(React state + WS 클라이언트 모듈, 스타일은 `src/styles.css`). 편집 화면은 없다(No config UI). PLC 쓰기는 Overview 행의 확인 대화상자뿐이다(M3c-3, 아래 "PLC 쓰기 화면").
 
 | 경로 | 책임 |
 |---|---|
@@ -304,7 +304,8 @@ Frontend 작업은 화면이 크고 회귀 위험이 높다. 다음 원칙을 �
 | `src/api/client.ts` | `openapi-fetch` 클라이언트(`credentials: "include"`), 401 → 로그인 이벤트, 역할 비교·실패 문구, 생성 타입 별칭 |
 | `src/api/schema.d.ts` | 생성물(`npm run gen:api`, contracts-drift가 검사). REST·WS 메시지 타입의 정본 |
 | `src/ws/client.ts` | `RealtimeClient` |
-| `src/pages/` | `Login` · `Overview`(태그) · `Alarms`(활성·ACK·저널) · `Trend` · `Devices` · `Audit` |
+| `src/app/writes.ts` | 쓰기 버튼 표시 조건·검사 이름·결과 문구(아래 "PLC 쓰기 화면") |
+| `src/pages/` | `Login` · `Overview`(태그·쓰기 버튼) · `WriteDialog`(쓰기 확인) · `Alarms`(활성·ACK·저널) · `Trend` · `Devices` · `Audit` |
 | `e2e/` · `playwright.config.ts` | compose 스택 위 chromium 스모크 |
 
 **상태 규칙**
@@ -312,7 +313,13 @@ Frontend 작업은 화면이 크고 회귀 위험이 높다. 다음 원칙을 �
 - effect는 정리 함수(AbortController·WS 해제·ResizeObserver/uPlot 해제)를 돌려준다. 다시 불러올 때의 loading 전환은 effect가 아니라 이벤트 핸들러에서 한다.
 - 실패 문구는 HTTP 상태로 고른 고정 문구다(서버 문구를 그대로 보여주지 않음). 로그인 실패는 "아이디 또는 비밀번호가 올바르지 않습니다."
 - 401이 오면(로그인 요청 제외) `/login?next=<원래 경로>`로 보내고, 로그인 뒤 그 경로로 돌아간다(같은 사이트 경로만).
-- 역할별 표시: ACK·전체 ACK는 운전원 이상, 감사 로그는 엔지니어 이상(아래는 권한 없음 안내). 서버가 같은 규칙으로 403을 낸다.
+- 역할별 표시: ACK·전체 ACK는 운전원 이상, 감사 로그는 엔지니어 이상(아래는 권한 없음 안내), 쓰기 버튼은 태그 선언 `role` 이상. 서버가 같은 규칙으로 403(쓰기는 409 검사 `role`)을 낸다.
+
+**PLC 쓰기 화면** (M3c-3, API는 [api-events](api-events.md) 쓰기 절, 근거 ADR-013·plan M3c D8·D10)
+- 버튼: `GET /writes/targets`가 `enabled=true`이고 그 태그가 선언돼 있고 사용자 역할 ≥ 선언 `role`일 때만 행에 `쓰기` 버튼. 대상 조회가 실패하면 버튼을 하나도 보이지 않고 안내 1줄. 요약 줄에 `쓰기 가능 N개` 또는 `현장 쓰기 꺼짐`.
+- 대화상자(`<dialog>` `showModal`, 진행 중에는 Esc로 닫히지 않음): 장비·현재값(품질·시각)·허용 범위(설정값) 또는 허용 값·허가 조건(명령) → 목표값·사유(1~200자) → `검사`(`POST /writes`, 아무것도 안 보냄) → 통과 검사 목록·확인 기한 → `실행`(`POST /writes/{id}/confirm`). **명령은 "정말 실행합니까?" 확인을 한 번 더** 받는다. 범위 밖 값도 화면이 막지 않는다 — 서버 검사 `value`가 거부하고 그 결과를 보여준다. 검사 거부(409)는 실패한 검사 이름·이유를 보여주고 다시 입력으로.
+- 결과 문구: `CONFIRMED` "적용 확인" · 명령 `WRITTEN` "장비 수신" · **설정값 `WRITTEN`(readback 없음) "장비 수신, 값 미확인 — 현재값 확인"(경고)** · `MISMATCH` "값 불일치" · `FAILED` "쓰지 못했습니다" · `REJECTED` "보내지 않았습니다" · **`NO_RESPONSE`·모르는 값 "응답 없음 — 결과를 알 수 없습니다. 써졌을 수 있으니 현장 확인, 자동으로 다시 보내지 않음"(경고)**.
+- confirm 실패: 410 → "확인 시간이 지났습니다"(다시 검사), 404 → 이미 처리됐거나 없는 요청(현재값·감사 로그로 확인), 503 → 감사 기록 실패로 보내지 않음, **네트워크 오류·그 밖 5xx → `NO_RESPONSE`와 같은 "결과 모름"**(confirm이 core에 닿았는지 모른다 — "실패"로 쓰면 다시 눌러 이중 쓰기). 다시 보내기 버튼은 없다.
 
 **WS** (`/api/v1/ws`, 쿠키 인증)
 - 로그인한 레이아웃이 연결 하나를 만들고 화면이 `on(type, handler)`·`subscribe(tagIds)`(참조 계수)로 나눠 쓴다. 해제 함수를 effect 정리에서 부른다.
@@ -328,7 +335,7 @@ Frontend 작업은 화면이 크고 회귀 위험이 높다. 다음 원칙을 �
 ```bash
 cd services/web && npm ci && npm run typecheck && npm run lint && npm run build
 npm run dev                      # http://localhost:3000 → core 127.0.0.1:18000 (PUREIRON_CORE_URL)
-bash scripts/g1.sh web-e2e       # 이미지 빌드 → pureiron-it compose(시뮬레이터 100태그 + 알람 1개, CLI 계정) → Playwright
+bash scripts/g1.sh web-e2e       # 이미지 빌드 → pureiron-it compose(쓰기 스위치 켬, 시뮬레이터 100태그 + 쓰기 선언 3개 + 알람 1개, CLI 계정) → Playwright
 ```
 
 e2e 결과·trace·화면 스크린샷은 `artifacts/web-e2e/`(`test-results/`·`report/`·`screens/`·`compose.log`). `PUREIRON_IT_KEEP=1`이면 스택을 내리지 않는다. 포트·프로젝트 이름은 core 통합 테스트와 같은 환경변수(`PUREIRON_IT_PROJECT`·`PUREIRON_DEV_*_PORT`·`PUREIRON_IT_WEB_PORT`)로 바꾼다.
