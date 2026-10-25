@@ -39,6 +39,8 @@ MAX_MS = 2**31 - 1
 PORT_MAX = 65535
 UNIT_ID_MAX = 255
 ADDRESS_MAX = 65535
+# legacy `ModbusConnectionConfig.timeout_s` 기본값. V1 기본 1000 ms와 달라 키가 없어도 적는다.
+LEGACY_TIMEOUT_S = 3.0
 _PROVIDER = re.compile(r"^\[[^\]]*\]")
 # legacy project_package.py `_REDACT_KEY_PATTERN`과 같은 패턴·camelCase 정규화(apiKey → api_Key).
 SECRET_KEY = re.compile(
@@ -162,13 +164,12 @@ def _timing(doc: dict[str, Json], raw: Mapping[str, Json], note: tuple[Notes, st
             )
         else:
             doc["poll_ms"] = poll_ms
-    if "timeout_s" in raw:
-        seconds = as_number(raw["timeout_s"])
-        millis = seconds * 1000 if seconds is not None else math.nan
-        if not MIN_MS <= millis <= MAX_MS:
-            notes.dropped(file, item, "timeout_s", f"timeout must be {MIN_MS}..{MAX_MS} ms")
-        else:
-            doc["timeout_ms"] = round(millis)
+    seconds = as_number(raw.get("timeout_s", LEGACY_TIMEOUT_S))
+    millis = seconds * 1000 if seconds is not None else math.nan
+    if not MIN_MS <= millis <= MAX_MS:
+        notes.dropped(file, item, "timeout_s", f"timeout must be {MIN_MS}..{MAX_MS} ms")
+    else:
+        doc["timeout_ms"] = round(millis)
 
 
 @dataclass(frozen=True, slots=True)

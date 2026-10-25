@@ -81,7 +81,7 @@ def test_modbus_device_row_config_object_or_json_string_converts(
     assert code == 0, report["unsupported"]
     assert (out / "devices" / "plc.yaml").read_text("utf-8") == (
         "credentials: secret://plc\nhost: 10.0.0.1\nid: plc\nport: 502\n"
-        "protocol: modbus_tcp\nunit_id: 7\n"
+        "protocol: modbus_tcp\ntimeout_ms: 3000\nunit_id: 7\n"
     )
     assert (out / "tags" / "plc.yaml").read_text("utf-8") == (
         "- device: plc\n  modbus:\n    address: 10\n    data_type: float32\n"
@@ -518,7 +518,8 @@ def test_connection_values_are_checked_before_writing(
     if entry is None:
         assert code == 0
         assert (out / "devices" / "plc.yaml").read_text("utf-8") == (
-            "host: localhost\nid: plc\nport: 502\nprotocol: modbus_tcp\nunit_id: 3\n"
+            "host: localhost\nid: plc\nport: 502\nprotocol: modbus_tcp\ntimeout_ms: 3000\n"
+            "unit_id: 3\n"
         )
 
 
@@ -531,6 +532,43 @@ def test_secret_keys_follow_the_legacy_pattern_with_camel_case(tmp_path: Path) -
     text = (out / "devices" / "plc.yaml").read_text("utf-8")
     assert "k-value" not in text
     assert "plant-7" not in text
+
+
+# --- 재리뷰 r2 N1·N2: canonical이 읽지 못하는 plain 문자열, legacy timeout 기본값 ----------------
+
+
+def test_strings_ruamel_cannot_read_as_plain_are_quoted(tmp_path: Path) -> None:
+    connection = (
+        CONNECTION + "    timeout_s: 1\n    tags:\n"
+        '      - {tag_path: "[PLC]a", register_type: holding, description: "+_", '
+        'engineering_units: "0x_"}\n'
+    )
+    code, out, report = _convert(tmp_path, {"connections/plc.yaml": connection})
+    assert code == 0, report["unsupported"]
+    assert (out / "tags" / "plc.yaml").read_text("utf-8") == (
+        '- description: "+_"\n  device: plc\n  eu: "0x_"\n  modbus:\n    address: 0\n'
+        "    data_type: uint16\n    register_type: holding\n  path: a\n"
+    )
+    assert main(["fmt", "--check", str(out)]) == 0
+
+
+@pytest.mark.parametrize(
+    ("timeout", "expected"),
+    [
+        ("", "timeout_ms: 3000\n"),
+        ("    timeout_s: 1\n", ""),
+        ("    timeout_s: 3\n", "timeout_ms: 3000\n"),
+    ],
+    ids=["missing-is-legacy-3s", "v1-default-omitted", "explicit"],
+)
+def test_missing_timeout_keeps_the_legacy_3_second_default(
+    tmp_path: Path, timeout: str, expected: str
+) -> None:
+    code, out, report = _convert(tmp_path, {"connections/plc.yaml": CONNECTION + timeout})
+    assert code == 0, report["unsupported"]
+    assert (out / "devices" / "plc.yaml").read_text("utf-8") == (
+        f"host: h\nid: plc\nport: 502\nprotocol: modbus_tcp\n{expected}"
+    )
 
 
 # --- 종료 코드 2의 두 의미 ----------------------------------------------------------------
