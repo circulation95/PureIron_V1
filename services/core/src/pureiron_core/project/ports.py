@@ -12,6 +12,10 @@ class ProjectStateError(Exception):
     pass
 
 
+class ProjectTreeError(ProjectStateError):
+    """적용·복원할 트리(tar)가 안전하지 않거나 검증·hash가 맞지 않는다(아무것도 바꾸지 않았다)."""
+
+
 class EditLockConflictError(ProjectStateError):
     def __init__(self, holder: str | None) -> None:
         super().__init__(f"edit lock held by {holder!r}")

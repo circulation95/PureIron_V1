@@ -31,6 +31,8 @@ from pureiron_bundle.errors import BundleRejectedError, RejectCode
 from pureiron_bundle.images import config_digest_from_tar
 from pureiron_bundle.trust import issue_cert
 from pureiron_bundle.verify import GenDecision, SchemaAction, VerifyContext, verify_bundle
+from pureiron_core.project.apply import tree_from_tar
+from pureiron_core.project.export import tree_tar
 from pureiron_project.project import load_project
 
 REPO = Path(__file__).resolve().parents[2]
@@ -173,6 +175,18 @@ def test_build_then_verify_end_to_end(setup: Setup, capsys: pytest.CaptureFixtur
     assert metrics["zlib"] == zlib.ZLIB_RUNTIME_VERSION
     assert metrics["python"] == platform.python_version()
     assert not list(setup.out.glob(".staging-*"))
+
+
+def test_bundle_project_tar_is_what_core_applies_and_exports(setup: Setup) -> None:
+    """번들 project.tar = core `apply --tar`가 받는 트리(같은 hash), export와 같은 바이트."""
+    assert main(setup.args()) == 0
+    extract = setup.tmp / "staging"
+    manifest = verify_bundle(setup.pib, context(schema_epoch=1), extract_to=extract).manifest
+    data = (extract / "project" / "project.tar").read_bytes()
+    tree = tree_from_tar(data)
+    assert tree.content_hash == manifest.project.content_hash
+    assert tree.project_id == manifest.project.project_id
+    assert tree_tar(tree.files) == data
 
 
 def test_build_is_deterministic(setup: Setup) -> None:

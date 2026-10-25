@@ -30,8 +30,9 @@ from pureiron_core.project.ports import (
 from pureiron_project.project import Project
 from pureiron_project.schema import Kind
 
-# apply-definitions끼리 직렬화한다(동시 실행 시 rev 계산·retire가 섞이지 않게). 'PIRD'.
-_APPLY_LOCK_KEY = 0x50495244
+# 정의 적용(apply-definitions·project apply·restore)끼리 직렬화한다(동시 실행 시 rev 계산·retire가
+# 섞이지 않게). 'PIRD'.
+APPLY_LOCK_KEY = 0x50495244
 # core 백그라운드 조회 제한 시간(half-open DB 연결에서 plan 갱신이 멈추지 않게).
 _QUERY_TIMEOUT_S = 5.0
 
@@ -181,7 +182,7 @@ async def apply_definitions(conn: Connection, project: Project) -> ApplyResult:
     """검증된 프로젝트의 장비·태그 정의를 한 트랜잭션으로 반영한다."""
     rows = _rows(project)
     async with conn.transaction():
-        await conn.execute("SELECT pg_advisory_xact_lock($1)", _APPLY_LOCK_KEY)
+        await conn.execute("SELECT pg_advisory_xact_lock($1)", APPLY_LOCK_KEY)
         devices = await conn.fetchrow(
             _UPSERT_DEVICES, rows.device_ids, rows.device_protocols, rows.device_defs
         )
