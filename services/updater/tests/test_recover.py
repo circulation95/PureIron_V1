@@ -176,6 +176,19 @@ SCENARIOS = {
         frozenset(COMMON | {Phase.MIGRATING, Phase.ROLLING_BACK, Phase.FAILED}),
         base="r4",
     ),
+    # 리뷰 M-1: r3(트리 모름) → r4 첫 트리 release health 실패 — state만 되돌리고 E_DEFINITIONS_LEFT
+    # 경보. 경보 저장이 따로 한 지점 늘어도 수렴해야 한다(outcome에 alarm 포함).
+    "transition_health_fail": Scenario(
+        fail_health("r4"),
+        2,
+        "r4",
+        AttemptResult.FAILED,
+        frozenset(
+            COMMON
+            | {Phase.MIGRATING, Phase.SWITCHING, Phase.CHECKING, Phase.ROLLING_BACK, Phase.FAILED}
+        ),
+        base="r3",
+    ),
 }
 # 검증 단계 E_DRAFT는 커밋 전 거부라 잠금 단계까지 가지 않는다 — 잠금 아래 거부는 test_phases.
 
@@ -261,7 +274,9 @@ def test_crash_at_every_point_converges(tmp_path: Path, name: str) -> None:
     assert scenario.phases <= crashed_in, sorted(scenario.phases - crashed_in)
 
 
-@pytest.mark.parametrize("name", ["update", "health_fail", "tree_health_fail"])
+@pytest.mark.parametrize(
+    "name", ["update", "health_fail", "tree_health_fail", "transition_health_fail"]
+)
 def test_crash_during_recover_still_converges(tmp_path: Path, name: str) -> None:
     """복구 도중 다시 crash(재부팅 반복) → 다시 recover → 같은 결과."""
     harness = Harness(tmp_path, SCENARIOS[name])
@@ -308,7 +323,10 @@ def test_recover_after_window_closed(tmp_path: Path, name: str) -> None:
         assert site.world.schema_epoch == EPOCH[scenario.base], (at, phase)
 
 
-@pytest.mark.parametrize("name", ["update", "health_fail", "migrate_fail", "tree_health_fail"])
+@pytest.mark.parametrize(
+    "name",
+    ["update", "health_fail", "migrate_fail", "tree_health_fail", "transition_health_fail"],
+)
 def test_reboot_at_every_point_converges(tmp_path: Path, name: str) -> None:
     """crash가 호스트 재부팅이면: 데몬이 뜨기 전엔 아무것도 하지 않고, DB가 복구 중이어도
     일시 장애를 영구 실패로 분류하지 않으며, 결국 crash 없는 실행과 같은 결과로 수렴한다."""

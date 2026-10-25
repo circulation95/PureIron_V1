@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import os
+import re
 import stat
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import cast
 
@@ -163,3 +164,97 @@ def test_tree_backup_without_state_is_a_backup_error(tmp_path: Path) -> None:
             tree=True,
             reader_uid=None,
         )
+
+
+# ── 리뷰 M-2: 쓰기 mount 결과물은 컨테이너 uid가 만든 것 — 링크를 따르지 않는다 ─────────────────
+
+posix_only = pytest.mark.skipif(sys.platform == "win32", reason="symlink·hard link는 POSIX에서만")
+
+
+class PlantingCompose(ExportingCompose):
+    """손상된 core 이미지: export 결과 자리에 호스트 파일을 가리키는 링크를 심는다."""
+
+    def __init__(self, plant: Callable[[Path], None]) -> None:
+        super().__init__()
+        self.plant = plant
+
+    def run_core(
+        self,
+        target: ComposeTarget,
+        args: Sequence[str],
+        *,
+        mounts: Mapping[Path, str] | None = None,
+        writable: Mapping[Path, str] | None = None,
+    ) -> str:
+        super().run_core(target, args, mounts=mounts, writable=writable)
+        for host in self.writable:
+            self.plant(host)
+        return ""
+
+
+def _host_secret(tmp_path: Path) -> Path:
+    secret = tmp_path / "host-secret"
+    secret.write_text('{"root-only": true}', encoding="utf-8")
+    return secret
+
+
+def _backup_with(tmp_path: Path, compose: ExportingCompose) -> Path:
+    directory = tmp_path / "backups" / "g2"
+    backup.make_backup(
+        cast(Compose, compose),
+        _current(tmp_path),
+        directory,
+        tmp_path / "secrets",
+        tree=True,
+        reader_uid=None,
+    )
+    return directory
+
+
+@posix_only
+@pytest.mark.parametrize("name", [backup.STATE_FILE, backup.TREE_FILE])
+def test_backup_rejects_symlink_planted_by_the_container(tmp_path: Path, name: str) -> None:
+    secret = _host_secret(tmp_path)
+
+    def plant(out: Path) -> None:
+        (out / name).unlink()
+        (out / name).symlink_to(secret)
+
+    with pytest.raises(backup.BackupError, match=re.escape(name)):
+        _backup_with(tmp_path, PlantingCompose(plant))
+    assert not (tmp_path / "backups" / "g2" / backup.COMPLETE).exists()
+
+
+@posix_only
+def test_backup_rejects_hard_link_planted_by_the_container(tmp_path: Path) -> None:
+    secret = _host_secret(tmp_path)
+
+    def plant(out: Path) -> None:
+        (out / backup.STATE_FILE).unlink()
+        os.link(secret, out / backup.STATE_FILE)
+
+    with pytest.raises(backup.BackupError, match="single-link"):
+        _backup_with(tmp_path, PlantingCompose(plant))
+
+
+def test_backup_rejects_unexpected_export_entries(tmp_path: Path) -> None:
+    def plant(out: Path) -> None:
+        (out / "extra").mkdir()
+
+    with pytest.raises(backup.BackupError, match=r"expected state\.json"):
+        _backup_with(tmp_path, PlantingCompose(plant))
+
+
+@posix_only
+def test_restore_does_not_follow_a_symlink_in_the_backup_tree(tmp_path: Path) -> None:
+    """백업 뒤 트리 항목이 링크로 바뀌어 있어도 링크 대상을 사본으로 만들어 mount하지 않는다."""
+    compose = ExportingCompose()
+    directory = _backup_with(tmp_path, compose)
+    tree = directory / backup.TREE_DIR / backup.TREE_FILE
+    tree.unlink()
+    tree.symlink_to(_host_secret(tmp_path))
+    with pytest.raises(backup.BackupError, match="not a regular file"):
+        backup.restore_project(
+            cast(Compose, compose), ComposeTarget(tmp_path / "g1"), directory, reader_uid=None
+        )
+    assert not (directory / backup.RESTORE_DIR / backup.TREE_FILE).exists()

@@ -563,6 +563,8 @@ def test_tree_rollback_restores_backup_tree_and_draft_revs_with_previous_image(
         2,
     )
     assert calls[-1] == ("g1", "project", "restore", "--from", "/run/pureiron-backup/project")
+    assert state.alarm is None  # 정의까지 되돌렸다 — 조용한 failed가 맞다
+    assert "E_DEFINITIONS_LEFT" not in str(reports(site)[-1]["logs"])
 
 
 def test_first_tree_release_after_pre_tree_release_rolls_back_state_only(site: Site) -> None:
@@ -577,6 +579,13 @@ def test_first_tree_release_after_pre_tree_release_rolls_back_state_only(site: S
     assert calls[-1] == ("g1", "project", "restore", "--from", "/run/pureiron-backup/project.json")
     assert site.world.project["version"] == "v1"
     assert site.world.tree == b"project-v2"  # 실패한 업데이트가 적용한 정의가 남는다
+    # 리뷰 M-1: 남은 정의는 조용히 넘기지 않는다 — 별도 코드·경보·메트릭
+    assert state.alarm == "g2: E_HEALTH E_DEFINITIONS_LEFT"
+    report = reports(site)[-1]
+    assert (report["code"], report["failed_manual"]) == ("E_HEALTH", False)
+    assert "rollback: E_DEFINITIONS_LEFT: project definitions" in str(report["logs"])
+    prom = (site.settings.state_dir / "metrics" / "updater.prom").read_text(encoding="utf-8")
+    assert "updater_failed_manual 1" in prom
 
 
 def test_revert_to_pre_tree_release_records_meta_only(site: Site) -> None:

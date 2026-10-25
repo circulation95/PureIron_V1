@@ -92,6 +92,12 @@ E_SWITCH = "E_SWITCH"
 E_HEALTH = "E_HEALTH"
 E_SUPERSEDED = "E_SUPERSEDED"
 E_BUNDLE = "E_BUNDLE"
+E_DEFINITIONS_LEFT = "E_DEFINITIONS_LEFT"
+"""롤백은 됐지만 실패한 generation의 정의가 남았다(트리 이전 백업, backup.py 한계) — alarm."""
+DEFINITIONS_LEFT_HINT = (
+    "project definitions of the failed generation left in place (pre-tree backup); "
+    "manual: run `pureiron-core apply-definitions <previous project dir>` with the previous image"
+)
 _IMAGE_PAYLOAD = re.compile(r"images/([a-z][a-z0-9-]{0,31})\.tar(\.gz)?")
 
 
@@ -564,10 +570,15 @@ class Updater:
             pin_images(self.deps.docker, images)
             self.deps.compose.up(prev)
             check_running(self.deps.compose.running_images(prev), images)
-            backup_dir = self.settings.backups_dir / f"g{self._gen(attempt)}"
-            restore_project(
-                self.deps.compose, prev, backup_dir, reader_uid=self.settings.secret_uid
+            gen = self._gen(attempt)
+            restored_tree = restore_project(
+                self.deps.compose,
+                prev,
+                self.settings.backups_dir / f"g{gen}",
+                reader_uid=self.settings.secret_uid,
             )
+            # 전환기(backup.py 한계): 트리 이전 백업이면 state만 되돌려 새 정의가 남는다
+            left = not restored_tree and tree_aware(read_manifest(self._target(gen)))
             failure = self._wait_ready(None)
             if failure is not None:
                 raise _RollbackError(f"previous generation not ready: {failure}")
@@ -579,6 +590,13 @@ class Updater:
                 self._enter(attempt, Phase.FAILED_MANUAL, rollback_tries=tries, detail=detail)
             else:
                 self._update(attempt, rollback_tries=tries, detail=detail)
+            return True
+        if left:
+            log.error("generation %s rolled back with its definitions left in place", gen)
+            # alarm을 먼저 저장한다 — 사이에서 crash하면 롤백이 다시 돌고(멱등) 같은 값을 다시 쓴다
+            self._save(replace(self.state, alarm=f"g{gen}: {attempt.code} {E_DEFINITIONS_LEFT}"))
+            detail = f"{attempt.detail}\nrollback: {E_DEFINITIONS_LEFT}: {DEFINITIONS_LEFT_HINT}"
+            self._enter(attempt, Phase.FAILED, detail=detail)
             return True
         self._enter(attempt, Phase.FAILED)
         return True
