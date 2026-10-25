@@ -60,7 +60,7 @@ def test_mini_converts_supported_items_to_the_expected_canonical_tree(tmp_path: 
     assert main(["fmt", "--check", str(out)]) == 0
     assert report["content_hash"] == load_project(MINI_CONVERTED).content_hash()
     assert report["summary"]["devices"] == 1
-    assert report["summary"]["tags"] == 3
+    assert report["summary"]["tags"] == 4
     assert report["summary"]["alarms"] == 2
 
 
@@ -83,10 +83,11 @@ def test_mini_reports_every_unsupported_item(tmp_path: Path) -> None:
         ("tags/tags.json", "[Memory]LineA/setpoint", "memory_tag", None),
         ("tags/tags.json", "[Expressions]LineA/avg", "expression_tag", None),
         ("tags/tags.json", "[S7]LineA/s7", "device_tag", None),
-        ("tags/tags.json", "[Line-A PLC]LineA/old", "excluded_tag", None),
+        ("tags/tags.json", "[Line-A PLC]LineA/old", "field", "read_only"),
+        ("tags/tags.json", "[Line-A PLC]LineA/old", "field", "history"),
         ("udt/types.yaml", "VALVE", "udt_type", None),
     ]
-    assert report["summary"]["unsupported"] == 18
+    assert report["summary"]["unsupported"] == 19
 
 
 def test_secret_values_and_user_data_are_never_copied(tmp_path: Path) -> None:
@@ -158,6 +159,7 @@ def test_store_tag_addresses_follow_the_connection_addressing_rule(tmp_path: Pat
             "tag_type": "Device",
             "device_name": "PLC",
             "address_config": {"protocol": "modbus", "address": 41, "data_type": "float32"},
+            "read_only": True,
         },
     }
     root = _legacy(
@@ -175,7 +177,7 @@ def test_flat_yaml_device_tag_and_name_without_ascii_get_ids(tmp_path: Path) -> 
     connection = 'connections:\n  - name: "보일러"\n    host: h\n'
     tags = (
         'tags:\n  - path: "[보일러]boiler/temp"\n    tag_type: Device\n'
-        "    device_name: 보일러\n    scan_rate_ms: 200\n"
+        "    device_name: 보일러\n    scan_rate_ms: 200\n    read_only: true\n"
         "    address_config: {protocol: modbus, address: 5, data_type: int16}\n"
     )
     alarms = (

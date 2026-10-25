@@ -20,3 +20,9 @@
     data_type: int16
     register_type: input
   path: LineA/flow
+- device: line-a-plc
+  modbus:
+    address: 49
+    data_type: uint16
+    register_type: holding
+  path: LineA/old
