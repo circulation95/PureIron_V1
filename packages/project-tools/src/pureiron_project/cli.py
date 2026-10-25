@@ -2,7 +2,8 @@
 
 종료 코드: 0 성공, 1 검증 실패·포맷 불일치(`fmt --check`)·읽을 수 없는 입력,
 2 사용법 오류(argparse). `convert-legacy`는 2를 하나 더 쓴다: 변환은 했지만(출력·보고서 기록)
-미지원 항목이 있음(M5 plan D11).
+미지원 항목이 있음(M5 plan D11). 둘은 stdout으로 구분한다 — 미지원이면 `converted:` 줄이 있고,
+사용법 오류면 stdout은 비고 stderr에 argparse usage가 나온다.
 """
 
 from __future__ import annotations
@@ -13,7 +14,8 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from pureiron_project.convert_legacy import ConvertError, convert_legacy, report_bytes, write_tree
+from pureiron_project.convert_legacy import convert_legacy, report_bytes, write_tree
+from pureiron_project.legacy_files import ConvertError
 from pureiron_project.project import format_project, load_project
 
 EXIT_UNSUPPORTED = 2
@@ -50,15 +52,9 @@ def _utf8_console() -> None:
 def _convert_legacy(source: Path, out: Path, report_path: Path) -> int:
     try:
         conversion = convert_legacy(source)
-        write_tree(conversion, out)
+        project = write_tree(conversion, out)
     except ConvertError as exc:
         print(f"error: {exc}", file=sys.stderr)
-        return 1
-    project = load_project(out)
-    if not project.ok:
-        # 변환기 결함 — 출력은 항상 validate를 통과해야 한다.
-        for problem in project.problems:
-            print(f"error: converted output is invalid: {problem}", file=sys.stderr)
         return 1
     report = conversion.report(project.content_hash())
     report_path.parent.mkdir(parents=True, exist_ok=True)

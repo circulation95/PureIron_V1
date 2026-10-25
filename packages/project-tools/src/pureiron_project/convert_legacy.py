@@ -12,8 +12,10 @@
   넣지 않는다 → 같은 입력이면 출력 트리·보고서가 바이트 단위로 같다.
 - 비밀값·개인정보: `auth/`·`settings/`·사용자별 dashboard는 개수만 보고하고, 연결의 비밀값
   필드는 값을 옮기지 않고 `secret://<device id>` 참조로만 쓴다.
-- 변환하는 파일(project.json·연결·태그·알람)을 읽을 수 없으면 `ConvertError`(아무것도 쓰지
-  않음). 미지원 디렉터리의 파일은 읽지 못해도 파일 단위로 보고만 한다.
+- 조용히 버리지 않는다(D11): 목록이 아닌 값·mapping이 아닌 항목·읽지 않는 최상위 키도 보고한다.
+- 변환하는 파일(project.json·연결·태그·알람)을 읽을 수 없으면 `ConvertError`. 미지원 디렉터리의
+  파일은 읽지 못해도 파일 단위로 보고만 한다.
+- 출력은 메모리에서 정규형으로 만들고 `check_texts`로 검증한 뒤에만 쓴다 → exit 1이면 쓴 것이 없다.
 """
 
 from __future__ import annotations
@@ -24,26 +26,29 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from pureiron_project.canonical import Json, dump
+from pureiron_project.canonical import CanonicalError, Json, dump
+from pureiron_project.legacy_alarms import alarm
 from pureiron_project.legacy_files import (
     DOCUMENT_SUFFIXES,
     ConvertError,
+    ListReport,
     item_name,
     mappings,
+    parse_json,
     read_document,
     report_only,
 )
 from pureiron_project.legacy_items import (
-    TAG_CONFIG_KEYS,
     Device,
-    Notes,
     TagSource,
-    alarm,
     connection_device,
     inline_tag,
+    is_yaml,
     store_tag,
+    yaml_tag_config,
 )
-from pureiron_project.project import PROJECT_FILE
+from pureiron_project.legacy_values import Notes
+from pureiron_project.project import PROJECT_FILE, Project, check_texts
 from pureiron_project.schema import Kind, omit_defaults
 
 REPORT_FORMAT = "pureiron-convert-legacy-report"
@@ -154,9 +159,17 @@ class _State:
 
 
 def _policy(state: _State, rel: str) -> None:
-    """legacy 수집 정책: excluded_paths = 지운 태그, approved_paths(있으면) = 수집 허용 목록."""
-    data = read_document(state.root / rel, rel)
-    paths = {p for p in data if isinstance(p, str)} if isinstance(data, list) else set[str]()
+    """legacy 수집 정책(`collection_policy`): excluded_paths = 드라이버가 다시 등록하지 않는 태그,
+    approved_paths = 드라이버 태그 수집 허용 목록. 읽을 수 없거나 목록이 아니면 legacy처럼
+    없는 것으로 본다(허용 목록 없음 = 전부 수집) — 그 사실은 보고한다."""
+    try:
+        data = read_document(state.root / rel, rel)
+    except ConvertError:
+        data = None
+    if not isinstance(data, list):
+        state.notes.add(rel, "$", "file", "not a readable JSON list; legacy ignored it")
+        return
+    paths = {str(p) for p in data}
     if rel == _EXCLUDED_FILE:
         state.excluded = paths
     else:
@@ -164,10 +177,22 @@ def _policy(state: _State, rel: str) -> None:
 
 
 def _skip_reason(state: _State, legacy_path: str) -> str | None:
+    """연결 안 태그(드라이버가 등록하던 태그)만 — 정책이 등록 자체를 막았다."""
     if legacy_path in state.excluded:
         return f"excluded by {_EXCLUDED_FILE}"
     if state.approved is not None and legacy_path not in state.approved:
         return f"not in {_APPROVED_FILE} (legacy did not collect it)"
+    return None
+
+
+def _history_reason(state: _State, raw: Mapping[str, Json], legacy_path: str) -> str | None:
+    """TagStore 태그는 정책과 무관하게 폴링됐고 이력만 막혔다(`evaluate_collection`)
+    → 변환하고 보고한다."""
+    if legacy_path in state.excluded:
+        return f"legacy did not record it ({_EXCLUDED_FILE}); V1 records every tag"
+    driver = raw.get("source_kind") == "driver_derived"
+    if driver and state.approved is not None and legacy_path not in state.approved:
+        return f"legacy did not record it (not in {_APPROVED_FILE}); V1 records every tag"
     return None
 
 
@@ -177,9 +202,10 @@ def _add_tag(
     file: str,
     legacy_path: str,
     build: Callable[[], dict[str, Json] | None],
+    *,
+    skip: str | None = None,
 ) -> None:
     """수집 정책·중복 검사 뒤 태그를 더한다. build는 그 뒤에만 불러 field 보고가 중복되지 않게."""
-    skip = _skip_reason(state, legacy_path)
     if skip is not None:
         state.notes.add(file, legacy_path, "excluded_tag", skip)
         return
@@ -208,7 +234,8 @@ def _connection(
     conv: Conversion, state: _State, file: str, item: str, raw: Mapping[str, Json]
 ) -> None:
     device = connection_device(raw, file, item, state.device_ids, state.notes)
-    inline = list(mappings(raw.get("tags")))
+    report = ListReport(state.notes, file, "modbus_tag", f"{item}.tags")
+    inline = list(mappings(raw.get("tags"), report))
     if device is None:
         for index, tag in inline:
             legacy_path = item_name(tag, "tag_path", fallback=f"{item}.tags[{index}]")
@@ -223,7 +250,12 @@ def _connection(
     for index, tag in inline:
         legacy_path = item_name(tag, "tag_path", fallback=f"{item}.tags[{index}]")
         _add_tag(
-            conv, state, file, legacy_path, lambda tag=tag: inline_tag(tag, source, state.notes)
+            conv,
+            state,
+            file,
+            legacy_path,
+            lambda tag=tag: inline_tag(tag, source, state.notes),
+            skip=_skip_reason(state, legacy_path),
         )
 
 
@@ -234,12 +266,29 @@ def _opcua(state: _State, file: str, item: str, raw: Mapping[str, Json]) -> None
         "opcua_connection",
         "OPC-UA is not supported by the V1 collector (Modbus TCP only)",
     )
-    for index, tag in mappings(raw.get("tags")):
+    report = ListReport(state.notes, file, "opcua_tag", f"{item}.tags")
+    for index, tag in mappings(raw.get("tags"), report):
         legacy_path = item_name(tag, "tag_path", fallback=f"{item}.tags[{index}]")
         state.notes.add(file, legacy_path, "opcua_tag", "OPC-UA tag (connection not converted)")
 
 
 _ROW_KEYS = frozenset({"id", "name", "type", "hostname", "port", "config"})
+
+
+def _row_config(row: Mapping[str, Json]) -> dict[str, Json] | str:
+    """`devices.config`(jsonb) 또는 쓸 수 없는 이유. DB에서 내보낸 행은 JSON 문자열일 수 있다
+    (asyncpg 기본 codec — legacy gateway가 `json.loads` 했다)."""
+    config = row.get("config")
+    if isinstance(config, str):
+        try:
+            config = parse_json(config)
+        except (ValueError, RecursionError):
+            return "config is not valid JSON"
+    if config is None:
+        return "config is NULL (legacy did not start this device)"
+    if not isinstance(config, dict):
+        return "config is not a JSON object"
+    return config
 
 
 def _device_row(
@@ -248,13 +297,15 @@ def _device_row(
     """legacy `devices` 테이블 행 모양({name, type, hostname, port, config}) 한 개."""
     item = item_name(row, "name", fallback=f"[{index}]")
     device_type = row.get("type")
-    config = row.get("config")
-    settings = config if isinstance(config, dict) else {}
+    settings = _row_config(row)
     if device_type == "OPC UA":
-        _opcua(state, file, item, settings)
+        _opcua(state, file, item, settings if isinstance(settings, dict) else {})
         return
     if device_type != "Modbus TCP":
         state.notes.add(file, item, "device", f"device type {device_type!r} is not Modbus TCP")
+        return
+    if isinstance(settings, str):
+        state.notes.add(file, item, "modbus_connection", settings)
         return
     for key in sorted(k for k in row if k not in _ROW_KEYS):
         state.notes.dropped(file, item, key, "device row field has no V1 equivalent")
@@ -268,18 +319,30 @@ def _device_row(
     _connection(conv, state, file, item, merged)
 
 
+def _device_rows(conv: Conversion, state: _State, rel: str, data: Json) -> None:
+    for index, row in mappings(data, ListReport(state.notes, rel, "device")):
+        _device_row(conv, state, rel, index, row)
+
+
+def _unread_keys(notes: Notes, rel: str, data: Mapping[str, Json], key: str) -> None:
+    """legacy 로더도 읽지 않던 최상위 키 — 손으로 옮겨 붙인 블록이 사라져도 알 수 있게 보고한다."""
+    for other in sorted(k for k in data if k != key):
+        notes.add(rel, other, "file", f"top-level key is not read (only {key!r} is)")
+
+
 def _connection_file(conv: Conversion, state: _State, rel: str) -> None:
     data = read_document(state.root / rel, rel)
     if isinstance(data, dict) and isinstance(data.get("connections"), list):
-        for index, raw in mappings(data["connections"]):
+        _unread_keys(state.notes, rel, data, "connections")
+        report = ListReport(state.notes, rel, "connection", "connections")
+        for index, raw in mappings(data["connections"], report):
             _connection(
                 conv, state, rel, item_name(raw, "name", fallback=f"connections[{index}]"), raw
             )
     elif isinstance(data, dict) and "endpoint_url" in data:
         _opcua(state, rel, item_name(data, "name", fallback=rel), data)
     elif _is_device_rows(data):
-        for index, row in mappings(data):
-            _device_row(conv, state, rel, index, row)
+        _device_rows(conv, state, rel, data)
     else:
         state.notes.add(rel, "$", "file", "unrecognised connection file")
 
@@ -288,14 +351,12 @@ def _is_device_rows(data: Json) -> bool:
     return isinstance(data, list) and any("hostname" in row for _, row in mappings(data))
 
 
-def _tag_config(raw: Mapping[str, Json]) -> dict[str, Json] | None:
-    """`tag_config` 블록. legacy YAML 평면 형식(`tag_type`·`address_config`가 최상위)도 받는다."""
+def _tag_config(raw: Mapping[str, Json], file: str) -> dict[str, Json] | None:
+    """JSON(TagStore 저장본)은 `tag_config` 블록, YAML은 legacy `config_loader`처럼 최상위 키."""
+    if is_yaml(file):
+        return yaml_tag_config(raw)
     config = raw.get("tag_config")
-    if isinstance(config, dict):
-        return config
-    if "address_config" in raw or "tag_type" in raw:
-        return {k: raw[k] for k in TAG_CONFIG_KEYS if k in raw}
-    return None
+    return config if isinstance(config, dict) else None
 
 
 _TAG_KINDS = {
@@ -303,13 +364,35 @@ _TAG_KINDS = {
     "Expression": ("expression_tag", "expression tags are not supported"),
     "Query": ("query_tag", "query tags are not supported"),
 }
+_DEVICE_TAG_TYPES = frozenset({"Device", "OPC"})
+
+
+def _device_tag_problem(
+    state: _State, file: str, legacy_path: str, tag_type: Json, protocol: Json
+) -> bool:
+    """Modbus로 변환할 수 없는 Device 태그면 보고하고 True."""
+    if tag_type in _DEVICE_TAG_TYPES and protocol is None:
+        reason = "address_config without protocol (legacy default OPC-UA)"
+        state.notes.add(file, legacy_path, "opcua_tag", reason)
+    elif tag_type not in _DEVICE_TAG_TYPES or protocol not in {"modbus", "opcua"}:
+        state.notes.add(
+            file,
+            legacy_path,
+            "device_tag",
+            f"tag type {tag_type!r} / protocol {protocol!r} is not supported",
+        )
+    elif protocol == "opcua":
+        state.notes.add(file, legacy_path, "opcua_tag", "OPC-UA tag")
+    else:
+        return False
+    return True
 
 
 def _store_tag(
     conv: Conversion, state: _State, file: str, index: int, raw: Mapping[str, Json]
 ) -> None:
     legacy_path = item_name(raw, "path", fallback=f"[{index}]")
-    config = _tag_config(raw)
+    config = _tag_config(raw, file)
     if config is None:
         status = raw.get("metadata")
         status = status.get("status") if isinstance(status, dict) else None
@@ -327,53 +410,50 @@ def _store_tag(
         return
     raw_address = config.get("address_config")
     address = raw_address if isinstance(raw_address, dict) else {}
-    protocol = address.get("protocol")
+    if _device_tag_problem(state, file, legacy_path, tag_type, address.get("protocol")):
+        return
     device = state.by_legacy_name.get(str(config.get("device_name", "")))
-    if tag_type not in {"Device", "OPC"} or protocol not in {"modbus", "opcua"}:
-        state.notes.add(
-            file,
-            legacy_path,
-            "device_tag",
-            f"tag type {tag_type!r} / protocol {protocol!r} is not supported",
-        )
-    elif protocol == "opcua":
-        state.notes.add(file, legacy_path, "opcua_tag", "OPC-UA tag")
-    elif device is None:
+    if device is None:
         state.notes.add(
             file,
             legacy_path,
             "modbus_tag",
             f"device {config.get('device_name')!r} is not a converted Modbus TCP connection",
         )
-    else:
-        source = TagSource(file, device, inline=False)
-        _add_tag(
-            conv,
-            state,
-            file,
-            legacy_path,
-            lambda: store_tag(raw, config, address, source, state.notes),
-        )
+        return
+    source = TagSource(file, device, inline=False)
+
+    def build() -> dict[str, Json] | None:
+        tag = store_tag(raw, config, address, source, state.notes)
+        history = _history_reason(state, raw, legacy_path)
+        if tag is not None and history is not None:
+            state.notes.dropped(file, legacy_path, "history", history)
+        return tag
+
+    _add_tag(conv, state, file, legacy_path, build)
 
 
 def _tag_file(conv: Conversion, state: _State, rel: str, data: Json) -> None:
+    prefix = ""
     if isinstance(data, dict) and isinstance(data.get("tags"), list):
-        data = data["tags"]
+        _unread_keys(state.notes, rel, data, "tags")
+        data, prefix = data["tags"], "tags"
     if not isinstance(data, list):
         state.notes.add(rel, "$", "file", "unrecognised tag file")
         return
-    for index, raw in mappings(data):
+    for index, raw in mappings(data, ListReport(state.notes, rel, "tag", prefix)):
         _store_tag(conv, state, rel, index, raw)
 
 
 def _alarm_file(conv: Conversion, state: _State, rel: str) -> None:
     data = read_document(state.root / rel, rel)
     items = data.get("alarms") if isinstance(data, dict) else None
-    if not isinstance(items, list):
+    if not isinstance(data, dict) or not isinstance(items, list):
         state.notes.add(rel, "$", "file", "unrecognised alarm file")
         return
+    _unread_keys(state.notes, rel, data, "alarms")
     out = conv.alarms.setdefault(rel, [])
-    for index, raw in mappings(items):
+    for index, raw in mappings(items, ListReport(state.notes, rel, "alarm", "alarms")):
         item = item_name(raw, "name", fallback=f"alarms[{index}]")
         doc = alarm(raw, rel, state.legacy_tags, state.alarm_ids, state.notes)
         if doc is not None:
@@ -436,8 +516,7 @@ def convert_legacy(root: Path) -> Conversion:
     tag_docs = [(rel, read_document(root / rel, rel)) for rel in areas.get("tags", [])]
     for rel, data in tag_docs:
         if _is_device_rows(data):
-            for index, row in mappings(data):
-                _device_row(conv, state, rel, index, row)
+            _device_rows(conv, state, rel, data)
     for rel, data in tag_docs:
         if not _is_device_rows(data):
             _tag_file(conv, state, rel, data)
@@ -448,14 +527,33 @@ def convert_legacy(root: Path) -> Conversion:
     return conv
 
 
-def write_tree(conv: Conversion, out: Path) -> None:
-    """정규형(기본값 생략·`dump`)으로 쓴다 → `fmt --check`가 바꿀 것이 없다."""
+def _texts(conv: Conversion) -> list[tuple[str, Kind, str]]:
+    texts: list[tuple[str, Kind, str]] = []
+    for rel, kind, data in conv.documents():
+        try:
+            texts.append((rel, kind, dump(omit_defaults(kind, data))))
+        except CanonicalError as exc:
+            raise ConvertError(f"converted output is invalid: {exc}") from exc
+    return texts
+
+
+def write_tree(conv: Conversion, out: Path) -> Project:
+    """정규형(기본값 생략·`dump`)으로 쓴다 → `fmt --check`가 바꿀 것이 없다.
+
+    모든 파일을 메모리에서 만들고 `validate`와 같은 규칙으로 검증한 뒤에만 쓴다. 검증 실패는
+    변환기 결함이다(ConvertError, 쓴 것 없음).
+    """
     if out.exists() and (not out.is_dir() or any(out.iterdir())):
         raise ConvertError(f"{out}: output directory must be empty or absent")
-    for rel, kind, data in conv.documents():
+    texts = _texts(conv)
+    project = check_texts(out, texts)
+    if not project.ok:
+        raise ConvertError("converted output is invalid: " + "; ".join(project.problems))
+    for rel, _, text in texts:
         target = out / rel
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(dump(omit_defaults(kind, data)).encode("utf-8"))
+        target.write_bytes(text.encode("utf-8"))
+    return project
 
 
 def report_bytes(report: Json) -> bytes:
