@@ -1,0 +1,28 @@
+[
+  {
+    "path": "[Line-A PLC]LineA/flow",
+    "data_type": "Float64",
+    "provider": "Line-A PLC",
+    "description": "",
+    "engineering_units": "m3/h",
+    "metadata": {"history_enabled": true},
+    "tag_config": {
+      "tag_type": "Device",
+      "device_name": "Line-A PLC",
+      "address_config": {
+        "protocol": "modbus",
+        "register_type": "input",
+        "address": 41,
+        "data_type": "int16",
+        "byte_order": "big",
+        "word_order": "big"
+      },
+      "scan_rate_ms": 1000,
+      "read_only": true
+    }
+  },
+  {"path": "[Memory]LineA/setpoint", "data_type": "Float64", "tag_config": {"tag_type": "Memory", "initial_value": 1.0}},
+  {"path": "[Expressions]LineA/avg", "tag_config": {"tag_type": "Expression", "expression_string": "1+1"}},
+  {"path": "[S7]LineA/s7", "tag_config": {"tag_type": "Device", "device_name": "S7", "address_config": {"protocol": "s7", "area": "DB"}}},
+  {"path": "[Line-A PLC]LineA/old", "tag_config": {"tag_type": "Device", "device_name": "Line-A PLC", "address_config": {"protocol": "modbus", "address": 50}}}
+]

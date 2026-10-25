@@ -1,0 +1,13 @@
+- deadband: 1.5
+  description: A라인 온도 높음
+  id: linea-temp-high
+  on_delay_s: 2
+  priority: high
+  setpoint: 80
+  tag: LineA/temp
+  type: above
+- id: linea-flow-low
+  priority: low
+  setpoint: 5
+  tag: LineA/flow
+  type: below

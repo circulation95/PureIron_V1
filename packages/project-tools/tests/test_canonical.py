@@ -5,7 +5,7 @@ import unicodedata
 from typing import cast
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from pureiron_project.canonical import CanonicalError, Json, as_json_roundtrip, dump, load
@@ -27,6 +27,8 @@ MAX = 2**53 - 1
         ("a: .inf\n", "NaN"),
         (f"a: {MAX + 1}\n", "2^53"),
         ("a: [1, 2\n", "<input>"),
+        ("a: 0x_\n", "<input>"),
+        ("a: +_\n", "<input>"),
     ],
 )
 def test_strict_loader_rejects(text: str, fragment: str) -> None:
@@ -71,6 +73,12 @@ def test_dump_is_sorted_block_yaml_with_jcs_numbers() -> None:
         "a #b",
         "line\nbreak",
         "true",
+        "+_",
+        "0x_",
+        "0b_",
+        "0o_",
+        "._",
+        "+._",
     ],
 )
 def test_ambiguous_strings_are_quoted_and_roundtrip(value: str) -> None:
@@ -99,6 +107,8 @@ _json: st.SearchStrategy[Json] = st.recursive(
 
 @settings(max_examples=1000, deadline=None)
 @given(_json)
+@example({"+_": None})
+@example(["0x_", "._"])
 def test_roundtrip_and_idempotence(value: Json) -> None:
     """parse(dump(x)) == NFC(x) (JCS 의미에서), dump는 고정점."""
     expected = _nfc(value)
