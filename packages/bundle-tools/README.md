@@ -13,7 +13,7 @@
 | `images.py` | docker save tar(.tar/.tar.gz)의 config digest(`manifest.json` 정확히 1개), load 후 `.Id` 대조 helper |
 | `sign.py` | payload sha256 → manifest 서명 → `.pib` 쓰기(빌더용) |
 | `verify.py` | 고정 순서 ①~⑥ 검증과 순수 판정 규칙(gen·스키마 envelope·Updater 버전·드래프트 게이트), 설치 번들 검증 |
-| `sitesign.py` | site key 서명 봉투(enrollment·report export·현장 드래프트, 용도 `purpose`로 도메인 분리) — 현장이 서명, control-api(M4)·absorb(M5-3)가 같은 코드로 검증. 드래프트 `draft.tar` = `draft.json`(`site-draft` 봉투) + `project.tar` 결정적 tar(`pack_draft`), 검증 `open_draft(data, public)` = 서명 + `project_tar_sha256` 일치 |
+| `sitesign.py` | site key 서명 봉투(enrollment·report export·현장 드래프트, 용도 `purpose`로 도메인 분리) — 현장이 서명, control-api(M4)·absorb(M5-3)가 같은 코드로 검증. 드래프트 `draft.tar` = `draft.json`(`site-draft` 봉투) + `project.tar` 결정적 tar(`pack_draft`), 검증 `open_draft(data, public, *, site_id)` = 서명 + payload `site_id` 일치 + `project_tar_sha256` 일치 |
 
 ## `.pib` 형식
 

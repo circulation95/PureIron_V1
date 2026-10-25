@@ -73,11 +73,12 @@ pureiron-site project export --out draft.tar                   # 서명된 현�
 |---|---|---|
 | 등록 확인 | `state/site.json` + `site.key` 지문 일치 | 등록 전·불일치 exit 3(core 호출 없음) |
 | 적용본 확인 | `updater.json` `applied_gen` | 없음 exit 1 |
-| core export | `state/compose/g<applied>/`의 core 이미지로 `project export --draft`(쓰기 mount `state/draft-export/`, 컨테이너 uid 0700) | core 실패(트리 apply 전 등)·출력이 `project.tar`·`draft-meta.json` 두 일반 파일이 아님 exit 1 |
+| core export | `state/compose/g<applied>/`의 core 이미지로 `project export --draft`(쓰기 mount `state/draft-export/`, 컨테이너 uid 0700) | 이전 실행이 남긴 `state/draft-export`를 지우거나 만들 수 없음(경로 표시)·core 실패(트리 apply 전 등)·출력이 `project.tar`·`draft-meta.json` 두 일반 파일이 아님 exit 1 |
 | 서명·묶음 | payload `{site_id, site_rev, base_site_rev, content_hash, exported_at, project_tar_sha256}` → `site-draft` 봉투 `draft.json` + `project.tar` 결정적 tar | — |
 
 - `site_rev == base_site_rev`(흡수할 드래프트 없음)여도 파일은 쓰고 `note: no site drafts …`를 출력한다(exit 0).
-- 벤더는 등록된 site 공개키로 `pureiron_bundle.sitesign.open_draft`(서명·`project_tar_sha256`)를 확인한 뒤 고객 repo에 회수한다(`absorb`, M5-3). 회수 전 이 현장에 absorbs 없는 번들을 보내면 `E_DRAFT`로 거부된다. 형식은 [data-contracts](../../docs/wiki/sot/data-contracts.md) M5-2 절.
+- 트리 apply 전 현장(`project_files`가 빈 상태 — 개발 스택·수동 복구 경로)에서 한 PATCH는 드래프트로 회수할 수 없다(export exit 1). 그 드래프트를 버리려면 `absorbs[site] = site_rev`를 단 번들을 보낸다.
+- 벤더는 등록된 site 공개키와 현장 id로 `pureiron_bundle.sitesign.open_draft`(서명·payload `site_id`·`project_tar_sha256`)를 확인한 뒤 고객 repo에 회수한다(`absorb`, M5-3). 회수 전 이 현장에 absorbs 없는 번들을 보내면 `E_DRAFT`로 거부된다. 형식은 [data-contracts](../../docs/wiki/sot/data-contracts.md) M5-2 절.
 - 다른 Updater 실행과 직렬화한다(`process_lock`).
 
 ## 테스트
