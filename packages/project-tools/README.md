@@ -1,12 +1,17 @@
 # pureiron-project-tools
 
-고객 프로젝트 repo(`pureiron-project-<id>`)의 정규화·검증·버전 식별 도구(ADR-025, plan §6.3). **M1 최소판**이다.
+고객 프로젝트 repo(`pureiron-project-<id>`)의 정규화·검증·버전 식별 도구(ADR-025, plan §6.3). **M1 최소판** + legacy 변환기(M5-1)다.
 
 ```bash
 pureiron-project validate <dir>      # 스키마(packages/contracts/project.schema.json) + 교차 참조 검증
 pureiron-project fmt [--check] <dir> # 정규형으로 다시 쓰기 / 불일치만 보고(CI)
 pureiron-project hash <dir>          # content hash (sha256:…)
+pureiron-project convert-legacy <legacy_dir> --out <dir> --report <json>  # legacy 변환(M5-1)
 ```
+
+## legacy 변환기
+
+`project.json`, Modbus TCP 연결·태그, 상·하한 알람만 변환하고(PD-12), 나머지(OPC-UA·UDT·scripts·dashboard·Memory/expression/query 태그·shelve·`auth/`·`settings/`·알 수 없는 파일)는 보고서 `unsupported[]`에 빠짐없이 남긴다. 비밀값은 `secret://<device id>` 참조로만 쓰고 값·사용자 정보는 출력·보고서에 옮기지 않는다. 종료 코드 0 = 미지원 없음, 2 = 변환했지만 미지원 있음, 1 = 읽을 수 없는 입력·비어 있지 않은 `--out`. 매핑 표·보고서 형식은 [data-contracts](../../docs/wiki/sot/data-contracts.md)의 `V1 구현 현황 (M5-1 legacy 변환기)` 절. 예시는 `fixtures/legacy-mini/` → `fixtures/legacy-mini-converted/`.
 
 ## 트리
 
@@ -24,7 +29,7 @@ pureiron-project hash <dir>          # content hash (sha256:…)
 
 ## 범위 밖(이후 단계)
 
-- legacy 프로젝트 변환기(지원 항목·미지원 보고)와 드래프트 회수(`absorb`)는 **M5**.
+- 드래프트 회수(`absorb`)는 **M5**(M5-3).
 - 고객 repo용 재사용 workflow(`validate-project.yml`)도 **M5**.
 
 `src/pureiron_project/schema/project.schema.json`은 계약 정본의 복사본(생성물)이다 — `bash scripts/g1.sh contracts-gen`으로 갱신하고 `contracts-drift`가 동기를 검사한다.

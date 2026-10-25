@@ -233,6 +233,25 @@ historian: { retention_days: 365, default_deadband: 0.0, default_max_interval_s:
 - 비밀값은 `secret://<name>` 참조만.
 - legacy 변환기 1차 범위: `project.json`, Modbus TCP 연결·태그, 상·하한 알람. OPC-UA·UDT·scripts·dashboard·expression/query 태그·shelve·`auth/users.json`은 **미지원으로 보고**.
 
+### V1 구현 현황 (M5-1 legacy 변환기, 2026-10-25)
+
+- 명령: `pureiron-project convert-legacy <legacy_dir> --out <dir> --report <json>`(`packages/project-tools` `convert_legacy.py`·`legacy_items.py`·`legacy_files.py`). `--out`은 없거나 비어 있어야 한다. 종료 코드 **0** = 미지원 없음, **2** = 트리·보고서는 썼지만 미지원 항목 있음(M5 plan D11), **1** = 읽을 수 없거나 잘못된 입력(`project.json` 없음·형식 오류, 변환 대상 파일의 JSON/YAML 오류) 또는 비어 있지 않은 `--out` — 이때는 아무것도 쓰지 않는다. argparse 사용법 오류도 2(기존 cli 규칙).
+- 매핑(legacy 시맨틱은 `legacy-final` `drivers/modbus_config.py`·`modbus_client.py`·`tags/config_loader.py`·`alarms/models.py`):
+
+| legacy | V1 | 규칙 |
+|---|---|---|
+| `project.json` `project_id`·`name` | `project.yaml` | `project_id`는 V1 id 형식이어야 함(아니면 exit 1). `features.*`는 kind `feature` |
+| `connections/*.{yaml,yml,json}`의 `connections[]`(`protocol: tcp`), 장비 행(`{name, type: "Modbus TCP", hostname, port, config}` — `tags/*.json`에 있어도) | `devices/<slug(name)>.yaml` | `host`·`port`·`unit_id`, `scan_rate_ms` → `poll_ms`, `timeout_s` → `timeout_ms`. 비밀값 키(password·token·username 등, legacy `project_package` 기준)는 값을 옮기지 않고 `credentials: secret://<device id>` + 보고서 `secrets[]`. 그 밖 키(`reconnect_delay_s` 등)는 kind `field` |
+| 연결 안 `tags:` | `tags/<device>.yaml` | 경로의 `[Provider]` 접두 제거(V1 tagPath로 못 쓰면 미지원), 주소 그대로(legacy가 0-based로 썼음), `discrete_input` → `discrete`, `engineering_units` → `eu` |
+| `tags/*.{json,yaml}`의 Device 태그(`address_config.protocol: modbus`, `device_name` = 변환된 연결 이름) | 같은 `tags/<device>.yaml` | 주소 1-based → −1(연결 `zero_based_addressing: true`면 그대로), `reverse_word_order` → `word_order: little`. `read_only: false`(쓰기는 `write:` 명시 선언 필요)·`history_enabled: false`·그 밖 metadata는 kind `field` |
+| `alarms/*.yaml` AboveSetpoint·BelowSetpoint | `alarms/<같은 이름>.yaml` | id = slug(name), 대상 태그가 변환된 경우만. `Diagnostic` → `low`(+ `field`), 기본값이 아닌 `shelve_duration_s`는 kind `shelve`, `off_delay_s`·`notification_channels`는 `field`, 비활성 알람은 미지원 |
+| `tags/excluded_paths.json`·`approved_paths.json` | (수집 정책) | 제외됐거나 허용 목록 밖인 Modbus 태그는 kind `excluded_tag` |
+
+- 미지원 kind: `opcua_connection`·`opcua_tag`·`modbus_rtu_connection`·`connection`·`modbus_connection`·`modbus_tag`·`device`·`device_tag`(S7 등)·`memory_tag`·`expression_tag`·`query_tag`·`tag`(`tag_config` 없는 import 자리표시)·`udt_type`·`udt_instance`·`script`·`dashboard`·`users`·`settings`·`alarm`·`shelve`·`feature`·`field`·`excluded_tag`·`file`(알 수 없는 파일). `.gitkeep`만 보고하지 않는다.
+- 보고서(`format: pureiron-convert-legacy-report`, `version: 1`, 키 정렬 JSON): `summary`(파일·장비·태그·알람·미지원 수, kind별 수), `content_hash`, `converted[]`(legacy 항목 → V1 id/경로), `sources[]`(변환 단계가 읽은 파일), `secrets[]`(파일·항목·필드·참조 — 값 없음), `unsupported[]`(`{file, item, kind, reason, field?}`, 파일 경로 순·파일 안 순서). 입력의 모든 파일은 `sources` 또는 `unsupported[].file`에 나온다. 시각·절대 경로가 없어 같은 입력이면 트리·보고서가 바이트 단위로 같다. `auth/`·`settings/`·사용자별 dashboard는 항목 수만 쓴다(사용자 이름·값 비복사).
+- 출력은 정규형(기본값 생략)으로 쓰고 쓴 뒤 `load_project`로 검증한다(실패 = 변환기 결함, exit 1). legacy YAML은 PyYAML과 같은 YAML 1.1 규칙으로 읽는다.
+- `projects/demo-coffee` 실측: 장비 1(`line1-plc`)·태그 4·알람 0(알람 19개 대상 `[modbus_test]`·`[Memory]` 태그가 Memory 태그라 미지원), unsupported 2,555건, exit 2. 변환 0.27 s·tracemalloc 최대 11 MB(Windows dev PC) — 2.2 MB `gbrb_tags.json`도 스트리밍 불필요(M5 plan R4).
+
 ### 배포 정본·번들 (ADR-022, ADR-023)
 
 ```yaml
