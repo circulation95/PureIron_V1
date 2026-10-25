@@ -14,6 +14,7 @@ content_hash, exported_at, project_tar_sha256}`를 site key로 서명(purpose `s
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
@@ -96,14 +97,24 @@ def _payload(site_id: str, meta: dict[str, object], tree: bytes, now: datetime) 
     }
 
 
+def _fresh_work_dir(work: Path) -> None:
+    """이전 실행이 남긴 작업 디렉터리를 지우고 새로 만든다. 못 지우거나 못 만들면 `DraftError`
+    (exit 1, 경로 포함) — `OSError`로 새면 CLI가 설정 오류(exit 3)로 보인다."""
+    try:
+        with contextlib.suppress(FileNotFoundError):
+            shutil.rmtree(work)
+        work.mkdir(parents=True)
+    except OSError as exc:
+        raise DraftError(f"cannot prepare work directory {work}: {exc}") from exc
+
+
 def export_draft(settings: Settings, compose: Compose, out: Path, *, now: datetime) -> DraftExport:
     site_id, seed = _site_seed(settings)
     state = StateStore(settings.state_dir).load()
     if state.applied_gen is None:
         raise DraftError("no applied generation yet — nothing to export")
     work = settings.state_dir / WORK_DIR
-    shutil.rmtree(work, ignore_errors=True)
-    work.mkdir(parents=True)
+    _fresh_work_dir(work)
     try:
         restrict(work, 0o700, settings.secret_uid)
         try:

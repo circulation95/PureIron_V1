@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import replace
 from pathlib import Path
 
@@ -109,6 +110,19 @@ def test_unexpected_container_output_is_rejected(site: Site, tmp_path: Path) -> 
     site.world.draft_extra = {"evil.txt": b"x"}
     with pytest.raises(DraftError, match=r"evil\.txt"):
         export_draft(_settings(site), site.deps().compose, tmp_path / "d.tar", now=T0)
+    assert not (tmp_path / "d.tar").exists()
+
+
+def test_unremovable_work_dir_is_draft_error_with_path(site: Site, tmp_path: Path) -> None:
+    """이전 실행이 남긴 작업 경로를 지울 수 없으면(여기선 디렉터리가 아닌 파일) 설정 오류가 아니라
+    `DraftError`(exit 1)이고 메시지에 경로가 있다. core는 부르지 않는다."""
+    _ready(site)
+    work = _settings(site).state_dir / WORK_DIR
+    work.write_bytes(b"stale")
+    ops = site.world.ops
+    with pytest.raises(DraftError, match=re.escape(str(work))):
+        export_draft(_settings(site), site.deps().compose, tmp_path / "d.tar", now=T0)
+    assert site.world.ops == ops
     assert not (tmp_path / "d.tar").exists()
 
 
