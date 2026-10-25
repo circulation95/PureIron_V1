@@ -76,3 +76,23 @@ td.detail { white-space: normal; font-family: ui-monospace, monospace; font-size
 .tag-picker label { display: block; padding: 0.1rem 0; }
 .trend-body { min-width: 0; }
 .chart { width: 100%; }
+
+/* PLC 쓰기 확인 대화상자 */
+.write-dialog { width: min(34rem, calc(100vw - 2rem)); border: 1px solid var(--line); border-radius: 6px; padding: 1rem 1.25rem; background: Canvas; color: CanvasText; }
+.write-dialog::backdrop { background: #0006; }
+.write-dialog h2 { font-size: 1.1rem; margin: 0 0 0.75rem; }
+.write-facts { display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 1rem; margin: 0 0 0.75rem; }
+.write-facts dt { color: var(--muted); }
+.write-facts dd { margin: 0; }
+.write-form { display: flex; flex-direction: column; gap: 0.6rem; }
+.write-form label { display: flex; flex-direction: column; gap: 0.2rem; }
+.write-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.75rem; }
+.checks { list-style: none; padding: 0; margin: 0.5rem 0; }
+.checks li { padding: 0.1rem 0; }
+.outcome { padding: 0.6rem 0.8rem; border-left: 3px solid; }
+.outcome p { margin: 0.3rem 0 0; }
+.outcome.tone-ok { border-color: var(--ok); background: #1a7f3714; }
+.outcome.tone-warn { border-color: var(--warn); background: #b26a0014; }
+.outcome.tone-bad { border-color: var(--bad); background: #c628281a; }
+.write-actions .danger { background: var(--bad); color: #fff; border: 1px solid var(--bad); }
+.write-actions .danger:disabled { opacity: 0.5; }

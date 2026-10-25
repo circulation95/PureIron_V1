@@ -1,23 +1,12 @@
 // 운영 화면 스모크: 로그인 → 5화면 핵심 요소(실제 core·WS·nginx 경로) → 알람 ACK 1회 → 감사 → 로그아웃 뒤 보호.
 // 화면마다 찍은 스크린샷은 artifacts/web-e2e/screens/(PR 첨부용).
-import { join } from "node:path";
+import { expect, test } from "@playwright/test";
 
-import { expect, type Page, test } from "@playwright/test";
-
-import { ALARM_ID, ARTIFACTS, E2E_PASSWORD, USERS } from "./stack";
+import { ALARM_ID, USERS } from "./stack";
+import { login, screenshot } from "./ui";
 
 const ALARM_WAIT_MS = 90 * 1000; // 알람 조건이 처음 성립하기까지 사인파 한 주기(~63s) 안
 const TAGS_GOOD_WAIT_MS = 30 * 1000;
-
-async function login(page: Page, username: string): Promise<void> {
-  await page.getByLabel("아이디").fill(username);
-  await page.getByLabel("비밀번호").fill(E2E_PASSWORD);
-  await page.getByRole("button", { name: "로그인" }).click();
-}
-
-async function screenshot(page: Page, name: string): Promise<void> {
-  await page.screenshot({ path: join(ARTIFACTS, "screens", `${name}.png`), fullPage: true });
-}
 
 test("엔지니어: 로그인 → 5화면 → 알람 ACK → 감사 → 로그아웃", async ({ page }) => {
   await test.step("보호 경로는 로그인으로 보내고, 로그인 뒤 원래 경로로 돌아온다", async () => {

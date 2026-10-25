@@ -1,9 +1,20 @@
 // 태그 현황: `GET /tags`로 시작하고 WS `tag_update`로 갱신한다(구독 직후 서버가 현재값을 한 번 보낸다).
+// 쓰기 가능한 태그(현장 스위치 켜짐·선언됨·역할 충족, `GET /writes/targets`)는 행에 쓰기 버튼을 둔다.
 import { useEffect, useState } from "react";
 
-import { api, failureMessage, type Load, networkMessage, type TagValue } from "../api/client";
+import {
+  api,
+  failureMessage,
+  type Load,
+  networkMessage,
+  type TagValue,
+  type WriteTarget,
+  type WriteTargets,
+} from "../api/client";
 import { useSession } from "../app/session";
+import { writableTargets } from "../app/writes";
 import { formatTime, formatValue } from "../format";
+import { WriteDialog } from "./WriteDialog";
 
 type Tags = ReadonlyMap<number, TagValue>;
 
@@ -13,9 +24,16 @@ function merge(tags: Tags, values: readonly TagValue[]): Tags {
   return next;
 }
 
+function writesSummary(enabled: boolean, rows: readonly TagValue[], writable: ReadonlyMap<number, WriteTarget>): string {
+  if (!enabled) return "현장 쓰기 꺼짐";
+  return `쓰기 가능 ${String(rows.filter((tag) => writable.has(tag.tag_id)).length)}개`;
+}
+
 export function Overview() {
-  const { realtime } = useSession();
+  const { me, realtime } = useSession();
   const [tags, setTags] = useState<Load<Tags>>({ kind: "loading" });
+  const [targets, setTargets] = useState<Load<WriteTargets>>({ kind: "loading" });
+  const [writing, setWriting] = useState<WriteTarget | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -44,17 +62,44 @@ export function Overview() {
     };
   }, [realtime]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    api
+      .GET("/api/v1/writes/targets", { signal: controller.signal })
+      .then(({ data, response }) => {
+        setTargets(
+          data === undefined ? { kind: "error", message: failureMessage(response) } : { kind: "ok", value: data },
+        );
+      })
+      .catch((err: unknown) => {
+        if (!controller.signal.aborted) setTargets({ kind: "error", message: networkMessage(err) });
+      });
+    return () => {
+      controller.abort();
+    };
+  }, []);
+
   if (tags.kind === "loading") return <p className="page-status">태그를 불러오는 중…</p>;
   if (tags.kind === "error") return <p className="page-status error">{tags.message}</p>;
 
   const rows = [...tags.value.values()];
   const good = rows.filter((tag) => tag.quality === "GOOD").length;
+  // 쓰기 대상을 못 불러오면 버튼을 하나도 보이지 않는다(누를 수 없는 버튼을 보이지 않음).
+  const writable: ReadonlyMap<number, WriteTarget> =
+    targets.kind === "ok" ? writableTargets(targets.value, me.role) : new Map();
+  const anyWritable = rows.some((tag) => writable.has(tag.tag_id));
   return (
     <section>
       <h1>태그 현황</h1>
       <p className="summary">
         전체 {rows.length}개 · GOOD {good}개 · 그 밖 {rows.length - good}개
+        {targets.kind === "ok" ? <> · {writesSummary(targets.value.enabled, rows, writable)}</> : null}
       </p>
+      {targets.kind === "error" ? (
+        <p className="notice" role="note">
+          쓰기 대상을 불러오지 못해 쓰기 버튼을 표시하지 않습니다. ({targets.message})
+        </p>
+      ) : null}
       {rows.length === 0 ? (
         <p>정의된 태그가 없습니다.</p>
       ) : (
@@ -66,22 +111,51 @@ export function Overview() {
               <th className="num">값</th>
               <th>품질</th>
               <th>시각</th>
+              {anyWritable ? <th>쓰기</th> : null}
             </tr>
           </thead>
           <tbody>
-            {rows.map((tag) => (
-              <tr key={tag.tag_id}>
-                <td>{tag.path}</td>
-                <td>{tag.device_id}</td>
-                <td className="num">{formatValue(tag.value)}</td>
-                <td>
-                  <span className={`quality q-${tag.quality.toLowerCase()}`}>{tag.quality}</span>
-                </td>
-                <td>{formatTime(tag.ts)}</td>
-              </tr>
-            ))}
+            {rows.map((tag) => {
+              const target = writable.get(tag.tag_id);
+              return (
+                <tr key={tag.tag_id} data-tag-path={tag.path}>
+                  <td>{tag.path}</td>
+                  <td>{tag.device_id}</td>
+                  <td className="num">{formatValue(tag.value)}</td>
+                  <td>
+                    <span className={`quality q-${tag.quality.toLowerCase()}`}>{tag.quality}</span>
+                  </td>
+                  <td>{formatTime(tag.ts)}</td>
+                  {anyWritable ? (
+                    <td>
+                      {target === undefined ? null : (
+                        <button
+                          type="button"
+                          aria-label={`${tag.path} 쓰기`}
+                          onClick={() => {
+                            setWriting(target);
+                          }}
+                        >
+                          쓰기
+                        </button>
+                      )}
+                    </td>
+                  ) : null}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
+      )}
+      {writing === null ? null : (
+        <WriteDialog
+          key={writing.tag_id}
+          target={writing}
+          current={tags.value.get(writing.tag_id)}
+          onClose={() => {
+            setWriting(null);
+          }}
+        />
       )}
     </section>
   );
