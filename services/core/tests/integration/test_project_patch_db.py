@@ -2,12 +2,16 @@
 
 PATCH 한 번 = definition + `site_rev`·`definitions_rev` += 1 + 감사 `project.patch`(같은 트랜잭션).
 같은 값은 no-op, 잠금 중 `EditLockedError`, 없음·retire는 `DefinitionNotFoundError`, 감사 기록
-실패는 전부 롤백. `--draft`는 PATCH 값이 실린 유효 트리 + `draft-meta.json`을 쓰고, 같은 상태를
-두 번 export 하면 바이트가 같고, 적용된 트리가 없으면 실패한다.
+실패는 전부 롤백. 정의 적용 advisory lock을 다른 연결이 쥐면 PATCH는 대기 상한 뒤
+`ProjectStateError`(무변경)이고, 풀리면 대기하던 PATCH가 성공한다. Updater 잠금 획득과 동시에
+돌리면 결과는 (PATCH 성공 + 획득 site_rev = +1) 또는 (PATCH 423) 둘뿐이다. `--draft`는 PATCH
+값이 실린 유효 트리 + `draft-meta.json`을 쓰고, 같은 상태를 두 번 export 하면 바이트가 같고,
+적용된 트리가 없으면 실패한다.
 """
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import tarfile
@@ -19,6 +23,7 @@ import pytest
 
 from pureiron_core.audit.store import PgAuditStore
 from pureiron_core.platform.db import Database
+from pureiron_core.project.definitions import APPLY_LOCK_KEY
 from pureiron_core.project.export import DRAFT_META_FILE, TREE_FILE, tree_tar
 from pureiron_core.project.patch import PgProjectPatcher
 from pureiron_core.project.ports import (
@@ -27,6 +32,7 @@ from pureiron_core.project.ports import (
     PatchResult,
     ProjectStateError,
 )
+from pureiron_core.project.stub import PgProjectStateStore
 from pureiron_project.canonical import dump
 from pureiron_project.project import load_project
 
@@ -46,6 +52,8 @@ type Conn = asyncpg.Connection[asyncpg.Record]
 type Env = dict[str, str]
 
 EXIT_FAILED = 4
+SHORT_LOCK_TIMEOUT_S = 0.5
+RACE_ROUNDS = 20
 
 
 @pytest.fixture
@@ -63,12 +71,17 @@ async def conn(site_db: SiteDb) -> AsyncGenerator[Conn]:
 
 
 @pytest.fixture
-async def patcher(site_db: SiteDb) -> AsyncGenerator[PgProjectPatcher]:
-    db = Database(site_db.dsn, password=site_db.password)
+async def db(site_db: SiteDb) -> AsyncGenerator[Database]:
+    database = Database(site_db.dsn, password=site_db.password)
     try:
-        yield PgProjectPatcher(db, PgAuditStore(db))
+        yield database
     finally:
-        await db.close()
+        await database.close()
+
+
+@pytest.fixture
+def patcher(db: Database) -> PgProjectPatcher:
+    return PgProjectPatcher(db, PgAuditStore(db))
 
 
 def _apply_v1(env: Env, tmp: Path) -> str:
@@ -232,6 +245,92 @@ async def test_audit_failure_rolls_back_definition_and_revs(
         await patcher.patch_alarm("a-high", {"setpoint": 99}, username="admin")
     assert (await _definition(conn, "alarms", "alarm_id", "a-high"))["setpoint"] == 80
     assert await _revs(conn) == revs
+
+
+async def _waiting_advisory_locks(conn: Conn) -> int:
+    count = await conn.fetchval(
+        "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted"
+    )
+    return int(count)
+
+
+async def _until_patch_waits(conn: Conn) -> None:
+    for _ in range(100):
+        if await _waiting_advisory_locks(conn):
+            return
+        await asyncio.sleep(0.05)
+    raise AssertionError("PATCH did not wait on the apply advisory lock")
+
+
+async def test_patch_times_out_while_apply_lock_is_held_and_changes_nothing(
+    conn: Conn, env: Env, db: Database, site_db: SiteDb, tmp_path: Path
+) -> None:
+    _apply_v1(env, tmp_path)
+    revs = await _revs(conn)
+    patcher = PgProjectPatcher(db, PgAuditStore(db), lock_timeout_s=SHORT_LOCK_TIMEOUT_S)
+    holder = await asyncpg.connect(site_db.dsn, password=site_db.password)
+    try:
+        async with holder.transaction():
+            await holder.execute("SELECT pg_advisory_xact_lock($1)", APPLY_LOCK_KEY)
+            with pytest.raises(ProjectStateError, match="site-db error"):
+                await patcher.patch_alarm("a-high", {"setpoint": 99}, username="admin")
+    finally:
+        await holder.close()
+    assert (await _definition(conn, "alarms", "alarm_id", "a-high"))["setpoint"] == 80
+    assert await _revs(conn) == revs
+    assert await _audit(conn) == []
+    assert await _waiting_advisory_locks(conn) == 0  # 취소된 대기가 남지 않는다
+
+
+async def test_waiting_patch_succeeds_once_apply_lock_is_released(
+    conn: Conn, env: Env, patcher: PgProjectPatcher, site_db: SiteDb, tmp_path: Path
+) -> None:
+    _apply_v1(env, tmp_path)
+    holder = await asyncpg.connect(site_db.dsn, password=site_db.password)
+    try:
+        transaction = holder.transaction()
+        await transaction.start()
+        await holder.execute("SELECT pg_advisory_xact_lock($1)", APPLY_LOCK_KEY)
+        pending = asyncio.create_task(
+            patcher.patch_alarm("a-high", {"setpoint": 91}, username="admin")
+        )
+        await _until_patch_waits(conn)
+        assert not pending.done()
+        assert (await _definition(conn, "alarms", "alarm_id", "a-high"))["setpoint"] == 80
+        await transaction.commit()
+        result = await asyncio.wait_for(pending, timeout=5)
+    finally:
+        await holder.close()
+    assert (result.changed, result.site_rev) == (True, 1)
+    assert (await _definition(conn, "alarms", "alarm_id", "a-high"))["setpoint"] == 91
+    assert [entry[2] for entry in await _audit(conn)] == ["alarm:a-high"]
+
+
+async def test_patch_and_edit_lock_acquire_serialize(
+    conn: Conn, env: Env, db: Database, patcher: PgProjectPatcher, tmp_path: Path
+) -> None:
+    """R1: Updater가 받은 site_rev는 진행 중이던 PATCH를 반영하거나, PATCH가 423이다."""
+    _apply_v1(env, tmp_path)
+    store = PgProjectStateStore(db)
+    for round_ in range(RACE_ROUNDS):
+        site_rev = (await _revs(conn))[0]
+        setpoint = 100 + round_
+        patched, acquired = await asyncio.gather(
+            patcher.patch_alarm("a-high", {"setpoint": setpoint}, username="admin"),
+            store.acquire_edit_lock("updater", round_ + 1),
+            return_exceptions=True,
+        )
+        assert isinstance(acquired, int), acquired
+        stored = (await _definition(conn, "alarms", "alarm_id", "a-high"))["setpoint"]
+        if isinstance(patched, PatchResult):
+            assert (patched.site_rev, acquired, stored) == (site_rev + 1, site_rev + 1, setpoint)
+        else:
+            assert isinstance(patched, EditLockedError), patched
+            assert acquired == site_rev
+            assert (await _revs(conn))[0] == site_rev
+            assert stored != setpoint
+        await store.release_edit_lock("updater")
+    assert (await _revs(conn))[0] == len(await _audit(conn))  # 성공한 PATCH마다 +1·감사 1건
 
 
 def _draft(env: Env, out: Path) -> tuple[dict[str, object], bytes]:

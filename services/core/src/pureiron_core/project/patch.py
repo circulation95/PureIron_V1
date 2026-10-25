@@ -43,7 +43,8 @@ RECORD_FIELDS = frozenset({"deadband", "max_interval_s"})
 _REQUIRED = frozenset({"setpoint"})
 _RECORD = "record"
 _QUERY_TIMEOUT_S = 5.0
-# apply·restore가 advisory lock을 쥔 동안 PATCH가 기다리는 상한(요청이 매달리지 않게, 넘으면 503).
+# apply·restore가 advisory lock을 쥔 동안 PATCH가 기다리는 기본 상한(요청이 매달리지 않게, 넘으면
+# 503). 테스트는 `PgProjectPatcher(..., lock_timeout_s=...)`로 줄인다.
 _LOCK_TIMEOUT_S = 10.0
 
 LOCK_STATE_SQL = "SELECT site_rev, edit_lock_owner FROM project_state WHERE id FOR UPDATE"
@@ -161,7 +162,8 @@ def _flatten(definition: Mapping[str, Json]) -> dict[str, Json]:
 def changed_fields(
     before: Mapping[str, Json], after: Mapping[str, Json]
 ) -> tuple[dict[str, Json], dict[str, Json]]:
-    """바뀐 필드만(before, after). 없던·지운 필드는 None."""
+    """바뀐 필드만(before, after). 없는 필드(= 스키마 기본값 — 지웠거나 기본값과 같은 값을
+    보낸 경우 모두, 정규형은 기본값을 생략한다)는 None."""
     old, new = _flatten(before), _flatten(after)
     keys = sorted(k for k in old.keys() | new.keys() if old.get(k) != new.get(k))
     return {k: old.get(k) for k in keys}, {k: new.get(k) for k in keys}
@@ -182,6 +184,7 @@ async def patch_definition(
     changes: Mapping[str, object],
     *,
     username: str,
+    lock_timeout_s: float = _LOCK_TIMEOUT_S,
 ) -> PatchResult:
     """P3 한 트랜잭션. 잠금·대상 확인 뒤 `merge`(실패 = 422, 아무것도 쓰지 않음)."""
     lock_sql, update_sql = (
@@ -191,7 +194,7 @@ async def patch_definition(
     )
     async with conn.transaction():
         await conn.execute(
-            "SELECT pg_advisory_xact_lock($1)", APPLY_LOCK_KEY, timeout=_LOCK_TIMEOUT_S
+            "SELECT pg_advisory_xact_lock($1)", APPLY_LOCK_KEY, timeout=lock_timeout_s
         )
         state = await conn.fetchrow(LOCK_STATE_SQL, timeout=_QUERY_TIMEOUT_S)
         if state is None:
@@ -236,9 +239,12 @@ class PgProjectPatcher:
     """`ProjectPatchPort` 구현. DB 오류(감사 기록 실패 포함 — 트랜잭션은 이미 롤백)는
     `ProjectStateError`(API 503)로 바꾼다."""
 
-    def __init__(self, db: Database, audit: AuditWriter) -> None:
+    def __init__(
+        self, db: Database, audit: AuditWriter, *, lock_timeout_s: float = _LOCK_TIMEOUT_S
+    ) -> None:
         self._db = db
         self._audit = audit
+        self._lock_timeout_s = lock_timeout_s
 
     async def _patch(
         self, kind: PatchKind, ident: str, changes: Mapping[str, object], username: str
@@ -247,7 +253,13 @@ class PgProjectPatcher:
         try:
             async with self._db.connection() as conn:
                 return await patch_definition(
-                    conn, self._audit, kind, ident, changes, username=username
+                    conn,
+                    self._audit,
+                    kind,
+                    ident,
+                    changes,
+                    username=username,
+                    lock_timeout_s=self._lock_timeout_s,
                 )
         except (
             DatabaseUnavailableError,
