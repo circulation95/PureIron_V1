@@ -77,7 +77,7 @@ def tree_aware(manifest: Manifest) -> bool:
     return manifest.product_release.schema.app_expected >= PROJECT_TREE_EPOCH
 
 
-def _restrict(path: Path, mode: int, reader_uid: int | None) -> None:
+def restrict(path: Path, mode: int, reader_uid: int | None) -> None:
     """서비스(`UMask=0027`)가 만든 root 소유 파일은 core 컨테이너 사용자(`reader_uid`, 기본 10001)가
     못 읽는다(M2d VM 실측) → 그 uid 소유로 바꾼다(secret 파일과 같은 방식, root일 때만 chown).
     core 이미지는 release마다 동결이라 core 쪽 변경으로는 이전 release로의 롤백을 고칠 수 없다."""
@@ -88,7 +88,7 @@ def _restrict(path: Path, mode: int, reader_uid: int | None) -> None:
         os.chown(path, reader_uid, reader_uid)
 
 
-def _is_regular(path: Path) -> bool:
+def is_regular(path: Path) -> bool:
     """링크를 따르지 않고 일반 파일인가(없으면 False)."""
     try:
         return stat.S_ISREG(os.lstat(path).st_mode)
@@ -96,9 +96,9 @@ def _is_regular(path: Path) -> bool:
         return False
 
 
-def _read_regular(path: Path) -> bytes:
+def read_regular(path: Path) -> bytes:
     """링크를 따르지 않고, 링크가 하나뿐인 일반 파일만 읽는다(쓰기 mount 결과물, 모듈 docstring)."""
-    if not _is_regular(path):
+    if not is_regular(path):
         raise BackupError(f"{path} is not a regular file")
     try:
         fd = os.open(path, os.O_RDONLY | _NOFOLLOW)
@@ -119,15 +119,15 @@ def _check_export(out: Path) -> None:
             f"project export --with-state wrote {names}, expected {STATE_FILE}[, {TREE_FILE}]"
         )
     for name in names:
-        if not _is_regular(out / name):
+        if not is_regular(out / name):
             raise BackupError(f"project export --with-state: {name} is not a regular file")
 
 
 def _stage(source: Path, staged: Path, reader_uid: int | None) -> None:
     """컨테이너에 mount할 0400 사본. 이전 실행의 사본이 있어도 바꿔 쓴다(recover 재실행)."""
     staged.unlink(missing_ok=True)
-    atomic_write(staged, _read_regular(source))
-    _restrict(staged, 0o400, reader_uid)
+    atomic_write(staged, read_regular(source))
+    restrict(staged, 0o400, reader_uid)
 
 
 def apply_project(
@@ -173,14 +173,14 @@ def make_backup(
     if tree:
         out = backup_dir / TREE_DIR
         out.mkdir()
-        _restrict(out, 0o700, reader_uid)
+        restrict(out, 0o700, reader_uid)
         compose.run_core(
             current,
             ["project", "export", "--with-state", "--out", _CONTAINER_EXPORT_DIR],
             writable={out: _CONTAINER_EXPORT_DIR},
         )
         _check_export(out)
-        snapshot = _read_regular(out / STATE_FILE).decode("utf-8", errors="replace")
+        snapshot = read_regular(out / STATE_FILE).decode("utf-8", errors="replace")
     else:
         snapshot = compose.run_core(current, ["project", "export"])
     if not snapshot.strip().startswith("{"):
@@ -214,7 +214,7 @@ def restore_project(
         for name in (STATE_FILE, TREE_FILE):
             if os.path.lexists(tree_dir / name):  # 링크·일반 파일 아님은 _stage가 거부
                 _stage(tree_dir / name, staged_dir / name, reader_uid)
-        _restrict(staged_dir, 0o700, reader_uid)
+        restrict(staged_dir, 0o700, reader_uid)
         compose.run_core(
             target,
             ["project", "restore", "--from", _CONTAINER_RESTORE_DIR],

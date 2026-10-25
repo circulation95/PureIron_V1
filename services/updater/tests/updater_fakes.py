@@ -281,6 +281,8 @@ class World:
     project: dict[str, str] = field(default_factory=dict[str, str])
     tree: bytes | None = None
     """마지막으로 적용·복원된 프로젝트 트리(project.tar 바이트) = 정의·project_files."""
+    draft_extra: dict[str, bytes] = field(default_factory=dict[str, bytes])
+    """`export --draft`가 쓰기 mount에 함께 남기는 파일(신뢰하지 않는 컨테이너 출력 주입)."""
     good_ratio: float | None = None
     # 결함 주입
     fail_migrate_ids: set[str] = field(default_factory=set[str])
@@ -450,6 +452,9 @@ class FakeCompose:
                 (host[path] / "state.json").write_text(json.dumps(self._project_snapshot()))
                 if w.tree is not None:
                     (host[path] / "project.tar").write_bytes(w.tree)
+            case ["project", "export", "--draft", "--out", path]:
+                self._tree_image(image, args, writable_path=path in (writable or {}).values())
+                self._export_draft(host[path])
             case ["project", "apply", "--project-id", pid, "--version", ver, "--content-hash", h]:
                 self._apply(pid, ver, h)
             case [
@@ -485,6 +490,20 @@ class FakeCompose:
         release = next(r for r in EPOCH if digest_of("core", r) == image)
         if EPOCH[release] < PROJECT_TREE_EPOCH or not writable_path:
             raise AssertionError(f"core {release} does not support {list(args)}")
+
+    def _export_draft(self, out: Path) -> None:
+        w = self.w
+        if w.tree is None:  # core: project_files가 비면 exit 4
+            raise CommandError("no applied project tree (project_files is empty)")
+        meta = {
+            "site_rev": w.site_rev,
+            "base_site_rev": w.base_site_rev,
+            "content_hash": w.project["content_hash"],
+        }
+        (out / "draft-meta.json").write_text(json.dumps(meta))
+        (out / "project.tar").write_bytes(w.tree)
+        for name, data in w.draft_extra.items():
+            (out / name).write_bytes(data)
 
     def _apply(self, project_id: str, version: str, content_hash: str) -> None:
         w = self.w
