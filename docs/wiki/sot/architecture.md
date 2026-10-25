@@ -240,7 +240,7 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
   `backed_up`은 **직전 core 이미지**가 `project export --with-state`(state + 현재 유효 트리)로 백업하고, `rolling_back`은
   같은 직전 이미지가 `project restore --from <dir>`로 트리·state(site_rev·base 그대로)를 되돌린다 — 백업을 쓴 이미지가
   읽고, 롤백이 실패한 새 이미지에 기대지 않는다. 트리 명령은 schema epoch ≥ 5 core만 알아서 그 이전 이미지는 state만
-  다룬다(첫 트리 release로의 업데이트를 롤백하면 정의는 남는다). 근거·한계는 `services/updater/src/pureiron_updater/backup.py`.
+  다룬다(첫 트리 release로의 업데이트를 롤백하면 정의는 남는다 — `E_DEFINITIONS_LEFT` 경보, updater README runbook). 근거·한계는 `services/updater/src/pureiron_updater/backup.py`.
 - 폐쇄망 현장도 같은 `.pib`를 USB 등으로 반입해 같은 검증을 거친다. 설치는 install 번들(`deploy/install/`)로 오프라인 부트스트랩.
 - 이미지 신원 = config digest(release 기록 `deploy/releases/<r>.json`). 현장 이미지는 번들에서 `docker load`만 한다.
 
