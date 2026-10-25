@@ -5,6 +5,10 @@
 `devices/<id>.yaml`은 그 장비 정의, `tags/*.yaml`·`alarms/*.yaml`은 목록 안의 같은 `path`·`id` 항목.
 DB에서 retire된 항목은 파일 값을 그대로 둔다(파일에서 빼는 것은 Git 정본 경로만, D1).
 
+현장 드래프트(M5-2 P5, `export --draft`)는 같은 유효 트리 tar에 `draft-meta.json`
+(`{site_rev, base_site_rev, content_hash}`, content_hash = 유효 트리 `load_tree` 값)을 곁들인다.
+서명·묶음(`draft.tar`)은 site key를 가진 Updater(`pureiron-site project export`)가 만든다.
+
 tar는 번들 빌더(`deploy/bundle/build_bundle.py` `write_project_tar`)와 같은 형식이다: 경로
 UTF-8 바이트 순, PAX, mtime 0·root 소유·0644 일반 파일. 그래서 같은 트리는 같은 바이트이고, 덮어쓸
 운영 값이 없으면 번들 project.tar와도 바이트가 같다(export → apply → export 동일).
@@ -27,6 +31,8 @@ STATE_FILE = "state.json"
 """`export --with-state` 디렉터리의 project_state 스냅샷(`ProjectState.to_snapshot()`)."""
 TREE_FILE = "project.tar"
 """같은 디렉터리의 유효 트리. `project_files`가 비어 있으면 만들지 않는다(state만 복원)."""
+DRAFT_META_FILE = "draft-meta.json"
+"""`export --draft` 디렉터리의 `{site_rev, base_site_rev, content_hash}`(옆의 `project.tar`)."""
 _TAR_MODE = 0o644
 
 
