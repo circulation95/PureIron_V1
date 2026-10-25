@@ -126,6 +126,18 @@ def slug(text: str) -> str:
     return _NOT_ID.sub("-", lowered).strip("-")[:ID_MAX].rstrip("-")
 
 
+def new_id(name: str, prefix: str, taken: set[str]) -> str | None:
+    """이름 → 쓰지 않은 id. 쓸 글자가 없는 이름(예: 한글만)은 `<prefix>-<n>`(입력 순서대로),
+    slug가 이미 쓰인 이름은 legacy에서도 충돌이므로 None."""
+    base = slug(name)
+    if base:
+        return None if base in taken else base
+    n = 1
+    while f"{prefix}-{n}" in taken:
+        n += 1
+    return f"{prefix}-{n}"
+
+
 def tag_path(legacy: str) -> str | None:
     """`[Provider]Folder/Tag` → `Folder/Tag`. V1 tagPath로 쓸 수 없으면 None."""
     path = _PROVIDER.sub("", legacy.strip(), count=1)
@@ -170,7 +182,6 @@ def connection_device(
 ) -> Device | None:
     """Modbus TCP 연결(legacy `ModbusConnectionConfig`) → `devices/<id>.yaml`."""
     name = _text(raw.get("name")) or ""
-    device_id = slug(name)
     protocol = raw.get("protocol", "tcp")
     if protocol != "tcp":
         notes.add(
@@ -180,9 +191,9 @@ def connection_device(
             f"protocol {protocol!r} is not Modbus TCP",
         )
         return None
-    if not device_id or device_id in taken:
-        reason = "duplicate device id" if device_id else "name gives no usable device id"
-        notes.add(file, item, "modbus_connection", f"{reason} {device_id!r}")
+    device_id = new_id(name, "device", taken)
+    if device_id is None:
+        notes.add(file, item, "modbus_connection", f"duplicate device id {slug(name)!r}")
         return None
     host = raw.get("host", "localhost")
     port = _int(raw.get("port", 502), 1, PORT_MAX)
@@ -319,6 +330,8 @@ def inline_tag(raw: Mapping[str, Json], source: TagSource, notes: Notes) -> dict
 
 # TagStore 태그(`TagDefinition`)에서 따로 읽는 필드와, 값이 이것과 같으면 옮길 것이 없는 필드.
 # provider·id·data_type은 legacy 내부 표기(경로 접두·DB 키·값 형식)라 옮길 대상이 아니다.
+# tag_type 등 5개는 YAML 평면 형식에서 tag_config 대신 최상위에 오는 키(`TAG_CONFIG_KEYS`).
+TAG_CONFIG_KEYS = ("tag_type", "device_name", "address_config", "scan_rate_ms", "read_only")
 _DEFINITION_KNOWN = frozenset(
     {
         "path",
@@ -329,18 +342,22 @@ _DEFINITION_KNOWN = frozenset(
         "engineering_units",
         "metadata",
         "tag_config",
+        *TAG_CONFIG_KEYS,
     }
 )
+LEGACY_TAG_SCAN_MS = 1000
 _DEFINITION_DEFAULTS: dict[str, Json] = {"scan_group": "default", "source_kind": "authored"}
 
 
-def store_tag(raw: Mapping[str, Json], source: TagSource, notes: Notes) -> dict[str, Json] | None:
-    """TagStore Device 태그(`tag_config.address_config.protocol == "modbus"`) 한 항목."""
+def store_tag(
+    raw: Mapping[str, Json],
+    config: Mapping[str, Json],
+    address: Mapping[str, Json],
+    source: TagSource,
+    notes: Notes,
+) -> dict[str, Json] | None:
+    """TagStore Device 태그(`address_config.protocol == "modbus"`) 한 항목. config = tag_config."""
     legacy_path = _text(raw.get("path")) or ""
-    config = raw.get("tag_config")
-    address = config.get("address_config") if isinstance(config, dict) else None
-    if not isinstance(config, dict) or not isinstance(address, dict):
-        return None
     tag = modbus_tag(legacy_path, address, source, notes)
     if tag is None:
         return None
@@ -354,6 +371,13 @@ def store_tag(raw: Mapping[str, Json], source: TagSource, notes: Notes) -> dict[
             legacy_path,
             "read_only",
             "legacy write permission is not carried over; declare write: explicitly",
+        )
+    if config.get("scan_rate_ms", LEGACY_TAG_SCAN_MS) != LEGACY_TAG_SCAN_MS:
+        notes.dropped(
+            source.file,
+            legacy_path,
+            "scan_rate_ms",
+            "per-tag scan rate; V1 polls every tag at its device poll_ms",
         )
     metadata = raw.get("metadata")
     for key, value in sorted(metadata.items() if isinstance(metadata, dict) else []):
@@ -391,7 +415,6 @@ def alarm(
     (V1 validate가 모르는 태그를 가리키는 알람을 거부).
     """
     name = _text(raw.get("name")) or ""
-    alarm_id = slug(name)
     alarm_type = ALARM_TYPES.get(str(raw.get("alarm_type", "")).lower())
     legacy_tag = _text(raw.get("tag_path")) or ""
     setpoint = _number(raw.get("setpoint"))
@@ -404,8 +427,9 @@ def alarm(
     if legacy_tag not in tags:
         notes.add(file, name, "alarm", f"target tag {legacy_tag!r} was not converted")
         return None
-    if not alarm_id or alarm_id in taken or setpoint is None:
-        notes.add(file, name, "alarm", "missing/duplicate id or setpoint is not a number")
+    alarm_id = new_id(name, "alarm", taken)
+    if alarm_id is None or setpoint is None:
+        notes.add(file, name, "alarm", "duplicate alarm id or setpoint is not a number")
         return None
     doc: dict[str, Json] = {
         "id": alarm_id,

@@ -64,12 +64,9 @@ def _convert_legacy(source: Path, out: Path, report_path: Path) -> int:
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_bytes(report_bytes(report))
     unsupported = len(conversion.notes.unsupported)
-    summary = report["summary"]
     print(
         f"converted: {len(project.files)} files, {project.content_hash()}; "
         f"unsupported: {unsupported} (see {report_path})"
-        if isinstance(summary, dict)
-        else ""
     )
     return EXIT_UNSUPPORTED if unsupported else 0
 

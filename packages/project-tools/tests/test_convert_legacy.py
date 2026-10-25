@@ -171,6 +171,38 @@ def test_store_tag_addresses_follow_the_connection_addressing_rule(tmp_path: Pat
     )
 
 
+def test_flat_yaml_device_tag_and_name_without_ascii_get_ids(tmp_path: Path) -> None:
+    connection = 'connections:\n  - name: "보일러"\n    host: h\n'
+    tags = (
+        'tags:\n  - path: "[보일러]boiler/temp"\n    tag_type: Device\n'
+        "    device_name: 보일러\n    scan_rate_ms: 200\n"
+        "    address_config: {protocol: modbus, address: 5, data_type: int16}\n"
+    )
+    alarms = (
+        'alarms:\n  - name: 온도 높음\n    tag_path: "[보일러]boiler/temp"\n'
+        "    alarm_type: AboveSetpoint\n    setpoint: 90\n"
+    )
+    files = {
+        "connections/plc.yaml": connection,
+        "tags/boiler.yaml": tags,
+        "alarms/boiler.yaml": alarms,
+        ".git/config": "[core]\n",
+    }
+    code, out, report = _convert(_legacy(tmp_path, files), tmp_path)
+    assert code == 2
+    assert _entries(report) == [
+        ("tags/boiler.yaml", "[보일러]boiler/temp", "field", "scan_rate_ms")
+    ]
+    assert (out / "devices" / "device-1.yaml").exists()
+    assert (out / "tags" / "device-1.yaml").read_text("utf-8") == (
+        "- device: device-1\n  modbus:\n    address: 4\n    data_type: int16\n"
+        "    register_type: holding\n  path: boiler/temp\n"
+    )
+    assert (out / "alarms" / "boiler.yaml").read_text("utf-8") == (
+        "- id: alarm-1\n  setpoint: 90\n  tag: boiler/temp\n  type: above\n"
+    )
+
+
 def test_supported_only_project_exits_0_with_empty_unsupported(tmp_path: Path) -> None:
     root = _legacy(tmp_path, {"connections/plc.yaml": MODBUS_CONNECTION, ".gitkeep": ""})
     code, out, report = _convert(root, tmp_path)

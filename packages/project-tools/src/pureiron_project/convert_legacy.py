@@ -34,6 +34,7 @@ from pureiron_project.legacy_files import (
     report_only,
 )
 from pureiron_project.legacy_items import (
+    TAG_CONFIG_KEYS,
     Device,
     Notes,
     TagSource,
@@ -51,8 +52,9 @@ NAME_MAX = 200
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 _EXCLUDED_FILE = "tags/excluded_paths.json"
 _APPROVED_FILE = "tags/approved_paths.json"
-# 빈 디렉터리를 git에 남기는 표식 — 내용이 아니라 보고하지 않는다.
+# 빈 디렉터리를 git에 남기는 표식과 git 저장소 메타데이터 — 프로젝트 내용이 아니라 보고하지 않는다.
 KEEP_FILE = ".gitkeep"
+VCS_DIR = ".git"
 
 
 @dataclass(slots=True)
@@ -292,7 +294,7 @@ def _tag_config(raw: Mapping[str, Json]) -> dict[str, Json] | None:
     if isinstance(config, dict):
         return config
     if "address_config" in raw or "tag_type" in raw:
-        return {k: raw[k] for k in ("tag_type", "device_name", "address_config") if k in raw}
+        return {k: raw[k] for k in TAG_CONFIG_KEYS if k in raw}
     return None
 
 
@@ -323,8 +325,9 @@ def _store_tag(
         kind, reason = _TAG_KINDS[str(tag_type)]
         state.notes.add(file, legacy_path, kind, reason)
         return
-    address = config.get("address_config")
-    protocol = address.get("protocol") if isinstance(address, dict) else None
+    raw_address = config.get("address_config")
+    address = raw_address if isinstance(raw_address, dict) else {}
+    protocol = address.get("protocol")
     device = state.by_legacy_name.get(str(config.get("device_name", "")))
     if tag_type not in {"Device", "OPC"} or protocol not in {"modbus", "opcua"}:
         state.notes.add(
@@ -344,7 +347,13 @@ def _store_tag(
         )
     else:
         source = TagSource(file, device, inline=False)
-        _add_tag(conv, state, file, legacy_path, lambda: store_tag(raw, source, state.notes))
+        _add_tag(
+            conv,
+            state,
+            file,
+            legacy_path,
+            lambda: store_tag(raw, config, address, source, state.notes),
+        )
 
 
 def _tag_file(conv: Conversion, state: _State, rel: str, data: Json) -> None:
@@ -378,7 +387,7 @@ def _files(root: Path, notes: Notes) -> list[str]:
         rel = path.relative_to(root).as_posix()
         if path.is_symlink():
             notes.add(rel, "$", "file", "symbolic link not followed")
-        elif path.is_file() and path.name != KEEP_FILE:
+        elif path.is_file() and path.name != KEEP_FILE and rel.split("/", 1)[0] != VCS_DIR:
             rels.append(rel)
     return sorted(rels, key=lambda r: r.encode("utf-8"))
 
