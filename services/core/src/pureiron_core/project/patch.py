@@ -43,6 +43,8 @@ RECORD_FIELDS = frozenset({"deadband", "max_interval_s"})
 _REQUIRED = frozenset({"setpoint"})
 _RECORD = "record"
 _QUERY_TIMEOUT_S = 5.0
+# apply·restore가 advisory lock을 쥔 동안 PATCH가 기다리는 상한(요청이 매달리지 않게, 넘으면 503).
+_LOCK_TIMEOUT_S = 10.0
 
 LOCK_STATE_SQL = "SELECT site_rev, edit_lock_owner FROM project_state WHERE id FOR UPDATE"
 LOCK_ALARM_SQL = (
@@ -181,15 +183,16 @@ async def patch_definition(
     *,
     username: str,
 ) -> PatchResult:
-    """P3 한 트랜잭션. 본문 검사(422)는 DB에 닿기 전에 한다."""
-    _check_fields(kind, changes)
+    """P3 한 트랜잭션. 잠금·대상 확인 뒤 `merge`(실패 = 422, 아무것도 쓰지 않음)."""
     lock_sql, update_sql = (
         (LOCK_ALARM_SQL, UPDATE_ALARM_SQL)
         if kind is PatchKind.ALARM
         else (LOCK_TAG_SQL, UPDATE_TAG_SQL)
     )
     async with conn.transaction():
-        await conn.execute("SELECT pg_advisory_xact_lock($1)", APPLY_LOCK_KEY)
+        await conn.execute(
+            "SELECT pg_advisory_xact_lock($1)", APPLY_LOCK_KEY, timeout=_LOCK_TIMEOUT_S
+        )
         state = await conn.fetchrow(LOCK_STATE_SQL, timeout=_QUERY_TIMEOUT_S)
         if state is None:
             raise ProjectStateError("project_state row missing (run `pureiron-core migrate up`)")
@@ -240,7 +243,7 @@ class PgProjectPatcher:
     async def _patch(
         self, kind: PatchKind, ident: str, changes: Mapping[str, object], username: str
     ) -> PatchResult:
-        _check_fields(kind, changes)
+        _check_fields(kind, changes)  # 본문 오류(422)는 DB 연결 전에
         try:
             async with self._db.connection() as conn:
                 return await patch_definition(
