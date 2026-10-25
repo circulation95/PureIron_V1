@@ -100,8 +100,11 @@ class Compose(Protocol):
         args: Sequence[str],
         *,
         mounts: Mapping[Path, str] | None = None,
+        writable: Mapping[Path, str] | None = None,
     ) -> str:
-        """`run --rm --no-deps -T core <args>`(이미지 ENTRYPOINT = pureiron-core). stdout 반환."""
+        """`run --rm --no-deps -T core <args>`(이미지 ENTRYPOINT = pureiron-core). stdout 반환.
+
+        `mounts`는 읽기 전용, `writable`은 쓰기 가능 bind mount(호스트 경로 → 컨테이너 경로)."""
         ...
 
     def dump_db(self, target: ComposeTarget, out: Path) -> None:

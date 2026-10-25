@@ -131,10 +131,13 @@ class ComposeCli:
         args: Sequence[str],
         *,
         mounts: Mapping[Path, str] | None = None,
+        writable: Mapping[Path, str] | None = None,
     ) -> str:
         argv = [*self._base(target), "run", "--rm", "--no-deps", "-T"]
         for host, container in sorted((mounts or {}).items()):
             argv += ["--volume", f"{host}:{container}:ro"]
+        for host, container in sorted((writable or {}).items()):
+            argv += ["--volume", f"{host}:{container}"]
         return self._check([*argv, "core", *args], 1800)
 
     def dump_db(self, target: ComposeTarget, out: Path) -> None:

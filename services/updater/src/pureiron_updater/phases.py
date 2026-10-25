@@ -15,6 +15,7 @@
   같은 generation은 다시 시도하지 않는다(자동 재시도 없음).
 - 모든 종료(`_finish`)는 편집 잠금을 먼저 푼다. core HTTP가 없으면 `pureiron-core project unlock`.
 - 롤백은 앱 이미지·프로젝트만 직전으로 되돌린다. 스키마는 전진만, site-db digest는 바꾸지 않는다.
+- 프로젝트 적용은 새 이미지, 백업·복원은 직전 이미지가 한다(근거·한계는 `backup.py` docstring).
 """
 
 from __future__ import annotations
@@ -40,7 +41,13 @@ from pureiron_bundle.verify import (
     verify_bundle,
 )
 from pureiron_updater import gc, metrics
-from pureiron_updater.backup import BackupError, make_backup, restore_project
+from pureiron_updater.backup import (
+    BackupError,
+    apply_project,
+    make_backup,
+    restore_project,
+    tree_aware,
+)
 from pureiron_updater.compose import (
     COMPOSE_PAYLOAD,
     check_config,
@@ -465,8 +472,15 @@ class Updater:
         if current is not None:
             backup_dir = self.settings.backups_dir / f"g{self._gen(attempt)}"
             try:
-                make_backup(self.deps.compose, current, backup_dir, self.settings.secrets_dir)
-            except (CommandError, BackupError, OSError) as exc:
+                make_backup(
+                    self.deps.compose,
+                    current,
+                    backup_dir,
+                    self.settings.secrets_dir,
+                    tree=tree_aware(read_manifest(current)),
+                    reader_uid=self.settings.secret_uid,
+                )
+            except (CommandError, BackupError, BundleRejectedError, OSError) as exc:
                 return self._end(attempt, Phase.FAILED, E_BACKUP, str(exc), Phase.BACKED_UP)
         self._enter(attempt, Phase.BACKED_UP)
         return True
@@ -498,13 +512,12 @@ class Updater:
             pin_images(self.deps.docker, images)
             self.deps.compose.up(target)
             check_running(self.deps.compose.running_images(target), images)
-            project = manifest.project
-            self.deps.compose.run_core(
+            apply_project(
+                self.deps.compose,
                 target,
-                [
-                    *("project", "apply", "--project-id", project.project_id),
-                    *("--version", project.version, "--content-hash", project.content_hash),
-                ],
+                manifest,
+                Path(attempt.extract_dir),
+                reader_uid=self.settings.secret_uid,
             )
         except (CommandError, BundleRejectedError, OSError) as exc:
             self._fail_over(attempt, Phase.SWITCHING, E_SWITCH, str(exc))

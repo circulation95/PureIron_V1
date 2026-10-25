@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import replace
 from datetime import timedelta
@@ -495,3 +496,97 @@ def test_gc_failure_does_not_change_the_result(site: Site, monkeypatch: pytest.M
     monkeypatch.setattr(gc, "collect", broken)
     state = installed(site).updater().state
     assert (state.applied_gen, state.last_result) == (1, AttemptResult.SUCCEEDED)
+
+
+# ── 프로젝트 트리(M5-0): 새 이미지가 적용, 직전 이미지가 백업·복원(backup.py docstring) ─────────
+
+
+def tree_installed(site: Site) -> Site:
+    """g1 = r4(epoch 5, 트리를 아는 core) 최초 설치 — 번들 project.tar가 정의로 들어간다."""
+    state = site.apply(site.kit.bundle(1, "r4"))
+    assert state.applied_gen == 1
+    assert site.world.tree == b"project-v1"
+    return site
+
+
+def project_calls(site: Site, pib: Path) -> tuple[UpdaterState, list[tuple[str, ...]]]:
+    updater = site.submit(pib)
+    state = updater.advance()
+    compose = updater.deps.compose
+    assert isinstance(compose, FakeCompose)
+    return state, [c[1:] for c in compose.calls if c[0] == "run_core" and c[2] == "project"]
+
+
+def content_hash(version: str) -> str:
+    return "sha256:" + hashlib.sha256(version.encode()).hexdigest()
+
+
+def test_tree_update_applies_bundle_tree_with_new_image_and_backs_up_with_old(
+    site: Site,
+) -> None:
+    tree_installed(site)
+    site.world.site_rev = site.world.base_site_rev = 4
+    state, calls = project_calls(site, site.kit.bundle(2, "r5", version="v2"))
+    assert (state.applied_gen, state.last_result) == (2, AttemptResult.SUCCEEDED)
+    assert site.world.tree == b"project-v2"
+    assert (site.world.project["version"], site.world.base_site_rev) == ("v2", 4)
+    assert calls == [
+        ("g1", "project", "export", "--with-state", "--out", "/run/pureiron-backup-out"),
+        (
+            *("g2", "project", "apply", "--tar", "/run/pureiron-project/project.tar"),
+            *("--project-id", "acme", "--version", "v2", "--content-hash", content_hash("v2")),
+        ),
+    ]
+    backup = site.settings.backups_dir / "g2"
+    assert sorted(p.name for p in (backup / "project").iterdir()) == ["project.tar", "state.json"]
+    assert (backup / "project" / "project.tar").read_bytes() == b"project-v1"
+    state_json = (backup / "project" / "state.json").read_bytes()
+    assert (backup / "project.json").read_bytes() == state_json
+    assert (json.loads(state_json)["version"], json.loads(state_json)["site_rev"]) == ("v1", 4)
+
+
+def test_tree_rollback_restores_backup_tree_and_draft_revs_with_previous_image(
+    site: Site,
+) -> None:
+    tree_installed(site)
+    site.world.site_rev, site.world.base_site_rev = 5, 2  # 흡수된 드래프트(absorbs 5)
+    site.world.unhealthy_ids.add(release_ids("r5")["core"])
+    pib = site.kit.bundle(2, "r5", version="v2", absorbs={"site-a": 5})
+    state, calls = project_calls(site, pib)
+    assert (state.applied_gen, state.last_result) == (1, AttemptResult.FAILED)
+    assert reports(site)[-1]["code"] == "E_HEALTH"
+    assert site.world.running == release_ids("r4")
+    assert site.world.tree == b"project-v1"
+    assert (site.world.project["version"], site.world.site_rev, site.world.base_site_rev) == (
+        "v1",
+        5,
+        2,
+    )
+    assert calls[-1] == ("g1", "project", "restore", "--from", "/run/pureiron-backup/project")
+
+
+def test_first_tree_release_after_pre_tree_release_rolls_back_state_only(site: Site) -> None:
+    """한계(backup.py): 직전 r3는 트리를 모르므로 백업에 트리가 없고 state만 되돌린다."""
+    site.apply(site.kit.bundle(1, "r3"))
+    assert site.world.tree is None
+    site.world.unhealthy_ids.add(release_ids("r4")["core"])
+    state, calls = project_calls(site, site.kit.bundle(2, "r4", version="v2"))
+    assert state.last_result is AttemptResult.FAILED
+    assert not (site.settings.backups_dir / "g2" / "project").exists()
+    assert calls[0] == ("g1", "project", "export")
+    assert calls[-1] == ("g1", "project", "restore", "--from", "/run/pureiron-backup/project.json")
+    assert site.world.project["version"] == "v1"
+    assert site.world.tree == b"project-v2"  # 실패한 업데이트가 적용한 정의가 남는다
+
+
+def test_revert_to_pre_tree_release_records_meta_only(site: Site) -> None:
+    """트리 이전 release로 되돌리는 번들(gen+1): 백업은 직전 r4가 트리로, 적용은 r3가 메타만."""
+    tree_installed(site)
+    state, calls = project_calls(site, site.kit.bundle(2, "r3", version="v2"))
+    assert (state.applied_gen, state.last_result) == (2, AttemptResult.SUCCEEDED)
+    assert calls[0][:4] == ("g1", "project", "export", "--with-state")
+    assert calls[-1] == (
+        *("g2", "project", "apply", "--project-id", "acme"),
+        *("--version", "v2", "--content-hash", content_hash("v2")),
+    )
+    assert site.world.tree == b"project-v1"

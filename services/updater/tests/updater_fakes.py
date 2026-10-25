@@ -31,6 +31,7 @@ from pureiron_bundle.manifest import DOCKER_PACKAGES, Json
 from pureiron_bundle.sign import write_signed_bundle
 from pureiron_bundle.trust import format_timestamp, issue_cert
 from pureiron_bundle.verify import INSTALL_LAYOUT, ROOT_PEM_PAYLOAD, ROOT_PUB_PAYLOAD
+from pureiron_updater.backup import PROJECT_TREE_EPOCH
 from pureiron_updater.phases import Deps, Updater
 from pureiron_updater.ports import (
     CommandError,
@@ -50,8 +51,16 @@ NOT_BEFORE = datetime(2026, 9, 1, tzinfo=UTC)
 T0 = datetime(2026, 10, 5, 1, 0, tzinfo=UTC)
 SERVICES = ("collector", "core", "site-db", "web")
 SITE_DB_TAG = "pureiron/site-db:2.30.2-pg16"
-EPOCH = {"r0": 1, "r1": 2, "r2": 3, "r3": 4}
-VERSION = {"r0": "2026.10.0", "r1": "2026.11.0", "r2": "2026.12.0", "r3": "2027.1.0"}
+# r4부터 core가 프로젝트 트리(`project_files`, epoch 5 = backup.PROJECT_TREE_EPOCH)를 안다.
+EPOCH = {"r0": 1, "r1": 2, "r2": 3, "r3": 4, "r4": 5, "r5": 6}
+VERSION = {
+    "r0": "2026.10.0",
+    "r1": "2026.11.0",
+    "r2": "2026.12.0",
+    "r3": "2027.1.0",
+    "r4": "2027.2.0",
+    "r5": "2027.3.0",
+}
 _VAR = re.compile(r"\$\{([A-Z_]+)(?::-([^}]*))?\}")
 
 
@@ -270,6 +279,8 @@ class World:
     site_rev: int = 0
     base_site_rev: int = 0
     project: dict[str, str] = field(default_factory=dict[str, str])
+    tree: bytes | None = None
+    """마지막으로 적용·복원된 프로젝트 트리(project.tar 바이트) = 정의·project_files."""
     good_ratio: float | None = None
     # 결함 주입
     fail_migrate_ids: set[str] = field(default_factory=set[str])
@@ -319,6 +330,7 @@ class World:
             "site_rev": self.site_rev,
             "base_site_rev": self.base_site_rev,
             "project": dict(self.project),
+            "tree": self.tree,
         }
 
 
@@ -419,11 +431,13 @@ class FakeCompose:
         args: Sequence[str],
         *,
         mounts: Mapping[Path, str] | None = None,
+        writable: Mapping[Path, str] | None = None,
     ) -> str:
         self.calls.append(("run_core", target.directory.name, *args))
         image = self._core_image(target)
         w = self.w
         out = ""
+        host = {v: k for k, v in {**(mounts or {}), **(writable or {})}.items()}
         match list(args):
             case ["migrate", "up", "--to", epoch]:
                 if image in w.fail_migrate_ids:
@@ -431,21 +445,60 @@ class FakeCompose:
                 w.schema_epoch = max(w.schema_epoch, int(epoch))
             case ["project", "export"]:
                 out = json.dumps(self._project_snapshot())
+            case ["project", "export", "--with-state", "--out", path]:
+                self._tree_image(image, args, writable_path=path in (writable or {}).values())
+                (host[path] / "state.json").write_text(json.dumps(self._project_snapshot()))
+                if w.tree is not None:
+                    (host[path] / "project.tar").write_bytes(w.tree)
             case ["project", "apply", "--project-id", pid, "--version", ver, "--content-hash", h]:
-                w.project = {"project_id": pid, "version": ver, "content_hash": h}
-                w.base_site_rev = w.site_rev
+                self._apply(pid, ver, h)
+            case [
+                "project",
+                "apply",
+                "--tar",
+                path,
+                "--project-id",
+                pid,
+                "--version",
+                ver,
+                "--content-hash",
+                h,
+            ]:
+                self._tree_image(image, args)
+                w.tree = host[path].read_bytes()
+                self._apply(pid, ver, h)
+            case ["project", "restore", "--from", path] if host[path].is_dir():
+                self._tree_image(image, args)
+                tree = host[path] / "project.tar"
+                w.tree = tree.read_bytes() if tree.is_file() else w.tree
+                self._restore(host[path] / "state.json")
             case ["project", "restore", "--from", path]:
-                host = {v: k for k, v in (mounts or {}).items()}[path]
-                snap = cast(dict[str, object], json.loads(host.read_text(encoding="utf-8")))
-                w.project = {k: str(snap[k]) for k in ("project_id", "version", "content_hash")}
-                w.site_rev = cast(int, snap["site_rev"])
-                w.base_site_rev = cast(int, snap["base_site_rev"])
-                owner, gen = snap["edit_lock_owner"], snap["edit_lock_gen"]
-                w.lock = None if owner is None else (cast(str, owner), cast(int, gen))
+                self._restore(host[path])
             case _:
                 raise AssertionError(f"unexpected core command {args}")
         w.op("run_core " + " ".join(args[:2]))
         return out
+
+    @staticmethod
+    def _tree_image(image: str, args: Sequence[str], *, writable_path: bool = True) -> None:
+        """트리 명령은 트리를 아는 core(r4+)만 안다 — Updater가 이미지에 맞는 명령을 고르는지."""
+        release = next(r for r in EPOCH if digest_of("core", r) == image)
+        if EPOCH[release] < PROJECT_TREE_EPOCH or not writable_path:
+            raise AssertionError(f"core {release} does not support {list(args)}")
+
+    def _apply(self, project_id: str, version: str, content_hash: str) -> None:
+        w = self.w
+        w.project = {"project_id": project_id, "version": version, "content_hash": content_hash}
+        w.base_site_rev = w.site_rev
+
+    def _restore(self, state_file: Path) -> None:
+        w = self.w
+        snap = cast(dict[str, object], json.loads(state_file.read_text(encoding="utf-8")))
+        w.project = {k: str(snap[k]) for k in ("project_id", "version", "content_hash")}
+        w.site_rev = cast(int, snap["site_rev"])
+        w.base_site_rev = cast(int, snap["base_site_rev"])
+        owner, gen = snap["edit_lock_owner"], snap["edit_lock_gen"]
+        w.lock = None if owner is None else (cast(str, owner), cast(int, gen))
 
     def _project_snapshot(self) -> dict[str, object]:
         w = self.w
