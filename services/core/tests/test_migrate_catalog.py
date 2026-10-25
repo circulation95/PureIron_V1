@@ -36,9 +36,10 @@ def test_real_catalog_epochs(migrations_dir: Path) -> None:
         "0010_auth.sql",
         "0011_audit.sql",
         "0012_alarms.sql",
+        "0013_project_files.sql",
     ]
-    assert catalog.epochs == {1: 5, 2: 7, 3: 9, 4: 12}
-    assert (catalog.app_expected, catalog.app_max_compatible) == (4, 5)
+    assert catalog.epochs == {1: 5, 2: 7, 3: 9, 4: 12, 5: 13}
+    assert (catalog.app_expected, catalog.app_max_compatible) == (5, 6)
     assert [m.transactional for m in catalog.migrations] == [
         True,
         True,
@@ -46,6 +47,7 @@ def test_real_catalog_epochs(migrations_dir: Path) -> None:
         False,
         True,
         False,
+        True,
         True,
         True,
         True,

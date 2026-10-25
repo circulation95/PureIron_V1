@@ -1,5 +1,9 @@
 """`pureiron-core` 진입점: serve · migrate · project · apply-definitions · users.
 
+`project apply --tar`·`export --with-state`·`restore --from <dir>`(M5-0)는 번들 트리를
+적용·백업·복원한다(`project/apply.py`·`export.py`). tar 읽기·검증은 DB에 닿기 전에 끝낸다 —
+실패하면 아무것도 바꾸지 않는다.
+
 종료 코드(plan §6.6): 0 성공, 2 lock, 3 checksum, 4 실패, 5 lint.
 `runtime`/`app`을 import할 수 있는 유일한 모듈이다(import-linter 계약 (a)).
 `users` 하위 명령의 parser·실행은 `cli_users.py`에 있고 여기서는 등록만 한다.
@@ -16,6 +20,7 @@ import os
 import re
 import sys
 from collections.abc import Awaitable, Callable, Sequence
+from hashlib import sha256
 from pathlib import Path
 from typing import cast
 
@@ -30,9 +35,11 @@ from pureiron_core.auth.ports import AuthError
 from pureiron_core.platform import migrate
 from pureiron_core.platform.db import Database, DatabaseUnavailableError, connect_once
 from pureiron_core.platform.migrate_lint import lint_directory
+from pureiron_core.project.apply import ProjectTree, apply_tree, restore_tree, tree_from_tar
 from pureiron_core.project.definitions import apply_definitions
+from pureiron_core.project.export import STATE_FILE, TREE_FILE, effective_files, tree_tar
 from pureiron_core.project.ports import ProjectStateError
-from pureiron_core.project.stub import PgProjectStateStore
+from pureiron_core.project.stub import PgProjectStateStore, state_from_snapshot
 from pureiron_core.runtime import SiteRuntime
 from pureiron_core.settings import Settings, SettingsError, read_secret
 from pureiron_project.project import load_project
@@ -75,20 +82,39 @@ def _parser() -> argparse.ArgumentParser:
     lint.add_argument("directory", type=Path)
     lint.add_argument("--base-ref", default=None)
 
-    proj = sub.add_parser("project", help="현장 프로젝트 상태(M1 골격: project_state만)")
+    proj = sub.add_parser("project", help="현장 프로젝트 적용·백업·복원(ADR-025, M5-0)")
     proj_sub = proj.add_subparsers(dest="project_command", required=True)
-    apply = proj_sub.add_parser("apply")
+    apply = proj_sub.add_parser(
+        "apply", help="번들 project.tar를 적용(정의·project_files·project_state 한 트랜잭션)"
+    )
+    apply.add_argument(
+        "--tar",
+        type=Path,
+        default=None,
+        help="번들 project/project.tar. 없으면 project_state 메타만 기록한다(M5 이전 Updater 호환)",
+    )
     apply.add_argument("--project-id", required=True)
     apply.add_argument("--version", required=True)
-    apply.add_argument("--content-hash", required=True)
-    export = proj_sub.add_parser("export")
+    apply.add_argument("--content-hash", required=True, help="manifest 값(트리 hash와 같아야 함)")
+    export = proj_sub.add_parser(
+        "export", help="project_state JSON. --with-state면 --out 디렉터리에 state + 유효 트리"
+    )
+    export.add_argument(
+        "--with-state",
+        action="store_true",
+        help=f"--out 디렉터리에 {STATE_FILE} + 현재 유효 트리 {TREE_FILE}(Updater 백업)",
+    )
     export.add_argument("--out", type=Path, default=None)
-    restore = proj_sub.add_parser("restore")
+    restore = proj_sub.add_parser(
+        "restore", help="--from <state JSON | export --with-state 디렉터리>(site_rev·base 그대로)"
+    )
     restore.add_argument("--from", dest="source", type=Path, required=True)
 
     defs = sub.add_parser(
         "apply-definitions",
-        help="프로젝트 트리의 장비·태그 정의를 site-db에 반영(path 기준 upsert·retire, M3a)",
+        help="프로젝트 트리의 장비·태그 정의를 site-db에 반영(path 기준 upsert·retire, M3a). "
+        "개발·수동 복구용 — project_files·project_state는 갱신하지 않으므로 현장 적용은 "
+        "`project apply --tar`(Updater)로만",
     )
     defs.add_argument("project_dir", type=Path)
     defs.add_argument("--json", action="store_true")
@@ -120,9 +146,9 @@ def _serve(settings: Settings) -> int:
     return 0
 
 
-async def _with_connection(
-    settings: Settings, action: Callable[[migrate.Connection], Awaitable[int]]
-) -> int:
+async def _with_connection[T](
+    settings: Settings, action: Callable[[migrate.Connection], Awaitable[T]]
+) -> T:
     conn = await connect_once(settings.db_dsn, password=read_secret(settings.db_password_file))
     try:
         return await action(conn)
@@ -204,8 +230,67 @@ async def _project(
         await db.close()
 
 
+def _print_json(value: object) -> int:
+    print(json.dumps(value, sort_keys=True))
+    return migrate.EXIT_OK
+
+
+def _apply_tar(args: argparse.Namespace, settings: Settings, tar: Path) -> int:
+    tree = tree_from_tar(tar.read_bytes())
+
+    async def run(conn: migrate.Connection) -> int:
+        result = await apply_tree(
+            conn,
+            tree,
+            project_id=args.project_id,
+            version=args.version,
+            content_hash=args.content_hash,
+        )
+        return _print_json(result.as_json())
+
+    return asyncio.run(_with_connection(settings, run))
+
+
+def _export_with_state(settings: Settings, out: Path | None) -> int:
+    if out is None:
+        raise ProjectStateError("export --with-state needs --out <directory>")
+    state, files = asyncio.run(_with_connection(settings, effective_files))
+    tar = tree_tar(files) if files else None
+    if tar is not None:
+        # 복원할 수 없는 백업을 만들지 않는다(백업 단계 실패는 서비스에 영향이 없다).
+        tree_from_tar(tar)
+    out.mkdir(parents=True, exist_ok=True)
+    snapshot = state.to_snapshot()
+    state_text = json.dumps(snapshot, sort_keys=True, indent=2) + "\n"
+    (out / STATE_FILE).write_text(state_text, encoding="utf-8", newline="\n")
+    if tar is None:
+        (out / TREE_FILE).unlink(missing_ok=True)
+    else:
+        (out / TREE_FILE).write_bytes(tar)
+    tree = None if tar is None else {"files": len(files), "sha256": sha256(tar).hexdigest()}
+    return _print_json({"state": snapshot, "tree": tree})
+
+
+def _restore_dir(settings: Settings, source: Path) -> int:
+    state = state_from_snapshot(_read_snapshot(source / STATE_FILE))
+    tar = source / TREE_FILE
+    tree: ProjectTree | None = tree_from_tar(tar.read_bytes()) if tar.is_file() else None
+
+    async def run(conn: migrate.Connection) -> int:
+        return _print_json((await restore_tree(conn, tree, state)).as_json())
+
+    return asyncio.run(_with_connection(settings, run))
+
+
 def _run_project(args: argparse.Namespace, settings: Settings) -> int:
-    snapshot = _read_snapshot(args.source) if args.project_command == "restore" else None
+    command: str = args.project_command
+    if command == "apply" and args.tar is not None:
+        return _apply_tar(args, settings, args.tar)
+    if command == "export" and args.with_state:
+        return _export_with_state(settings, args.out)
+    if command == "restore" and args.source.is_dir():
+        return _restore_dir(settings, args.source)
+    snapshot = _read_snapshot(args.source) if command == "restore" else None
     text = asyncio.run(_project(args, settings, snapshot))
     out: Path | None = getattr(args, "out", None)
     if out is None:

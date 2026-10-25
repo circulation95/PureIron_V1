@@ -16,6 +16,8 @@ from pathlib import Path
 import build_bundle
 import pytest
 from build_bundle import (
+    PROJECT_TAR_LIMIT_BYTES,
+    PROJECT_TAR_LIMIT_FILES,
     SIZE_LIMIT,
     SIZE_WARN,
     ReleaseRecord,
@@ -31,6 +33,9 @@ from pureiron_bundle.errors import BundleRejectedError, RejectCode
 from pureiron_bundle.images import config_digest_from_tar
 from pureiron_bundle.trust import issue_cert
 from pureiron_bundle.verify import GenDecision, SchemaAction, VerifyContext, verify_bundle
+from pureiron_core.project import apply
+from pureiron_core.project.apply import tree_from_tar
+from pureiron_core.project.export import tree_tar
 from pureiron_project.project import load_project
 
 REPO = Path(__file__).resolve().parents[2]
@@ -173,6 +178,36 @@ def test_build_then_verify_end_to_end(setup: Setup, capsys: pytest.CaptureFixtur
     assert metrics["zlib"] == zlib.ZLIB_RUNTIME_VERSION
     assert metrics["python"] == platform.python_version()
     assert not list(setup.out.glob(".staging-*"))
+
+
+def test_bundle_project_tar_is_what_core_applies_and_exports(setup: Setup) -> None:
+    """번들 project.tar = core `apply --tar`가 받는 트리(같은 hash), export와 같은 바이트."""
+    assert main(setup.args()) == 0
+    extract = setup.tmp / "staging"
+    manifest = verify_bundle(setup.pib, context(schema_epoch=1), extract_to=extract).manifest
+    data = (extract / "project" / "project.tar").read_bytes()
+    tree = tree_from_tar(data)
+    assert tree.content_hash == manifest.project.content_hash
+    assert tree.project_id == manifest.project.project_id
+    assert tree_tar(tree.files) == data
+
+
+def test_project_tar_limits_match_core_and_fail_the_build(
+    setup: Setup, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """M5-0 리뷰 L-2: core가 switching에서 거부할 트리는 빌드에서 먼저 막는다."""
+    assert (PROJECT_TAR_LIMIT_BYTES, PROJECT_TAR_LIMIT_FILES) == (
+        apply.TREE_LIMIT_BYTES,
+        apply.TREE_LIMIT_FILES,
+    )
+    monkeypatch.setattr(build_bundle, "PROJECT_TAR_LIMIT_BYTES", 1024)
+    assert main(setup.args()) == 1
+    assert "core limit 1024" in capsys.readouterr().err
+    monkeypatch.setattr(build_bundle, "PROJECT_TAR_LIMIT_BYTES", PROJECT_TAR_LIMIT_BYTES)
+    monkeypatch.setattr(build_bundle, "PROJECT_TAR_LIMIT_FILES", 1)
+    assert main(setup.args()) == 1
+    assert "core limit 1)" in capsys.readouterr().err
+    assert not setup.pib.exists()
 
 
 def test_build_is_deterministic(setup: Setup) -> None:

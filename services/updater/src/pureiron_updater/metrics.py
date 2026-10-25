@@ -4,7 +4,8 @@
   (plan §6.4) 본문 필드를 담는다. `report_seq`·site key 서명은 `report export`(폐쇄망 USB
   반출, `enroll.py`)가 묶을 때 붙이고, 온라인 전송은 control-api(M4) 몫이다.
 - `metrics/updater.prom`(plan §4.2): `updater_last_result`, `updater_applied_generation`,
-  `updater_failed_manual`, `updater_phase_duration_seconds{phase}`(마지막 시도).
+  `updater_failed_manual`(alarm 유무 — `failed_manual` 또는 `E_DEFINITIONS_LEFT`),
+  `updater_phase_duration_seconds{phase}`(마지막 시도).
 """
 
 from __future__ import annotations

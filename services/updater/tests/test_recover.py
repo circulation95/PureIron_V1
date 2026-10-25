@@ -9,6 +9,9 @@ crash(프로세스 강제 종료)를 주입한 뒤 새 Updater로 `recover()` �
 
 창이 닫힌 뒤 복구하는 경우: 서비스 영향 전이면 `verified`(잠금 없음, 서비스 무변경)로 돌아가고,
 `migrating` 이후면 창과 무관하게 끝까지 간다.
+
+`tree_*` 시나리오(M5-0)는 트리를 아는 r4 → r5로, 번들 트리 적용(새 이미지)·트리 백업과 복원(직전
+이미지)이 모든 지점에서 수렴하는지 본다 — 바깥 상태의 `tree`(정의·project_files)까지 같아야 한다.
 """
 
 from __future__ import annotations
@@ -17,12 +20,12 @@ import copy
 import os
 import shutil
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from pathlib import Path
 
 import pytest
-from updater_fakes import T0, Crash, Kit, Site, open_window, release_ids
+from updater_fakes import EPOCH, T0, Crash, Kit, Site, open_window, release_ids
 
 from pureiron_bundle.verify import AttemptResult
 from pureiron_updater.recover import recover
@@ -50,19 +53,45 @@ def nothing(_site: Site, _g1: Path) -> None:
     return None
 
 
-def fail_migrate(site: Site, g1: Path) -> None:
+def fail_migrate(new: str = "r1") -> Setup:
+    def setup(site: Site, g1: Path) -> None:
+        install_g1(site, g1)
+        site.world.fail_migrate_ids.add(release_ids(new)["core"])
+
+    return setup
+
+
+def fail_health(new: str = "r1") -> Setup:
+    def setup(site: Site, g1: Path) -> None:
+        install_g1(site, g1)
+        site.world.unhealthy_ids.add(release_ids(new)["core"])
+
+    return setup
+
+
+def fail_rollback(new: str = "r1", old: str = "r0") -> Setup:
+    def setup(site: Site, g1: Path) -> None:
+        install_g1(site, g1)
+        site.world.unhealthy_ids.update({release_ids(new)["core"], release_ids(old)["core"]})
+
+    return setup
+
+
+def draft_absorbed(site: Site, g1: Path) -> None:
+    """흡수된 드래프트(site_rev 5 > base 2)에서 health 실패 — 롤백이 두 값을 그대로 되돌린다."""
     install_g1(site, g1)
-    site.world.fail_migrate_ids.add(release_ids("r1")["core"])
+    site.world.site_rev, site.world.base_site_rev = 5, 2
+    site.world.unhealthy_ids.add(release_ids("r5")["core"])
 
 
-def fail_health(site: Site, g1: Path) -> None:
+LEFT_ALARM = "g2: E_HEALTH E_DEFINITIONS_LEFT"
+
+
+def definitions_left(site: Site, g1: Path) -> None:
+    """r3 g1에 전환기 롤백(g2)의 남은 정의 경보가 서 있다(리뷰 N-1)."""
     install_g1(site, g1)
-    site.world.unhealthy_ids.add(release_ids("r1")["core"])
-
-
-def fail_rollback(site: Site, g1: Path) -> None:
-    install_g1(site, g1)
-    site.world.unhealthy_ids.update({release_ids("r1")["core"], release_ids("r0")["core"]})
+    store = site.updater().store
+    store.save(replace(store.load(), alarm=LEFT_ALARM))
 
 
 @dataclass(frozen=True)
@@ -72,6 +101,9 @@ class Scenario:
     release: str
     result: AttemptResult
     phases: frozenset[Phase]
+    base: str = "r0"
+    """g1(설치된 직전 release)."""
+    absorbs: int | None = None
 
 
 COMMON = {Phase.FETCHED, Phase.VERIFIED, Phase.COMMITTED, Phase.LOCKED, Phase.BACKED_UP}
@@ -91,14 +123,14 @@ SCENARIOS = {
         frozenset(COMMON | {Phase.MIGRATING, Phase.SWITCHING, Phase.CHECKING, Phase.SUCCEEDED}),
     ),
     "migrate_fail": Scenario(
-        fail_migrate,
+        fail_migrate(),
         2,
         "r1",
         AttemptResult.FAILED,
         frozenset(COMMON | {Phase.MIGRATING, Phase.ROLLING_BACK, Phase.FAILED}),
     ),
     "health_fail": Scenario(
-        fail_health,
+        fail_health(),
         2,
         "r1",
         AttemptResult.FAILED,
@@ -108,7 +140,7 @@ SCENARIOS = {
         ),
     ),
     "rollback_fail": Scenario(
-        fail_rollback,
+        fail_rollback(),
         2,
         "r1",
         AttemptResult.FAILED,
@@ -117,6 +149,73 @@ SCENARIOS = {
             | {Phase.MIGRATING, Phase.SWITCHING, Phase.CHECKING, Phase.ROLLING_BACK}
             | {Phase.FAILED_MANUAL}
         ),
+    ),
+    "tree_first_install": Scenario(
+        nothing,
+        1,
+        "r4",
+        AttemptResult.SUCCEEDED,
+        frozenset(COMMON | {Phase.MIGRATING, Phase.SWITCHING, Phase.CHECKING, Phase.SUCCEEDED}),
+        base="r4",
+    ),
+    "tree_update": Scenario(
+        install_g1,
+        2,
+        "r5",
+        AttemptResult.SUCCEEDED,
+        frozenset(COMMON | {Phase.MIGRATING, Phase.SWITCHING, Phase.CHECKING, Phase.SUCCEEDED}),
+        base="r4",
+    ),
+    "tree_health_fail": Scenario(
+        draft_absorbed,
+        2,
+        "r5",
+        AttemptResult.FAILED,
+        frozenset(
+            COMMON
+            | {Phase.MIGRATING, Phase.SWITCHING, Phase.CHECKING, Phase.ROLLING_BACK, Phase.FAILED}
+        ),
+        base="r4",
+        absorbs=5,
+    ),
+    "tree_migrate_fail": Scenario(
+        fail_migrate("r5"),
+        2,
+        "r5",
+        AttemptResult.FAILED,
+        frozenset(COMMON | {Phase.MIGRATING, Phase.ROLLING_BACK, Phase.FAILED}),
+        base="r4",
+    ),
+    # 리뷰 M-1: r3(트리 모름) → r4 첫 트리 release health 실패 — state만 되돌리고 E_DEFINITIONS_LEFT
+    # 경보. 경보 저장이 따로 한 지점 늘어도 수렴해야 한다(outcome에 alarm 포함).
+    "transition_health_fail": Scenario(
+        fail_health("r4"),
+        2,
+        "r4",
+        AttemptResult.FAILED,
+        frozenset(
+            COMMON
+            | {Phase.MIGRATING, Phase.SWITCHING, Phase.CHECKING, Phase.ROLLING_BACK, Phase.FAILED}
+        ),
+        base="r3",
+    ),
+    # 리뷰 N-1: 남은 정의 경보는 트리 release 성공(정의 교체)만 지운다 — 경보를 읽는 마지막 저장이
+    # 어느 지점에서 crash해도 같은 결론이어야 한다.
+    "transition_meta_success": Scenario(
+        definitions_left,
+        3,
+        "r3",
+        AttemptResult.SUCCEEDED,
+        frozenset(COMMON | {Phase.MIGRATING, Phase.SWITCHING, Phase.CHECKING, Phase.SUCCEEDED}),
+        base="r3",
+    ),
+    "transition_tree_success": Scenario(
+        definitions_left,
+        3,
+        "r4",
+        AttemptResult.SUCCEEDED,
+        frozenset(COMMON | {Phase.MIGRATING, Phase.SWITCHING, Phase.CHECKING, Phase.SUCCEEDED}),
+        base="r3",
     ),
 }
 # 검증 단계 E_DRAFT는 커밋 전 거부라 잠금 단계까지 가지 않는다 — 잠금 아래 거부는 test_phases.
@@ -143,8 +242,15 @@ class Harness:
         self.scenario = scenario
         self.window = open_window(T0 - timedelta(hours=1), 2)
         # created_at은 만든 순서로 증가한다 — g1을 먼저 만들어야 대상 번들이 E_CERT(역행)가 아니다.
-        self.g1 = self.kit.bundle(1, "r0")
-        self.pib = self.kit.bundle(scenario.generation, scenario.release, window=self.window)
+        self.g1 = self.kit.bundle(1, scenario.base)
+        absorbs = None if scenario.absorbs is None else {"site-a": scenario.absorbs}
+        self.pib = self.kit.bundle(
+            scenario.generation,
+            scenario.release,
+            window=self.window,
+            version=f"v{scenario.generation}",
+            absorbs=absorbs,
+        )
         self.runs = 0
         # setup(최초 설치 등)은 한 번만 하고 실행마다 상태 디렉터리·바깥 세계를 복사한다.
         self.base = Site(root=tmp / "base", kit=self.kit)
@@ -196,7 +302,25 @@ def test_crash_at_every_point_converges(tmp_path: Path, name: str) -> None:
     assert scenario.phases <= crashed_in, sorted(scenario.phases - crashed_in)
 
 
-@pytest.mark.parametrize("name", ["update", "health_fail"])
+@pytest.mark.parametrize(
+    ("name", "alarm"), [("transition_meta_success", LEFT_ALARM), ("transition_tree_success", None)]
+)
+def test_definitions_left_alarm_outcome(tmp_path: Path, name: str, alarm: str | None) -> None:
+    """수렴 기준값 자체: 메타만 기록한 성공은 경보를 남기고, 트리 성공은 지운다."""
+    expected, _ = Harness(tmp_path, SCENARIOS[name]).reference()
+    assert expected["alarm"] == alarm
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "update",
+        "health_fail",
+        "tree_health_fail",
+        "transition_health_fail",
+        "transition_meta_success",
+    ],
+)
 def test_crash_during_recover_still_converges(tmp_path: Path, name: str) -> None:
     """복구 도중 다시 crash(재부팅 반복) → 다시 recover → 같은 결과."""
     harness = Harness(tmp_path, SCENARIOS[name])
@@ -221,12 +345,13 @@ def test_crash_during_recover_still_converges(tmp_path: Path, name: str) -> None
             assert outcome(site) == expected, (at, again, site.world.log)
 
 
-@pytest.mark.parametrize("name", ["update", "health_fail", "migrate_fail"])
+@pytest.mark.parametrize("name", ["update", "health_fail", "migrate_fail", "tree_health_fail"])
 def test_recover_after_window_closed(tmp_path: Path, name: str) -> None:
     """창이 닫힌 뒤 복구: 서비스 영향 전이면 대기(verified)로, migrating 이후면 끝까지."""
-    harness = Harness(tmp_path, SCENARIOS[name])
+    scenario = SCENARIOS[name]
+    harness = Harness(tmp_path, scenario)
     expected, total = harness.reference()
-    prev = release_ids("r0")
+    prev = release_ids(scenario.base)
     service_phases = {Phase.MIGRATING, Phase.SWITCHING, Phase.CHECKING, Phase.ROLLING_BACK}
     for at in range(1, total + 1):
         site, phase = harness.crash(at)
@@ -239,10 +364,20 @@ def test_recover_after_window_closed(tmp_path: Path, name: str) -> None:
         assert phase not in service_phases, (at, phase)
         assert state.attempt.phase is Phase.VERIFIED, (at, phase)
         assert site.world.running == prev, (at, phase)
-        assert site.world.schema_epoch == 1, (at, phase)
+        assert site.world.schema_epoch == EPOCH[scenario.base], (at, phase)
 
 
-@pytest.mark.parametrize("name", ["update", "health_fail", "migrate_fail"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "update",
+        "health_fail",
+        "migrate_fail",
+        "tree_health_fail",
+        "transition_health_fail",
+        "transition_meta_success",
+    ],
+)
 def test_reboot_at_every_point_converges(tmp_path: Path, name: str) -> None:
     """crash가 호스트 재부팅이면: 데몬이 뜨기 전엔 아무것도 하지 않고, DB가 복구 중이어도
     일시 장애를 영구 실패로 분류하지 않으며, 결국 crash 없는 실행과 같은 결과로 수렴한다."""

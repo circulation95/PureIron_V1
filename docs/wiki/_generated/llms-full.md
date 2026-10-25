@@ -1793,8 +1793,8 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
   부팅 시 자동 실행하지 않는다(Updater `migrating` 단계 또는 운영자가 실행).
 - 마이그레이션을 포함한 release만 schema epoch를 +1 한다. 앱은 `app_expected ≤ 현재 epoch ≤ app_max_compatible`일 때만
   ready다 → 한 단계 이전 앱으로 롤백할 수 있다.
-- 현재: r0 = epoch 1, r1 = epoch 2, r2 = epoch 3(`0009`), **r3 = epoch 4**(`0010~0012`). 다음 migration은 `0013~`, epoch 5.
-  세부(테이블·CAGG·lint 규칙·release 기록)는 [data-contracts](data-contracts.md).
+- 현재: r0 = epoch 1, r1 = epoch 2, r2 = epoch 3(`0009`), **r3 = epoch 4**(`0010~0012`). 미release epoch 5 = `0013`
+  (`project_files`, M5-0) — r4로 release한다. 세부(테이블·CAGG·lint 규칙·release 기록)는 [data-contracts](data-contracts.md).
 
 ## 배포 · 중앙 (ADR-022, ADR-023)
 
@@ -1804,6 +1804,13 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
   `switching` → `checking` → `succeeded`, 실패 시 `rolling_back` → `failed`(수동 개입 필요 시 `failed_manual`).
   서명·검증 실패는 커밋 전에 `rejected`로 끝난다(서비스 영향 없음, generation을 기록하지 않음).
   각 단계는 멱등이라 crash·전원 리셋 뒤 다시 실행해 수렴한다.
+- **프로젝트 적용 경로(M5-0)**: `switching`에서 **새 core 이미지**가 번들 `project/project.tar`를
+  `pureiron-core project apply --tar`로 적용한다(tar 안전 읽기 → project-tools 검증 → content_hash == manifest →
+  한 트랜잭션에 정의·`project_files`·`project_state`, `base_site_rev = site_rev`). 최초 설치도 같다.
+  `backed_up`은 **직전 core 이미지**가 `project export --with-state`(state + 현재 유효 트리)로 백업하고, `rolling_back`은
+  같은 직전 이미지가 `project restore --from <dir>`로 트리·state(site_rev·base 그대로)를 되돌린다 — 백업을 쓴 이미지가
+  읽고, 롤백이 실패한 새 이미지에 기대지 않는다. 트리 명령은 schema epoch ≥ 5 core만 알아서 그 이전 이미지는 state만
+  다룬다(첫 트리 release로의 업데이트를 롤백하면 정의는 남는다 — `E_DEFINITIONS_LEFT` 경보, updater README runbook). 근거·한계는 `services/updater/src/pureiron_updater/backup.py`.
 - 폐쇄망 현장도 같은 `.pib`를 USB 등으로 반입해 같은 검증을 거친다. 설치는 install 번들(`deploy/install/`)로 오프라인 부트스트랩.
 - 이미지 신원 = config digest(release 기록 `deploy/releases/<r>.json`). 현장 이미지는 번들에서 `docker load`만 한다.
 
@@ -1817,7 +1824,7 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
 | M3b | alarms·auth·audit·realtime·devices·history API, web 로그인 + 5화면, r3(epoch 4), VM 실측 r2→r3 30/30 | 완료 |
 | M3c | PLC 쓰기 경로(ADR-013 가드레일): M3c-0 REST Origin/CSRF·로그인 제한, M3c-1 계약·collector 쓰기·simulator, M3c-2 core 쓰기(writes·REST·감사) | 진행 중 — M3c-3 web 쓰기 화면 예정 |
 | M4 | control-api·control-web·fleet·release 파이프라인 | 예정 |
-| M5 | 프로젝트 수명주기(project-tools 완성, apply·드래프트 회수) | 예정 |
+| M5 | 프로젝트 수명주기(project-tools 완성, apply·드래프트 회수) | 진행 중 — M5-0 번들 프로젝트 적용·트리 백업/복원 |
 
 진행 기록의 정본은 각 PR과 [data-contracts](data-contracts.md)의 release·실측 절이다.
 
@@ -2286,7 +2293,7 @@ uv run python scripts/project_package.py import \
 - ADD-only lint 거부 목록: DROP/RENAME/`ALTER … TYPE`/TRUNCATE, `ADD CONSTRAINT`, NOT NULL 무기본값, `CREATE UNIQUE INDEX`, `CREATE TRIGGER`, `refresh_continuous_aggregate` 호출, `WITH NO DATA` 없는 CAGG.
 - `migrate lint --base-ref`의 epoch 항목 불변 기준은 base의 release 기록(`deploy/releases/*.json` `schema.app_expected` 최댓값)이다. 그 이하 epoch는 바꿀 수 없고, 아직 release되지 않은 epoch는 마지막 파일을 뒤 파일로 늘리는 것만 허용한다(r2 = epoch 3 = `0008` → `0009`: r1 앱 envelope 상한이 3이라 r2는 epoch 하나만 올려야 롤백 가능). base에 있는 SQL 파일과 release 기록(`deploy/releases/*.json`)의 수정·삭제는 epoch와 무관하게 금지, 읽을 수 없는 기록은 lint 실패, release 기록이 없는 base는 모든 epoch를 release된 것으로 본다. CAGG 실시간 집계 토글(`ALTER MATERIALIZED VIEW … SET (timescaledb.materialized_only = …)`) 한 형태만 ALTER MATERIALIZED VIEW로 허용한다.
 - epoch: 마이그레이션을 포함한 release만 +1. 앱 ready 조건 `app_expected ≤ 현재 epoch ≤ app_max_compatible(= expected + 1)`. 1 epoch 초과 점프는 `E_SCHEMA`(단계 적용).
-- baseline 스키마: `schema_meta`, `tags`(`id`, `path unique` — path 기준 안정 id), `tag_history`(1일 chunk hypertable, `UNIQUE(tag_id, time)`, 2일 후 압축), 1분 CAGG, `project_state`(`project_id, version, content_hash, base_site_rev, site_rev, edit_lock_owner, edit_lock_gen`). epoch 2(r1)에서 1시간 CAGG `tag_history_1h`를 더했다(아래 CAGG 조회 계약).
+- baseline 스키마: `schema_meta`, `tags`(`id`, `path unique` — path 기준 안정 id), `tag_history`(1일 chunk hypertable, `UNIQUE(tag_id, time)`, 2일 후 압축), 1분 CAGG, `project_state`(`project_id, version, content_hash, base_site_rev, site_rev, edit_lock_owner, edit_lock_gen`). epoch 2(r1)에서 1시간 CAGG `tag_history_1h`를 더했다(아래 CAGG 조회 계약). epoch 5(미release, r4 예정)는 `0013_project_files`(아래 M5-0 절).
 
 ### 기록 정책 (ADR-021)
 
@@ -2307,7 +2314,7 @@ historian: { retention_days: 365, default_deadband: 0.0, default_max_interval_s:
 ```
 
 - 정규화: YAML 1.2 strict(중복 키·anchor·커스텀 tag 거부), 숫자 RFC 8785, 기본값 생략, POSIX 상대 경로, UTF-8 NFC, LF, 키 정렬. `content_hash = sha256(정렬된 (경로, 정규화 내용))`, 버전 = 고객 repo 태그 `vN`.
-- 현장 드래프트: `PATCH`마다 `site_rev += 1`(리셋 없음), 적용 시 `base_site_rev = site_rev`. 배포 게이트: `absorbs[site]`가 있으면 `site_rev ≤ absorbs[site]`, 없으면 `site_rev == base_site_rev`, 아니면 `E_DRAFT`.
+- 현장 드래프트: `PATCH`마다 `site_rev += 1`(리셋 없음, M5-2 예정), 적용 시 `base_site_rev = site_rev`(구현됨, 아래 M5-0 절). 배포 게이트: `absorbs[site]`가 있으면 `site_rev ≤ absorbs[site]`, 없으면 `site_rev == base_site_rev`, 아니면 `E_DRAFT`.
 - 비밀값은 `secret://<name>` 참조만.
 - legacy 변환기 1차 범위: `project.json`, Modbus TCP 연결·태그, 상·하한 알람. OPC-UA·UDT·scripts·dashboard·expression/query 태그·shelve·`auth/users.json`은 **미지원으로 보고**.
 
@@ -2477,6 +2484,25 @@ ADR-013(개정) 쓰기 경로의 계약과 collector 실행부다. core 쓰기 �
 - **기한(`timeout_ms`)과 응답 없음의 성질**: collector는 쓰기 메시지를 **처리하는 순간** `deadline = monotonic + timeout_ms`를 잡고(수신 시각이 아니다), 장비로 보내기 **직전**에 다시 확인해 지났으면 보내지 않는다(REJECTED). 보낸 쓰기는 쓰기(장비 `timeout_ms`)와 재읽기(장비 `timeout_ms`) 안에 끝난다. 처리 시점은 수신보다 늦을 수 있다 — plan 적용 중에는 collector 수신 루프가 최대 `STOP_TIMEOUT_S`(5 s, poller 정지 대기) 멈춘다. 그래서 **core가 응답 없음을 확정한 뒤에는 그 쓰기가 PLC에 닿지 않는다**는 성질은 다음 두 조건에서 성립한다: (1) core는 collector가 현재 plan_rev의 batch를 보낸 뒤에만 쓰기를 보낸다(= plan 적용이 끝났다, M3c-2 D9), (2) core 응답 대기 시한 ≥ `timeout_ms + 2 × 장비 timeout_ms + 여유`, 여유 ≥ 수신 지연. 그러면 ADR-013 7항 "응답 없음 = 거부로 읽음"이 실제로도 성립한다. 세션이 끝나면 아직 보내지 않은 쓰기는 취소돼 보내지 않는다.
 - **collector 실행**: 쓰기 함수는 coil FC5, holding 1워드 FC6, 2·4워드 FC16뿐이다(PLC 로직 불변 — `ModbusClient` 표면 고정 테스트). 값은 `encode()`(= `decode()`의 역, byte·word order 포함). 장비별 `DevicePoller`가 쓰기 큐를 **poll과 poll 사이**에 같은 task·같은 연결로 하나씩 실행해 한 장비에 동시 트랜잭션이 없다. 자동 재시도 없음. 결과를 기다리는 동안에도 세션은 Ack·plan을 계속 읽는다. 같은 plan_rev의 plan이 다시 오면(재연결) poller는 그대로 두고 쓰기 표(tag_id → 주소·`writable`)만 새 plan으로 바꾼다 — 현장 스위치는 정의 rev를 바꾸지 않으므로 스위치를 바꿔 다시 띄운 core의 `writable`이 반영돼야 한다(M3c-2).
 - **dev 시뮬레이터(`SIM_MEMORY`, 기본 100)**: holding N..N+M-1(N = `SIM_REGISTERS`)과 coil 0..max(N, M)-1은 사인파로 덮어쓰지 않는 메모리. 거부 시험 주소: holding N+M-1 쓰기 → 예외 응답(ILLEGAL DATA VALUE), N+M-2 쓰기 → 정상 응답하지만 값 유지(readback 불일치). compose 기본값이면 메모리 holding 100..199, 예외 199, 무시 198. 허가 조건 coil은 시험 하네스가 직접 바꾼다.
+
+### V1 구현 현황 (M5-0 번들 프로젝트 적용·트리 백업/복원, 2026-10-25)
+
+번들 `project/project.tar`가 이제 실제로 현장 정의가 된다(이전에는 Updater가 `project_state` 메타만 기록했다). 롤백도 정의를 되돌린다. 근거 plan `pureiron-m5.md` D5~D7.
+
+- **migration `0013_project_files.sql`(epoch 5, ADD-only)**: `project_files(path text PK, content bytea, sha256 text)` = 마지막 apply·restore의 정규형 파일 전체. DB 정의 행만으로는 파일 배치·`project.yaml` 메타를 되살릴 수 없어서 둔다.
+- **`pureiron-core project apply --tar <project.tar> --project-id --version --content-hash`**:
+  1. tar 안전 읽기(메모리, 압축 없는 tar만, 64 MiB·10,000 파일 상한) — 정규화된 POSIX 상대 경로의 일반 파일만. 절대 경로·`..`·`./`·`//`·역슬래시·심볼릭/하드 링크·디렉터리·장치·FIFO·중복 경로는 거부.
+  2. project-tools `load_project` 검증. 프로젝트 파일이 아닌 항목(README, `screens/.gitkeep` 포함)이 섞이면 거부. 다시 계산한 content_hash와 `project.yaml` project_id가 인자와 같아야 한다.
+  3. 한 트랜잭션(정의 적용 advisory lock): `apply_definitions`(path·alarm_id 기준 upsert·retire, 바뀌면 `definitions_rev += 1`) + `project_files` 전체 교체(정규형 바이트) + `project_state` 메타·`applied_at`·`base_site_rev = site_rev`.
+
+  1·2의 실패는 DB에 닿지 않고, 3의 실패는 트랜잭션이 되돌린다 → 무엇이든 실패하면 아무것도 바뀌지 않고 exit 4. 같은 project_id·version·hash·파일 재적용은 아무것도 쓰지 않는다(`changed: false`, recover 재실행에 안전). stdout = 정렬 JSON(`state`·`changed`·`files_changed`·`definitions`). `--tar` 없는 이전 형식(메타만 기록)은 M5 이전 Updater 호환으로 남는다.
+- **`project export --with-state --out <dir>`**: `state.json`(`ProjectState.to_snapshot()`) + `project.tar` = **현재 유효 트리**(`project_files`에 현재 DB 정의를 덮어쓴 것 — 항목 단위로 `devices/<id>`, 목록의 같은 tag `path`·alarm `id`; retire된 항목은 파일 값 유지). tar는 번들 빌더와 같은 결정적 형식(경로 UTF-8 바이트 순, PAX, mtime 0·root·0644)이라 운영 값 변경이 없으면 번들 project.tar와 바이트가 같다(deploy 테스트). 쓴 트리를 다시 검증해 복원할 수 없는 백업은 만들지 않는다. `project_files`가 비어 있으면(트리 apply 전) `project.tar` 없이 state만 쓴다. `--with-state` 없는 `export`(state JSON 한 개)는 그대로다.
+- tar 안전 읽기는 같은 이름이 파일이면서 디렉터리인 경우(`a`와 `a/b`)와 비UTF-8 이름도 `ProjectTreeError`(exit 4)로 거부한다. state 스냅샷 키 누락·날짜 형식 오류도 exit 4다.
+- **`project restore --from <dir>`**: 그 디렉터리의 트리(있으면) 재적용 + state 스냅샷 그대로(site_rev·base·잠금 포함, 리셋 없음)를 한 트랜잭션으로. 트리는 운영 값이 덮인 것이라 content_hash는 스냅샷 값과 비교하지 않는다(project_id만 확인). `--from <state JSON 파일>`은 이전 백업 하위호환으로 state만 되돌린다. export → restore → export는 바이트 동일.
+- **Updater**: 어느 core 이미지가 무엇을 하는지는 [architecture](architecture.md) 배포 절과 `services/updater/src/pureiron_updater/backup.py` docstring. 트리 명령 판단 = manifest `schema.app_expected ≥ 5`. 백업 `backups/g<gen>/project/{state.json, project.tar}`(+ 기존 `project.json`). 번들 tar·백업은 core 컨테이너 uid 소유 0400 사본을 읽기 전용 mount, export 출력은 그 uid 소유 0700 디렉터리를 쓰기 mount 한다. 쓰기 mount 결과물은 신뢰하지 않는다 — `state.json`(+ `project.tar`) 외 항목·심볼릭/하드 링크·일반 파일이 아닌 항목이면 `E_BACKUP`, root updater는 링크를 따르지 않고(`lstat`·`O_NOFOLLOW`) 읽는다.
+- **한계**: 직전 이미지가 epoch 4 이하(r3)면 백업에 트리가 없어, 첫 트리 release(r4) 업데이트가 실패하면 state만 되돌리고 r4가 적용한 정의는 남는다(r3 현장은 번들 정의를 받은 적이 없다). 이 롤백은 결과 `failed` + 보고 `logs`의 `E_DEFINITIONS_LEFT` + Updater alarm(`updater_failed_manual 1`)으로 드러나고(경보는 트리 release 성공만 지운다 — 트리 이전 release 성공은 메타만 기록해 남은 정의를 고치지 않는다), 수동 복구는 updater README runbook(직전 이미지로 `apply-definitions <직전 프로젝트 dir>`). 테스트 스택(`g1.sh`·web e2e)은 계속 `apply-definitions <dir>`를 쓴다(개발 도구 경로, 같은 `apply_definitions`).
+- **정의 읽기는 관대하다(롤백 순서 계약)**: Updater 롤백은 직전 앱을 먼저 띄우고(`up`) 그 뒤에 정의를 되돌린다(`restore`). 그래서 N-1 core는 잠시 N 정의 위에서 부팅한다. core가 site-db 정의 행을 읽을 때(`acquisition/plan.py`) 모르는 키는 무시하고, 쓸 수 없는 항목은 problems로 남기고 건너뛴다 — 부팅·ready를 막지 않는다. 엄격한 검증은 project-tools(번들 빌드)와 `project apply`에서만 한다. 이 계약을 깨려면 롤백 순서(restore를 `up` 앞으로)를 먼저 바꿔야 한다.
+- **검증**: core 단위(tar 거부 표, 정규형·결정적 왕복, DB 전 hash·project_id 거부), deploy(번들 project.tar = core가 받는 트리·같은 hash·같은 바이트), 통합(v1 → 같은 hash no-op → v2 setpoint·태그 retire → 운영 값 변경 뒤 export → 실패할 v3 적용 → restore가 정의·site_rev·base 복원, 재실행·export 바이트 동일; 변조 tar·hash 불일치·unsafe tar·`project_files` 트리거 주입 중간 실패 무변경), Updater 단위(트리 적용·백업·롤백·전환기 한계와 `E_DEFINITIONS_LEFT` 경보·되돌림 release·쓰기 mount 링크 거부) + crash 주입 수렴(`tree_first_install`·`tree_update`·`tree_health_fail`(흡수 드래프트 site_rev 5·base 2)·`tree_migrate_fail`·`transition_health_fail`(r3→r4)·`transition_meta_success`·`transition_tree_success`(남은 정의 경보 유지·해제), 복구 중 재crash·창 닫힘·재부팅 포함).
 
 ---
 

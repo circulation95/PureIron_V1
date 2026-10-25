@@ -152,12 +152,12 @@
     },
     {
       "audience": "both",
-      "bytes": 22066,
+      "bytes": 23190,
       "id": "sot-architecture",
       "last_verified": "2026-10-17",
       "path": "docs/wiki/sot/architecture.md",
       "section_count": 18,
-      "sha256": "a62a9bddc5c0f432c7eac818d3df0e12e75725ac189fea276954973ebf8262ca",
+      "sha256": "4577554981478e2668d51ccca6f2cf0e33028a6fee15e9b8167195602e5410d8",
       "source_globs": [],
       "sources": [
         "services/core/src/pureiron_core/runtime.py",
@@ -215,12 +215,12 @@
     },
     {
       "audience": "both",
-      "bytes": 67291,
+      "bytes": 73723,
       "id": "sot-data-contracts",
       "last_verified": "2026-08-22",
       "path": "docs/wiki/sot/data-contracts.md",
-      "section_count": 26,
-      "sha256": "1ba4a2f1ce14de042f2706bb3efd551cfb59489e69db72d4ed3b4b0bc13533b7",
+      "section_count": 27,
+      "sha256": "ebe584aba24b67cf9fa073427908387302f1a153021450421790b4f08b36d668",
       "source_globs": [
         "projects/demo-coffee/**/*.yaml",
         "projects/demo-coffee/**/*.json"

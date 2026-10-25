@@ -49,7 +49,12 @@ def test_compose_commands_pin_project_file_and_env(tmp_path: Path) -> None:
     base += ["--env-file", str(target.env_file)]
     compose.up(target)
     compose.up(target, ["site-db"])
-    compose.run_core(target, ["migrate", "up", "--to", "2"], mounts={tmp_path / "p.json": "/x"})
+    compose.run_core(
+        target,
+        ["migrate", "up", "--to", "2"],
+        mounts={tmp_path / "p.json": "/x"},
+        writable={tmp_path / "out": "/o"},
+    )
     compose.dump_db(target, tmp_path / "db.dump")
     compose.down(target)
     compose.release_lock_db(target)
@@ -59,6 +64,7 @@ def test_compose_commands_pin_project_file_and_env(tmp_path: Path) -> None:
     assert runner.calls[2] == [
         *base,
         *("run", "--rm", "--no-deps", "-T", "--volume", f"{tmp_path / 'p.json'}:/x:ro"),
+        *("--volume", f"{tmp_path / 'out'}:/o"),
         *("core", "migrate", "up", "--to", "2"),
     ]
     dump = runner.calls[3]

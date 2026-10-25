@@ -15,6 +15,7 @@
   같은 generation은 다시 시도하지 않는다(자동 재시도 없음).
 - 모든 종료(`_finish`)는 편집 잠금을 먼저 푼다. core HTTP가 없으면 `pureiron-core project unlock`.
 - 롤백은 앱 이미지·프로젝트만 직전으로 되돌린다. 스키마는 전진만, site-db digest는 바꾸지 않는다.
+- 프로젝트 적용은 새 이미지, 백업·복원은 직전 이미지가 한다(근거·한계는 `backup.py` docstring).
 """
 
 from __future__ import annotations
@@ -40,7 +41,13 @@ from pureiron_bundle.verify import (
     verify_bundle,
 )
 from pureiron_updater import gc, metrics
-from pureiron_updater.backup import BackupError, make_backup, restore_project
+from pureiron_updater.backup import (
+    BackupError,
+    apply_project,
+    make_backup,
+    restore_project,
+    tree_aware,
+)
 from pureiron_updater.compose import (
     COMPOSE_PAYLOAD,
     check_config,
@@ -85,6 +92,29 @@ E_SWITCH = "E_SWITCH"
 E_HEALTH = "E_HEALTH"
 E_SUPERSEDED = "E_SUPERSEDED"
 E_BUNDLE = "E_BUNDLE"
+E_DEFINITIONS_LEFT = "E_DEFINITIONS_LEFT"
+"""롤백은 됐지만 실패한 generation의 정의가 남았다(트리 이전 백업, backup.py 한계) — alarm."""
+DEFINITIONS_LEFT_HINT = (
+    "project definitions of the failed generation left in place (pre-tree backup); "
+    "manual: run `pureiron-core apply-definitions <previous project dir>` with the previous image"
+)
+_ALARM_SEP = "; "
+
+
+def _definitions_left(alarm: str | None) -> str | None:
+    """alarm 중 `E_DEFINITIONS_LEFT` 항목(`g<gen>: <code> E_DEFINITIONS_LEFT`), 없으면 None."""
+    if alarm is None:
+        return None
+    return next((p for p in alarm.split(_ALARM_SEP) if p.endswith(E_DEFINITIONS_LEFT)), None)
+
+
+def _join_alarm(alarm: str, previous: str | None) -> str:
+    """새 경보가 남은 정의 경보를 덮어 지우지 않는다 — 트리 release 성공까지 함께 남긴다
+    (리뷰 N-1)."""
+    left = _definitions_left(previous)
+    return alarm if left is None else f"{alarm}{_ALARM_SEP}{left}"
+
+
 _IMAGE_PAYLOAD = re.compile(r"images/([a-z][a-z0-9-]{0,31})\.tar(\.gz)?")
 
 
@@ -465,8 +495,15 @@ class Updater:
         if current is not None:
             backup_dir = self.settings.backups_dir / f"g{self._gen(attempt)}"
             try:
-                make_backup(self.deps.compose, current, backup_dir, self.settings.secrets_dir)
-            except (CommandError, BackupError, OSError) as exc:
+                make_backup(
+                    self.deps.compose,
+                    current,
+                    backup_dir,
+                    self.settings.secrets_dir,
+                    tree=tree_aware(read_manifest(current)),
+                    reader_uid=self.settings.secret_uid,
+                )
+            except (CommandError, BackupError, BundleRejectedError, OSError) as exc:
                 return self._end(attempt, Phase.FAILED, E_BACKUP, str(exc), Phase.BACKED_UP)
         self._enter(attempt, Phase.BACKED_UP)
         return True
@@ -498,13 +535,12 @@ class Updater:
             pin_images(self.deps.docker, images)
             self.deps.compose.up(target)
             check_running(self.deps.compose.running_images(target), images)
-            project = manifest.project
-            self.deps.compose.run_core(
+            apply_project(
+                self.deps.compose,
                 target,
-                [
-                    *("project", "apply", "--project-id", project.project_id),
-                    *("--version", project.version, "--content-hash", project.content_hash),
-                ],
+                manifest,
+                Path(attempt.extract_dir),
+                reader_uid=self.settings.secret_uid,
             )
         except (CommandError, BundleRejectedError, OSError) as exc:
             self._fail_over(attempt, Phase.SWITCHING, E_SWITCH, str(exc))
@@ -551,10 +587,15 @@ class Updater:
             pin_images(self.deps.docker, images)
             self.deps.compose.up(prev)
             check_running(self.deps.compose.running_images(prev), images)
-            backup_dir = self.settings.backups_dir / f"g{self._gen(attempt)}"
-            restore_project(
-                self.deps.compose, prev, backup_dir, reader_uid=self.settings.secret_uid
+            gen = self._gen(attempt)
+            restored_tree = restore_project(
+                self.deps.compose,
+                prev,
+                self.settings.backups_dir / f"g{gen}",
+                reader_uid=self.settings.secret_uid,
             )
+            # 전환기(backup.py 한계): 트리 이전 백업이면 state만 되돌려 새 정의가 남는다
+            left = not restored_tree and tree_aware(read_manifest(self._target(gen)))
             failure = self._wait_ready(None)
             if failure is not None:
                 raise _RollbackError(f"previous generation not ready: {failure}")
@@ -566,6 +607,13 @@ class Updater:
                 self._enter(attempt, Phase.FAILED_MANUAL, rollback_tries=tries, detail=detail)
             else:
                 self._update(attempt, rollback_tries=tries, detail=detail)
+            return True
+        if left:
+            log.error("generation %s rolled back with its definitions left in place", gen)
+            # alarm을 먼저 저장한다 — 사이에서 crash하면 롤백이 다시 돌고(멱등) 같은 값을 다시 쓴다
+            self._save(replace(self.state, alarm=f"g{gen}: {attempt.code} {E_DEFINITIONS_LEFT}"))
+            detail = f"{attempt.detail}\nrollback: {E_DEFINITIONS_LEFT}: {DEFINITIONS_LEFT_HINT}"
+            self._enter(attempt, Phase.FAILED, detail=detail)
             return True
         self._enter(attempt, Phase.FAILED)
         return True
@@ -607,9 +655,11 @@ class Updater:
             result = metrics.result_of(attempt)
             state = replace(state, last_attempted_gen=attempt.generation, last_result=result)
             if attempt.phase is Phase.SUCCEEDED:
-                state = replace(state, applied_gen=attempt.generation, alarm=None)
+                alarm = self._alarm_after_success(attempt)
+                state = replace(state, applied_gen=attempt.generation, alarm=alarm)
             elif attempt.phase is Phase.FAILED_MANUAL:
-                state = replace(state, alarm=f"g{attempt.generation}: {attempt.code}")
+                alarm = _join_alarm(f"g{attempt.generation}: {attempt.code}", state.alarm)
+                state = replace(state, alarm=alarm)
         else:
             state = skip_bundle(state, attempt.bundle_sha256)
         self._cleanup(attempt)
@@ -620,6 +670,22 @@ class Updater:
         if attempt.phase is Phase.SUCCEEDED:
             self._collect_garbage(attempt)
         return False
+
+    def _alarm_after_success(self, attempt: Attempt) -> str | None:
+        """성공은 경보를 지운다. 단 정의가 남은 경보(`E_DEFINITIONS_LEFT`)는 정의를 실제로 교체한
+        성공, 즉 트리 release만 지운다 — 트리 이전 release의 성공은 메타만 기록해 남은 정의가
+        그대로다(리뷰 N-1). target manifest를 못 읽으면 남긴다(보수적, 다음 트리 성공이 지운다)."""
+        left = _definitions_left(self.state.alarm)
+        if left is None:
+            return None
+        try:
+            if tree_aware(read_manifest(self._target(self._gen(attempt)))):
+                return None
+        except (BundleRejectedError, OSError) as exc:
+            log.error(
+                "generation %s: cannot read manifest, keeping alarm: %s", attempt.generation, exc
+            )
+        return left
 
     def _collect_garbage(self, attempt: Attempt) -> None:
         """정리 실패는 이미 확정된 결과에 영향을 주지 않는다(다음 성공 때 다시 시도)."""

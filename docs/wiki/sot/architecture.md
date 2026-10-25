@@ -223,8 +223,8 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
   부팅 시 자동 실행하지 않는다(Updater `migrating` 단계 또는 운영자가 실행).
 - 마이그레이션을 포함한 release만 schema epoch를 +1 한다. 앱은 `app_expected ≤ 현재 epoch ≤ app_max_compatible`일 때만
   ready다 → 한 단계 이전 앱으로 롤백할 수 있다.
-- 현재: r0 = epoch 1, r1 = epoch 2, r2 = epoch 3(`0009`), **r3 = epoch 4**(`0010~0012`). 다음 migration은 `0013~`, epoch 5.
-  세부(테이블·CAGG·lint 규칙·release 기록)는 [data-contracts](data-contracts.md).
+- 현재: r0 = epoch 1, r1 = epoch 2, r2 = epoch 3(`0009`), **r3 = epoch 4**(`0010~0012`). 미release epoch 5 = `0013`
+  (`project_files`, M5-0) — r4로 release한다. 세부(테이블·CAGG·lint 규칙·release 기록)는 [data-contracts](data-contracts.md).
 
 ## 배포 · 중앙 (ADR-022, ADR-023)
 
@@ -234,6 +234,13 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
   `switching` → `checking` → `succeeded`, 실패 시 `rolling_back` → `failed`(수동 개입 필요 시 `failed_manual`).
   서명·검증 실패는 커밋 전에 `rejected`로 끝난다(서비스 영향 없음, generation을 기록하지 않음).
   각 단계는 멱등이라 crash·전원 리셋 뒤 다시 실행해 수렴한다.
+- **프로젝트 적용 경로(M5-0)**: `switching`에서 **새 core 이미지**가 번들 `project/project.tar`를
+  `pureiron-core project apply --tar`로 적용한다(tar 안전 읽기 → project-tools 검증 → content_hash == manifest →
+  한 트랜잭션에 정의·`project_files`·`project_state`, `base_site_rev = site_rev`). 최초 설치도 같다.
+  `backed_up`은 **직전 core 이미지**가 `project export --with-state`(state + 현재 유효 트리)로 백업하고, `rolling_back`은
+  같은 직전 이미지가 `project restore --from <dir>`로 트리·state(site_rev·base 그대로)를 되돌린다 — 백업을 쓴 이미지가
+  읽고, 롤백이 실패한 새 이미지에 기대지 않는다. 트리 명령은 schema epoch ≥ 5 core만 알아서 그 이전 이미지는 state만
+  다룬다(첫 트리 release로의 업데이트를 롤백하면 정의는 남는다 — `E_DEFINITIONS_LEFT` 경보, updater README runbook). 근거·한계는 `services/updater/src/pureiron_updater/backup.py`.
 - 폐쇄망 현장도 같은 `.pib`를 USB 등으로 반입해 같은 검증을 거친다. 설치는 install 번들(`deploy/install/`)로 오프라인 부트스트랩.
 - 이미지 신원 = config digest(release 기록 `deploy/releases/<r>.json`). 현장 이미지는 번들에서 `docker load`만 한다.
 
@@ -247,7 +254,7 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
 | M3b | alarms·auth·audit·realtime·devices·history API, web 로그인 + 5화면, r3(epoch 4), VM 실측 r2→r3 30/30 | 완료 |
 | M3c | PLC 쓰기 경로(ADR-013 가드레일): M3c-0 REST Origin/CSRF·로그인 제한, M3c-1 계약·collector 쓰기·simulator, M3c-2 core 쓰기(writes·REST·감사) | 진행 중 — M3c-3 web 쓰기 화면 예정 |
 | M4 | control-api·control-web·fleet·release 파이프라인 | 예정 |
-| M5 | 프로젝트 수명주기(project-tools 완성, apply·드래프트 회수) | 예정 |
+| M5 | 프로젝트 수명주기(project-tools 완성, apply·드래프트 회수) | 진행 중 — M5-0 번들 프로젝트 적용·트리 백업/복원 |
 
 진행 기록의 정본은 각 PR과 [data-contracts](data-contracts.md)의 release·실측 절이다.
 
