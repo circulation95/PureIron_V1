@@ -588,6 +588,50 @@ def test_first_tree_release_after_pre_tree_release_rolls_back_state_only(site: S
     assert "updater_failed_manual 1" in prom
 
 
+def transition_failed(site: Site) -> Site:
+    """r3 g1 → 첫 트리 release r4 g2 health 실패 — state만 되돌리고 r4 정의가 남은 경보."""
+    site.apply(site.kit.bundle(1, "r3"))
+    site.world.unhealthy_ids.add(release_ids("r4")["core"])
+    state = site.apply(site.kit.bundle(2, "r4", version="v2"))
+    assert state.alarm == "g2: E_HEALTH E_DEFINITIONS_LEFT"
+    site.world.unhealthy_ids.clear()
+    return site
+
+
+def prom_failed_manual(site: Site) -> str:
+    prom = (site.settings.state_dir / "metrics" / "updater.prom").read_text(encoding="utf-8")
+    return next(line for line in prom.splitlines() if line.startswith("updater_failed_manual "))
+
+
+def test_pre_tree_success_keeps_definitions_left_alarm_until_tree_success(site: Site) -> None:
+    """리뷰 N-1: r3 번들 재발행(메타만)은 남은 정의를 고치지 않는다 — 경보 유지, 트리 release
+    성공만 지운다."""
+    transition_failed(site)
+    state = site.apply(site.kit.bundle(3, "r3", version="v3"))
+    assert (state.applied_gen, state.last_result) == (3, AttemptResult.SUCCEEDED)
+    assert site.world.tree == b"project-v2"  # 정의는 여전히 실패한 g2의 것
+    assert state.alarm == "g2: E_HEALTH E_DEFINITIONS_LEFT"
+    assert prom_failed_manual(site) == "updater_failed_manual 1"
+    state = site.apply(site.kit.bundle(4, "r4", version="v4"))
+    assert (state.applied_gen, state.last_result) == (4, AttemptResult.SUCCEEDED)
+    assert site.world.tree == b"project-v4"
+    assert state.alarm is None
+    assert prom_failed_manual(site) == "updater_failed_manual 0"
+
+
+def test_failed_manual_after_transition_keeps_definitions_left_alarm(site: Site) -> None:
+    """뒤이은 failed_manual 경보가 남은 정의 경보를 덮어 지우지 않는다 — 둘 다 남고, 그 뒤 r3
+    성공은 failed_manual 쪽만 지운다."""
+    transition_failed(site)
+    site.world.unhealthy_ids.add(release_ids("r3")["core"])  # r3 → r3' 실패, 롤백(r3)도 실패
+    state = site.apply(site.kit.bundle(3, "r3", version="v3"))
+    assert state.alarm == "g3: E_HEALTH; g2: E_HEALTH E_DEFINITIONS_LEFT"
+    site.world.unhealthy_ids.clear()
+    state = site.apply(site.kit.bundle(4, "r3", version="v4"))
+    assert (state.applied_gen, state.last_result) == (4, AttemptResult.SUCCEEDED)
+    assert state.alarm == "g2: E_HEALTH E_DEFINITIONS_LEFT"
+
+
 def test_revert_to_pre_tree_release_records_meta_only(site: Site) -> None:
     """트리 이전 release로 되돌리는 번들(gen+1): 백업은 직전 r4가 트리로, 적용은 r3가 메타만."""
     tree_installed(site)

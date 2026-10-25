@@ -101,7 +101,9 @@ class UpdaterState:
     """커밋 전에 끝난(거부·적재 실패) 번들 sha256 — 같은 파일을 다시 받지 않는다."""
     alarm: str | None = None
     """수동 조치가 필요한 종료의 요약 — `failed_manual`, 또는 정의가 남은 전환기 롤백
-    (`E_DEFINITIONS_LEFT`). 다음 성공 적용에서 지운다. 메트릭 `updater_failed_manual` = 유무."""
+    (`E_DEFINITIONS_LEFT`). 다음 성공 적용에서 지운다 — 단 `E_DEFINITIONS_LEFT` 항목은 트리 release
+    성공(정의 교체)만 지우고 뒤이은 `failed_manual`도 덮지 않는다(`; `로 이음). 메트릭
+    `updater_failed_manual` = 유무."""
 
 
 def _ts(value: datetime | None) -> str | None:

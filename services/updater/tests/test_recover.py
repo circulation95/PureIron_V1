@@ -20,7 +20,7 @@ import copy
 import os
 import shutil
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from pathlib import Path
 
@@ -82,6 +82,16 @@ def draft_absorbed(site: Site, g1: Path) -> None:
     install_g1(site, g1)
     site.world.site_rev, site.world.base_site_rev = 5, 2
     site.world.unhealthy_ids.add(release_ids("r5")["core"])
+
+
+LEFT_ALARM = "g2: E_HEALTH E_DEFINITIONS_LEFT"
+
+
+def definitions_left(site: Site, g1: Path) -> None:
+    """r3 g1에 전환기 롤백(g2)의 남은 정의 경보가 서 있다(리뷰 N-1)."""
+    install_g1(site, g1)
+    store = site.updater().store
+    store.save(replace(store.load(), alarm=LEFT_ALARM))
 
 
 @dataclass(frozen=True)
@@ -189,6 +199,24 @@ SCENARIOS = {
         ),
         base="r3",
     ),
+    # 리뷰 N-1: 남은 정의 경보는 트리 release 성공(정의 교체)만 지운다 — 경보를 읽는 마지막 저장이
+    # 어느 지점에서 crash해도 같은 결론이어야 한다.
+    "transition_meta_success": Scenario(
+        definitions_left,
+        3,
+        "r3",
+        AttemptResult.SUCCEEDED,
+        frozenset(COMMON | {Phase.MIGRATING, Phase.SWITCHING, Phase.CHECKING, Phase.SUCCEEDED}),
+        base="r3",
+    ),
+    "transition_tree_success": Scenario(
+        definitions_left,
+        3,
+        "r4",
+        AttemptResult.SUCCEEDED,
+        frozenset(COMMON | {Phase.MIGRATING, Phase.SWITCHING, Phase.CHECKING, Phase.SUCCEEDED}),
+        base="r3",
+    ),
 }
 # 검증 단계 E_DRAFT는 커밋 전 거부라 잠금 단계까지 가지 않는다 — 잠금 아래 거부는 test_phases.
 
@@ -275,7 +303,23 @@ def test_crash_at_every_point_converges(tmp_path: Path, name: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "name", ["update", "health_fail", "tree_health_fail", "transition_health_fail"]
+    ("name", "alarm"), [("transition_meta_success", LEFT_ALARM), ("transition_tree_success", None)]
+)
+def test_definitions_left_alarm_outcome(tmp_path: Path, name: str, alarm: str | None) -> None:
+    """수렴 기준값 자체: 메타만 기록한 성공은 경보를 남기고, 트리 성공은 지운다."""
+    expected, _ = Harness(tmp_path, SCENARIOS[name]).reference()
+    assert expected["alarm"] == alarm
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "update",
+        "health_fail",
+        "tree_health_fail",
+        "transition_health_fail",
+        "transition_meta_success",
+    ],
 )
 def test_crash_during_recover_still_converges(tmp_path: Path, name: str) -> None:
     """복구 도중 다시 crash(재부팅 반복) → 다시 recover → 같은 결과."""
@@ -325,7 +369,14 @@ def test_recover_after_window_closed(tmp_path: Path, name: str) -> None:
 
 @pytest.mark.parametrize(
     "name",
-    ["update", "health_fail", "migrate_fail", "tree_health_fail", "transition_health_fail"],
+    [
+        "update",
+        "health_fail",
+        "migrate_fail",
+        "tree_health_fail",
+        "transition_health_fail",
+        "transition_meta_success",
+    ],
 )
 def test_reboot_at_every_point_converges(tmp_path: Path, name: str) -> None:
     """crash가 호스트 재부팅이면: 데몬이 뜨기 전엔 아무것도 하지 않고, DB가 복구 중이어도

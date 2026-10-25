@@ -39,7 +39,7 @@
 
 ### Runbook: `E_DEFINITIONS_LEFT`(전환기 롤백)
 
-트리를 모르는 직전 release(r3 이하)에서 첫 트리 release(r4)로의 업데이트가 실패하면, 롤백은 직전 앱과 project_state만 되돌리고 실패한 generation의 장비·태그·알람 정의는 site-db에 남는다(직전 앱이 그 정의로 수집). 수동 복구: 직전(적용 중) 프로젝트 디렉터리를 호스트에 두고 직전 core 이미지로 `pureiron-core apply-definitions <dir>`을 실행한다(r3에 있는 명령, path 기준 upsert·retire) → 태그 품질이 돌아왔는지 확인 → 다음 성공 적용이 경보를 지운다. 원인(번들 정의 오류)을 고친 새 generation을 다시 내는 것이 정상 경로다.
+트리를 모르는 직전 release(r3 이하)에서 첫 트리 release(r4)로의 업데이트가 실패하면, 롤백은 직전 앱과 project_state만 되돌리고 실패한 generation의 장비·태그·알람 정의는 site-db에 남는다(직전 앱이 그 정의로 수집). 수동 복구: 직전(적용 중) 프로젝트 디렉터리를 호스트에 두고 직전 core 이미지로 `pureiron-core apply-definitions <dir>`을 실행한다(r3에 있는 명령, path 기준 upsert·retire) → 태그 품질이 돌아왔는지 확인. 경보는 **트리 release(r4 이상) 적용이 성공해야만** 지워진다 — 정의를 실제로 교체한 성공이기 때문이다. 트리 이전 release(r3) 번들의 성공은 메타만 기록하므로 경보를 지우지 않는다(수동 복구 뒤에도 경보는 남는다). 그 사이 `failed_manual`이 나도 이 경보는 함께 남는다(`g3: E_HEALTH; g2: E_HEALTH E_DEFINITIONS_LEFT`). 원인(번들 정의 오류)을 고친 새 트리 release generation을 다시 내는 것이 정상 경로다.
 
 ## CLI
 

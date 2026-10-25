@@ -98,6 +98,23 @@ DEFINITIONS_LEFT_HINT = (
     "project definitions of the failed generation left in place (pre-tree backup); "
     "manual: run `pureiron-core apply-definitions <previous project dir>` with the previous image"
 )
+_ALARM_SEP = "; "
+
+
+def _definitions_left(alarm: str | None) -> str | None:
+    """alarm 중 `E_DEFINITIONS_LEFT` 항목(`g<gen>: <code> E_DEFINITIONS_LEFT`), 없으면 None."""
+    if alarm is None:
+        return None
+    return next((p for p in alarm.split(_ALARM_SEP) if p.endswith(E_DEFINITIONS_LEFT)), None)
+
+
+def _join_alarm(alarm: str, previous: str | None) -> str:
+    """새 경보가 남은 정의 경보를 덮어 지우지 않는다 — 트리 release 성공까지 함께 남긴다
+    (리뷰 N-1)."""
+    left = _definitions_left(previous)
+    return alarm if left is None else f"{alarm}{_ALARM_SEP}{left}"
+
+
 _IMAGE_PAYLOAD = re.compile(r"images/([a-z][a-z0-9-]{0,31})\.tar(\.gz)?")
 
 
@@ -638,9 +655,11 @@ class Updater:
             result = metrics.result_of(attempt)
             state = replace(state, last_attempted_gen=attempt.generation, last_result=result)
             if attempt.phase is Phase.SUCCEEDED:
-                state = replace(state, applied_gen=attempt.generation, alarm=None)
+                alarm = self._alarm_after_success(attempt)
+                state = replace(state, applied_gen=attempt.generation, alarm=alarm)
             elif attempt.phase is Phase.FAILED_MANUAL:
-                state = replace(state, alarm=f"g{attempt.generation}: {attempt.code}")
+                alarm = _join_alarm(f"g{attempt.generation}: {attempt.code}", state.alarm)
+                state = replace(state, alarm=alarm)
         else:
             state = skip_bundle(state, attempt.bundle_sha256)
         self._cleanup(attempt)
@@ -651,6 +670,22 @@ class Updater:
         if attempt.phase is Phase.SUCCEEDED:
             self._collect_garbage(attempt)
         return False
+
+    def _alarm_after_success(self, attempt: Attempt) -> str | None:
+        """성공은 경보를 지운다. 단 정의가 남은 경보(`E_DEFINITIONS_LEFT`)는 정의를 실제로 교체한
+        성공, 즉 트리 release만 지운다 — 트리 이전 release의 성공은 메타만 기록해 남은 정의가
+        그대로다(리뷰 N-1). target manifest를 못 읽으면 남긴다(보수적, 다음 트리 성공이 지운다)."""
+        left = _definitions_left(self.state.alarm)
+        if left is None:
+            return None
+        try:
+            if tree_aware(read_manifest(self._target(self._gen(attempt)))):
+                return None
+        except (BundleRejectedError, OSError) as exc:
+            log.error(
+                "generation %s: cannot read manifest, keeping alarm: %s", attempt.generation, exc
+            )
+        return left
 
     def _collect_garbage(self, attempt: Attempt) -> None:
         """정리 실패는 이미 확정된 결과에 영향을 주지 않는다(다음 성공 때 다시 시도)."""
