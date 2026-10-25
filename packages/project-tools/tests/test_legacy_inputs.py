@@ -493,11 +493,21 @@ def test_inline_tag_paths_and_addressing(tmp_path: Path) -> None:
 def test_store_tag_without_protocol_and_highest_one_based_address(tmp_path: Path) -> None:
     no_protocol = _store("[PLC]u", {})
     del no_protocol["tag_config"]["address_config"]["protocol"]
-    tags = _tags_json(no_protocol, _store("[PLC]top", {"address": 65536}))
+    no_address = _store("[PLC]v", {})
+    del no_address["tag_config"]["address_config"]
+    tags = _tags_json(no_protocol, no_address, _store("[PLC]top", {"address": 65536}))
     files = {"connections/plc.yaml": CONNECTION, "tags/tags.json": tags}
     code, out, report = _convert(tmp_path, files)
     assert code == 2
-    assert _entries(report) == [("tags/tags.json", "[PLC]u", "opcua_tag", None)]
+    assert _entries(report) == [
+        ("tags/tags.json", "[PLC]u", "opcua_tag", None),
+        ("tags/tags.json", "[PLC]v", "opcua_tag", None),
+    ]
+    # 재리뷰 N7: 블록이 있는데 protocol이 없으면 legacy가 거부, 블록이 없을 때만 OPC-UA 기본값.
+    assert _reasons(report) == [
+        "address_config without protocol (legacy rejected the tag)",
+        "no address_config (legacy default OPC-UA)",
+    ]
     assert "address: 65535\n" in (out / "tags" / "plc.yaml").read_text("utf-8")
 
 
@@ -568,6 +578,75 @@ def test_missing_timeout_keeps_the_legacy_3_second_default(
     assert code == 0, report["unsupported"]
     assert (out / "devices" / "plc.yaml").read_text("utf-8") == (
         f"host: h\nid: plc\nport: 502\nprotocol: modbus_tcp\n{expected}"
+    )
+
+
+# --- 재리뷰 r2 N3~N6: 조용히 무시되던 하위 키·알람 이름·features·jsonb null --------------------
+
+
+def test_unknown_address_and_tag_config_keys_are_reported(tmp_path: Path) -> None:
+    store = _store("[PLC]a", {"address": 1, "unit_id": 9, "scale": 10}, deadband=5)
+    yaml_tags = (
+        "tags:\n  - path: b\n    tag_type: Device\n    device_name: PLC\n    read_only: true\n"
+        "    address_config: {protocol: modbus, address: 2, unit_id: 9}\n"
+    )
+    files = {
+        "connections/plc.yaml": CONNECTION,
+        "tags/tags.json": _tags_json(store),
+        "tags/more.yaml": yaml_tags,
+    }
+    code, out, report = _convert(tmp_path, files)
+    assert code == 2
+    assert _entries(report) == [
+        ("tags/more.yaml", "b", "field", "address_config.unit_id"),
+        ("tags/tags.json", "[PLC]a", "field", "tag_config.deadband"),
+        ("tags/tags.json", "[PLC]a", "field", "address_config.scale"),
+        ("tags/tags.json", "[PLC]a", "field", "address_config.unit_id"),
+    ]
+    assert _reasons(report)[:2] == [
+        "legacy ModbusAddressConfig ignored this field",
+        "legacy DeviceTagConfig ignored this field",
+    ]
+    assert (out / "tags" / "plc.yaml").read_text("utf-8").count("- device: plc\n") == 2
+
+
+def test_alarm_whose_name_is_not_a_string_is_not_converted(tmp_path: Path) -> None:
+    connection = CONNECTION + '    tags:\n      - {tag_path: "[PLC]a", register_type: holding}\n'
+    alarms = (
+        "alarms:\n"
+        '  - {name: 5, tag_path: "[PLC]a", alarm_type: AboveSetpoint, setpoint: 1}\n'
+        '  - {tag_path: "[PLC]a", alarm_type: AboveSetpoint, setpoint: 2}\n'
+        '  - {name: Ok, tag_path: "[PLC]a", alarm_type: AboveSetpoint, setpoint: 3}\n'
+    )
+    files = {"connections/plc.yaml": connection, "alarms/a.yaml": alarms}
+    code, out, report = _convert(tmp_path, files)
+    assert code == 2
+    assert _entries(report) == [
+        ("alarms/a.yaml", "alarms[0]", "alarm", None),
+        ("alarms/a.yaml", "alarms[1]", "alarm", None),
+    ]
+    assert _reasons(report) == ["name is not a string (legacy did not load it)"] * 2
+    assert (out / "alarms" / "a.yaml").read_text("utf-8") == (
+        "- id: ok\n  setpoint: 3\n  tag: a\n  type: above\n"
+    )
+
+
+def test_features_that_is_not_a_mapping_is_reported(tmp_path: Path) -> None:
+    project = '{"schema_version": 1, "project_id": "tiny", "name": "Tiny", "features": ["a"]}'
+    code, _, report = _convert(tmp_path, {"project.json": project})
+    assert code == 2
+    assert _entries(report) == [("project.json", "$", "field", "features")]
+
+
+@pytest.mark.parametrize("config", ["null", "[]", "{}", {}])
+def test_modbus_device_row_with_empty_jsonb_config_uses_the_row_values(
+    tmp_path: Path, config: object
+) -> None:
+    row = {"name": "PLC", "type": "Modbus TCP", "hostname": "h", "port": 5020, "config": config}
+    code, out, report = _convert(tmp_path, {"tags/devices.json": json.dumps([row])})
+    assert code == 0, report["unsupported"]
+    assert (out / "devices" / "plc.yaml").read_text("utf-8") == (
+        "host: h\nid: plc\nport: 5020\nprotocol: modbus_tcp\ntimeout_ms: 3000\n"
     )
 
 

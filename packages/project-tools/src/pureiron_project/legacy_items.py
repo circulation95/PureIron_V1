@@ -350,10 +350,35 @@ _DEFINITION_KNOWN = frozenset(
 )
 LEGACY_TAG_SCAN_MS = 1000
 _DEFINITION_DEFAULTS: dict[str, Json] = {"scan_group": "default"}
+# legacy `ModbusAddressConfig`·`DeviceTagConfig` 필드. 그 밖의 키는 legacy pydantic도 무시했다.
+_ADDRESS_KEYS = frozenset(
+    {"protocol", "register_type", "address", "data_type", "byte_order", "word_order"}
+)
+_DEVICE_CONFIG_KEYS = frozenset(
+    {"tag_type", "device_name", "address_config", "scan_rate_ms", "read_only"}
+)
 
 
 def is_yaml(file: str) -> bool:
     return file.endswith((".yaml", ".yml"))
+
+
+def _ignored_config_keys(config: Mapping[str, Json], file: str) -> list[tuple[str, str]]:
+    """`tag_config`(JSON만 — YAML은 최상위 키로 만든다)·`address_config` 안의 모르는 키."""
+    ignored: list[tuple[str, str]] = []
+    if not is_yaml(file):
+        ignored = [
+            (f"tag_config.{key}", "legacy DeviceTagConfig ignored this field")
+            for key in sorted(config)
+            if key not in _DEVICE_CONFIG_KEYS
+        ]
+    address = config.get("address_config")
+    ignored.extend(
+        (f"address_config.{key}", "legacy ModbusAddressConfig ignored this field")
+        for key in sorted(address if isinstance(address, dict) else {})
+        if key not in _ADDRESS_KEYS
+    )
+    return ignored
 
 
 def _store_tag_options(
@@ -366,6 +391,7 @@ def _store_tag_options(
         known = _DEFINITION_KNOWN | YAML_CONFIG_KEYS
         if "tag_config" in raw:
             dropped.append(("tag_config", "legacy YAML loader ignored tag_config (top-level keys)"))
+    dropped.extend(_ignored_config_keys(config, file))
     # legacy 기본값은 쓰기 가능(read_only False) — 키가 없어도 V1에서는 읽기 전용이 된다.
     if as_bool(config.get("read_only", False)) is not True:
         reason = "legacy write permission is not carried over; declare write: explicitly"

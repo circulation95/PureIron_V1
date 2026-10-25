@@ -131,6 +131,8 @@ def _project(raw: Json, notes: Notes) -> dict[str, Json]:
     if raw.get("schema_version", 1) != 1:
         raise ConvertError("project.json: only legacy schema_version 1 is known")
     features = raw.get("features")
+    if features is not None and not isinstance(features, dict):
+        notes.dropped("project.json", "$", "features", "not a mapping")
     for key in sorted(features if isinstance(features, dict) else {}):
         notes.add(
             "project.json",
@@ -279,13 +281,16 @@ def _row_config(row: Mapping[str, Json]) -> dict[str, Json] | str:
     """`devices.config`(jsonb) 또는 쓸 수 없는 이유. DB에서 내보낸 행은 JSON 문자열일 수 있다
     (asyncpg 기본 codec — legacy gateway가 `json.loads` 했다)."""
     config = row.get("config")
+    if config is None:
+        return "config is NULL (legacy did not start this device)"
     if isinstance(config, str):
         try:
             config = parse_json(config)
         except (ValueError, RecursionError):
             return "config is not valid JSON"
-    if config is None:
-        return "config is NULL (legacy did not start this device)"
+    if not config:
+        # jsonb `null`·`[]` 등은 SQL NULL이 아니다 — legacy `**(raw_config or {})`로 행 값만 썼다.
+        return {}
     if not isinstance(config, dict):
         return "config is not a JSON object"
     return config
@@ -368,11 +373,19 @@ _DEVICE_TAG_TYPES = frozenset({"Device", "OPC"})
 
 
 def _device_tag_problem(
-    state: _State, file: str, legacy_path: str, tag_type: Json, protocol: Json
+    state: _State, file: str, legacy_path: str, tag_type: Json, config: Mapping[str, Json]
 ) -> bool:
     """Modbus로 변환할 수 없는 Device 태그면 보고하고 True."""
+    address = config.get("address_config")
+    protocol = address.get("protocol") if isinstance(address, dict) else None
     if tag_type in _DEVICE_TAG_TYPES and protocol is None:
-        reason = "address_config without protocol (legacy default OPC-UA)"
+        # `address_config`가 없을 때만 DeviceTagConfig 기본값(OPC-UA)이다. 있는데 protocol이
+        # 없으면 legacy가 거부했다(YAML `config_loader` ValueError, JSON discriminator 오류).
+        reason = (
+            "address_config without protocol (legacy rejected the tag)"
+            if "address_config" in config
+            else "no address_config (legacy default OPC-UA)"
+        )
         state.notes.add(file, legacy_path, "opcua_tag", reason)
     elif tag_type not in _DEVICE_TAG_TYPES or protocol not in {"modbus", "opcua"}:
         state.notes.add(
@@ -408,10 +421,10 @@ def _store_tag(
         kind, reason = _TAG_KINDS[str(tag_type)]
         state.notes.add(file, legacy_path, kind, reason)
         return
+    if _device_tag_problem(state, file, legacy_path, tag_type, config):
+        return
     raw_address = config.get("address_config")
     address = raw_address if isinstance(raw_address, dict) else {}
-    if _device_tag_problem(state, file, legacy_path, tag_type, address.get("protocol")):
-        return
     device = state.by_legacy_name.get(str(config.get("device_name", "")))
     if device is None:
         state.notes.add(
@@ -455,6 +468,10 @@ def _alarm_file(conv: Conversion, state: _State, rel: str) -> None:
     out = conv.alarms.setdefault(rel, [])
     for index, raw in mappings(items, ListReport(state.notes, rel, "alarm", "alarms")):
         item = item_name(raw, "name", fallback=f"alarms[{index}]")
+        if not isinstance(raw.get("name"), str):
+            # legacy `AlarmConfig.name: str`은 필수이고 lax도 int를 str로 바꾸지 않는다.
+            state.notes.add(rel, item, "alarm", "name is not a string (legacy did not load it)")
+            continue
         doc = alarm(raw, rel, state.legacy_tags, state.alarm_ids, state.notes)
         if doc is not None:
             out.append(doc)
