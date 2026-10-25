@@ -365,6 +365,62 @@
         "title": "AlarmOut",
         "type": "object"
       },
+      "AlarmPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "deadband": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "null = 제거(기본 0)",
+            "title": "Deadband"
+          },
+          "on_delay_s": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "null = 제거(기본 0)",
+            "title": "On Delay S"
+          },
+          "priority": {
+            "anyOf": [
+              {
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "critical"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "null = 제거(기본 medium)",
+            "title": "Priority"
+          },
+          "setpoint": {
+            "description": "필수 필드 — null 불가",
+            "title": "Setpoint",
+            "type": "number"
+          }
+        },
+        "title": "AlarmPatch",
+        "type": "object"
+      },
       "Alarms": {
         "description": "알람 상태 집계(준비 판정에는 쓰지 않음). 누적 값은 core 기동 후 기준.",
         "properties": {
@@ -1467,6 +1523,27 @@
         "title": "PasswordChangeRequest",
         "type": "object"
       },
+      "PatchOut": {
+        "properties": {
+          "definition": {
+            "additionalProperties": true,
+            "description": "저장된 정규형 정의(스키마 기본값 생략)",
+            "title": "Definition",
+            "type": "object"
+          },
+          "site_rev": {
+            "description": "PATCH 뒤 site_rev(no-op이면 그대로)",
+            "title": "Site Rev",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "site_rev",
+          "definition"
+        ],
+        "title": "PatchOut",
+        "type": "object"
+      },
       "PingMessage": {
         "description": "20s마다. 클라이언트는 `pong`으로 답한다(60s 동안 pong이 없으면 서버가 끊는다).",
         "properties": {
@@ -1714,6 +1791,39 @@
         "title": "Realtime",
         "type": "object"
       },
+      "RecordPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "deadband": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "null = 제거",
+            "title": "Deadband"
+          },
+          "max_interval_s": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "null = 제거",
+            "title": "Max Interval S"
+          }
+        },
+        "title": "RecordPatch",
+        "type": "object"
+      },
       "RoleName": {
         "enum": [
           "viewer",
@@ -1814,6 +1924,50 @@
           "tags"
         ],
         "title": "TagList",
+        "type": "object"
+      },
+      "TagPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "null = 제거",
+            "title": "Description"
+          },
+          "eu": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "null = 제거",
+            "title": "Eu"
+          },
+          "record": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecordPatch"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "null = record 전체 제거"
+          }
+        },
+        "title": "TagPatch",
         "type": "object"
       },
       "TagUpdateMessage": {
@@ -3265,6 +3419,82 @@
         ]
       }
     },
+    "/api/v1/project/alarms/{alarm_id}": {
+      "patch": {
+        "operationId": "patch_alarm",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "alarm_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+              "title": "Alarm Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AlarmPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PatchOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "not authenticated"
+          },
+          "403": {
+            "description": "requires admin (or E_ORIGIN)"
+          },
+          "404": {
+            "description": "unknown or retired definition"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "423": {
+            "description": "E_EDIT_LOCKED: Updater holds the edit lock"
+          },
+          "503": {
+            "description": "site-db unavailable"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          },
+          {
+            "SessionBearer": []
+          }
+        ],
+        "summary": "Patch Alarm",
+        "tags": [
+          "project"
+        ]
+      }
+    },
     "/api/v1/project/edit-lock": {
       "delete": {
         "operationId": "release_edit_lock",
@@ -3352,6 +3582,82 @@
           }
         ],
         "summary": "Acquire Edit Lock",
+        "tags": [
+          "project"
+        ]
+      }
+    },
+    "/api/v1/project/tags/{tag_path}": {
+      "patch": {
+        "operationId": "patch_tag",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tag_path",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9_][A-Za-z0-9_./-]{0,254}$",
+              "title": "Tag Path",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PatchOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "not authenticated"
+          },
+          "403": {
+            "description": "requires admin (or E_ORIGIN)"
+          },
+          "404": {
+            "description": "unknown or retired definition"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "423": {
+            "description": "E_EDIT_LOCKED: Updater holds the edit lock"
+          },
+          "503": {
+            "description": "site-db unavailable"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          },
+          {
+            "SessionBearer": []
+          }
+        ],
+        "summary": "Patch Tag",
         "tags": [
           "project"
         ]
