@@ -75,6 +75,10 @@ GIB = 1024**3
 SIZE_LIMIT = int(1.5 * GIB)
 SIZE_WARN = int(1.2 * GIB)
 METRICS_SUFFIX = ".bundle-metrics.json"
+PROJECT_TAR_LIMIT_BYTES = 64 * 1024 * 1024
+PROJECT_TAR_LIMIT_FILES = 10_000
+"""core `project apply --tar` 상한(`pureiron_core.project.apply.TREE_LIMIT_*`, 같음은 테스트로).
+빌드에서 먼저 막는다 — 서명·검증을 통과한 뒤 `switching`에서 매번 실패·롤백하지 않게."""
 
 
 class BuildError(RuntimeError):
@@ -186,13 +190,20 @@ def compress_image(source: Path, target: Path) -> None:
 
 
 def write_project_tar(project: Project, target: Path) -> None:
-    """정규형 프로젝트 파일들의 결정적 tar(경로 UTF-8 바이트 순)."""
+    """정규형 프로젝트 파일들의 결정적 tar(경로 UTF-8 바이트 순). core 적용 상한을 넘으면 거부."""
+    if len(project.files) > PROJECT_TAR_LIMIT_FILES:
+        raise BuildError(
+            f"project has {len(project.files)} files (core limit {PROJECT_TAR_LIMIT_FILES})"
+        )
     target.parent.mkdir(parents=True, exist_ok=True)
     ordered = sorted(project.files, key=lambda f: f.relpath.encode("utf-8"))
     with tarfile.open(target, "w", format=tarfile.PAX_FORMAT) as tar:
         for f in ordered:
             data = dump(f.data).encode("utf-8")
             tar.addfile(tar_info(f.relpath, len(data)), io.BytesIO(data))
+    size = target.stat().st_size
+    if size > PROJECT_TAR_LIMIT_BYTES:
+        raise BuildError(f"project.tar is {size} bytes (core limit {PROJECT_TAR_LIMIT_BYTES})")
 
 
 def size_gate(size: int) -> int:
