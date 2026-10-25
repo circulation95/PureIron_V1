@@ -43,7 +43,7 @@ def test_up_is_idempotent_and_status_reports_epoch(stack: Stack, fresh_database:
     env = stack.cli_env(fresh_database)
     first = _cli(env, "migrate", "up")
     assert first.returncode == 0, first.stderr
-    assert "applied 12" in first.stdout
+    assert "applied 13" in first.stdout
     second = _cli(env, "migrate", "up")
     assert second.returncode == 0, second.stderr
     assert "applied 0" in second.stdout
@@ -51,9 +51,9 @@ def test_up_is_idempotent_and_status_reports_epoch(stack: Stack, fresh_database:
     status = _cli(env, "migrate", "status", "--json")
     assert status.returncode == 0, status.stderr
     assert json.loads(status.stdout) == {
-        "cur": 4,
-        "app_expected": 4,
-        "app_max_compatible": 5,
+        "cur": 5,
+        "app_expected": 5,
+        "app_max_compatible": 6,
         "pending": [],
         "checksum_ok": True,
         "mismatched": [],
