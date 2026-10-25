@@ -84,6 +84,39 @@ def test_edit_lock_with_updater_secret(stack: Stack) -> None:
     assert _request("DELETE", f"{lock}?owner=updater", stack.updater_token) == 204
 
 
+@pytest.mark.compose
+def test_backup_mounts_work_in_real_docker(stack: Stack, tmp_path: Path) -> None:
+    """M5-0 리뷰 M-3(부분): Updater 백업·롤백과 같은 mount(`ComposeCli.run_core`의 argv 모양) —
+    쓰기 bind 디렉터리로 `export --with-state`, 디렉터리 ro mount로 `restore --from <dir>`.
+    root 서비스가 컨테이너 uid(10001) 소유 0700/0400으로 맞추는 경로는 비root 테스트가 chown할 수
+    없어 여기서는 권한을 열어 두고, 실제 소유·UMask 경로는 r4 release VM 게이트가 확인한다."""
+    out = tmp_path / "export"
+    out.mkdir()
+    out.chmod(0o777)
+    export = compose(
+        stack.compose_env,
+        *("run", "--rm", "--no-deps", "-T", "--volume", f"{out}:/run/pureiron-backup-out"),
+        *("core", "project", "export", "--with-state", "--out", "/run/pureiron-backup-out"),
+    )
+    exported = json.loads(export.stdout)
+    names = sorted(p.name for p in out.iterdir())
+    assert names in (["state.json"], ["project.tar", "state.json"]), names
+    assert json.loads((out / "state.json").read_text(encoding="utf-8")) == exported["state"]
+
+    staged = tmp_path / "restore"
+    staged.mkdir()
+    for name in names:
+        (staged / name).write_bytes((out / name).read_bytes())
+        (staged / name).chmod(0o444)
+    restore = compose(
+        stack.compose_env,
+        *("run", "--rm", "--no-deps", "-T"),
+        *("--volume", f"{staged}:/run/pureiron-backup/project:ro"),
+        *("core", "project", "restore", "--from", "/run/pureiron-backup/project"),
+    )
+    assert json.loads(restore.stdout)["state"] == exported["state"]
+
+
 async def test_edit_lock_race_has_single_winner(site_db: SiteDb) -> None:
     db = Database(site_db.dsn, password=site_db.password)
     store = PgProjectStateStore(db)
