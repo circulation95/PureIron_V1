@@ -11,7 +11,7 @@ pureiron-project convert-legacy <legacy_dir> --out <dir> --report <json>  # lega
 
 ## legacy 변환기
 
-`project.json`, Modbus TCP 연결·태그, 상·하한 알람만 변환하고(PD-12), 나머지(OPC-UA·UDT·scripts·dashboard·Memory/expression/query 태그·shelve·`auth/`·`settings/`·알 수 없는 파일)는 보고서 `unsupported[]`에 빠짐없이 남긴다. 비밀값은 `secret://<device id>` 참조로만 쓰고 값·사용자 정보는 출력·보고서에 옮기지 않는다. 종료 코드 0 = 미지원 없음, 2 = 변환했지만 미지원 있음, 1 = 읽을 수 없는 입력·비어 있지 않은 `--out`. 매핑 표·보고서 형식은 [data-contracts](../../docs/wiki/sot/data-contracts.md)의 `V1 구현 현황 (M5-1 legacy 변환기)` 절. 예시는 `fixtures/legacy-mini/` → `fixtures/legacy-mini-converted/`.
+`project.json`, Modbus TCP 연결·태그, 상·하한 알람만 변환하고(PD-12), 나머지(OPC-UA·UDT·scripts·dashboard·Memory/expression/query 태그·shelve·`auth/`·`settings/`·알 수 없는 파일)는 보고서 `unsupported[]`에 빠짐없이 남긴다. 비밀값은 `secret://<device id>` 참조로만 쓰고 값·사용자 정보는 출력·보고서에 옮기지 않는다. 목록이 아닌 값·mapping이 아닌 항목·읽지 않는 최상위 키도 보고하고(조용히 버리지 않음), legacy 값은 pydantic lax 규칙(`"true"`·`1`·`"502"` 등)으로 읽는다. 종료 코드 0 = 미지원 없음, 2 = 변환했지만 미지원 있음(argparse 사용법 오류도 2 — 미지원이면 stdout에 `converted:` 줄이 있다), 1 = 읽을 수 없는 입력·비어 있지 않은 `--out`(출력은 검증한 뒤에만 쓰므로 이때 쓴 것 없음). 매핑 표·보고서 형식은 [data-contracts](../../docs/wiki/sot/data-contracts.md)의 `V1 구현 현황 (M5-1 legacy 변환기)` 절. 예시는 `fixtures/legacy-mini/` → `fixtures/legacy-mini-converted/`.
 
 ## 트리
 

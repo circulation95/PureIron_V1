@@ -10,7 +10,7 @@
 - **sot-api-events** (30KB/15절) — PureIron의 REST prefix, WebSocket wire protocol, Chat SSE event, 내부 event bus topic 계약이다. ([docs/wiki/sot/api-events.md](wiki/sot/api-events.md))
 - **sot-architecture** (22KB/18절) — PureIron V1은 현장 한 곳에 설치되는 **서비스 4개(collector·core·web·site-db) + 호스트 Updater**와, 벤더 쪽 **중앙 ([docs/wiki/sot/architecture.md](wiki/sot/architecture.md))
 - **sot-coding-style** (21KB/14절) — 이 문서는 PureIron_V1 새 코드(`services/`·`packages/`·`deploy/`·`tests/e2e/`)를 **어떻게 쓰는가**의 정본이다. ([docs/wiki/sot/coding-style.md](wiki/sot/coding-style.md))
-- **sot-data-contracts** (62KB/26절) — PureIron의 DB 스키마와 YAML/JSON 설정 파일 계약이다. ([docs/wiki/sot/data-contracts.md](wiki/sot/data-contracts.md))
+- **sot-data-contracts** (65KB/26절) — PureIron의 DB 스키마와 YAML/JSON 설정 파일 계약이다. ([docs/wiki/sot/data-contracts.md](wiki/sot/data-contracts.md))
 - **sot-frontend** (27KB/16절) — 이 문서는 PureIron frontend의 **구조·상태·실시간·UI 작업 규칙**에 대한 정본이다. 상세 구현은 `frontend/src/**`가 정본이고, `frontend/AGENTS.md`와 `frontend/CLAUDE.md`는 도구별 operational cheat sheet다. ([docs/wiki/sot/frontend.md](wiki/sot/frontend.md))
 - **sot-mes-schedule** (9KB/7절) — 이 문서는 PureIron의 **MES-lite / Schedule 기능의 v1 고객 노출 용어와 사용자 플로우 계약의 정본**이다. ([docs/wiki/sot/mes-schedule.md](wiki/sot/mes-schedule.md))
 - **sot-product** (14KB/18절) — PureIron은 중소 제조업과 산업시설을 위한 경량 Web HMI/SCADA 플랫폼이다. ([docs/wiki/sot/product.md](wiki/sot/product.md))
