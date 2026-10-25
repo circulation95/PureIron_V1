@@ -126,7 +126,7 @@ class PatchOut(BaseModel):
 
 _PATCH_ERRORS: dict[int | str, dict[str, object]] = {
     status.HTTP_401_UNAUTHORIZED: {"description": "not authenticated"},
-    status.HTTP_403_FORBIDDEN: {"description": "requires admin"},
+    status.HTTP_403_FORBIDDEN: {"description": "requires admin (or E_ORIGIN)"},
     status.HTTP_404_NOT_FOUND: {"description": "unknown or retired definition"},
     status.HTTP_423_LOCKED: {"description": "E_EDIT_LOCKED: Updater holds the edit lock"},
     status.HTTP_503_SERVICE_UNAVAILABLE: {"description": "site-db unavailable"},
