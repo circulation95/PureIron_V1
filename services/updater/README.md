@@ -12,11 +12,11 @@
 | `verified` | `verify_bundle`(추출본) → 창 형식·site-db digest 불변 → `compose/g<gen>/` 작성 → `compose config` 이미지 == manifest 태그 → 없는 이미지만 load + `.Id` 확인 | `rejected`(거부 코드) / `failed`(`E_LOAD`) — generation 미기록, 번들 sha256만 건너뜀 |
 | `committed` | 창 안에서만. `last_attempted_gen=gen`, `last_result=pending`, trust 상태 저장 | — |
 | `locked` | `POST edit-lock{gen}` → 반환 site_rev + `GET /project` base로 드래프트 게이트 재검사, GOOD 비율 baseline | `rejected(E_DRAFT)` / core 없음 → `verified`로 대기 |
-| `backed_up` | `backups/g<gen>/`: `pg_dump -Fc`(tag_history·Timescale 내부 제외), project export, 직전 compose, secret 이름 | `failed(E_BACKUP)` |
+| `backed_up` | `backups/g<gen>/`: `pg_dump -Fc`(tag_history·Timescale 내부 제외), **직전 core 이미지**로 project export(epoch ≥ 5 core면 `--with-state` → `project/{state.json, project.tar}` 현재 유효 트리, 아니면 state JSON만), 직전 compose, secret 이름 | `failed(E_BACKUP)` |
 | `migrating` | `up --wait site-db`(DB 준비 대기) → 새 core 이미지로 `migrate up --to <target>` | `rolling_back(E_MIGRATE)` |
-| `switching` | 태그 `.Id` 재확인 → `up -d --wait --remove-orphans` → 실행 컨테이너 `.Image` 확인 → `project apply` | `rolling_back(E_SWITCH)` |
+| `switching` | 태그 `.Id` 재확인 → `up -d --wait --remove-orphans` → 실행 컨테이너 `.Image` 확인 → **새 core 이미지**로 `project apply --tar`(번들 `project/project.tar`의 컨테이너 uid 소유 0400 사본을 읽기 전용 mount, 정의·project_files·state 한 트랜잭션, 같은 트리 재적용 no-op). target이 epoch 4 이하 core면 메타만 기록하는 이전 `project apply` | `rolling_back(E_SWITCH)` |
 | `checking` | `/readyz` ready + collector 세션(+ baseline > 0이면 GOOD 비율 ≥ baseline − 2%p), 제한 90 s | `rolling_back(E_HEALTH)` |
-| `rolling_back` | 직전 compose `up -d` + `.Id` 확인 + project restore(site_rev·base 포함, 백업의 컨테이너 uid 소유 0400 사본을 mount — 서비스 `UMask=0027` 백업은 컨테이너가 못 읽음) + ready | 2회 실패 → `failed_manual`(경보) |
+| `rolling_back` | 직전 compose `up -d` + `.Id` 확인 + **백업을 만든 직전 core 이미지**로 project restore(트리 백업이면 `--from <dir>` = 트리 재적용 + state, 아니면 `project.json` state만; site_rev·base 포함, 백업의 컨테이너 uid 소유 0400 사본을 mount — 서비스 `UMask=0027` 백업은 컨테이너가 못 읽음) + ready | 2회 실패 → `failed_manual`(경보) |
 | 종료 | 편집 잠금 해제(HTTP 실패 시 site-db `psql`로 updater 잠금만 해제 — core 이미지 무관) → 보고 → 확정 | 해제 실패 → 종료 phase로 남아 다음 tick에 재시도 |
 
 - docker 데몬이 응답하지 않으면(재부팅 직후 등) `advance`·`recover`는 아무것도 바꾸지 않고 다음 tick을 기다린다 — 일시 장애를 영구 실패로 분류하지 않는다.
@@ -25,6 +25,7 @@
 - 최초 설치(적용 이력 없음)는 창·잠금·백업이 없고, 실패해도 되돌릴 대상이 없어 띄운 스택을 진단용으로 남긴다. 최초 설치가 실패한 뒤의 재시도(새 generation)도 적용 이력이 없으므로 다시 최초 설치로 진행한다(보호할 직전 상태가 없다).
 - 성공한 적용 뒤 GC(`gc.py`): 방금 적용한 gen과 직전 gen(`from`)의 `state/compose/g*`·`backups/g*`만 남기고, 그 두 정의가 참조하지 않는 `pureiron/*` 이미지 태그를 지운다. 정리 실패(예외 포함)는 확정된 결과·종료 코드에 영향이 없다(로그만, 다음 성공 때 다시). 같은 태그를 다른 이미지로 다시 쓴 경우(release 재빌드) 이전 이미지는 태그 없는(dangling) 상태로 남는다 — release 태그는 재사용하지 않는 것이 전제다.
 - poll이 받은 번들 사본 이름은 기대 sha256 기준(`poll-<sha256 16자>.pib`) — 서명 전에는 믿을 수 없는 generation으로 이름을 지으면 대기 시도의 사본과 겹칠 수 있다.
+- 프로젝트 트리(M5-0): 적용은 새 이미지, 백업·복원은 직전 이미지가 한다 — 백업을 쓴 이미지가 읽고, 롤백이 실패한 새 이미지에 기대지 않는다. 직전 이미지가 트리를 모르면(epoch 4 이하) 롤백은 state만 되돌린다(첫 트리 release로의 업데이트 실패 시 정의는 남음). 근거·한계는 `backup.py` docstring.
 - 스키마는 전진만 한다. 롤백은 앱 이미지·프로젝트만 직전으로 되돌린다. site-db digest·태그가 바뀌는 번들은 `E_DIGEST`로 거부한다(db-step release는 아직 미지원).
 - `recover()` 규칙은 `recover.py` docstring 표. 서비스 영향 전 단계는 창 밖이면 `verified`로, `migrating` 이후는 창과 무관하게 끝까지 간다.
 - compose 정의는 번들 payload `compose/site.compose.yml`(서명 대상)이고, `.env`는 manifest 태그에서 만든다. `up`은 `--wait --wait-timeout 180`.
@@ -60,4 +61,4 @@ pureiron-site report export --out DIR                          # 폐쇄망 보�
 
 ## 테스트
 
-docker·compose·core는 `tests/updater_fakes.py`의 fake 세계로 대신한다. `test_recover.py`는 시나리오(최초 설치·업데이트·migrate/health/rollback 실패)마다 모든 바깥 호출·상태 저장 지점에 crash를 주입하고, 새 프로세스의 `recover()`가 crash 없는 실행과 같은 결과로 수렴하는지(복구 중 재crash, 창 닫힌 뒤 복구 포함) 검사한다. 같은 지점들에서 "호스트 재부팅"(데몬 정지 → DB·core 복구 중 → 복구)도 주입한다. 실제 docker·VM 검증은 M2d.
+docker·compose·core는 `tests/updater_fakes.py`의 fake 세계로 대신한다. `test_recover.py`는 시나리오(최초 설치·업데이트·migrate/health/rollback 실패, 트리를 아는 r4→r5의 최초 설치·업데이트·health/migrate 실패)마다 모든 바깥 호출·상태 저장 지점에 crash를 주입하고, 새 프로세스의 `recover()`가 crash 없는 실행과 같은 결과로 수렴하는지(복구 중 재crash, 창 닫힌 뒤 복구 포함) 검사한다. 같은 지점들에서 "호스트 재부팅"(데몬 정지 → DB·core 복구 중 → 복구)도 주입한다. 실제 docker·VM 검증은 M2d.
