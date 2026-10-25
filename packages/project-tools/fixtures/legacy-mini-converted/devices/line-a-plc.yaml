@@ -1,0 +1,8 @@
+credentials: secret://line-a-plc
+host: 10.0.0.5
+id: line-a-plc
+poll_ms: 250
+port: 502
+protocol: modbus_tcp
+timeout_ms: 1500
+unit_id: 3

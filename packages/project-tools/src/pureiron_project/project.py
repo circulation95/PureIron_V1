@@ -12,6 +12,7 @@ content_hash = `sha256:` + sha256(JCS([[posix_relpath, 정규 데이터], ...] �
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
@@ -187,18 +188,40 @@ def _cross_check(files: list[ProjectFile], problems: list[str]) -> None:
     )
 
 
+def _add_file(project: Project, rel: str, kind: Kind, path: Path, text: str) -> None:
+    try:
+        raw = load(text, rel)
+    except CanonicalError as exc:
+        project.problems.append(str(exc))
+        return
+    errors = validate(kind, raw)
+    project.problems.extend(f"{rel}: {error}" for error in errors)
+    if not errors:
+        project.files.append(ProjectFile(rel, kind, path, omit_defaults(kind, raw)))
+
+
 def load_project(root: Path) -> Project:
     project = Project(root=root)
     for rel, kind, path in _discover(root, project.problems):
         try:
-            raw = load(path.read_text(encoding="utf-8"), rel)
-        except (CanonicalError, UnicodeDecodeError) as exc:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
             project.problems.append(str(exc))
             continue
-        errors = validate(kind, raw)
-        project.problems.extend(f"{rel}: {error}" for error in errors)
-        if not errors:
-            project.files.append(ProjectFile(rel, kind, path, omit_defaults(kind, raw)))
+        _add_file(project, rel, kind, path, text)
+    if project.ok:
+        _cross_check(project.files, project.problems)
+    return project
+
+
+def check_texts(root: Path, texts: Sequence[tuple[str, Kind, str]]) -> Project:
+    """쓰기 전의 트리(상대 경로·종류·파일 텍스트)를 `load_project`와 같은 규칙으로 검증한다.
+
+    convert-legacy가 검증을 통과한 뒤에만 쓰게 하려는 것 — 실패해도 디스크에 남는 것이 없다.
+    """
+    project = Project(root=root)
+    for rel, kind, text in texts:
+        _add_file(project, rel, kind, root / rel, text)
     if project.ok:
         _cross_check(project.files, project.problems)
     return project
