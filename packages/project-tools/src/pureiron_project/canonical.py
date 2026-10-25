@@ -116,7 +116,8 @@ def load(text: str, source: str = "<input>") -> Json:
     try:
         _check_events(text, source)
         data = _yaml().load(text)
-    except YAMLError as exc:
+    except (YAMLError, ValueError) as exc:
+        # ruamel은 int·float처럼 보이는 스칼라(`+_`, `0x_`, `._`)의 변환 실패를 ValueError로 던진다.
         raise CanonicalError(f"{source}: {exc}") from exc
     return _to_json(data, source, "$")
 
@@ -137,7 +138,8 @@ def _is_plain(text: str) -> bool:
         return False
     try:
         return _yaml().load(text) == text
-    except YAMLError:
+    except (YAMLError, ValueError):
+        # plain으로 읽지 못하는 문자열(`+_` 등, ruamel ValueError)은 따옴표 표기로 둔다.
         return False
 
 
