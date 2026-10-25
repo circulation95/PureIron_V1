@@ -1,0 +1,23 @@
+alarms:
+  - name: "LineA Temp High"
+    tag_path: "[Modbus]LineA/temp"
+    alarm_type: AboveSetpoint
+    setpoint: 80.0
+    deadband: 1.5
+    on_delay_s: 2
+    priority: High
+    description: "A라인 온도 높음"
+  - name: "LineA Flow Low"
+    tag_path: "[Line-A PLC]LineA/flow"
+    alarm_type: BelowSetpoint
+    setpoint: 5
+    priority: Diagnostic
+    shelve_duration_s: 600
+  - name: "LineA Run Equal"
+    tag_path: "[Modbus]LineA/run"
+    alarm_type: Equal
+    setpoint: 1
+  - name: "Memory High"
+    tag_path: "[Memory]LineA/setpoint"
+    alarm_type: AboveSetpoint
+    setpoint: 3
