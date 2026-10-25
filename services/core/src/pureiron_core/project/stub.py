@@ -130,14 +130,19 @@ class PgProjectStateStore:
 
 def state_from_snapshot(snapshot: Mapping[str, object]) -> ProjectState:
     """`ProjectState.to_snapshot()` JSON → 상태(형식이 다르면 `ProjectStateError`)."""
-    return _row_to_state(
-        {
-            **snapshot,
-            "applied_at": datetime.fromisoformat(str(snapshot["applied_at"]))
-            if snapshot.get("applied_at")
-            else None,
-        }
-    )
+    try:
+        return _row_to_state(
+            {
+                **snapshot,
+                "applied_at": datetime.fromisoformat(str(snapshot["applied_at"]))
+                if snapshot.get("applied_at")
+                else None,
+            }
+        )
+    except KeyError as exc:  # 키 누락·날짜 형식 오류도 traceback(exit 1)이 아니라 exit 4
+        raise ProjectStateError(f"project state snapshot is missing {exc}") from None
+    except ValueError as exc:
+        raise ProjectStateError(f"project state snapshot: {exc}") from None
 
 
 async def write_state(conn: Connection, state: ProjectState) -> None:

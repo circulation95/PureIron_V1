@@ -14,7 +14,8 @@ from pureiron_core.platform.db import Connection
 from pureiron_core.project import apply
 from pureiron_core.project.apply import apply_tree, load_tree, read_tar, tree_from_tar
 from pureiron_core.project.export import tree_tar
-from pureiron_core.project.ports import ProjectTreeError
+from pureiron_core.project.ports import ProjectState, ProjectStateError, ProjectTreeError
+from pureiron_core.project.stub import state_from_snapshot
 from pureiron_project.project import load_project
 
 ACME = Path(__file__).resolve().parents[3] / "packages" / "project-tools" / "fixtures" / "acme"
@@ -65,6 +66,10 @@ REJECTED = {
     "directory": (_with_acme(_special("alarms", tarfile.DIRTYPE)), "regular files"),
     "fifo": (_with_acme(_special("alarms/x.yaml", tarfile.FIFOTYPE)), "regular files"),
     "duplicate": (_with_acme(_file("project.yaml", b"name: x\n")), "duplicate path"),
+    # 리뷰 L-1: 파일/디렉터리 충돌·비UTF-8 이름은 load_tree의 OSError 전에 ProjectTreeError
+    "file-then-dir": (_tar(_file("tags"), _file("tags/x.yaml")), "path conflict"),
+    "dir-then-file": (_with_acme(_file("devices")), "path conflict"),
+    "non-utf8": (_with_acme(_file("alarms/\udcff.yaml")), "not UTF-8"),
     "not-a-tar": (b"not a tar archive" * 64, "not a valid tar"),
     "compressed": (gzip.compress(_with_acme(), mtime=0), "not a valid tar"),
 }
@@ -139,3 +144,14 @@ async def test_hash_or_project_id_mismatch_is_rejected_before_db(
             version="v1",
             content_hash=content_hash or tree.content_hash,
         )
+
+
+def test_malformed_state_snapshot_is_a_project_state_error() -> None:
+    """리뷰 L-4: 키 누락·날짜 형식 오류는 traceback(exit 1)이 아니라 ProjectStateError(exit 4)."""
+    snapshot = ProjectState("acme", "v1", "sha256:x", 3, 3, None, None, None).to_snapshot()
+    assert state_from_snapshot(snapshot).site_rev == 3
+    missing = {k: v for k, v in snapshot.items() if k != "site_rev"}
+    with pytest.raises(ProjectStateError, match="site_rev"):
+        state_from_snapshot(missing)
+    with pytest.raises(ProjectStateError, match="snapshot"):
+        state_from_snapshot({**snapshot, "applied_at": "yesterday"})

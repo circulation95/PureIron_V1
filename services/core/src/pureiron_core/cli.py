@@ -112,7 +112,9 @@ def _parser() -> argparse.ArgumentParser:
 
     defs = sub.add_parser(
         "apply-definitions",
-        help="프로젝트 트리의 장비·태그 정의를 site-db에 반영(path 기준 upsert·retire, M3a)",
+        help="프로젝트 트리의 장비·태그 정의를 site-db에 반영(path 기준 upsert·retire, M3a). "
+        "개발·수동 복구용 — project_files·project_state는 갱신하지 않으므로 현장 적용은 "
+        "`project apply --tar`(Updater)로만",
     )
     defs.add_argument("project_dir", type=Path)
     defs.add_argument("--json", action="store_true")

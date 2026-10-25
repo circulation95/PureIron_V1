@@ -105,23 +105,28 @@ def read_tar(data: bytes) -> dict[str, bytes]:
     if len(data) > TREE_LIMIT_BYTES:
         raise ProjectTreeError(f"project tar is {len(data)} bytes (limit {TREE_LIMIT_BYTES})")
     files: dict[str, bytes] = {}
+    dirs: set[str] = set()
     try:
         # "r:" = 압축 없는 tar만(압축 폭탄 방지). 크기 상한은 위에서 원본 바이트로 이미 건다.
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as tar:
             for member in tar:
-                rel = _member_path(member, files)  # 내용을 읽기 전에 종류·경로부터 거른다
+                rel = _member_path(member, files, dirs)  # 내용을 읽기 전에 종류·경로부터 거른다
                 files[rel] = _member_content(tar, member)
     except tarfile.TarError as exc:
         raise ProjectTreeError(f"project tar is not a valid tar archive: {exc}") from exc
     return files
 
 
-def _member_path(member: tarfile.TarInfo, seen: Mapping[str, bytes]) -> str:
+def _member_path(member: tarfile.TarInfo, seen: Mapping[str, bytes], dirs: set[str]) -> str:
+    """검사를 통과한 정규 경로. `dirs`(앞 파일들의 상위 디렉터리)에 이 경로의 상위를 더한다."""
     name = member.name
     if not member.isreg():
         raise ProjectTreeError(f"project tar entry {name!r}: only regular files are allowed")
     try:
+        name.encode("utf-8")  # tarfile은 비UTF-8 바이트를 surrogate로 남긴다
         rel = normalize_relpath(name)
+    except UnicodeEncodeError:
+        raise ProjectTreeError(f"project tar entry {name!r}: name is not UTF-8") from None
     except RelPathError as exc:
         raise ProjectTreeError(f"project tar entry {name!r}: {exc}") from None
     # `./a`·`a//b`·역슬래시처럼 정규화하면 바뀌는 이름도 거부한다 — 같은 파일의 두 이름을 막는다.
@@ -129,8 +134,13 @@ def _member_path(member: tarfile.TarInfo, seen: Mapping[str, bytes]) -> str:
         raise ProjectTreeError(f"project tar entry {name!r}: path must be normalized ({rel!r})")
     if rel in seen:
         raise ProjectTreeError(f"project tar entry {name!r}: duplicate path")
+    # `a`와 `a/b`: 같은 이름이 파일이면서 디렉터리일 수 없다(load_tree가 디스크에 쓰다 깨지기 전에)
+    parents = ["/".join(rel.split("/")[:i]) for i in range(1, rel.count("/") + 1)]
+    if rel in dirs or any(parent in seen for parent in parents):
+        raise ProjectTreeError(f"project tar entry {name!r}: file/directory path conflict")
     if len(seen) >= TREE_LIMIT_FILES:
         raise ProjectTreeError(f"project tar has more than {TREE_LIMIT_FILES} files")
+    dirs.update(parents)
     return rel
 
 
