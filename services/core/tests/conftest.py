@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
 
 from pureiron_core.audit.ports import AuditEntry, AuditQuery, AuditRecord
-from pureiron_core.project.ports import Definitions, DeviceDef, TagDef
+from pureiron_core.project.ports import Definitions, DeviceDef, PatchResult, TagDef
 
 CORE = Path(__file__).resolve().parents[1]
 MIGRATIONS = CORE / "migrations"
@@ -31,6 +32,35 @@ class FakeAudit:
     async def query(self, query: AuditQuery) -> tuple[AuditRecord, ...]:
         self.queries.append(query)
         return self.results
+
+
+@dataclass
+class FakePatcher:
+    """`ProjectPatchPort` 가짜: 받은 호출(kind, id, changes, username)을 모으고, 정해 둔 오류를
+    던지거나 site_rev 8·변경을 그대로 담은 정의를 돌려준다."""
+
+    error: Exception | None = None
+    calls: list[tuple[str, str, dict[str, object], str]] = field(
+        default_factory=list[tuple[str, str, dict[str, object], str]]
+    )
+
+    def _patch(
+        self, kind: str, ident: str, changes: Mapping[str, object], username: str
+    ) -> PatchResult:
+        if self.error is not None:
+            raise self.error
+        self.calls.append((kind, ident, dict(changes), username))
+        return PatchResult(site_rev=8, definition={"id": ident, **changes}, changed=True)
+
+    async def patch_alarm(
+        self, alarm_id: str, changes: Mapping[str, object], *, username: str
+    ) -> PatchResult:
+        return self._patch("alarm", alarm_id, changes, username)
+
+    async def patch_tag(
+        self, path: str, changes: Mapping[str, object], *, username: str
+    ) -> PatchResult:
+        return self._patch("tag", path, changes, username)
 
 
 def write_migrations(directory: Path, files: dict[str, str], epochs: dict[int, str]) -> Path:

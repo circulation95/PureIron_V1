@@ -25,6 +25,7 @@ from pureiron_core.platform.bus import EventBus
 from pureiron_core.platform.db import Database
 from pureiron_core.platform.migrate import Catalog, SchemaGuard, load_catalog
 from pureiron_core.project.definitions import PgDefinitionsSource
+from pureiron_core.project.patch import PgProjectPatcher
 from pureiron_core.project.stub import PgProjectStateStore
 from pureiron_core.realtime.service import RealtimeService
 from pureiron_core.settings import Settings, read_secret
@@ -43,6 +44,7 @@ class SiteRuntime:
     historian: Historian
     acquisition: AcquisitionServer
     project: PgProjectStateStore
+    project_patch: PgProjectPatcher
     updater_token: str | None
     auth: AuthService
     login_throttle: LoginThrottle
@@ -112,6 +114,7 @@ class SiteRuntime:
                 service, keeper, host=settings.grpc_host, port=settings.grpc_port
             ),
             project=project,
+            project_patch=PgProjectPatcher(db, audit),
             updater_token=read_secret(settings.updater_token_file),
             auth=auth,
             login_throttle=LoginThrottle(),

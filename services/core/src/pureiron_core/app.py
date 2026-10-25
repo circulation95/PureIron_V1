@@ -47,11 +47,17 @@ def create_app(rt: SiteRuntime) -> FastAPI:
         ),
         prefix=API_PREFIX,
     )
+    guard = SessionGuard(rt.auth)
     app.include_router(
-        build_project_router(store=rt.project, updater_token=rt.updater_token, audit=rt.audit),
+        build_project_router(
+            store=rt.project,
+            updater_token=rt.updater_token,
+            audit=rt.audit,
+            patcher=rt.project_patch,
+            guard=guard,
+        ),
         prefix=API_PREFIX,
     )
-    guard = SessionGuard(rt.auth)
     app.include_router(
         build_auth_router(
             auth=rt.auth,
