@@ -54,7 +54,7 @@ def test_export_signs_effective_tree_with_site_key(site: Site, tmp_path: Path) -
     public = _ready(site)
     out = tmp_path / "usb" / "draft.tar"
     result = export_draft(_settings(site), site.deps().compose, out, now=T0)
-    payload, tree = open_draft(out.read_bytes(), public)
+    payload, tree = open_draft(out.read_bytes(), public, site_id="site-a")
     assert payload == {
         "site_id": "site-a",
         "site_rev": 3,
@@ -143,7 +143,7 @@ def test_cli_project_export(
     out = tmp_path / "draft.tar"
     assert cli.main(["project", "export", "--out", str(out)]) == cli.EXIT_OK
     assert "site_rev:      3 (base 0)" in capsys.readouterr().out
-    assert open_draft(out.read_bytes(), public)[0]["site_rev"] == 3
+    assert open_draft(out.read_bytes(), public, site_id="site-a")[0]["site_rev"] == 3
 
     cli_site.world.site_rev = 0
     assert cli.main(["project", "export", "--out", str(out)]) == cli.EXIT_OK

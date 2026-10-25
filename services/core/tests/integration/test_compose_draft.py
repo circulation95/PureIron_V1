@@ -210,7 +210,7 @@ def test_site_patch_gate_and_signed_draft(stack: Stack, tmp_path: Path) -> None:
     settings, public = _site(tmp_path)
     out = tmp_path / "usb" / "draft.tar"
     result = export_draft(settings, StackCompose(stack), out, now=datetime.now(UTC))
-    payload, tree = open_draft(out.read_bytes(), public)
+    payload, tree = open_draft(out.read_bytes(), public, site_id=SITE)
     assert payload == result.payload
     assert (payload["site_id"], payload["site_rev"], payload["base_site_rev"]) == (
         SITE,

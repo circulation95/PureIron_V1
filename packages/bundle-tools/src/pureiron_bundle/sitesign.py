@@ -171,11 +171,13 @@ def _draft_members(data: bytes) -> dict[str, bytes]:
     return members
 
 
-def open_draft(data: bytes, public: bytes) -> tuple[dict[str, Json], bytes]:
+def open_draft(data: bytes, public: bytes, *, site_id: str) -> tuple[dict[str, Json], bytes]:
     """`draft.tar`를 등록된 site 공개키로 검증하고 (payload, project.tar 바이트)를 돌려준다.
 
-    서명(purpose `site-draft`)·payload 형식·`project_tar_sha256` 일치를 모두 확인한다 — 하나라도
-    틀리면 `SignedDocumentError`. tree 내용(프로젝트 검증·content_hash)은 호출자(absorb)가 본다.
+    서명(purpose `site-draft`)·payload 형식·`site_id`가 그 공개키의 현장과 같은지·
+    `project_tar_sha256` 일치를 모두 확인한다 — 하나라도 틀리면 `SignedDocumentError`(현장 X
+    키로 서명했지만 payload에 다른 site_id를 적은 파일을 그 현장 드래프트로 읽지 않게). tree
+    내용(프로젝트 검증·content_hash)은 호출자(absorb)가 본다.
     """
     members = _draft_members(data)
     payload = open_document(members[DRAFT_ENVELOPE], SitePurpose.DRAFT, public)
@@ -186,6 +188,10 @@ def open_draft(data: bytes, public: bytes) -> tuple[dict[str, Json], bytes]:
     for key in _DRAFT_TEXTS:
         if not isinstance(payload.get(key), str):
             raise SignedDocumentError(f"payload.{key} must be a string")
+    if payload["site_id"] != site_id:
+        raise SignedDocumentError(
+            f"payload.site_id {payload['site_id']!r} does not match expected site {site_id!r}"
+        )
     tree = members[DRAFT_TREE]
     if payload["project_tar_sha256"] != tree_digest(tree):
         raise SignedDocumentError("project.tar does not match payload.project_tar_sha256")
