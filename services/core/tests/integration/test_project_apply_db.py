@@ -2,8 +2,8 @@
 
 번들과 같은 tar(v1) 적용 → 정의 반영, v2(알람 setpoint 변경·태그 하나 retire) → 반영, 현장 값
 변경 뒤 백업 → 실패한 업데이트(v3) → 롤백 경로(restore) → 정의·site_rev·base가 백업 시점
-그대로. 같은 hash 재적용은 아무것도 쓰지 않고, 변조 tar·hash 불일치·적용 도중 실패는 아무것도
-바꾸지 않는다.
+그대로. 같은 hash 재적용은 아무것도 쓰지 않고(현장 드래프트가 남아 있으면 정의 재적용·base
+이동 — M5-3 K8), 변조 tar·hash 불일치·적용 도중 실패는 아무것도 바꾸지 않는다.
 Updater와 같은 순서로 호스트 CLI를 부른다(상태기계 자체는 updater 단위 테스트).
 """
 
@@ -236,6 +236,36 @@ async def test_bundle_apply_update_then_rollback_restores_backup(
     assert (await _view(conn)).state["definitions_rev"] == rev
     state_again, tar_again = _export(env, tmp_path / "backup-again")
     assert (state_again, tar_again) == (backup_state, backup_tar)
+
+
+async def test_same_tree_with_site_drafts_reapplies_and_moves_base(
+    conn: Conn, stack: Stack, fresh_database: str, tmp_path: Path
+) -> None:
+    """M5-3 K8(M5-2 리뷰 LOW-4): 같은 트리 + 남은 드래프트 → 정의 재적용 + base = site_rev.
+    그 뒤 재실행(Updater recover)은 rev가 같아 no-op이다."""
+    env = stack.cli_env(fresh_database)
+    v1 = _bundle(tmp_path, "v1", setpoint=80, tags=3)
+    _apply_ok(env, v1)
+    # 현장 PATCH 흉내: 알람 setpoint 변경 + site_rev 3 앞섬(번들은 게이트를 통과했다 = 흡수 완료).
+    await conn.execute(
+        "UPDATE alarms SET definition = jsonb_set(definition, '{setpoint}', '123')"
+        " WHERE alarm_id = 'a-high'"
+    )
+    await conn.execute("UPDATE project_state SET site_rev = site_rev + 3 WHERE id")
+    patched = await _view(conn)
+    assert patched.alarm("a-high")["setpoint"] == 123
+
+    reapplied = _apply_ok(env, v1)
+    assert reapplied["changed"] is True
+    assert reapplied["files_changed"] is False
+    after = await _view(conn)
+    assert after.alarm("a-high")["setpoint"] == 80
+    assert after.state["base_site_rev"] == after.state["site_rev"] == patched.state["site_rev"]
+    assert await _files(conn) == _tar_files(v1.data)
+
+    rerun = _apply_ok(env, v1)
+    assert (rerun["changed"], rerun["definitions"]) == (False, None)
+    assert await _view(conn) == after
 
 
 async def test_bad_tar_hash_or_mid_apply_failure_changes_nothing(

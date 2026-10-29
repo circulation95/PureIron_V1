@@ -155,3 +155,22 @@ def test_malformed_state_snapshot_is_a_project_state_error() -> None:
         state_from_snapshot(missing)
     with pytest.raises(ProjectStateError, match="snapshot"):
         state_from_snapshot({**snapshot, "applied_at": "yesterday"})
+
+
+@pytest.mark.parametrize(
+    ("version", "site_rev", "base_site_rev", "noop"),
+    [
+        pytest.param("v1", 3, 3, True, id="same-tree-no-drafts"),
+        pytest.param("v1", 5, 3, False, id="same-tree-drafts-left"),  # K8: 재적용·base 이동
+        pytest.param("v2", 3, 3, False, id="other-version"),
+    ],
+)
+def test_already_applied_needs_same_meta_and_no_site_drafts(
+    version: str, site_rev: int, base_site_rev: int, noop: bool
+) -> None:
+    """M5-3 K8(M5-2 리뷰 LOW-4): 같은 트리라도 드래프트가 남았으면 no-op이 아니다."""
+    current = ProjectState("acme", "v1", "sha256:x", base_site_rev, site_rev, None, None, None)
+    assert (
+        apply.already_applied(current, project_id="acme", version=version, content_hash="sha256:x")
+        is noop
+    )
