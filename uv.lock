@@ -603,6 +603,7 @@ version = "0.1.0"
 source = { editable = "packages/project-tools" }
 dependencies = [
     { name = "jsonschema" },
+    { name = "pureiron-bundle-tools" },
     { name = "rfc8785" },
     { name = "ruamel-yaml" },
 ]
@@ -610,6 +611,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "jsonschema", specifier = ">=4.25" },
+    { name = "pureiron-bundle-tools", editable = "packages/bundle-tools" },
     { name = "rfc8785", specifier = ">=0.1.4" },
     { name = "ruamel-yaml", specifier = ">=0.18.15" },
 ]
