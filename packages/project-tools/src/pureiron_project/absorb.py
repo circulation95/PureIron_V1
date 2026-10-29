@@ -2,7 +2,8 @@
 
 순서(전부 아니면 전무 — 거부되면 repo는 한 바이트도 바뀌지 않는다):
 
-1. 현장 키: `--site-key <site-enrollment.json>`(Updater `enroll`이 쓴 자기 서명 봉투)를 검증하고
+1. 현장 키: `--site-key <enrollment.json>`(Updater `enroll`이 `state/`에 쓴 자기 서명 봉투, purpose
+   `site-enrollment`)를 검증하고
    payload `site_id`가 `--site`와 같은지 본다. 자기 서명이라 신뢰 근거는 파일 출처(설치 때 벤더가
    받아 둔 파일)다 — 공개키 fingerprint를 출력해 사람이 설치 기록과 대조한다(M4 fleet 등록부).
 2. `open_draft`(서명·purpose·site_id·`project_tar_sha256`) → `project.tar`를 tarsafe로 읽어

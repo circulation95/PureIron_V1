@@ -85,7 +85,7 @@ def _write_inputs(
     draft_file.write_bytes(
         draft(SEED, SITE, tree, content_hash, site_rev=site_rev, base_site_rev=base_site_rev)
     )
-    key_file = tmp_path / "site-enrollment.json"
+    key_file = tmp_path / "enrollment.json"
     key_file.write_bytes(enrollment(SEED, SITE))
     return draft_file, key_file
 

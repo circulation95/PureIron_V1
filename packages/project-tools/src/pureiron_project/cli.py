@@ -38,6 +38,7 @@ from pureiron_project.project import format_project, load_project
 
 EXIT_UNSUPPORTED = 2
 EXIT_CONFLICT = 2
+ENROLLMENT_HELP = "현장 enrollment.json(Updater enroll이 state/에 씀, 설치 때 수령)"
 REPO_CHANGED = "(repo changed: run absorb again to finish, or restore with git)"
 
 
@@ -62,9 +63,7 @@ def _parser() -> argparse.ArgumentParser:
     absorb_cmd = sub.add_parser("absorb", help="서명된 현장 드래프트(draft.tar)를 repo에 회수")
     _site_args(absorb_cmd)
     absorb_cmd.add_argument("--draft", type=Path, required=True, help="현장 draft.tar")
-    absorb_cmd.add_argument(
-        "--site-key", type=Path, required=True, help="현장 site-enrollment.json(설치 때 수령)"
-    )
+    absorb_cmd.add_argument("--site-key", type=Path, required=True, help=ENROLLMENT_HELP)
     absorb_cmd.add_argument(
         "--rev", type=int, help="기록할 absorbs 리비전(기본 = 서명된 site_rev, 그 이하만)"
     )
@@ -75,7 +74,7 @@ def _parser() -> argparse.ArgumentParser:
     source = gate_cmd.add_mutually_exclusive_group(required=True)
     source.add_argument("--draft", type=Path, help="현장 draft.tar(--site-key 필요)")
     source.add_argument("--site-rev", type=int, help="현장 site_rev(--base-site-rev 필요)")
-    gate_cmd.add_argument("--site-key", type=Path, help="현장 site-enrollment.json")
+    gate_cmd.add_argument("--site-key", type=Path, help=ENROLLMENT_HELP)
     gate_cmd.add_argument("--base-site-rev", type=int, help="현장 base_site_rev")
     return parser
 
