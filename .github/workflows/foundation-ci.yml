@@ -17,6 +17,7 @@ on:
       - scripts/tools.sh
       - .dockerignore
       - .github/workflows/foundation-*.yml
+      - .github/workflows/validate-project.yml
   push:
     branches: [master]
     paths: *gate-paths
@@ -136,6 +137,44 @@ jobs:
     needs: plan
     runs-on: [self-hosted, g1]
     steps: *node-job
+
+  # G1-8 V1 안 대리: 고객 repo와 같은 reusable workflow로 템플릿을 검증한다(g1.sh에는 없는 CI 전용 job,
+  # 로컬 대응은 deploy/tests/test_project_template.py).
+  template-validate:
+    needs: plan
+    uses: ./.github/workflows/validate-project.yml
+    with:
+      project_dir: deploy/templates/pureiron-project
+      runs_on: '["self-hosted", "g1"]'
+
+  template-outputs:
+    needs: template-validate
+    runs-on: [self-hosted, g1]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - env:
+          CONTENT_HASH: ${{ needs.template-validate.outputs.content_hash }}
+          PROJECT_VERSION: ${{ needs.template-validate.outputs.project_version }}
+        run: |
+          if ! [[ "$CONTENT_HASH" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::content_hash 형식 오류: '$CONTENT_HASH'"
+            exit 1
+          fi
+          local_hash="$(uv run --locked --package pureiron-project-tools pureiron-project hash deploy/templates/pureiron-project | tail -n 1)"
+          if [ "$CONTENT_HASH" != "$local_hash" ]; then
+            echo "::error::content_hash $CONTENT_HASH ≠ 로컬 hash $local_hash"
+            exit 1
+          fi
+          # foundation-ci는 태그로 돌지 않는다 → project_version은 빈 값이어야 한다.
+          if [ -n "$PROJECT_VERSION" ]; then
+            echo "::error::태그가 아닌 실행에서 project_version='$PROJECT_VERSION'"
+            exit 1
+          fi
+          echo "content_hash=$CONTENT_HASH (로컬 hash 일치), project_version=(없음)"
 
   integration-compose:
     needs: plan
