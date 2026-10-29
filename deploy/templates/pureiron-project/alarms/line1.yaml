@@ -1,0 +1,4 @@
+- id: temp-high
+  setpoint: 80
+  tag: line1/temp
+  type: above
