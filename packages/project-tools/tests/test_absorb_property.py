@@ -4,8 +4,10 @@
    도달하고(두 번째 fmt는 바꿀 것이 없음) content hash는 fmt 전후로 같다.
 ⓑ 무작위 base 트리에 무작위 PATCH 허용 값(설정·제거)을 적용한 드래프트를 서명해 base 사본에
    absorb → repo hash == 드래프트 `content_hash`.
-ⓒ repo가 앞선 경우(base 뒤에 태그 추가): absorb가 그 태그를 보존한다 — repo hash == 드래프트
-   트리 + 같은 추가 태그의 hash.
+ⓒ repo가 앞선 경우(base 뒤에 태그 추가 + 기존 항목의 PATCH 비허용 필드 — 태그 `modbus.address`,
+   알람 `type`·`tag`·`description` — 변경): absorb가 그 변경을 보존한다 — repo hash == 드래프트
+   트리에 같은 변경을 적용한 hash. ⓑ는 repo = base라 드래프트 항목을 통째로 덮는 병합도 통과하지만,
+   ⓒ는 비허용 필드가 repo와 드래프트에서 달라 그 버그를 잡는다.
 
 absorbs 줄 기준: absorb는 repo `project.yaml`에 `absorbs.<site> = site_rev`를 기록하므로, ⓑ·ⓒ의
 hash 비교는 회수 뒤 repo `project.yaml` 데이터에서 `absorbs` 키를 지운 트리로 계산한다(base·
@@ -17,8 +19,9 @@ from __future__ import annotations
 import dataclasses
 import json
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import cast
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -35,6 +38,8 @@ SITE_REV = 9
 BASE_SITE_REV = 4
 
 type Tree = dict[str, Json]
+type Edit = tuple[str, str, str, str, Json]
+"""(파일, 식별 키, 식별자, 필드, 새 값)."""
 
 _ids = st.from_regex(r"[a-z][a-z0-9-]{0,8}", fullmatch=True)
 # JSON 실수 표기가 YAML 1.2 float로 그대로 읽히는 값(무한 소수·지수 표기 없이)
@@ -147,6 +152,52 @@ def drafts(draw: st.DrawFn, base: Tree) -> Tree:
     return site
 
 
+def _entries(tree: Tree, directory: str) -> list[tuple[str, dict[str, Json]]]:
+    return [
+        (rel, item)
+        for rel, data in sorted(tree.items())
+        if rel.startswith(directory + "/") and isinstance(data, list)
+        for item in data
+        if isinstance(item, dict)
+    ]
+
+
+@st.composite
+def _repo_edits(draw: st.DrawFn, base: Tree) -> list[Edit]:
+    """repo가 번들 뒤에 바꾼 PATCH 비허용 필드 — 태그 주소, 알람 `type`·`tag`·`description`."""
+    tags = _entries(base, "tags")
+    edits: list[Edit] = []
+    for rel, tag in tags:
+        if draw(st.booleans()):
+            modbus = cast(dict[str, Json], tag["modbus"])
+            address = draw(st.integers(0, 65_535))
+            edits.append(
+                (rel, "path", cast(str, tag["path"]), "modbus", modbus | {"address": address})
+            )
+    alarm_fields = {
+        "type": st.sampled_from(["above", "below"]),
+        "tag": st.sampled_from([cast(str, tag["path"]) for _, tag in tags]),
+        "description": _text,
+    }
+    for rel, alarm in _entries(base, "alarms"):
+        for field, values in alarm_fields.items():
+            if draw(st.booleans()):
+                edits.append((rel, "id", cast(str, alarm["id"]), field, draw(values)))
+    return edits
+
+
+def _apply(tree: Tree, edits: Sequence[Edit]) -> Tree:
+    out = dict(tree)
+    for rel, key, ident, field, value in edits:
+        data = out[rel]
+        assert isinstance(data, list)
+        out[rel] = [
+            item | {field: value} if isinstance(item, dict) and item.get(key) == ident else item
+            for item in data
+        ]
+    return out
+
+
 def _write(root: Path, tree: Tree) -> Path:
     """JSON(= YAML 1.2)으로 쓴다 — 정규형이 아닌 입력."""
     for rel, data in tree.items():
@@ -207,21 +258,23 @@ def test_absorbed_repo_equals_draft_tree(data: st.DataObject) -> None:
 
 @settings(max_examples=1000, deadline=None)
 @given(st.data())
-def test_absorb_keeps_tags_the_repo_added(data: st.DataObject) -> None:
+def test_absorb_keeps_repo_changes_made_after_the_bundle(data: st.DataObject) -> None:
     base = data.draw(trees())
     site = data.draw(drafts(base))
+    edits = data.draw(_repo_edits(base))
     rel = data.draw(st.sampled_from(sorted(r for r in base if r.startswith("tags/"))))
     device = rel.removeprefix("tags/").removesuffix(".yaml")
     added = [
         data.draw(_tag(f"{device}/new{i}", device)) for i in range(data.draw(st.integers(1, 3)))
     ]
 
-    def with_added(tree: Tree) -> Tree:
-        tags = tree[rel]
+    def ahead(tree: Tree) -> Tree:
+        edited = _apply(tree, edits)
+        tags = edited[rel]
         assert isinstance(tags, list)
-        return {**tree, rel: [*tags, *added]}
+        return {**edited, rel: [*tags, *added]}
 
     with tempfile.TemporaryDirectory() as tmp:
-        repo, _ = _absorb_into(with_added(base), site, Path(tmp))
-        expected = _loaded(_write(Path(tmp) / "expected", with_added(site)))
+        repo, _ = _absorb_into(ahead(base), site, Path(tmp))
+        expected = _loaded(_write(Path(tmp) / "expected", ahead(site)))
         assert _hash_without_absorbs(repo) == expected.content_hash()
