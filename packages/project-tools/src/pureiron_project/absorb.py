@@ -11,11 +11,12 @@
 4. 필드 병합 계획(`merge.plan_merge`, 순수 함수): 드래프트의 알람·태그에서 현장 PATCH 허용
    필드만 꺼내 repo의 같은 `id`·`path` 항목에 덮는다. 드래프트에 없는 선택 필드 = 기본값(repo에서
    제거). 그 밖의 필드·repo에만 있는 항목(새 태그·주소·장비 등)은 그대로 둔다.
-5. 바뀐 파일 + `project.yaml absorbs.<site> = N`을 정규형으로 쓴 결과 트리를 먼저 검증하고 쓴 뒤,
-   디스크에서 다시 `load_project`로 확인한다(실패하면 원래 바이트로 되돌린다).
+5. 바뀐 파일 + `project.yaml absorbs.<site> = N`을 정규형으로 쓴 결과 트리를 먼저 검증하고 두 단계로
+   쓴 뒤(`_write_all`), 디스크에서 다시 `load_project`로 확인한다.
 
 종료 코드 구분(K4): 1~3의 검증 실패는 `AbsorbError`(exit 1), 드래프트 항목이 repo에 없음·
-`--rev` 초과·absorbs 퇴행은 사람이 판단할 충돌이라 `AbsorbConflictError`(exit 2).
+`--rev` 초과·absorbs 퇴행은 사람이 판단할 충돌이라 `AbsorbConflictError`(exit 2). 쓰기 도중
+실패해 repo 파일이 이미 바뀌었으면 `AbsorbWriteError`(exit 1, "repo unchanged"라고 말하지 않는다).
 """
 
 from __future__ import annotations
@@ -45,6 +46,7 @@ from pureiron_project.project import (
 from pureiron_project.schema import Kind
 
 ABSORBS = "absorbs"
+TMP_SUFFIX = ".absorb-tmp"
 TREE_LIMIT_FILES = 10_000
 """core `apply.TREE_LIMIT_FILES`와 같은 상한(바이트 상한은 `open_draft`의 드래프트 상한)."""
 _DRAFT_ROOT = Path("<draft>")
@@ -56,6 +58,10 @@ class AbsorbError(Exception):
 
 class AbsorbConflictError(Exception):
     """사람이 판단할 충돌(exit 2): repo에 없는 드래프트 항목·`--rev` 초과·absorbs 퇴행."""
+
+
+class AbsorbWriteError(Exception):
+    """쓰기 도중 실패했고 repo가 이미 바뀌었다(exit 1) — 바뀐 파일을 메시지에 적는다."""
 
 
 # ── 드래프트 검증 ────────────────────────────────────────────────────────────
@@ -218,20 +224,45 @@ def _target_rev(draft: SiteDraft, rev: int | None, existing: int | None) -> int:
     return target
 
 
+def _remove(temps: Sequence[tuple[str, Path]]) -> list[str]:
+    """tmp 파일을 지운다(없으면 지운 셈). 지우지 못한 것의 상대 경로를 돌려준다."""
+    left: list[str] = []
+    for rel, tmp in temps:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            left.append(rel + TMP_SUFFIX)
+    return left
+
+
 def _write_all(root: Path, contents: Mapping[str, bytes]) -> None:
-    """파일마다 tmp → rename. 중간에 실패하면 이미 바꾼 파일을 원래 바이트로 되돌린다."""
-    originals: dict[str, bytes] = {}
+    """두 단계 쓰기: 바뀔 파일 전부를 tmp로 쓴 뒤에야 순서대로 rename한다.
+
+    tmp 단계에서 실패하면 만든 tmp를 지우고 `AbsorbError` — 원본은 건드리지 않았다. rename 단계에서
+    실패하면 남은 tmp를 지우고, 이미 rename한 파일은 되돌리지 않는다(되돌리기 쓰기는 원자적이지 않아
+    또 실패할 수 있다). 그 파일들은 검증한 병합 결과이므로 repo는 유효하고, 같은 absorb를 다시
+    돌리면 나머지를 마저 쓴다. 이때는 바뀐 파일을 적은 `AbsorbWriteError`다.
+    """
+    temps = [(rel, root.joinpath(*(rel + TMP_SUFFIX).split("/"))) for rel in contents]
+    replaced: list[str] = []
     try:
-        for rel, content in contents.items():
-            path = root.joinpath(*rel.split("/"))
-            originals[rel] = path.read_bytes()
-            tmp = path.with_name(path.name + ".absorb-tmp")
-            tmp.write_bytes(content)
-            tmp.replace(path)
+        for rel, tmp in temps:
+            tmp.write_bytes(contents[rel])
+        for rel, tmp in temps:
+            tmp.replace(root.joinpath(*rel.split("/")))
+            replaced.append(rel)
     except OSError as exc:
-        for rel, content in originals.items():
-            root.joinpath(*rel.split("/")).write_bytes(content)
-        raise AbsorbError(f"cannot write the project tree: {exc}") from exc
+        left = _remove(temps[len(replaced) :])
+        if not replaced and not left:
+            raise AbsorbError(f"cannot write the project tree: {exc}") from exc
+        done = ", ".join(replaced) or "(none)"
+        leftover = f"; could not remove {', '.join(left)}" if left else ""
+        raise AbsorbWriteError(
+            f"cannot write the project tree: {exc}; already replaced: {done}{leftover}"
+        ) from exc
+    except BaseException:
+        _remove(temps[len(replaced) :])  # 중단(Ctrl-C 등)에도 tmp를 남기지 않고 다시 던진다
+        raise
 
 
 def absorb(
@@ -263,7 +294,7 @@ def absorb(
     _write_all(root, dict(sorted(contents.items())))
     after = load_project(root)
     if not after.ok:  # 쓰기 전에 같은 내용을 검증했으므로 디스크가 바뀐 경우뿐이다
-        raise AbsorbError("project is invalid after absorb: " + "; ".join(after.problems))
+        raise AbsorbWriteError("project is invalid after absorb: " + "; ".join(after.problems))
     return AbsorbResult(
         draft=draft,
         changes=plan.changes,

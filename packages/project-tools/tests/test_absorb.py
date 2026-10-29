@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from pureiron_bundle import keys
+from pureiron_project.absorb import TMP_SUFFIX
 from pureiron_project.canonical import Json, dump, load
 from pureiron_project.cli import main
 from pureiron_project.merge import (
@@ -376,6 +377,93 @@ def test_absorb_conflicts_exit_2_without_changes(
     assert captured.err.startswith("conflict: ")
     assert message in captured.err
     assert snapshot(repo) == before
+
+
+# ── 쓰기 실패(두 단계 쓰기) ──────────────────────────────────────────────────
+
+REPO_CHANGED = "(repo changed: run absorb again to finish, or restore with git)"
+
+
+def _fail_on(monkeypatch: pytest.MonkeyPatch, method: str, name: str) -> None:
+    """`Path.<method>`가 이름이 `name`인 파일에서 PermissionError(Windows 파일 잠금 등)를 낸다."""
+    real = getattr(Path, method)
+
+    def fake(self: Path, *args: object, **kwargs: object) -> object:
+        if self.name == name:
+            raise PermissionError(13, "file is locked", str(self))
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, method, fake)
+
+
+def _tmp_files(root: Path) -> list[str]:
+    return sorted(p.relative_to(root).as_posix() for p in root.rglob("*" + TMP_SUFFIX))
+
+
+@pytest.mark.parametrize(
+    "failing",
+    [
+        pytest.param(("write_bytes", "plc-1.yaml" + TMP_SUFFIX), id="tmp-stage"),
+        pytest.param(("replace", "line1.yaml" + TMP_SUFFIX), id="first-rename"),
+    ],
+)
+def test_absorb_write_failure_before_any_rename_leaves_repo_unchanged(
+    failing: tuple[str, str],
+    repo: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    draft_file, key_file = _write_inputs(tmp_path, _patched(tmp_path))
+    before = snapshot(repo)
+    with monkeypatch.context() as patched:
+        _fail_on(patched, *failing)
+        assert _absorb(repo, draft_file, key_file) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("error: cannot write the project tree: ")
+    assert err.rstrip().endswith("(repo unchanged)")
+    assert _tmp_files(repo) == []
+    assert snapshot(repo) == before
+
+
+def test_absorb_rename_failure_reports_replaced_files_and_rerun_finishes(
+    repo: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    draft_file, key_file = _write_inputs(tmp_path, _patched(tmp_path))
+    expected = tmp_path / "expected"
+    shutil.copytree(repo, expected)
+    assert _absorb(expected, draft_file, key_file) == 0
+    with monkeypatch.context() as patched:
+        _fail_on(patched, "replace", "plc-1.yaml" + TMP_SUFFIX)
+        assert _absorb(repo, draft_file, key_file) == 1
+    err = capsys.readouterr().err
+    assert "already replaced: alarms/line1.yaml" in err
+    assert "(repo unchanged)" not in err
+    assert err.rstrip().endswith(REPO_CHANGED)
+    assert _tmp_files(repo) == []
+    assert load_project(repo).ok
+    assert _absorb(repo, draft_file, key_file) == 0
+    assert snapshot(repo) == snapshot(expected)
+
+
+def test_absorb_write_failure_names_tmp_files_it_could_not_remove(
+    repo: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    draft_file, key_file = _write_inputs(tmp_path, _patched(tmp_path))
+    with monkeypatch.context() as patched:
+        _fail_on(patched, "replace", "line1.yaml" + TMP_SUFFIX)
+        _fail_on(patched, "unlink", "plc-1.yaml" + TMP_SUFFIX)
+        assert _absorb(repo, draft_file, key_file) == 1
+    err = capsys.readouterr().err
+    assert f"could not remove tags/plc-1.yaml{TMP_SUFFIX}" in err
+    assert err.rstrip().endswith(REPO_CHANGED)
+    assert _tmp_files(repo) == [f"tags/plc-1.yaml{TMP_SUFFIX}"]
 
 
 def test_absorb_missing_item_names_it(

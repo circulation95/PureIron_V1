@@ -8,7 +8,9 @@
   `converted:` 줄이 있다.
 - `absorb`: 사람이 판단할 충돌(M5-3 K4) — repo에 없는 드래프트 항목, `--rev`가 서명된 site_rev
   초과, `absorbs[site]` 퇴행. stderr가 `conflict:`로 시작한다. 서명·enrollment·tar·트리 검증
-  실패·`project_id` 불일치·content_hash 불일치는 1이다. 1·2 모두 repo를 바꾸지 않는다.
+  실패·`project_id` 불일치·content_hash 불일치·repo 쓰기 실패는 1이다. 1·2 모두 repo를 바꾸지
+  않는다 — 예외는 쓰기 rename 단계 실패뿐이고, 그때 stderr는 `(repo unchanged)` 대신 바뀐 파일과
+  `(repo changed: …)`를 쓴다.
 
 `gate`는 0 통과, 1 `E_DRAFT` 또는 점검할 수 없는 입력이다(stderr `error:`).
 """
@@ -22,7 +24,13 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from pureiron_bundle.verify import DraftState
-from pureiron_project.absorb import AbsorbConflictError, AbsorbError, absorb, report_lines
+from pureiron_project.absorb import (
+    AbsorbConflictError,
+    AbsorbError,
+    AbsorbWriteError,
+    absorb,
+    report_lines,
+)
 from pureiron_project.convert_legacy import convert_legacy, report_bytes, write_tree
 from pureiron_project.gate import GateError, draft_state, gate
 from pureiron_project.legacy_files import ConvertError
@@ -30,6 +38,7 @@ from pureiron_project.project import format_project, load_project
 
 EXIT_UNSUPPORTED = 2
 EXIT_CONFLICT = 2
+REPO_CHANGED = "(repo changed: run absorb again to finish, or restore with git)"
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -106,6 +115,9 @@ def _absorb(root: Path, draft: Path, site_key: Path, site_id: str, rev: int | No
     except AbsorbConflictError as exc:
         print(f"conflict: {exc} (repo unchanged)", file=sys.stderr)
         return EXIT_CONFLICT
+    except AbsorbWriteError as exc:
+        print(f"error: {exc} {REPO_CHANGED}", file=sys.stderr)
+        return 1
     except (AbsorbError, OSError) as exc:
         print(f"error: {exc} (repo unchanged)", file=sys.stderr)
         return 1
