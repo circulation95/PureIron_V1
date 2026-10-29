@@ -14,14 +14,14 @@ from pathlib import Path
 import pytest
 
 from pureiron_bundle import keys
-from pureiron_project.absorb import (
+from pureiron_project.canonical import Json, dump, load
+from pureiron_project.cli import main
+from pureiron_project.merge import (
     ALARM_FIELDS,
     TAG_FIELDS,
     FieldChange,
     plan_merge,
 )
-from pureiron_project.canonical import Json, dump, load
-from pureiron_project.cli import main
 from pureiron_project.project import load_project
 
 from .absorb_fakes import draft, enrollment, project_tar, snapshot, tree_tar

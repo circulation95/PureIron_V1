@@ -8,7 +8,7 @@ import pytest
 from pureiron_core.project import patch
 from pureiron_core.project.patch import PatchKind, changed_fields, merge, normalize
 from pureiron_core.project.ports import PatchInvalidError
-from pureiron_project import absorb
+from pureiron_project import merge as absorb_merge
 
 ALARM = {"id": "tank-high", "tag": "plant/level", "type": "above", "setpoint": 80, "deadband": 2}
 TAG = {
@@ -22,8 +22,8 @@ TAG = {
 
 def test_absorb_takes_exactly_the_site_patchable_fields() -> None:
     """벤더 absorb(M5-3 K2)는 현장이 PATCH로 바꿀 수 있는 필드만 repo로 옮긴다."""
-    assert absorb.ALARM_FIELDS == patch.ALARM_FIELDS
-    assert absorb.TAG_FIELDS == patch.TAG_FIELDS
+    assert absorb_merge.ALARM_FIELDS == patch.ALARM_FIELDS
+    assert absorb_merge.TAG_FIELDS == patch.TAG_FIELDS
     assert set(patch.RECORD_FIELDS) == {"deadband", "max_interval_s"}  # record 통째로 옮겨도 된다
 
 
