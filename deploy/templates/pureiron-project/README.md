@@ -24,4 +24,4 @@ uv run --package pureiron-project-tools pureiron-project absorb <repo> --draft <
 
 `gh secret set PUREIRON_CI_APP_ID` / `gh secret set PUREIRON_CI_APP_KEY < <key.pem>`으로도 넣을 수 있다.
 
-이 repo에 write 권한이 있는 사람은 workflow를 고쳐 이 키를 꺼낼 수 있고, 키는 곧 PureIron_V1 읽기 권한이다 — write 권한은 벤더 쪽에만 주고, 키 유출이 의심되면 벤더가 키를 재발급해 모든 고객 repo secret을 갱신한다.
+이 repo에 write 권한이 있는 사람은 workflow를 고쳐 이 키를 꺼낼 수 있고, 키는 곧 PureIron_V1에 대한 CI App 권한 전체(코드 읽기 + PR·commit status 쓰기)다. 지금은 고객 repo가 모두 벤더 계정 소유이고 write 권한자가 벤더뿐이라 이를 수용한다. 외부인(고객 엔지니어 등)에게 이 repo write 권한을 주기 전에 벤더가 고객 repo 전용 읽기 전용 App(Contents read만)으로 secret을 교체하거나 검증 workflow를 공개 repo로 분리한다. 키 유출이 의심되면 벤더가 키를 재발급해 모든 고객 repo secret을 갱신한다.
