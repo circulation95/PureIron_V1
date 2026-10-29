@@ -4,7 +4,8 @@
 드래프트에 없는 선택 필드 = 기본값(repo에서 제거). 그 밖의 필드·repo에만 있는 항목은 그대로 둔다.
 
 허용 필드는 core `project/patch.py`의 `ALARM_FIELDS`·`TAG_FIELDS`와 같다(core 단위 테스트가 고정).
-`record`는 하위 필드(`deadband`·`max_interval_s`)가 모두 PATCH 대상이라 객체 통째로 옮긴다.
+`record`는 스키마상 닫힌 객체이고 하위 필드(`deadband`·`max_interval_s`)가 모두 PATCH 대상이라
+객체 통째로 옮긴다(core 단위 테스트가 스키마 `record` 속성까지 고정).
 """
 
 from __future__ import annotations
