@@ -52,9 +52,10 @@ pureiron-site run                  # 서비스 loop(systemd): recover → poll �
 pureiron-site enroll --site <id> [--re-enroll] [--next-seq N] [--out FILE]
 pureiron-site secret set <name> [--generate] [--if-missing]   # 값은 stdin 한 줄
 pureiron-site report export --out DIR                          # 폐쇄망 보고 묶음
+pureiron-site project export --out draft.tar                   # 서명된 현장 드래프트(M5-2)
 ```
 
-설정 = 프로세스 환경 + `/etc/pureiron/updater.env`(`PUREIRON_ENV_FILE`, 프로세스 환경 우선) — systemd unit과 운영자 CLI가 같은 값을 본다. 변수 표는 `settings.py` docstring. `PUREIRON_SITE_ID`는 `enroll`이 env 파일에 기록하며, `enroll`·`secret set`·`report export`·`bundle verify --kind install`은 그 전에도 동작한다.
+설정 = 프로세스 환경 + `/etc/pureiron/updater.env`(`PUREIRON_ENV_FILE`, 프로세스 환경 우선) — systemd unit과 운영자 CLI가 같은 값을 본다. 변수 표는 `settings.py` docstring. `PUREIRON_SITE_ID`는 `enroll`이 env 파일에 기록하며, `enroll`·`secret set`·`report export`·`project export`·`bundle verify --kind install`은 `PUREIRON_SITE_ID` 없이 동작한다(`report export`·`project export`는 등록 뒤에만 — 현장 id는 `state/site.json`).
 
 ### 등록·secret·보고 (PD-3·PD-4, `enroll.py`·`secret_store.py`)
 
@@ -63,6 +64,22 @@ pureiron-site report export --out DIR                          # 폐쇄망 보�
 - `secret set`: `state/secrets/<name>`(0600, root면 소유자 `PUREIRON_SECRET_UID`=10001 — compose 파일 secret은 bind mount라 컨테이너 서비스 사용자가 읽어야 한다). `install.sh`가 `db_password`·`updater_token`을 `--generate --if-missing`으로 만든다. 온라인 현장은 `control_api_token`을 등록 때 받은 값으로 넣는다.
 - `report export`: 저널(`reports/.export.journal`: 첫 seq + 묶을 이름)을 쓰고 카운터를 예약한 뒤 `site-reports` 봉투(`pureiron-reports-<site>-<첫 seq>-<끝 seq>.json`)를 쓰고 원본을 옮긴다. 도중에 죽으면 다음 실행이 저널대로 같은 seq·같은 보고로 끝내고, 그 뒤 쌓인 보고도 같은 호출에서 다음 묶음으로 낸다(seq 재사용 없음). 저널이나 그것이 가리키는 보고가 깨져 export가 멈추면 저널을 지우고 다시 실행한다 — 예약했던 seq 구간은 비게 된다(gap은 수신 측에서 허용, 재사용보다 안전). 봉투 형식·검증은 `pureiron_bundle.sitesign` — 자기 키 검증은 enrollment에서만, 보고는 등록된 키로만 검증한다.
 - env 파일: `enroll`은 서비스가 실제로 읽는 env 파일에 `PUREIRON_SITE_ID`가 없으면 항상 기록한다(프로세스 환경에 값이 있어도).
+
+### 현장 드래프트 (`draft.py`, M5-2)
+
+`project export --out draft.tar`: 현장 admin이 REST `PATCH`(알람 setpoint·deadband·on_delay_s·priority, 태그 description·eu·record)로 바꾼 운영 값을 벤더에게 넘기는 파일(USB). 온라인 업로드는 M4.
+
+| 단계 | 동작 | 실패 |
+|---|---|---|
+| 등록 확인 | `state/site.json` + `site.key` 지문 일치 | 등록 전·불일치 exit 3(core 호출 없음) |
+| 적용본 확인 | `updater.json` `applied_gen` | 없음 exit 1 |
+| core export | `state/compose/g<applied>/`의 core 이미지로 `project export --draft`(쓰기 mount `state/draft-export/`, 컨테이너 uid 0700) | 이전 실행이 남긴 `state/draft-export`를 지우거나 만들 수 없음(경로 표시)·core 실패(트리 apply 전 등)·출력이 `project.tar`·`draft-meta.json` 두 일반 파일이 아님 exit 1 |
+| 서명·묶음 | payload `{site_id, site_rev, base_site_rev, content_hash, exported_at, project_tar_sha256}` → `site-draft` 봉투 `draft.json` + `project.tar` 결정적 tar | — |
+
+- `site_rev == base_site_rev`(흡수할 드래프트 없음)여도 파일은 쓰고 `note: no site drafts …`를 출력한다(exit 0).
+- 트리 apply 전 현장(`project_files`가 빈 상태 — 개발 스택·수동 복구 경로)에서 한 PATCH는 드래프트로 회수할 수 없다(export exit 1). 그 드래프트를 버리려면 `absorbs[site] = site_rev`를 단 번들을 보낸다.
+- 벤더는 등록된 site 공개키와 현장 id로 `pureiron_bundle.sitesign.open_draft`(서명·payload `site_id`·`project_tar_sha256`)를 확인한 뒤 고객 repo에 회수한다(`absorb`, M5-3). 회수 전 이 현장에 absorbs 없는 번들을 보내면 `E_DRAFT`로 거부된다. 형식은 [data-contracts](../../docs/wiki/sot/data-contracts.md) M5-2 절.
+- 다른 Updater 실행과 직렬화한다(`process_lock`).
 
 ## 테스트
 

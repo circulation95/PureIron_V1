@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from pureiron_core import __version__
 from pureiron_core.acquisition.ports import AcquisitionSummary, IngestCounts
 from pureiron_core.alarms.ports import AlarmStatus
+from pureiron_core.api.auth import SessionGuard
 from pureiron_core.api.health import build_health_router
 from pureiron_core.api.project import build_project_router
 from pureiron_core.audit.ports import AuditAction, AuditEntry, AuditSource
@@ -26,7 +27,8 @@ from pureiron_core.project.ports import EditLockConflictError, ProjectState
 from pureiron_core.realtime.ports import RealtimeStatus
 from pureiron_core.writes.ports import WriteOutcome, WritesStatus
 
-from .conftest import MIGRATIONS, FakeAudit
+from .auth_fakes import auth_fixture
+from .conftest import MIGRATIONS, FakeAudit, FakePatcher
 
 TOKEN = "s3cret-updater-token"
 
@@ -343,7 +345,13 @@ def _project_client(
 ) -> TestClient:
     app = FastAPI()
     app.include_router(
-        build_project_router(store=store, updater_token=token, audit=audit or FakeAudit()),
+        build_project_router(
+            store=store,
+            updater_token=token,
+            audit=audit or FakeAudit(),
+            patcher=FakePatcher(),
+            guard=SessionGuard(auth_fixture().service),
+        ),
         prefix="/api/v1",
     )
     return TestClient(app)

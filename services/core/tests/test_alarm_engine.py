@@ -334,6 +334,19 @@ def test_new_definition_evaluates_current_value_immediately() -> None:
     assert h.engine.set_definitions(definitions(alarm_def(setpoint=20.0), rev=2)) == []
 
 
+def test_site_patch_of_active_acked_alarm_keeps_ack_until_condition_clears() -> None:
+    """M5-2 R2: 현장 PATCH(setpoint·deadband·priority)는 같은 알람의 정의 교체다 — 조건이 계속
+    성립하면 ACK 상태를 잃지 않고(다시 UNACKED로 울리지 않는다), 해제되면 한 번 전이한다."""
+    h = _harness()
+    h.value(9.0)
+    h.ack()
+    patched = alarm_def(setpoint=8.5, deadband=0.2, priority="critical")
+    assert h.engine.set_definitions(definitions(patched, rev=2)) == []
+    assert h.state() == S.ACTIVE_ACKED
+    [cleared] = h.engine.set_definitions(definitions(alarm_def(setpoint=10), rev=3))
+    assert (cleared.from_state, cleared.to_state) == (S.ACTIVE_ACKED, S.NORMAL)
+
+
 def test_removed_definition_retires_with_one_transition_and_cancels_timer() -> None:
     h = Harness()
     h.engine.set_definitions(definitions(alarm_def(), alarm_def("slow", setpoint=5, on_delay_s=3)))

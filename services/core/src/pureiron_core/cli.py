@@ -2,7 +2,8 @@
 
 `project apply --tar`·`export --with-state`·`restore --from <dir>`(M5-0)는 번들 트리를
 적용·백업·복원한다(`project/apply.py`·`export.py`). tar 읽기·검증은 DB에 닿기 전에 끝낸다 —
-실패하면 아무것도 바꾸지 않는다.
+실패하면 아무것도 바꾸지 않는다. `export --draft`(M5-2 P5)는 현장 드래프트용 유효 트리 +
+`draft-meta.json`을 쓴다(적용된 트리가 없으면 실패).
 
 종료 코드(plan §6.6): 0 성공, 2 lock, 3 checksum, 4 실패, 5 lint.
 `runtime`/`app`을 import할 수 있는 유일한 모듈이다(import-linter 계약 (a)).
@@ -37,7 +38,13 @@ from pureiron_core.platform.db import Database, DatabaseUnavailableError, connec
 from pureiron_core.platform.migrate_lint import lint_directory
 from pureiron_core.project.apply import ProjectTree, apply_tree, restore_tree, tree_from_tar
 from pureiron_core.project.definitions import apply_definitions
-from pureiron_core.project.export import STATE_FILE, TREE_FILE, effective_files, tree_tar
+from pureiron_core.project.export import (
+    DRAFT_META_FILE,
+    STATE_FILE,
+    TREE_FILE,
+    effective_files,
+    tree_tar,
+)
 from pureiron_core.project.ports import ProjectStateError
 from pureiron_core.project.stub import PgProjectStateStore, state_from_snapshot
 from pureiron_core.runtime import SiteRuntime
@@ -97,12 +104,20 @@ def _parser() -> argparse.ArgumentParser:
     apply.add_argument("--version", required=True)
     apply.add_argument("--content-hash", required=True, help="manifest 값(트리 hash와 같아야 함)")
     export = proj_sub.add_parser(
-        "export", help="project_state JSON. --with-state면 --out 디렉터리에 state + 유효 트리"
+        "export",
+        help="project_state JSON. --with-state·--draft면 --out 디렉터리에 유효 트리와 함께",
     )
-    export.add_argument(
+    export_kind = export.add_mutually_exclusive_group()
+    export_kind.add_argument(
         "--with-state",
         action="store_true",
         help=f"--out 디렉터리에 {STATE_FILE} + 현재 유효 트리 {TREE_FILE}(Updater 백업)",
+    )
+    export_kind.add_argument(
+        "--draft",
+        action="store_true",
+        help=f"--out 디렉터리에 유효 트리 {TREE_FILE} + {DRAFT_META_FILE}(현장 드래프트, "
+        "서명은 pureiron-site project export). 적용된 트리가 없으면 실패",
     )
     export.add_argument("--out", type=Path, default=None)
     restore = proj_sub.add_parser(
@@ -271,6 +286,27 @@ def _export_with_state(settings: Settings, out: Path | None) -> int:
     return _print_json({"state": snapshot, "tree": tree})
 
 
+def _export_draft(settings: Settings, out: Path | None) -> int:
+    if out is None:
+        raise ProjectStateError("export --draft needs --out <directory>")
+    state, files = asyncio.run(_with_connection(settings, effective_files))
+    if not files:
+        raise ProjectStateError(
+            "no applied project tree (project_files is empty) — apply a bundle first"
+        )
+    tar = tree_tar(files)
+    meta = {
+        "site_rev": state.site_rev,
+        "base_site_rev": state.base_site_rev,
+        "content_hash": tree_from_tar(tar).content_hash,
+    }
+    out.mkdir(parents=True, exist_ok=True)
+    (out / TREE_FILE).write_bytes(tar)
+    meta_text = json.dumps(meta, sort_keys=True, indent=2) + "\n"
+    (out / DRAFT_META_FILE).write_text(meta_text, encoding="utf-8", newline="\n")
+    return _print_json({**meta, "files": len(files), "sha256": sha256(tar).hexdigest()})
+
+
 def _restore_dir(settings: Settings, source: Path) -> int:
     state = state_from_snapshot(_read_snapshot(source / STATE_FILE))
     tar = source / TREE_FILE
@@ -288,6 +324,8 @@ def _run_project(args: argparse.Namespace, settings: Settings) -> int:
         return _apply_tar(args, settings, args.tar)
     if command == "export" and args.with_state:
         return _export_with_state(settings, args.out)
+    if command == "export" and args.draft:
+        return _export_draft(settings, args.out)
     if command == "restore" and args.source.is_dir():
         return _restore_dir(settings, args.source)
     snapshot = _read_snapshot(args.source) if command == "restore" else None

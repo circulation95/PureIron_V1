@@ -230,6 +230,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/project/alarms/{alarm_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Patch Alarm */
+        patch: operations["patch_alarm"];
+        trace?: never;
+    };
     "/api/v1/project/edit-lock": {
         parameters: {
             query?: never;
@@ -246,6 +263,23 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/project/tags/{tag_path}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Patch Tag */
+        patch: operations["patch_tag"];
         trace?: never;
     };
     "/api/v1/readyz": {
@@ -483,6 +517,29 @@ export interface components {
              * @description 그 값의 샘플 시각(복원한 알람은 null)
              */
             value_ts: string | null;
+        };
+        /** AlarmPatch */
+        AlarmPatch: {
+            /**
+             * Deadband
+             * @description null = 제거(기본 0)
+             */
+            deadband?: number | null;
+            /**
+             * On Delay S
+             * @description null = 제거(기본 0)
+             */
+            on_delay_s?: number | null;
+            /**
+             * Priority
+             * @description null = 제거(기본 medium)
+             */
+            priority?: ("low" | "medium" | "high" | "critical") | null;
+            /**
+             * Setpoint
+             * @description 필수 필드 — null 불가
+             */
+            setpoint?: number;
         };
         /**
          * Alarms
@@ -923,6 +980,21 @@ export interface components {
             /** New Password */
             new_password: string;
         };
+        /** PatchOut */
+        PatchOut: {
+            /**
+             * Definition
+             * @description 저장된 정규형 정의(스키마 기본값 생략)
+             */
+            definition: {
+                [key: string]: unknown;
+            };
+            /**
+             * Site Rev
+             * @description PATCH 뒤 site_rev(no-op이면 그대로)
+             */
+            site_rev: number;
+        };
         /**
          * PingMessage
          * @description 20s마다. 클라이언트는 `pong`으로 답한다(60s 동안 pong이 없으면 서버가 끊는다).
@@ -1014,6 +1086,19 @@ export interface components {
              */
             connections: number;
         };
+        /** RecordPatch */
+        RecordPatch: {
+            /**
+             * Deadband
+             * @description null = 제거
+             */
+            deadband?: number | null;
+            /**
+             * Max Interval S
+             * @description null = 제거
+             */
+            max_interval_s?: number | null;
+        };
         /** @enum {string} */
         RoleName: "viewer" | "operator" | "engineer" | "admin";
         /** SchemaEnvelopeCheck */
@@ -1050,6 +1135,21 @@ export interface components {
              * @description 현재 plan의 태그 전부(tag_id 순)
              */
             tags: components["schemas"]["TagValueOut"][];
+        };
+        /** TagPatch */
+        TagPatch: {
+            /**
+             * Description
+             * @description null = 제거
+             */
+            description?: string | null;
+            /**
+             * Eu
+             * @description null = 제거
+             */
+            eu?: string | null;
+            /** @description null = record 전체 제거 */
+            record?: components["schemas"]["RecordPatch"] | null;
         };
         /**
          * TagUpdateMessage
@@ -1845,6 +1945,76 @@ export interface operations {
             };
         };
     };
+    patch_alarm: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                alarm_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AlarmPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PatchOut"];
+                };
+            };
+            /** @description not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description requires admin (or E_ORIGIN) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description unknown or retired definition */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description E_EDIT_LOCKED: Updater holds the edit lock */
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description site-db unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     acquire_edit_lock: {
         parameters: {
             query?: never;
@@ -1918,6 +2088,76 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    patch_tag: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tag_path: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TagPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PatchOut"];
+                };
+            };
+            /** @description not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description requires admin (or E_ORIGIN) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description unknown or retired definition */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description E_EDIT_LOCKED: Updater holds the edit lock */
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description site-db unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

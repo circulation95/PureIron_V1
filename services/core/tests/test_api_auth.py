@@ -21,7 +21,7 @@ from pureiron_core.platform.db import Database
 from pureiron_core.project.ports import ProjectState
 
 from .auth_fakes import AuthFixture, auth_fixture
-from .conftest import FakeAudit
+from .conftest import FakeAudit, FakePatcher
 
 PASSWORD = "correct-horse-1"
 ME = "/api/v1/auth/me"
@@ -487,7 +487,13 @@ async def test_concurrent_attempt_rejection_has_short_retry_after() -> None:
 
 def test_openapi_names_session_and_updater_schemes_apart() -> None:
     api = _api()
-    project = build_project_router(store=_NoProject(), updater_token="t", audit=FakeAudit())
+    project = build_project_router(
+        store=_NoProject(),
+        updater_token="t",
+        audit=FakeAudit(),
+        patcher=FakePatcher(),
+        guard=SessionGuard(api.fx.service),
+    )
     api.app.include_router(project, prefix="/api/v1")
     spec = api.app.openapi()
     schemes = spec["components"]["securitySchemes"]

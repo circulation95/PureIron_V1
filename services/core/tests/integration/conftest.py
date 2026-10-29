@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import secrets
@@ -42,6 +43,16 @@ DB_PORT = int(os.environ.get("PUREIRON_DEV_DB_PORT", "25432"))
 CORE_PORT = int(os.environ.get("PUREIRON_DEV_CORE_PORT", "18000"))
 WEB_PORT = int(os.environ.get("PUREIRON_IT_WEB_PORT", "18080"))
 EXISTING_DSN = os.environ.get("PUREIRON_TEST_EXISTING_DSN")
+
+# core-test 이미지(n-minus-1, `Dockerfile.test`)에는 core 패키지만 설치된다. 드래프트 compose
+# 테스트는 bundle-tools·updater를 import 하므로, 없으면 수집하지 않는다(수집 오류로 전체가
+# 중단되지 않게).
+collect_ignore = (
+    ["test_compose_draft.py"]
+    if importlib.util.find_spec("pureiron_updater") is None
+    or importlib.util.find_spec("pureiron_bundle") is None
+    else []
+)
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:

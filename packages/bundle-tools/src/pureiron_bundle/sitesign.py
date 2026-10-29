@@ -1,4 +1,4 @@
-"""현장 site key 서명 문서(PD-3): enrollment 파일·report export.
+"""현장 site key 서명 문서(PD-3): enrollment 파일·report export·현장 드래프트(M5-2).
 
 현장은 설치 때 만든 Ed25519 site key(raw 32B seed)로 자기 문서에 서명하고, control-api(M4)는
 같은 함수로 검증한다(P3). 봉투 형식:
@@ -8,11 +8,18 @@
 서명 대상은 JCS(`{"format": 1, "payload": …, "purpose": …}`)다 — 용도(`purpose`)를 서명에 넣어
 enrollment 서명을 report로(또는 그 반대로) 재사용할 수 없게 한다. root 서명(`trust.py`)과 같은
 도메인 분리 규칙이다.
+
+현장 드래프트 파일(`draft.tar`, plan M5-2 P6·P7)은 `draft.json`(purpose `site-draft` 봉투) +
+`project.tar`(유효 트리) 두 일반 파일만 담은 결정적 tar다(경로 바이트 순, PAX, mtime 0, root,
+0644). 봉투 payload `project_tar_sha256`이 tree를 묶는다 — `open_draft`가 서명과 함께 확인한다.
 """
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
+import tarfile
 from collections.abc import Mapping
 from enum import StrEnum
 from typing import cast
@@ -20,6 +27,8 @@ from typing import cast
 import rfc8785
 
 from pureiron_bundle import keys
+from pureiron_bundle.pib import tar_info
+from pureiron_bundle.tarsafe import PARSER_EXHAUSTION, open_tar_stream
 
 ENVELOPE_FORMAT = 1
 _ENVELOPE_KEYS = {"format", "purpose", "payload", "signature"}
@@ -32,6 +41,17 @@ class SitePurpose(StrEnum):
     """site 공개키 등록(자기 키로 서명 = 개인키 보유 증명)."""
     REPORTS = "site-reports"
     """ApplyAttempt 보고 묶음(폐쇄망 USB 반출, `report_seq` 포함)."""
+    DRAFT = "site-draft"
+    """현장 드래프트(운영 값 PATCH가 실린 유효 트리, `draft.tar`의 `draft.json`)."""
+
+
+DRAFT_ENVELOPE = "draft.json"
+DRAFT_TREE = "project.tar"
+# core project.tar 상한(64 MiB, core `apply.TREE_LIMIT_BYTES`) + 봉투. 메모리에서 읽는다.
+DRAFT_LIMIT_BYTES = 65 * 1024 * 1024
+_ENVELOPE_LIMIT_BYTES = 64 * 1024
+_DRAFT_INTS = ("site_rev", "base_site_rev")
+_DRAFT_TEXTS = ("site_id", "content_hash", "exported_at", "project_tar_sha256")
 
 
 class SignedDocumentError(ValueError):
@@ -105,3 +125,74 @@ def _payload_key(payload: Mapping[str, Json]) -> bytes:
     if len(public) != keys.KEY_LEN:
         raise SignedDocumentError(f"payload.public_key must be {keys.KEY_LEN} bytes")
     return public
+
+
+def tree_digest(project_tar: bytes) -> str:
+    return "sha256:" + hashlib.sha256(project_tar).hexdigest()
+
+
+def pack_draft(envelope: bytes, project_tar: bytes) -> bytes:
+    """`draft.tar` 바이트(같은 입력 = 같은 바이트)."""
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w", format=tarfile.PAX_FORMAT) as tar:
+        for name, data in sorted(
+            {DRAFT_ENVELOPE: envelope, DRAFT_TREE: project_tar}.items(),
+            key=lambda item: item[0].encode(),
+        ):
+            tar.addfile(tar_info(name, len(data)), io.BytesIO(data))
+    return buffer.getvalue()
+
+
+def _draft_members(data: bytes) -> dict[str, bytes]:
+    """정확히 `draft.json`·`project.tar` 두 일반 파일. 그 밖의 항목·중복·크기 초과는 거부."""
+    if len(data) > DRAFT_LIMIT_BYTES:
+        raise SignedDocumentError(f"draft is {len(data)} bytes (limit {DRAFT_LIMIT_BYTES})")
+    limits = {DRAFT_ENVELOPE: _ENVELOPE_LIMIT_BYTES, DRAFT_TREE: DRAFT_LIMIT_BYTES}
+    members: dict[str, bytes] = {}
+    try:
+        with open_tar_stream(io.BytesIO(data)) as tar:
+            for member in tar:
+                name = member.name
+                if name not in limits or name in members or not member.isreg():
+                    raise SignedDocumentError(f"unexpected draft entry {name!r}")
+                if member.size > limits[name]:
+                    raise SignedDocumentError(f"draft entry {name!r} is too large")
+                handle = tar.extractfile(member)
+                if handle is None:
+                    raise SignedDocumentError(f"draft entry {name!r} is unreadable")
+                members[name] = handle.read()
+    except SignedDocumentError:
+        raise
+    except (tarfile.TarError, ValueError, UnicodeError, *PARSER_EXHAUSTION) as exc:
+        raise SignedDocumentError(f"draft is not a valid tar ({exc})") from exc
+    missing = sorted(set(limits) - set(members))
+    if missing:
+        raise SignedDocumentError(f"draft is missing {missing}")
+    return members
+
+
+def open_draft(data: bytes, public: bytes, *, site_id: str) -> tuple[dict[str, Json], bytes]:
+    """`draft.tar`를 등록된 site 공개키로 검증하고 (payload, project.tar 바이트)를 돌려준다.
+
+    서명(purpose `site-draft`)·payload 형식·`site_id`가 그 공개키의 현장과 같은지·
+    `project_tar_sha256` 일치를 모두 확인한다 — 하나라도 틀리면 `SignedDocumentError`(현장 X
+    키로 서명했지만 payload에 다른 site_id를 적은 파일을 그 현장 드래프트로 읽지 않게). tree
+    내용(프로젝트 검증·content_hash)은 호출자(absorb)가 본다.
+    """
+    members = _draft_members(data)
+    payload = open_document(members[DRAFT_ENVELOPE], SitePurpose.DRAFT, public)
+    for key in _DRAFT_INTS:
+        value = payload.get(key)
+        if type(value) is not int or value < 0:
+            raise SignedDocumentError(f"payload.{key} must be a non-negative integer")
+    for key in _DRAFT_TEXTS:
+        if not isinstance(payload.get(key), str):
+            raise SignedDocumentError(f"payload.{key} must be a string")
+    if payload["site_id"] != site_id:
+        raise SignedDocumentError(
+            f"payload.site_id {payload['site_id']!r} does not match expected site {site_id!r}"
+        )
+    tree = members[DRAFT_TREE]
+    if payload["project_tar_sha256"] != tree_digest(tree):
+        raise SignedDocumentError("project.tar does not match payload.project_tar_sha256")
+    return payload, tree

@@ -8,11 +8,13 @@
     pureiron-site enroll --site <id> [--re-enroll] [--next-seq N] [--out FILE]
     pureiron-site secret set <name> [--generate] [--if-missing]   # 값은 stdin(한 줄)
     pureiron-site report export --out DIR                          # 폐쇄망 보고 묶음(USB)
+    pureiron-site project export --out draft.tar                   # 서명된 현장 드래프트(USB)
 
 종료 코드: 0 성공·대기·변경 없음, 1 거부·실패, 2 다른 Updater 실행 중·진행 중 시도, 3 설정 오류.
-`enroll`·`secret set`·`report export`·`bundle verify --kind install`은 `PUREIRON_SITE_ID` 없이
-쓴다(등록 전이거나, 현장 id를 `state/site.json`에서 읽는다).
-설정은 프로세스 환경 + `/etc/pureiron/updater.env`(`settings.py`). project export는 M3 이후 범위다.
+`enroll`·`secret set`·`report export`·`project export`·`bundle verify --kind install`은
+`PUREIRON_SITE_ID` 없이 쓴다(등록 전이거나, 현장 id를 `state/site.json`에서 읽는다).
+설정은 프로세스 환경 + `/etc/pureiron/updater.env`(`settings.py`). `project export`는 등록 뒤에만
+동작하고 드래프트 형식은 `draft.py`(M5-2).
 """
 
 from __future__ import annotations
@@ -44,6 +46,7 @@ from pureiron_bundle.verify import (
 from pureiron_updater import __version__
 from pureiron_updater.compose import ComposeCli
 from pureiron_updater.core import CoreHttp
+from pureiron_updater.draft import DraftError, export_draft
 from pureiron_updater.enroll import EnrollError, enroll, export_reports, load_identity
 from pureiron_updater.images import DockerCli
 from pureiron_updater.metrics import result_of
@@ -121,6 +124,12 @@ def _parser() -> argparse.ArgumentParser:
     report_sub = report.add_subparsers(dest="report_command", required=True)
     export = report_sub.add_parser("export", help="대기 보고를 서명 묶음으로(report_seq)")
     export.add_argument("--out", type=Path, required=True)
+    project = sub.add_parser("project", help="현장 프로젝트")
+    project_sub = project.add_subparsers(dest="project_command", required=True)
+    draft = project_sub.add_parser(
+        "export", help="현장 드래프트(운영 값 PATCH가 실린 유효 트리)를 site key 서명 파일로"
+    )
+    draft.add_argument("--out", type=Path, required=True, help="draft.tar 경로(USB 반출)")
     return parser
 
 
@@ -278,6 +287,23 @@ def _report_export(settings: Settings, out: Path) -> int:
     return EXIT_OK
 
 
+def _project_export(settings: Settings, out: Path) -> int:
+    with process_lock(settings.state_dir):
+        try:
+            result = export_draft(settings, real_deps(settings).compose, out, now=datetime.now(UTC))
+        except DraftError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_FAILED
+    payload = result.payload
+    print(f"draft:         {result.path}")
+    print(f"site:          {payload['site_id']}")
+    print(f"site_rev:      {payload['site_rev']} (base {payload['base_site_rev']})")
+    print(f"content_hash:  {payload['content_hash']}")
+    if not result.has_drafts:
+        print("note: no site drafts since the last applied bundle (site_rev == base_site_rev)")
+    return EXIT_OK
+
+
 def _status(settings: Settings, *, as_json: bool) -> int:
     state = StateStore(settings.state_dir).load()
     text = json.dumps(to_json(state), indent=2, sort_keys=True, ensure_ascii=False)
@@ -340,7 +366,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         settings = Settings.from_env(
             merged_env(os.environ),
-            require_site=not (install_verify or command in ("enroll", "secret", "report")),
+            require_site=not (
+                install_verify or command in ("enroll", "secret", "report", "project")
+            ),
         )
         commands: dict[str, Callable[[], int]] = {
             "apply": lambda: _apply(settings, args.pib),
@@ -353,6 +381,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "enroll": lambda: _enroll(settings, args),
             "secret": lambda: _secret_set(settings, args),
             "report": lambda: _report_export(settings, args.out),
+            "project": lambda: _project_export(settings, args.out),
         }
         return commands[command]()
     except (BusyError, AttemptInProgressError) as exc:
