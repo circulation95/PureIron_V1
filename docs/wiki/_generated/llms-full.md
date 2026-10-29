@@ -568,7 +568,7 @@ PoC 무료 모드(첫 유료 계약 전): GitHub Free private repo라 branch pro
 
 ## ADR-025: 프로젝트 정본 · 드래프트 회수(단조 site_rev)
 
-**상태**: Accepted — target design(미구현). ADR-012 개정의 근거.
+**상태**: Accepted — 부분 구현: project-tools 정규화·hash·검증(M1), legacy 변환기(M5-1), 번들 트리 적용·`base_site_rev`(M5-0), 현장 PATCH·`site_rev`·서명 드래프트(M5-2), 회수 `absorb`·게이트 `gate`(M5-3a, [data-contracts](../sot/data-contracts.md) 해당 절). 고객 repo 템플릿·검증 workflow는 M5-3b. ADR-012 개정의 근거.
 
 **결정**
 고객 프로젝트(장비·태그·알람·화면 설정)의 정본은 **고객별 Git repo**(`pureiron-project-<id>`)다. 현장 site-db의 프로젝트는 적용본이며, 현장에서 REST `PATCH`로 고친 내용은 드래프트로 남는다. `PATCH`마다 `site_rev`가 단조 증가(리셋 없음)하고, 적용 시 `base_site_rev`를 기록한다. 미회수 드래프트가 있으면 새 배포는 `E_DRAFT`로 거부된다. 회수는 현장 전체 스냅샷 export → 벤더가 고객 repo에서 `pureiron-project absorb` → PR(`absorbs: {site: rev}` 기록) 순서다. 비밀값은 프로젝트에 넣지 않고 `secret://<name>` 참조만 둔다. 프로젝트 파일은 정규화 규칙(YAML 1.2 strict, RFC 8785 숫자, 기본값 생략, POSIX 경로, UTF-8 NFC, LF)으로 **무손실 왕복**하고 `content_hash`로 버전을 식별한다. legacy 변환기는 지원하지 않는 항목을 반드시 보고한다.
@@ -2332,7 +2332,8 @@ historian: { retention_days: 365, default_deadband: 0.0, default_max_interval_s:
 ```
 
 - 정규화: YAML 1.2 strict(중복 키·anchor·커스텀 tag 거부), 숫자 RFC 8785, 기본값 생략, POSIX 상대 경로, UTF-8 NFC, LF, 키 정렬. `content_hash = sha256(정렬된 (경로, 정규화 내용))`, 버전 = 고객 repo 태그 `vN`.
-- 현장 드래프트: `PATCH`마다 `site_rev += 1`(리셋 없음, 구현됨 — 아래 M5-2 절), 적용 시 `base_site_rev = site_rev`(구현됨, 아래 M5-0 절). 배포 게이트: `absorbs[site]`가 있으면 `site_rev ≤ absorbs[site]`, 없으면 `site_rev == base_site_rev`, 아니면 `E_DRAFT`.
+- 현장 드래프트: `PATCH`마다 `site_rev += 1`(리셋 없음, 구현됨 — 아래 M5-2 절), 적용 시 `base_site_rev = site_rev`(구현됨, 아래 M5-0 절). 배포 게이트: `absorbs[site]`가 있으면 `site_rev ≤ absorbs[site]`, 없으면 `site_rev == base_site_rev`, 아니면 `E_DRAFT`(구현됨 — bundle verify ⑥·Updater `locked`·`pureiron-project gate`).
+- 회수(구현됨, 아래 M5-3a 절): 서명된 현장 `draft.tar` → 벤더가 고객 repo에서 `pureiron-project absorb`(PATCH 허용 필드만 필드 단위 병합 + `absorbs.<site>` 기록 + 커밋 trailer) → PR은 운영자. 고객 repo 템플릿·검증 workflow는 M5-3b.
 - 비밀값은 `secret://<name>` 참조만.
 - legacy 변환기 1차 범위: `project.json`, Modbus TCP 연결·태그, 상·하한 알람. OPC-UA·UDT·scripts·dashboard·expression/query 태그·shelve·`auth/users.json`은 **미지원으로 보고**.
 
@@ -2534,6 +2535,31 @@ ADR-013(개정) 쓰기 경로의 계약과 collector 실행부다. core 쓰기 �
 - **검증 `pureiron_bundle.sitesign.open_draft(data, public, *, site_id) → (payload, project.tar)`**(P7, bundle-tools): 등록된 site 공개키와 그 현장 id로만(자기 키 검증 없음). payload `site_id`가 기대 현장과 다르면(그 현장 키로 서명했어도) `SignedDocumentError`. 두 파일 외 항목·중복·누락·링크·크기 초과(전체 65 MiB, 봉투 64 KiB)·tar 형식 오류·다른 purpose·서명 불일치·payload 형식(site_rev·base 음 아닌 정수, 나머지 문자열)·`project_tar_sha256` 불일치는 `SignedDocumentError`. tar 헤더는 `tarsafe`(적대적 헤더 제한)로 읽는다. 트리 내용 검증·`content_hash` 재계산은 absorb(M5-3)가 한다.
 - **게이트**: 드래프트가 있는 현장(`site_rev > base_site_rev`)에 absorbs 없는 번들은 `E_DRAFT`(bundle verify ⑥·Updater `locked` 재검사, `check_draft_gate`). 벤더가 `absorbs[site] ≥ site_rev`로 회수한 번들만 통과한다.
 - **검증**: core 단위(허용·거부 필드 표, null 제거, 기본값 생략·정규 숫자, no-op, admin 미만 403·Origin 403·오류 매핑 423/404/422/503, 활성 ACK 알람 setpoint PATCH), core 통합 site-db(rev·감사 같은 트랜잭션, no-op, 잠금 423·없음/retire 404 무변경, 감사 트리거 실패 전체 롤백, 다른 연결이 정의 적용 advisory lock을 쥔 동안 대기 상한 뒤 503 경로·무변경과 풀리면 대기하던 PATCH 성공, Updater 잠금 획득과 동시 실행 시 결과가 (PATCH 성공 + 획득 site_rev +1)·(423) 둘뿐, `--draft` PATCH 반영·바이트 동일·트리 없음 exit 4), bundle-tools(결정적 tar, 다른 키·위조·다른 purpose·다른 site_id·tar 변조·항목 추가/누락/중복·payload 형식 거부), Updater 단위(등록 전·적용 전·core 실패·출력 위반·작업 디렉터리 준비 실패 거부, 같은 입력 같은 바이트, CLI 종료 코드·안내), compose(트리 apply → PATCH 3회 → site_rev +3 → 게이트 `E_DRAFT`/통과 → 잠금 중 423 → 실제 core 컨테이너로 `export_draft` → `open_draft` + 트리 content_hash·PATCH 값; compose 하네스에 Updater 설치가 없어 Updater 쪽은 같은 argv 모양의 테스트 `Compose` 어댑터로 부른다).
+
+### V1 구현 현황 (M5-3a 드래프트 회수 absorb·gate, 2026-10-30)
+
+벤더가 현장 드래프트 파일(`draft.tar`, M5-2 절)을 고객 repo에 회수하고, 번들을 만들기 전에 드래프트 게이트를 미리 점검한다. 근거 plan `pureiron-m5-3.md` K1·K2·K4~K8. project-tools가 bundle-tools에 직접 의존한다(K7 — `sitesign`·`tarsafe`·`check_draft_gate`를 복사하지 않고 재사용, 그 대가로 core 이미지에 `cryptography`가 들어간다).
+
+- **`pureiron-project absorb --draft <draft.tar> --site <id> --site-key <site-enrollment.json> [--rev N] [<dir>, 기본 .]`** — 거부되면 repo는 한 바이트도 바뀌지 않는다(전부 아니면 전무):
+  1. **신뢰 근거(K1)**: `--site-key`는 Updater `enroll`이 쓴 `state/enrollment.json`(purpose `site-enrollment`, 자기 서명). 자기 서명 검증 + payload `site_id == --site` + payload `fingerprint`가 공개키 fingerprint와 같아야 그 공개키로 `open_draft`(서명·purpose·site_id·`project_tar_sha256`)를 부른다. 자기 서명은 개인키 보유만 증명하므로 위조 파일도 "유효"하다 — 신뢰는 **파일 출처**(설치 때 벤더가 받아 둔 파일)에서 오고, stdout 첫 줄 `site key: <site> <fingerprint> (compare with the installation record)`를 설치 기록과 사람이 대조한다. M4 fleet 등록부(`sites/`)가 생기면 그 키로 바꾼다.
+  2. **드래프트 트리**: `project.tar`를 `tarsafe`로 읽는다(정규화된 프로젝트 파일 경로의 일반 파일만, 중복·링크·그 밖의 파일 거부, 10,000 파일 상한) → `check_texts`(= `load_project` 규칙) 검증 → 다시 계산한 content_hash가 payload `content_hash`와 같아야 한다.
+  3. **repo**: `load_project` 통과, `project.yaml project_id`가 드래프트와 같아야 한다. 기록할 리비전 N = `--rev`(없으면 서명된 `site_rev`)는 서명된 `site_rev` 이하이고 기존 `absorbs[site]` 이상이어야 한다(퇴행 금지).
+  4. **필드 단위 병합(K2, 순수 함수 `plan_merge`)**: 드래프트의 알람(`id`)·태그(`path`, 파일과 무관하게 전역)마다 PATCH 허용 필드 — 알람 `setpoint`·`deadband`·`on_delay_s`·`priority`, 태그 `description`·`eu`·`record`(하위 필드가 모두 허용 대상이라 객체 통째로) — 를 repo의 같은 항목에 덮는다. 드래프트에 없는 선택 필드 = 스키마 기본값이므로 repo에서 지운다. 그 밖의 필드(태그 주소·장비·write 등)와 repo에만 있는 항목(새 태그·장비)은 그대로 둔다. 허용 필드 목록은 core `project/patch.py`와 같다(core 단위 테스트가 고정).
+  5. **쓰기(K5)**: 바뀐 파일만 정규형으로 + `project.yaml absorbs.<site> = N`(이미 N이면 그대로). 쓸 결과 트리를 먼저 `check_texts`로 검증하고, 파일마다 tmp → rename, 쓰다 실패하면 원래 바이트로 되돌린다. 쓴 뒤 `load_project`로 다시 확인한다. PATCH 값이 이미 repo와 같아도 absorbs는 기록한다.
+- **종료 코드(K4)** — 1·2 모두 repo 무변경, stderr 한 줄 `… (repo unchanged)`:
+
+  | 코드 | 경우 |
+  |---|---|
+  | 0 | 회수 성공(바꿀 것이 없어도) |
+  | 1 (`error:`) | enrollment 서명·형식·현장·fingerprint 불일치, 드래프트 서명·형식·tar·`project_tar_sha256`, 드래프트 트리 검증 실패, content_hash ≠ payload, repo 검증 실패, `project_id` 불일치, 파일을 읽을 수 없음 |
+  | 2 (`conflict:`) | 드래프트의 알람·태그가 repo에 없음(이름 목록 출력), `--rev` > 서명된 `site_rev`, 기존 `absorbs[site]` > N(퇴행) |
+  | 2 (argparse `usage:`) | 사용법 오류 — stdout이 비고 stderr가 `usage:`로 시작해 충돌과 구분된다 |
+
+- **출력**: `site key: …` → `draft: site_rev=… base_site_rev=… content_hash=…` → (`site_rev == base_site_rev`면 `note: the draft has no site changes …`) → 바뀐 필드마다 `<file>: <alarm|tag> <id> <field>: <전> -> <후>`(값은 JCS JSON, 필드 없음 = `(absent)`) → `absorbs[<site>]: <전> -> <N>` → `wrote <file>` → `ok: <회수 뒤 content_hash>` → 마지막 줄 커밋 trailer **`Absorbs-Draft: <site> rev=<N> sha256=<draft.tar 파일 sha256 hex>`**. 커밋·PR은 운영자가 한다(trailer를 커밋 메시지에 붙인다).
+- **한계(R1)**: 공통 base 트리가 없어 3-way 병합이 아니다. 번들 이후 repo HEAD에서 벤더가 같은 PATCH 허용 필드를 바꿨다면 현장 값이 이긴다 — 바뀐 필드 전·후를 모두 출력하므로 PR 리뷰에서 사람이 판단한다. repo에서 지운(또는 이름을 바꾼) 항목이 드래프트에 남아 있으면 충돌(exit 2)이다 — 현장 값을 버릴지 사람이 정한다(항목을 되살려 회수한 뒤 다시 지우는 식).
+- **`pureiron-project gate <dir> --site <id> (--draft <draft.tar> --site-key <enrollment> | --site-rev N --base-site-rev M)`(K6)**: 현장 리비전을 서명된 드래프트(absorb와 같은 검증) 또는 숫자로 받아 repo `absorbs`와 `check_draft_gate`(bundle verify ⑥·Updater `locked`와 같은 함수, M4 publish도 같은 함수)로 판정한다. 0 = 통과(`ok: site … site_rev=… base_site_rev=… absorbs=…`), 1 = `E_DRAFT` 또는 점검할 수 없는 입력(stderr `error:`), 2 = 사용법 오류(입력 형태를 섞거나 짝이 빠짐).
+- **core `apply_tree` no-op(K8, M5-2 리뷰 LOW-4)**: no-op 조건에 `site_rev == base_site_rev`를 더했다. 같은 project_id·version·hash·파일이라도 드래프트가 남아 있으면(게이트를 이미 통과한 번들 = 흡수 끝) 정의를 다시 적용하고 `base_site_rev = site_rev`로 옮긴다. 첫 적용 뒤에는 rev가 같아 Updater recover 재실행은 그대로 no-op이다. 새 마이그레이션 없음.
+- **검증**: project-tools 단위(병합 계획 표, 값 변경·선택 필드 제거·같은 값·재실행 무변경·`--rev`·현재 디렉터리 기본값, 다른 키·enrollment 다른 키/다른 현장/위조·봉투 변조·tar 변조·링크 항목·payload hash 불일치·`project_id` 불일치·잘못된 트리·repo 무효·파일 없음 → 1 무변경, repo에 없는 항목·`--rev` 초과·absorbs 퇴행 → 2 무변경, trailer·fingerprint·안내 출력; gate 두 입력 형태 × 3분기·서명 실패·사용법 오류), G1-6 property(아래 [testing](testing.md) 11절), core 단위(no-op 판정 표, absorb 허용 필드 = PATCH 허용 필드)·site-db 통합(같은 트리 + 드래프트 → 재적용·base 이동 → 재실행 no-op), compose(M5-2 수직 경로 뒤에 Updater enrollment 파일로 `absorb` CLI → trailer·fingerprint·바뀐 필드 → `gate` 통과 → 회수한 트리 `project apply --tar` → `base_site_rev == site_rev`, 유효 트리 = 회수한 repo hash·PATCH 값).
 
 ---
 
@@ -3705,5 +3731,6 @@ E2E/NF:
 - 이미지 빌드(`deploy/build/build_images.sh`)는 전용 docker-container builder + `SOURCE_DATE_EPOCH`·`rewrite-timestamp`로 tar를 만든 뒤 `docker load` 한다(현장 번들과 같은 save/load 경로). uv가 남기는 설치 시각 메타데이터(`uv_cache.json`)는 `deploy/build/normalize_venv.py`가 지운다.
 - web-e2e의 Playwright는 CI에서 브라우저만 받는다(`npx playwright install chromium`, `--with-deps` 아님). chromium 실행에 필요한 시스템 라이브러리는 self-hosted runner에 미리 설치돼 있어야 하며, runner 준비 때 한 번만 `sudo npx playwright install-deps chromium`을 실행한다(job에서는 sudo를 쓰지 않는다).
 - 통합 테스트는 `PUREIRON_TEST_EXISTING_DSN`을 주면 새 DB를 만들지 않고 주어진 DB에서 돈다(n-minus-1이 쓰는 모드).
+- **G1-6 property(hypothesis 1,000예, `deadline=None`)**: `packages/project-tools/tests/test_canonical.py`(JSON 값 dump/load 왕복)와 `test_absorb_property.py`(M5-3a) ⓐ 무작위 유효 트리를 JSON(정규형이 아닌 YAML)으로 쓰기 → `load_project` → `fmt` 고정점·fmt 전후 hash 동일 ⓑ 무작위 base 트리 + 무작위 PATCH 허용 값(설정·제거) 드래프트를 base 사본에 absorb → repo hash == 드래프트 `content_hash` ⓒ repo가 앞서 태그를 추가한 경우 그 태그 보존. ⓑ·ⓒ의 hash 비교는 absorb가 기록한 `project.yaml absorbs` 키를 지운 트리 기준이다(기록 값은 따로 확인). `unit` job에 포함된다.
 
 ---

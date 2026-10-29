@@ -573,7 +573,7 @@ PoC 무료 모드(첫 유료 계약 전): GitHub Free private repo라 branch pro
 
 ## ADR-025: 프로젝트 정본 · 드래프트 회수(단조 site_rev)
 
-**상태**: Accepted — target design(미구현). ADR-012 개정의 근거.
+**상태**: Accepted — 부분 구현: project-tools 정규화·hash·검증(M1), legacy 변환기(M5-1), 번들 트리 적용·`base_site_rev`(M5-0), 현장 PATCH·`site_rev`·서명 드래프트(M5-2), 회수 `absorb`·게이트 `gate`(M5-3a, [data-contracts](../sot/data-contracts.md) 해당 절). 고객 repo 템플릿·검증 workflow는 M5-3b. ADR-012 개정의 근거.
 
 **결정**
 고객 프로젝트(장비·태그·알람·화면 설정)의 정본은 **고객별 Git repo**(`pureiron-project-<id>`)다. 현장 site-db의 프로젝트는 적용본이며, 현장에서 REST `PATCH`로 고친 내용은 드래프트로 남는다. `PATCH`마다 `site_rev`가 단조 증가(리셋 없음)하고, 적용 시 `base_site_rev`를 기록한다. 미회수 드래프트가 있으면 새 배포는 `E_DRAFT`로 거부된다. 회수는 현장 전체 스냅샷 export → 벤더가 고객 repo에서 `pureiron-project absorb` → PR(`absorbs: {site: rev}` 기록) 순서다. 비밀값은 프로젝트에 넣지 않고 `secret://<name>` 참조만 둔다. 프로젝트 파일은 정규화 규칙(YAML 1.2 strict, RFC 8785 숫자, 기본값 생략, POSIX 경로, UTF-8 NFC, LF)으로 **무손실 왕복**하고 `content_hash`로 버전을 식별한다. legacy 변환기는 지원하지 않는 항목을 반드시 보고한다.
