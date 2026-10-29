@@ -2546,7 +2546,7 @@ ADR-013(개정) 쓰기 경로의 계약과 collector 실행부다. core 쓰기 �
   3. **repo**: `load_project` 통과, `project.yaml project_id`가 드래프트와 같아야 한다. 기록할 리비전 N = `--rev`(없으면 서명된 `site_rev`, 음수는 사용법 오류)는 서명된 `site_rev` 이하이고 기존 `absorbs[site]` 이상이어야 한다(퇴행 금지).
   4. **필드 단위 병합(K2, 순수 함수 `merge.plan_merge`)**: 드래프트의 알람(`id`)·태그(`path`, 파일과 무관하게 전역)마다 PATCH 허용 필드 — 알람 `setpoint`·`deadband`·`on_delay_s`·`priority`, 태그 `description`·`eu`·`record`(스키마 `record`는 닫힌 객체이고 하위 필드 `deadband`·`max_interval_s`가 모두 허용 대상이라 객체 통째로 — core 단위 테스트가 스키마까지 고정) — 를 repo의 같은 항목에 덮는다. 드래프트에 없는 선택 필드 = 스키마 기본값이므로 repo에서 지운다. 그 밖의 필드(태그 주소·장비·write 등)와 repo에만 있는 항목(새 태그·장비)은 그대로 둔다. 허용 필드 목록은 core `project/patch.py`와 같다(core 단위 테스트가 고정).
   5. **쓰기(K5)**: 바뀐 파일만 정규형으로 + `project.yaml absorbs.<site> = N`(이미 N이면 그대로). 쓸 결과 트리를 먼저 `check_texts`로 검증한 뒤 두 단계로 쓴다: ① 바뀔 파일 전부를 `<file>.absorb-tmp`로 쓰고 ② 차례로 rename하며 `project.yaml`(absorbs = 회수 표시)은 맨 마지막이다. ①에서 실패하면 만든 tmp를 모두 지운다(원본 무변경). ②에서 실패하면(Windows에서 다른 프로그램이 대상 파일을 잡고 있을 때 등) 남은 tmp를 지우고, 이미 rename한 파일은 되돌리지 않는다 — 되돌리기 쓰기는 원자적이지 않아 또 실패할 수 있고, 그 파일들은 검증한 병합 결과이며 absorbs가 기록되지 않았으므로 게이트가 번들을 계속 막는다. 같은 absorb를 다시 돌리면 나머지를 마저 쓴다. 쓴 뒤 `load_project`로 다시 확인한다. PATCH 값이 이미 repo와 같아도 absorbs는 기록한다.
-- **종료 코드(K4)** — 1·2 모두 repo 무변경, stderr 한 줄 `… (repo unchanged)`. 예외는 쓰기 ② 단계 실패·쓴 뒤 재확인 실패뿐이다: exit 1, stderr에 이미 바꾼 파일 목록과 `(repo changed: run absorb again to finish, or restore with git)`:
+- **종료 코드(K4)** — 1·2 모두 repo 무변경, stderr 한 줄 `… (repo unchanged)`. 예외는 쓰기 ② 단계에서 이미 rename한 파일이 있거나 tmp를 지우지 못한 경우·쓴 뒤 재확인 실패뿐이다: exit 1, stderr에 바꾼 파일 목록(`already replaced: …; absorbs not recorded`, 지우지 못한 tmp)과 `(repo changed: run absorb again to finish, or restore with git)`:
 
   | 코드 | 경우 |
   |---|---|
