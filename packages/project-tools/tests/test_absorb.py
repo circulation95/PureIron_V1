@@ -433,6 +433,7 @@ def test_absorb_rename_failure_reports_replaced_files_and_rerun_finishes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     draft_file, key_file = _write_inputs(tmp_path, _patched(tmp_path))
+    before = snapshot(repo)
     expected = tmp_path / "expected"
     shutil.copytree(repo, expected)
     assert _absorb(expected, draft_file, key_file) == 0
@@ -440,8 +441,10 @@ def test_absorb_rename_failure_reports_replaced_files_and_rerun_finishes(
         _fail_on(patched, "replace", "plc-1.yaml" + TMP_SUFFIX)
         assert _absorb(repo, draft_file, key_file) == 1
     err = capsys.readouterr().err
-    assert "already replaced: alarms/line1.yaml" in err
+    # project.yaml(absorbs)은 맨 마지막 — tags에서 멈추면 absorbs는 기록되지 않았다
+    assert "already replaced: alarms/line1.yaml; absorbs not recorded" in err
     assert "(repo unchanged)" not in err
+    assert (repo / "project.yaml").read_bytes() == before["project.yaml"]
     assert err.rstrip().endswith(REPO_CHANGED)
     assert _tmp_files(repo) == []
     assert load_project(repo).ok

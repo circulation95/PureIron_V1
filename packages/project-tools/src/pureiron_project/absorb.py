@@ -238,12 +238,16 @@ def _remove(temps: Sequence[tuple[str, Path]]) -> list[str]:
 def _write_all(root: Path, contents: Mapping[str, bytes]) -> None:
     """두 단계 쓰기: 바뀔 파일 전부를 tmp로 쓴 뒤에야 순서대로 rename한다.
 
+    `project.yaml`(absorbs = 회수 표시)은 맨 마지막에 rename한다 — 중간에 멈추면 absorbs가 기록되지
+    않아 게이트가 번들을 계속 막는다(태그 값이 빠진 채 "흡수됨"만 남지 않는다).
+
     tmp 단계에서 실패하면 만든 tmp를 지우고 `AbsorbError` — 원본은 건드리지 않았다. rename 단계에서
     실패하면 남은 tmp를 지우고, 이미 rename한 파일은 되돌리지 않는다(되돌리기 쓰기는 원자적이지 않아
     또 실패할 수 있다). 그 파일들은 검증한 병합 결과이므로 repo는 유효하고, 같은 absorb를 다시
     돌리면 나머지를 마저 쓴다. 이때는 바뀐 파일을 적은 `AbsorbWriteError`다.
     """
-    temps = [(rel, root.joinpath(*(rel + TMP_SUFFIX).split("/"))) for rel in contents]
+    order = sorted(contents, key=lambda rel: (rel == PROJECT_FILE, rel.encode("utf-8")))
+    temps = [(rel, root.joinpath(*(rel + TMP_SUFFIX).split("/"))) for rel in order]
     replaced: list[str] = []
     try:
         for rel, tmp in temps:
@@ -256,9 +260,10 @@ def _write_all(root: Path, contents: Mapping[str, bytes]) -> None:
         if not replaced and not left:
             raise AbsorbError(f"cannot write the project tree: {exc}") from exc
         done = ", ".join(replaced) or "(none)"
+        pending = "; absorbs not recorded" if PROJECT_FILE in contents else ""
         leftover = f"; could not remove {', '.join(left)}" if left else ""
         raise AbsorbWriteError(
-            f"cannot write the project tree: {exc}; already replaced: {done}{leftover}"
+            f"cannot write the project tree: {exc}; already replaced: {done}{pending}{leftover}"
         ) from exc
     except BaseException:
         _remove(temps[len(replaced) :])  # 중단(Ctrl-C 등)에도 tmp를 남기지 않고 다시 던진다
@@ -291,7 +296,7 @@ def absorb(
         new_data[PROJECT_FILE] = project
     contents = {rel: dump(data).encode("utf-8") for rel, data in new_data.items()}
     _check_result(repo, contents)
-    _write_all(root, dict(sorted(contents.items())))
+    _write_all(root, contents)
     after = load_project(root)
     if not after.ok:  # 쓰기 전에 같은 내용을 검증했으므로 디스크가 바뀐 경우뿐이다
         raise AbsorbWriteError("project is invalid after absorb: " + "; ".join(after.problems))
