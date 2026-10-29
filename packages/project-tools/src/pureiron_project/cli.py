@@ -1,8 +1,8 @@
 """`pureiron-project validate|fmt|hash|convert-legacy|absorb|gate` — 고객 프로젝트 repo용 도구.
 
 종료 코드: 0 성공, 1 검증 실패·포맷 불일치(`fmt --check`)·읽을 수 없는 입력,
-2 사용법 오류(argparse). 2를 하나 더 쓰는 명령이 있고, 사용법 오류와는 출력으로 구분한다
-(사용법 오류면 stdout은 비고 stderr가 argparse `usage:`로 시작한다):
+2 사용법 오류(argparse, 음수 리비전 인자 포함). 2를 하나 더 쓰는 명령이 있고, 사용법 오류와는
+출력으로 구분한다(사용법 오류면 stdout은 비고 stderr가 argparse `usage:`로 시작한다):
 
 - `convert-legacy`: 변환은 했지만(출력·보고서 기록) 미지원 항목이 있음(M5 plan D11) — stdout에
   `converted:` 줄이 있다.
@@ -65,7 +65,7 @@ def _parser() -> argparse.ArgumentParser:
     absorb_cmd.add_argument("--draft", type=Path, required=True, help="현장 draft.tar")
     absorb_cmd.add_argument("--site-key", type=Path, required=True, help=ENROLLMENT_HELP)
     absorb_cmd.add_argument(
-        "--rev", type=int, help="기록할 absorbs 리비전(기본 = 서명된 site_rev, 그 이하만)"
+        "--rev", type=_revision, help="기록할 absorbs 리비전(기본 = 서명된 site_rev, 그 이하만)"
     )
     absorb_cmd.add_argument("directory", type=Path, nargs="?", default=Path("."))
     gate_cmd = sub.add_parser("gate", help="번들 전 드래프트 게이트 사전 점검")
@@ -73,10 +73,18 @@ def _parser() -> argparse.ArgumentParser:
     _site_args(gate_cmd)
     source = gate_cmd.add_mutually_exclusive_group(required=True)
     source.add_argument("--draft", type=Path, help="현장 draft.tar(--site-key 필요)")
-    source.add_argument("--site-rev", type=int, help="현장 site_rev(--base-site-rev 필요)")
+    source.add_argument("--site-rev", type=_revision, help="현장 site_rev(--base-site-rev 필요)")
     gate_cmd.add_argument("--site-key", type=Path, help=ENROLLMENT_HELP)
-    gate_cmd.add_argument("--base-site-rev", type=int, help="현장 base_site_rev")
+    gate_cmd.add_argument("--base-site-rev", type=_revision, help="현장 base_site_rev")
     return parser
+
+
+def _revision(text: str) -> int:
+    """리비전 인자 — 0 이상 정수. 음수는 충돌이 아니라 사용법 오류(exit 2)다."""
+    value = int(text)
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"must be >= 0, not {value}")
+    return value
 
 
 def _site_args(cmd: argparse.ArgumentParser) -> None:

@@ -469,6 +469,21 @@ def test_absorb_write_failure_names_tmp_files_it_could_not_remove(
     assert _tmp_files(repo) == [f"tags/plc-1.yaml{TMP_SUFFIX}"]
 
 
+def test_absorb_negative_rev_is_a_usage_error(
+    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    draft_file, key_file = _write_inputs(tmp_path, _patched(tmp_path))
+    before = snapshot(repo)
+    with pytest.raises(SystemExit) as exited:
+        _absorb(repo, draft_file, key_file, "--rev", "-1")
+    assert exited.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("usage: ")
+    assert "must be >= 0, not -1" in captured.err
+    assert snapshot(repo) == before
+
+
 def test_absorb_missing_item_names_it(
     repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -565,6 +580,8 @@ def test_gate_rejects_unverified_draft(
         ["--draft", "d.tar"],
         ["--draft", "d.tar", "--site-key", "k.json", "--base-site-rev", "1"],
         ["--draft", "d.tar", "--site-rev", "3"],
+        ["--site-rev", "-1", "--base-site-rev", "0"],
+        ["--site-rev", "1", "--base-site-rev", "-1"],
         [],
     ],
 )
