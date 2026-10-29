@@ -5,10 +5,10 @@ PureIron 고객 프로젝트 repo — 이 repo가 현장 정의의 정본이다(
 ## 명령 (PureIron_V1 체크아웃에서)
 
 ```bash
-uv run pureiron-project validate <repo>        # 스키마 + 교차 참조 검증
-uv run pureiron-project fmt [--check] <repo>   # 정규형으로 다시 쓰기 / 불일치만 보고
-uv run pureiron-project hash <repo>            # content hash (sha256:…)
-uv run pureiron-project absorb <repo> --draft <draft.tar> --site <site_id> --site-key <site-enrollment.json>  # 현장 드래프트 회수
+uv run --package pureiron-project-tools pureiron-project validate <repo>        # 스키마 + 교차 참조 검증
+uv run --package pureiron-project-tools pureiron-project fmt [--check] <repo>   # 정규형으로 다시 쓰기 / 불일치만 보고
+uv run --package pureiron-project-tools pureiron-project hash <repo>            # content hash (sha256:…)
+uv run --package pureiron-project-tools pureiron-project absorb <repo> --draft <draft.tar> --site <site_id> --site-key <site-enrollment.json>  # 현장 드래프트 회수
 ```
 
 버전 이름은 태그 `v1`, `v2`, … 이다. 태그를 push하면 CI가 `project_version`으로 그 이름을 낸다.
