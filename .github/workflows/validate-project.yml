@@ -97,6 +97,21 @@ jobs:
       - run: |
           uv sync --directory pureiron-v1 --package pureiron-project-tools --locked --no-dev
           echo "$GITHUB_WORKSPACE/pureiron-v1/.venv/bin" >> "$GITHUB_PATH"
+      # 도구는 pureiron-v1/, 검증 대상은 project/ — V1 자기 호출은 두 트리가 같아 hash 비교로는 섞여도 안 보인다.
+      - run: |
+          tool="$(command -v pureiron-project)"
+          workspace="$(realpath "$GITHUB_WORKSPACE")"
+          project="$(realpath -m "$PROJECT_DIR")"
+          if [[ "$(realpath "$tool")" != "$workspace/pureiron-v1/"* ]]; then
+            echo "::error::pureiron-project가 pureiron-v1/ 밖: $tool"
+            exit 1
+          fi
+          if [[ "$project" != "$workspace/project" && "$project" != "$workspace/project/"* ]]; then
+            echo "::error::프로젝트 경로가 project/ 밖: $project"
+            exit 1
+          fi
+          echo "도구: $tool"
+          echo "프로젝트: $project"
       - run: pureiron-project validate "$PROJECT_DIR"
       - run: pureiron-project fmt --check "$PROJECT_DIR"
       - id: hash
