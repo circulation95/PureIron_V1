@@ -572,6 +572,18 @@ def test_gate_rejects_unverified_draft(
     assert "signature does not match" in capsys.readouterr().err
 
 
+def test_gate_rejects_draft_of_another_project(
+    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    other = _site_tree(tmp_path, ("project.yaml", _rename_project))
+    draft_file, key_file = _write_inputs(tmp_path, other, site_rev=3, base_site_rev=3)
+    args = ["gate", str(repo), "--site", SITE, "--draft", str(draft_file)]
+    assert main([*args, "--site-key", str(key_file)]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("error: draft project_id 'other' != repo project_id 'acme'")
+
+
 @pytest.mark.parametrize(
     "args",
     [

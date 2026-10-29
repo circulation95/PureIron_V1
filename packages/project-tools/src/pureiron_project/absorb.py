@@ -212,6 +212,14 @@ def absorbs_of(project: Project) -> dict[str, int]:
     return {site: rev for site, rev in absorbs.items() if type(rev) is int}
 
 
+def check_project_id(repo: Project, draft: SiteDraft) -> None:
+    """드래프트가 이 repo의 프로젝트 것인지(`project.yaml project_id`)."""
+    repo_id = project_data(repo).get("project_id")
+    draft_id = project_data(draft.tree).get("project_id")
+    if repo_id != draft_id:
+        raise AbsorbError(f"draft project_id {draft_id!r} != repo project_id {repo_id!r}")
+
+
 def _target_rev(draft: SiteDraft, rev: int | None, existing: int | None) -> int:
     target = draft.site_rev if rev is None else rev
     if target < 0:
@@ -279,10 +287,7 @@ def absorb(
     repo = load_project(root)
     if not repo.ok:
         raise AbsorbError("project is invalid: " + "; ".join(repo.problems))
-    repo_id = project_data(repo).get("project_id")
-    draft_id = project_data(draft.tree).get("project_id")
-    if repo_id != draft_id:
-        raise AbsorbError(f"draft project_id {draft_id!r} != repo project_id {repo_id!r}")
+    check_project_id(repo, draft)
     existing = absorbs_of(repo).get(site_id)
     target = _target_rev(draft, rev, existing)
     plan = plan_merge(_data(repo), _data(draft.tree))

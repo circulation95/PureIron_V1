@@ -12,7 +12,7 @@
   않는다 — 예외는 쓰기 rename 단계 실패뿐이고, 그때 stderr는 `(repo unchanged)` 대신 바뀐 파일과
   `(repo changed: …)`를 쓴다.
 
-`gate`는 0 통과, 1 `E_DRAFT` 또는 점검할 수 없는 입력이다(stderr `error:`).
+`gate`는 0 통과, 1 `E_DRAFT`·드래프트 `project_id` 불일치·점검할 수 없는 입력이다(stderr `error:`).
 """
 
 from __future__ import annotations
@@ -28,11 +28,12 @@ from pureiron_project.absorb import (
     AbsorbConflictError,
     AbsorbError,
     AbsorbWriteError,
+    SiteDraft,
     absorb,
     report_lines,
 )
 from pureiron_project.convert_legacy import convert_legacy, report_bytes, write_tree
-from pureiron_project.gate import GateError, draft_state, gate
+from pureiron_project.gate import GateError, gate, open_gate_draft
 from pureiron_project.legacy_files import ConvertError
 from pureiron_project.project import format_project, load_project
 
@@ -139,16 +140,17 @@ def _gate(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     site_key: Path | None = args.site_key
     site_rev: int | None = args.site_rev
     base: int | None = args.base_site_rev
+    source: DraftState | SiteDraft
     try:
         if draft is None:
             if site_rev is None or base is None or site_key is not None:
                 parser.error("gate --site-rev needs --base-site-rev (and no --site-key)")
-            state, fingerprint = DraftState(site_rev=site_rev, base_site_rev=base), None
+            source = DraftState(site_rev=site_rev, base_site_rev=base)
         else:
             if site_key is None or base is not None:
                 parser.error("gate --draft needs --site-key (and no --base-site-rev)")
-            state, fingerprint = draft_state(draft.read_bytes(), site_key.read_bytes(), site_id)
-        result = gate(args.directory, site_id, state, fingerprint=fingerprint)
+            source = open_gate_draft(draft.read_bytes(), site_key.read_bytes(), site_id)
+        result = gate(args.directory, site_id, source)
     except (GateError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
