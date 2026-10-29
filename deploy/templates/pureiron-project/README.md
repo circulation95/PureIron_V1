@@ -23,3 +23,5 @@ uv run pureiron-project absorb <repo> --draft <draft.tar> --site <site_id> --sit
 | `PUREIRON_CI_APP_KEY` | 같은 App의 private key(PEM 전체) |
 
 `gh secret set PUREIRON_CI_APP_ID` / `gh secret set PUREIRON_CI_APP_KEY < <key.pem>`으로도 넣을 수 있다.
+
+이 repo에 write 권한이 있는 사람은 workflow를 고쳐 이 키를 꺼낼 수 있고, 키는 곧 PureIron_V1 읽기 권한이다 — write 권한은 벤더 쪽에만 주고, 키 유출이 의심되면 벤더가 키를 재발급해 모든 고객 repo secret을 갱신한다.

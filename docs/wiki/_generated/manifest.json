@@ -215,12 +215,12 @@
     },
     {
       "audience": "both",
-      "bytes": 82504,
+      "bytes": 83226,
       "id": "sot-data-contracts",
       "last_verified": "2026-08-22",
       "path": "docs/wiki/sot/data-contracts.md",
       "section_count": 29,
-      "sha256": "7cb070dcd63436c7fd0160dfb759019be669a9efeb2baf8e8f098b3fd78bcfb9",
+      "sha256": "a88abd03dc050d40d52072721cf89f5248614f2781c2485dbb2a262fcbaf821b",
       "source_globs": [
         "projects/demo-coffee/**/*.yaml",
         "projects/demo-coffee/**/*.json"
