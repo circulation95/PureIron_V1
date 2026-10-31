@@ -7,7 +7,13 @@ pureiron-project validate <dir>      # 스키마(packages/contracts/project.sche
 pureiron-project fmt [--check] <dir> # 정규형으로 다시 쓰기 / 불일치만 보고(CI)
 pureiron-project hash <dir>          # content hash (sha256:…)
 pureiron-project convert-legacy <legacy_dir> --out <dir> --report <json>  # legacy 변환(M5-1)
+pureiron-project absorb --draft <draft.tar> --site <id> --site-key <enrollment.json> [--rev N] [<dir>]
+pureiron-project gate <dir> --site <id> (--draft <draft.tar> --site-key <json> | --site-rev N --base-site-rev M)
 ```
+
+## 드래프트 회수(M5-3a)
+
+`absorb`는 현장 `draft.tar`를 enrollment 파일(Updater `enroll`이 쓴 `state/enrollment.json`, 설치 때 수령)의 공개키로 검증(서명·현장·`project_tar_sha256`·트리·content hash)한 뒤, 현장 PATCH 허용 필드(알람 `setpoint`·`deadband`·`on_delay_s`·`priority`, 태그 `description`·`eu`·`record`)만 repo의 같은 `id`·`path` 항목에 덮고 `project.yaml absorbs.<site>`를 기록한다. 그 밖의 repo 변경은 보존한다. 종료 코드 0 성공(stdout 마지막 줄 = 커밋 trailer `Absorbs-Draft: <site> rev=<N> sha256=<draft.tar sha256>`), 1 검증 실패, 2 충돌(repo에 없는 드래프트 항목·`--rev` 초과·absorbs 퇴행, stderr `conflict:`) — 1·2는 repo를 바꾸지 않는다. `gate`는 번들 verify와 같은 드래프트 게이트(0 통과, 1 `E_DRAFT`). 규칙 정본은 [data-contracts](../../docs/wiki/sot/data-contracts.md)의 `V1 구현 현황 (M5-3a 드래프트 회수 absorb·gate, 2026-10-30)` 절.
 
 ## legacy 변환기
 
@@ -29,7 +35,6 @@ pureiron-project convert-legacy <legacy_dir> --out <dir> --report <json>  # lega
 
 ## 범위 밖(이후 단계)
 
-- 드래프트 회수(`absorb`)는 **M5**(M5-3).
 - 고객 repo용 재사용 workflow(`validate-project.yml`)도 **M5**.
 
 `src/pureiron_project/schema/project.schema.json`은 계약 정본의 복사본(생성물)이다 — `bash scripts/g1.sh contracts-gen`으로 갱신하고 `contracts-drift`가 동기를 검사한다.

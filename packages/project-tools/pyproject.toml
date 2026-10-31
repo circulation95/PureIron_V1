@@ -7,7 +7,12 @@ dependencies = [
     "ruamel.yaml>=0.18.15",
     "jsonschema>=4.25",
     "rfc8785>=0.1.4",
+    # absorb·gate: 현장 드래프트 서명 검증·tarsafe·드래프트 게이트를 복사하지 않고 재사용(M5-3 K7).
+    "pureiron-bundle-tools",
 ]
+
+[tool.uv.sources]
+pureiron-bundle-tools = { workspace = true }
 
 [project.scripts]
 pureiron-project = "pureiron_project.cli:main"

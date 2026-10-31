@@ -3,10 +3,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import cast
+
 import pytest
 
+from pureiron_core.project import patch
 from pureiron_core.project.patch import PatchKind, changed_fields, merge, normalize
 from pureiron_core.project.ports import PatchInvalidError
+from pureiron_project import merge as absorb_merge
+from pureiron_project.schema import project_schema
 
 ALARM = {"id": "tank-high", "tag": "plant/level", "type": "above", "setpoint": 80, "deadband": 2}
 TAG = {
@@ -16,6 +22,26 @@ TAG = {
     "eu": "m",
     "record": {"deadband": 0.5, "max_interval_s": 60},
 }
+
+
+def test_absorb_takes_exactly_the_site_patchable_fields() -> None:
+    """벤더 absorb(M5-3 K2)는 현장이 PATCH로 바꿀 수 있는 필드만 repo로 옮긴다."""
+    assert absorb_merge.ALARM_FIELDS == patch.ALARM_FIELDS
+    assert absorb_merge.TAG_FIELDS == patch.TAG_FIELDS
+    # record를 통째로 옮겨도 되는 근거: 스키마 record는 닫힌 객체이고 하위 필드가 모두 PATCH 대상
+    record = _schema_node("$defs", "tag", "properties", "record")
+    assert record["additionalProperties"] is False
+    assert set(_schema_node("$defs", "tag", "properties", "record", "properties")) == set(
+        patch.RECORD_FIELDS
+    )
+    assert set(patch.RECORD_FIELDS) == {"deadband", "max_interval_s"}
+
+
+def _schema_node(*keys: str) -> Mapping[str, object]:
+    node: Mapping[str, object] = project_schema()
+    for key in keys:
+        node = cast(Mapping[str, object], node[key])
+    return node
 
 
 @pytest.mark.parametrize(

@@ -10,7 +10,10 @@
 
 1·2에서 실패하면 DB에 닿지 않고, 3에서 실패하면 트랜잭션이 전부 되돌린다 — 어느 쪽이든 아무것도
 바꾸지 않는다. 같은 project_id·version·hash와 같은 파일을 다시 적용하면 아무것도 쓰지 않는다
-(Updater `switching` recover 재실행에 안전).
+(Updater `switching` recover 재실행에 안전). 단 현장 드래프트가 남아 있으면(`site_rev ≠
+base_site_rev`) 같은 트리라도 정의를 다시 적용하고 base를 옮긴다(M5-3 K8) — 적용까지 온 번들은
+드래프트 게이트를 통과했으므로(드래프트 흡수 완료) 트리 정의가 현장 값을 대신한다. 첫 적용 뒤에는
+`site_rev == base_site_rev`라 recover 재실행은 그대로 no-op이다.
 
 `restore_tree`(= `project restore --from <dir>`, 롤백 B5)는 백업한 현재 유효 트리를 같은
 방식으로 적용하되 project_state는 백업 스냅샷 그대로 쓴다(site_rev·base 포함, 리셋 없음).
@@ -194,6 +197,19 @@ async def _replace_files(conn: Connection, tree: ProjectTree) -> bool:
     return True
 
 
+def already_applied(
+    current: ProjectState, *, project_id: str, version: str, content_hash: str
+) -> bool:
+    """no-op 후보: 같은 project_id·version·hash이고 남은 현장 드래프트가 없다(K8). 저장 파일
+    digest 비교는 호출자가 이어서 한다."""
+    same_meta = (current.project_id, current.version, current.content_hash) == (
+        project_id,
+        version,
+        content_hash,
+    )
+    return same_meta and current.site_rev == current.base_site_rev
+
+
 async def apply_tree(
     conn: Connection, tree: ProjectTree, *, project_id: str, version: str, content_hash: str
 ) -> TreeApplyResult:
@@ -209,12 +225,12 @@ async def apply_tree(
     async with conn.transaction():
         await conn.execute("SELECT pg_advisory_xact_lock($1)", APPLY_LOCK_KEY)
         current = await fetch_state(conn)
-        same_meta = (current.project_id, current.version, current.content_hash) == (
-            project_id,
-            version,
-            content_hash,
-        )
-        if same_meta and await _stored_digests(conn) == tree.digests():
+        if (
+            already_applied(
+                current, project_id=project_id, version=version, content_hash=content_hash
+            )
+            and await _stored_digests(conn) == tree.digests()
+        ):
             return TreeApplyResult(current, changed=False, files_changed=False, definitions=None)
         definitions = await apply_definitions(conn, tree.project)
         files_changed = await _replace_files(conn, tree)

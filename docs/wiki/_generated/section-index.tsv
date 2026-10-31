@@ -7,7 +7,7 @@
 # 열: doc_id	path	anchor	offset	limit	bytes	level	heading
 #   offset/limit = 파일 전체 기준 1-indexed 시작 줄 / 줄 수 (Read 인자 그대로)
 #   bytes        = 해당 절을 읽는 비용 (한국어는 대략 1.5~2바이트/토큰)
-adr-index	docs/wiki/adr/index.md	architecture-decision-records	18	659	47496	h1	Architecture Decision Records
+adr-index	docs/wiki/adr/index.md	architecture-decision-records	18	659	47796	h1	Architecture Decision Records
 adr-index	docs/wiki/adr/index.md	1-adr-경계	24	14	648	h2	1. ADR 경계
 adr-index	docs/wiki/adr/index.md	2-제품사업을-기준으로-한-최상위-결정	38	12	1038	h2	2. 제품·사업을 기준으로 한 최상위 결정
 adr-index	docs/wiki/adr/index.md	3-기술-adr-요약	50	35	3226	h2	3. 기술 ADR 요약
@@ -35,7 +35,7 @@ adr-index	docs/wiki/adr/index.md	adr-021-timescaledb-유지--기록-정책	493	1
 adr-index	docs/wiki/adr/index.md	adr-022-desiredstate-gitops--generation-카운터	512	22	2105	h2	ADR-022: DesiredState GitOps · generation 카운터
 adr-index	docs/wiki/adr/index.md	adr-023-단일-서명-번들--신뢰-루트--이미지-신원config-digest	534	20	2189	h2	ADR-023: 단일 서명 번들 · 신뢰 루트 · 이미지 신원(config digest)
 adr-index	docs/wiki/adr/index.md	adr-024-확장형-마이그레이션--epoch-envelope--백업-경계	554	20	2059	h2	ADR-024: 확장형 마이그레이션 · epoch envelope · 백업 경계
-adr-index	docs/wiki/adr/index.md	adr-025-프로젝트-정본--드래프트-회수단조-site_rev	574	19	1635	h2	ADR-025: 프로젝트 정본 · 드래프트 회수(단조 site_rev)
+adr-index	docs/wiki/adr/index.md	adr-025-프로젝트-정본--드래프트-회수단조-site_rev	574	19	1935	h2	ADR-025: 프로젝트 정본 · 드래프트 회수(단조 site_rev)
 adr-index	docs/wiki/adr/index.md	adr-026-repo-레이아웃--고객별-repo	593	19	1534	h2	ADR-026: repo 레이아웃 · 고객별 repo
 adr-index	docs/wiki/adr/index.md	adr-027-지원-호스트-매트릭스	612	19	1281	h2	ADR-027: 지원 호스트 매트릭스
 adr-index	docs/wiki/adr/index.md	adr-028-3단-검증-게이트--generated--authored--runner-격리	631	20	2502	h2	ADR-028: 3단 검증 게이트 · generated ≠ authored · runner 격리
@@ -153,7 +153,7 @@ sot-coding-style	docs/wiki/sot/coding-style.md	10-프론트엔드-servicesweb-�
 sot-coding-style	docs/wiki/sot/coding-style.md	11-리뷰-체크리스트-가독성구조	232	17	1522	h2	11. 리뷰 체크리스트 (가독성·구조)
 sot-coding-style	docs/wiki/sot/coding-style.md	12-현재-코드와의-차이-백로그-2026-10-11-검토-기준	249	14	1500	h2	12. 현재 코드와의 차이 (백로그, 2026-10-11 검토 기준)
 sot-coding-style	docs/wiki/sot/coding-style.md	13-이-문서를-바꾸는-법	263	4	281	h2	13. 이 문서를 바꾸는 법
-sot-data-contracts	docs/wiki/sot/data-contracts.md	data-contracts-sot	20	429	83421	h1	Data Contracts SOT
+sot-data-contracts	docs/wiki/sot/data-contracts.md	data-contracts-sot	20	455	92334	h1	Data Contracts SOT
 sot-data-contracts	docs/wiki/sot/data-contracts.md	이-문서의-원천	28	8	847	h2	이 문서의 원천
 sot-data-contracts	docs/wiki/sot/data-contracts.md	마이그레이션-규율	36	17	1446	h2	마이그레이션 규율
 sot-data-contracts	docs/wiki/sot/data-contracts.md	tag-정의-계약	53	20	1040	h2	Tag 정의 계약
@@ -163,25 +163,26 @@ sot-data-contracts	docs/wiki/sot/data-contracts.md	historian-retention--query-wi
 sot-data-contracts	docs/wiki/sot/data-contracts.md	project-config-root-계약	137	57	5026	h2	Project config root 계약
 sot-data-contracts	docs/wiki/sot/data-contracts.md	project-package-exportimport-계약	161	33	3368	h3	Project package export/import 계약
 sot-data-contracts	docs/wiki/sot/data-contracts.md	문서화-원칙	194	7	385	h2	문서화 원칙
-sot-data-contracts	docs/wiki/sot/data-contracts.md	목표-설계미구현	201	248	67621	h2	목표 설계(미구현)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	목표-설계미구현	201	274	76534	h2	목표 설계(미구현)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	마이그레이션스키마-호환-adr-024	205	8	1952	h3	마이그레이션·스키마 호환 (ADR-024)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	기록-정책-adr-021	213	4	195	h3	기록 정책 (ADR-021)
-sot-data-contracts	docs/wiki/sot/data-contracts.md	프로젝트-정본-adr-025	217	19	1538	h3	프로젝트 정본 (ADR-025)
-sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m5-1-legacy-변환기-2026-10-25	236	20	8257	h3	V1 구현 현황 (M5-1 legacy 변환기, 2026-10-25)
-sot-data-contracts	docs/wiki/sot/data-contracts.md	배포-정본번들-adr-022-adr-023	256	14	785	h3	배포 정본·번들 (ADR-022, ADR-023)
-sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m1-2026-10-04	270	10	2573	h3	V1 구현 현황 (M1, 2026-10-04)
-sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m2a-번들-서명검증-2026-10-04	280	9	1892	h3	V1 구현 현황 (M2a 번들 서명·검증, 2026-10-04)
-sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m2b-updater-상태기계recover-2026-10-05	289	13	2510	h3	V1 구현 현황 (M2b Updater 상태기계·recover, 2026-10-05)
-sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m2c-설치-번들부트스트랩systemdenroll-2026-10-05	302	10	3620	h3	V1 구현 현황 (M2c 설치 번들·부트스트랩·systemd·enroll, 2026-10-05)
-sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m2d-r1-release-2026-10-05	312	13	4829	h3	V1 구현 현황 (M2d r1 release, 2026-10-05)
-sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m2d-hyper-v-vm-실측-2026-10-05	325	10	2440	h3	V1 구현 현황 (M2d Hyper-V VM 실측, 2026-10-05)
-sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m3a-3-historian-2026-10-09	335	15	6629	h3	V1 구현 현황 (M3a-3 historian, 2026-10-09)
-sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m3b-1-authaudit-2026-10-11	350	7	2305	h3	V1 구현 현황 (M3b-1 auth·audit, 2026-10-11)
-sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m3b-2-alarmsrealtime-2026-10-11	357	8	3427	h3	V1 구현 현황 (M3b-2 alarms·realtime, 2026-10-11)
-sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m3c-1-쓰기-계약collector-2026-10-18	365	38	7508	h3	V1 구현 현황 (M3c-1 쓰기 계약·collector, 2026-10-18)
-sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m5-0-번들-프로젝트-적용트리-백업복원-2026-10-25	403	19	6318	h3	V1 구현 현황 (M5-0 번들 프로젝트 적용·트리 백업/복원, 2026-10-25)
-sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m5-2-현장-드래프트-patch서명-export-2026-10-25	422	13	5166	h3	V1 구현 현황 (M5-2 현장 드래프트 PATCH·서명 export, 2026-10-25)
-sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m5-3b-고객-repo-템플릿validate-project-2026-10-30	435	14	5313	h3	V1 구현 현황 (M5-3b 고객 repo 템플릿·validate-project, 2026-10-30)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	프로젝트-정본-adr-025	217	20	1898	h3	프로젝트 정본 (ADR-025)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m5-1-legacy-변환기-2026-10-25	237	20	8257	h3	V1 구현 현황 (M5-1 legacy 변환기, 2026-10-25)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	배포-정본번들-adr-022-adr-023	257	14	785	h3	배포 정본·번들 (ADR-022, ADR-023)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m1-2026-10-04	271	10	2573	h3	V1 구현 현황 (M1, 2026-10-04)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m2a-번들-서명검증-2026-10-04	281	9	1892	h3	V1 구현 현황 (M2a 번들 서명·검증, 2026-10-04)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m2b-updater-상태기계recover-2026-10-05	290	13	2510	h3	V1 구현 현황 (M2b Updater 상태기계·recover, 2026-10-05)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m2c-설치-번들부트스트랩systemdenroll-2026-10-05	303	10	3620	h3	V1 구현 현황 (M2c 설치 번들·부트스트랩·systemd·enroll, 2026-10-05)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m2d-r1-release-2026-10-05	313	13	4829	h3	V1 구현 현황 (M2d r1 release, 2026-10-05)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m2d-hyper-v-vm-실측-2026-10-05	326	10	2440	h3	V1 구현 현황 (M2d Hyper-V VM 실측, 2026-10-05)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m3a-3-historian-2026-10-09	336	15	6629	h3	V1 구현 현황 (M3a-3 historian, 2026-10-09)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m3b-1-authaudit-2026-10-11	351	7	2305	h3	V1 구현 현황 (M3b-1 auth·audit, 2026-10-11)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m3b-2-alarmsrealtime-2026-10-11	358	8	3427	h3	V1 구현 현황 (M3b-2 alarms·realtime, 2026-10-11)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m3c-1-쓰기-계약collector-2026-10-18	366	38	7508	h3	V1 구현 현황 (M3c-1 쓰기 계약·collector, 2026-10-18)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m5-0-번들-프로젝트-적용트리-백업복원-2026-10-25	404	19	6318	h3	V1 구현 현황 (M5-0 번들 프로젝트 적용·트리 백업/복원, 2026-10-25)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m5-2-현장-드래프트-patch서명-export-2026-10-25	423	13	5166	h3	V1 구현 현황 (M5-2 현장 드래프트 PATCH·서명 export, 2026-10-25)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m5-3a-드래프트-회수-absorbgate-2026-10-30	436	25	8553	h3	V1 구현 현황 (M5-3a 드래프트 회수 absorb·gate, 2026-10-30)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m5-3b-고객-repo-템플릿validate-project-2026-10-30	461	14	5313	h3	V1 구현 현황 (M5-3b 고객 repo 템플릿·validate-project, 2026-10-30)
 sot-frontend	docs/wiki/sot/frontend.md	frontend-sot	24	319	26104	h1	Frontend SOT
 sot-frontend	docs/wiki/sot/frontend.md	1-문서-경계	32	12	702	h2	1. 문서 경계
 sot-frontend	docs/wiki/sot/frontend.md	2-스택과-실행-명령	44	24	625	h2	2. 스택과 실행 명령
@@ -235,7 +236,7 @@ sot-runtime-config	docs/wiki/sot/runtime-config.md	지원-호스트-adr-027	100	
 sot-runtime-config	docs/wiki/sot/runtime-config.md	호스트-경로	105	11	625	h3	호스트 경로
 sot-runtime-config	docs/wiki/sot/runtime-config.md	실행-규칙	116	10	2250	h3	실행 규칙
 sot-runtime-config	docs/wiki/sot/runtime-config.md	v1-환경변수-m1m3a-구현	126	37	5440	h3	V1 환경변수 (M1~M3a 구현)
-sot-testing	docs/wiki/sot/testing.md	testing-sot	32	348	35093	h1	Testing SOT
+sot-testing	docs/wiki/sot/testing.md	testing-sot	32	349	35964	h1	Testing SOT
 sot-testing	docs/wiki/sot/testing.md	1-문서-경계	40	20	1306	h2	1. 문서 경계
 sot-testing	docs/wiki/sot/testing.md	2-기본-실행-명령	60	35	1204	h2	2. 기본 실행 명령
 sot-testing	docs/wiki/sot/testing.md	3-테스트-계층	95	73	9877	h2	3. 테스트 계층
@@ -252,4 +253,4 @@ sot-testing	docs/wiki/sot/testing.md	7-외부-의존성환경-기준	272	16	777	
 sot-testing	docs/wiki/sot/testing.md	8-테스트-작성-규칙	288	25	1603	h2	8. 테스트 작성 규칙
 sot-testing	docs/wiki/sot/testing.md	9-실패-처리-원칙	313	19	809	h2	9. 실패 처리 원칙
 sot-testing	docs/wiki/sot/testing.md	10-pr작업-완료-보고-형식	332	19	492	h2	10. PR/작업 완료 보고 형식
-sot-testing	docs/wiki/sot/testing.md	11-v1-g1-게이트-pureiron_v1-m1-구현	351	29	7461	h2	11. V1 G1 게이트 (PureIron_V1, M1 구현)
+sot-testing	docs/wiki/sot/testing.md	11-v1-g1-게이트-pureiron_v1-m1-구현	351	30	8332	h2	11. V1 G1 게이트 (PureIron_V1, M1 구현)
