@@ -1,0 +1,139 @@
+# 고객 프로젝트 repo 검증(ADR-025, M5-3 K9): 호출자 repo의 프로젝트 트리를 validate → fmt --check → hash.
+# 검증 도구는 이 workflow 파일과 같은 커밋(job.workflow_sha)의 PureIron_V1에서 가져온다 —
+# 호출자가 `uses: …/validate-project.yml@<ref>`로 고정한 ref가 곧 도구 버전이다.
+name: validate-project
+
+on:
+  workflow_call:
+    inputs:
+      project_dir:
+        description: 호출자 repo 안 프로젝트 루트(상대 경로)
+        type: string
+        default: "."
+      runs_on:
+        # 고객 repo는 GitHub-hosted 기본값. PureIron_V1 자기 호출(foundation-ci)은 self-hosted g1을 넘긴다(PD-23).
+        description: runner 라벨(JSON 문자열 또는 배열)
+        type: string
+        default: '"ubuntu-24.04"'
+    secrets:
+      # PureIron_V1이 private이라 고객 repo는 App 토큰으로 읽는다. 없으면 github.token(PureIron_V1 자기 호출).
+      PUREIRON_CI_APP_ID:
+        required: false
+      PUREIRON_CI_APP_KEY:
+        required: false
+    outputs:
+      content_hash:
+        description: 프로젝트 content hash(sha256:…)
+        value: ${{ jobs.validate.outputs.content_hash }}
+      project_version:
+        description: ref가 태그 v[1-9][0-9]*이면 그 이름, 아니면 빈 값
+        value: ${{ jobs.validate.outputs.project_version }}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  validate:
+    runs-on: ${{ fromJSON(inputs.runs_on) }}
+    env:
+      PYTHONUTF8: "1"
+      UV_VERSION: "0.10.12"
+      HAS_APP: ${{ secrets.PUREIRON_CI_APP_ID != '' && secrets.PUREIRON_CI_APP_KEY != '' }}
+      PROJECT_DIR: ${{ github.workspace }}/project/${{ inputs.project_dir }}
+    outputs:
+      content_hash: ${{ steps.hash.outputs.content_hash }}
+      project_version: ${{ steps.version.outputs.project_version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: project
+          persist-credentials: false
+      # 고객 repo에 secret이 빠지면 github.token으로 private PureIron_V1 checkout이 "Not Found"로 실패해
+      # 원인이 안 보인다 — 여기서 이유를 말하고 멈춘다. 값 대신 있음/없음만 env로 받는다.
+      - if: env.HAS_APP != 'true' && github.repository != 'circulation95/PureIron_V1'
+        env:
+          HAS_ID: ${{ secrets.PUREIRON_CI_APP_ID != '' }}
+          HAS_KEY: ${{ secrets.PUREIRON_CI_APP_KEY != '' }}
+        run: |
+          echo "::error::PUREIRON_CI_APP_ID·PUREIRON_CI_APP_KEY secret 둘 다 필요하다(ID 있음: $HAS_ID, KEY 있음: $HAS_KEY)"
+          exit 1
+      - id: app-token
+        if: env.HAS_APP == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          # client-id 입력은 App ID도 받는다(JWT iss). app-id 입력은 deprecated.
+          client-id: ${{ secrets.PUREIRON_CI_APP_ID }}
+          private-key: ${{ secrets.PUREIRON_CI_APP_KEY }}
+          owner: circulation95
+          repositories: PureIron_V1
+          permission-contents: read
+      - id: tool
+        env:
+          # 호출된 workflow의 커밋: 문서화된 job.workflow_sha, 없으면 OIDC 클레임과 같은 github.job_workflow_sha.
+          # 둘 다 비면 checkout이 기본 브랜치로 떨어지므로(다른 도구 버전) 여기서 멈춘다.
+          WORKFLOW_SHA: ${{ job.workflow_sha || github.job_workflow_sha }}
+        run: |
+          if ! [[ "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::호출된 workflow 커밋을 알 수 없다: '$WORKFLOW_SHA'"
+            exit 1
+          fi
+          echo "PureIron_V1 도구 커밋: $WORKFLOW_SHA"
+          echo "sha=$WORKFLOW_SHA" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: circulation95/PureIron_V1
+          ref: ${{ steps.tool.outputs.sha }}
+          token: ${{ steps.app-token.outputs.token || github.token }}
+          path: pureiron-v1
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - run: |
+          uv sync --directory pureiron-v1 --package pureiron-project-tools --locked --no-dev
+          echo "$GITHUB_WORKSPACE/pureiron-v1/.venv/bin" >> "$GITHUB_PATH"
+      # 도구는 pureiron-v1/, 검증 대상은 project/ — V1 자기 호출은 두 트리가 같아 hash 비교로는 섞여도 안 보인다.
+      - run: |
+          tool="$(command -v pureiron-project)"
+          workspace="$(realpath "$GITHUB_WORKSPACE")"
+          project="$(realpath -m "$PROJECT_DIR")"
+          if [[ "$(realpath "$tool")" != "$workspace/pureiron-v1/"* ]]; then
+            echo "::error::pureiron-project가 pureiron-v1/ 밖: $tool"
+            exit 1
+          fi
+          if [[ "$project" != "$workspace/project" && "$project" != "$workspace/project/"* ]]; then
+            echo "::error::프로젝트 경로가 project/ 밖: $project"
+            exit 1
+          fi
+          echo "도구: $tool"
+          echo "프로젝트: $project"
+      - run: pureiron-project validate "$PROJECT_DIR"
+      - run: pureiron-project fmt --check "$PROJECT_DIR"
+      - id: hash
+        run: |
+          content_hash="$(pureiron-project hash "$PROJECT_DIR" | tail -n 1)"
+          if ! [[ "$content_hash" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::hash 출력 형식 오류: $content_hash"
+            exit 1
+          fi
+          echo "content_hash: $content_hash"
+          echo "content_hash=$content_hash" >> "$GITHUB_OUTPUT"
+          echo "content_hash: \`$content_hash\`" >> "$GITHUB_STEP_SUMMARY"
+      - id: version
+        env:
+          # reusable workflow 안의 github 컨텍스트는 호출자 실행의 것이다.
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          project_version=""
+          if [ "$REF_TYPE" = "tag" ] && [[ "$REF_NAME" =~ ^v[1-9][0-9]*$ ]]; then
+            project_version="$REF_NAME"
+          fi
+          echo "project_version: ${project_version:-(없음)}"
+          echo "project_version=$project_version" >> "$GITHUB_OUTPUT"
+          echo "project_version: \`${project_version:-(없음)}\`" >> "$GITHUB_STEP_SUMMARY"
