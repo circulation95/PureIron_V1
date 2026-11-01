@@ -86,6 +86,8 @@ def build_sites_router(*, registry: PgSiteRegistry, guard: Guard) -> APIRouter:
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail="enrollment is for another site")
         try:
             done = await registry.rekey(site, parse(data))
+        except EnrollmentError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         except SiteNotFoundError as exc:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         return SiteRekeyed(site_id=site, fingerprint=done.fingerprint, next_seq=done.next_seq)

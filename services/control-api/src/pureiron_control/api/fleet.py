@@ -57,7 +57,7 @@ class FleetSite(BaseModel):
     current: CurrentInfo | None = Field(
         description="마지막 반영 보고값 — connection이 stale이면 reported_at 시각의 값"
     )
-    last_seen: datetime | None = Field(description="마지막 반영된 온라인 메시지 수신 시각(중앙)")
+    last_seen: datetime | None = Field(description="마지막 온라인 메시지 수신 시각(중앙)")
     connection: ConnectionState
     last_attempt: AttemptInfo | None
     disk_state: str | None

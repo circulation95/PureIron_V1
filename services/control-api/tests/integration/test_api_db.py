@@ -352,6 +352,14 @@ def test_connection_goes_stale_after_three_polls(
     assert fleet_row(central, "site-b")["connection"] == "never"
     everyone = central.client.get("/api/v1/fleet", headers=central.as_role("admin")).json()
     assert [row["site"] for row in everyone] == ["site-a", "site-b"]
+    # 밀린 seq의 재전송도 연결 증거다: online으로 돌아오지만 current는 그대로(이력만).
+    resent = central.client.post(
+        "/api/v1/sites/site-a/heartbeat", content=site_a.heartbeat(1, gen=9), headers=headers
+    )
+    assert resent.json() == {"outcome": "history", "last_seq": 1}
+    back = fleet_row(central, "site-a")
+    assert back["connection"] == "online"
+    assert back["current"] == seen["current"]
 
 
 def test_online_report_updates_last_attempt_and_current_on_success(

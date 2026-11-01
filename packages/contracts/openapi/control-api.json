@@ -369,7 +369,7 @@
                 "type": "null"
               }
             ],
-            "description": "마지막 반영된 온라인 메시지 수신 시각(중앙)",
+            "description": "마지막 온라인 메시지 수신 시각(중앙)",
             "title": "Last Seen"
           },
           "last_seq": {

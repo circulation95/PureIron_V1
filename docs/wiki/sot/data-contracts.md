@@ -484,7 +484,7 @@ ADR-013(개정) 쓰기 경로의 계약과 collector 실행부다. core 쓰기 �
 
 | 표 | 내용 |
 |---|---|
-| `sites` | `site_id` PK, `registered_at`, `last_seq`(마지막 반영 `report_seq`, 등록 때 `next_report_seq − 1`), `last_seen`(반영된 온라인 메시지 수신 시각), `current` jsonb `{product, project_version, gen}`·`current_reported_at`·`current_source`(online·offline), `updater_phase`, `disk_state`, `last_attempt_id` → `apply_attempts` |
+| `sites` | `site_id` PK, `registered_at`, `last_seq`(마지막 반영 `report_seq`, 등록 때 `next_report_seq − 1`), `last_seen`(token·서명이 확인된 온라인 메시지 수신 시각, 반영 여부 무관), `current` jsonb `{product, project_version, gen}`·`current_reported_at`·`current_source`(online·offline), `updater_phase`, `disk_state`, `last_attempt_id` → `apply_attempts` |
 | `site_keys` | site Ed25519 공개키 hex·지문, `revoked_at`(rekey가 찍음). 현장당 유효 키 하나(부분 unique index) |
 | `site_tokens` | 현장 token SHA-256(hex), `revoked_at`(재발급이 찍음). 현장당 유효 token 하나 |
 | `api_tokens` | 사람·CI token SHA-256, `name`(유효 token 사이 유일), `role` ∈ admin·ci·viewer, `revoked_at` |

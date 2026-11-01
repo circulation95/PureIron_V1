@@ -8,8 +8,9 @@ seq 규칙(`judge_seq`): `report_seq > last_seq` → 반영(`applied`), 그 밖 
 - heartbeat: `current`(현장이 보고한 product·project_version·gen)·`current_reported_at`
   (서명된 `at`)·`updater_phase`·`disk_state`.
 - 보고: `last_attempt_id`. 결과가 `succeeded`면 `current`도 — gen = `to`, 버전은 그 gen의 게시 번들.
-- 온라인 메시지가 하나라도 반영되면 `last_seen` = 중앙 수신 시각(stale 판정의 기준, C8). 폐쇄망
-  반입은 `last_seen`을 바꾸지 않는다.
+- `last_seen`(stale 판정의 기준, C8)은 반영 여부와 무관하게 **온라인** 메시지를 받은 중앙 시각이다 —
+  token·서명이 확인된 요청은 그 현장이 지금 연결돼 있다는 증거다(seq가 밀린 재전송이라도). 폐쇄망
+  반입은 `last_seen`을 바꾸지 않는다(중앙이 그 현장을 "본" 것이 아니다).
 
 서명·현장 일치는 호출자(api)가 확인한 뒤 여기 온다. payload 형식 위반은 `ReportFormatError`(400).
 """
@@ -355,7 +356,7 @@ class PgReportStore:
                 outcomes.append(outcome)
                 if outcome is SeqOutcome.APPLIED:
                     last_seq = message.report_seq
-            if source is Source.ONLINE and SeqOutcome.APPLIED in outcomes:
+            if source is Source.ONLINE:
                 await conn.execute(TOUCH_SQL, site_id, received_at)
             result = RecordResult(tuple(outcomes), last_seq, import_id)
             if import_id is not None:

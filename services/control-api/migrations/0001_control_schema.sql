@@ -19,8 +19,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS api_tokens_active_name ON api_tokens (name)
     WHERE revoked_at IS NULL;
 
 -- 등록된 현장과 그 현재 상태. last_seq = 마지막으로 반영한 report_seq(heartbeat·보고 공용 카운터).
--- current·last_attempt는 report_seq가 last_seq보다 큰 메시지만 바꾼다(C7). last_seen은 반영된
--- 온라인 메시지를 받은 중앙 시각 — 폐쇄망 반입은 바꾸지 않는다(그 현장을 "본" 것이 아니다).
+-- current·last_attempt는 report_seq가 last_seq보다 큰 메시지만 바꾼다(C7). last_seen은 온라인
+-- 메시지(token·서명 확인)를 받은 중앙 시각 — 폐쇄망 반입은 바꾸지 않는다(그 현장을 "본" 것이 아니다).
 CREATE TABLE IF NOT EXISTS sites (
     site_id             text        PRIMARY KEY,
     registered_at       timestamptz NOT NULL,

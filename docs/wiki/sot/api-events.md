@@ -245,7 +245,7 @@ PureIron_V1 core의 정본은 `services/core/src/pureiron_core/api/` 와 생성�
 - **인증 표(C5)**: token 없음·모름·폐기 401(`WWW-Authenticate: Bearer`). 현장 token은 **자기 `{site}` 경로만** — 다른 현장 경로·사람 경로는 403. 사람·CI token(`pia_…`)은 역할 `admin`·`ci`·`viewer`로만 판정하고 현장 경로에는 403. 사람·CI token은 `pureiron-control token create --role`로만 발급하고 기본 계정은 없다. control-web 앞 Caddy basic auth(M4-3)는 이 인증을 대신하지 않는다.
 - **서명 검증 순서**: 현장 token·경로 → 본문 `payload.site_id`(서명 확인 전 값)가 경로와 다르면 **403** → 등록된 유효 site 키로 `sitesign.open_document` — 서명 불일치·용도 다름·형식 위반 **400**. 용도(`purpose`)는 봉투 서명에 들어가 heartbeat 서명을 보고로(또는 묶음으로) 쓸 수 없다. rekey 뒤 구 키 서명은 400.
 - **seq 규칙(C7)**: heartbeat·보고는 현장 하나의 `report_seq` 카운터를 함께 쓴다. `report_seq > last_seq`만 반영(`applied`: `last_seq`·current·last_attempt 갱신), 그 밖은 **이력만**(`history`, current·last_attempt 그대로) — 둘 다 200·201. 온라인·폐쇄망이 같은 함수(`PgReportStore.record`, 현장 행 잠금 한 트랜잭션)를 지나고 이력 행에 `source`(online·offline)·`outcome`을 남긴다. 성공(`result = succeeded`) 보고는 current를 `to` gen + 그 gen 게시 번들의 버전으로 바꾼다.
-- **연결 판정(C8)**: `last_seen` = 반영된 **온라인** 메시지의 중앙 수신 시각(폐쇄망 반입은 바꾸지 않는다). `GET /fleet` 응답 때 `online`(now − last_seen ≤ 3 × `PUREIRON_CONTROL_POLL_S`, 기본 180s)·`stale`·`never`로 계산하고 저장하지 않는다. stale 현장의 `current`는 마지막 보고값이고 시각은 `current.reported_at`이다.
+- **연결 판정(C8)**: `last_seen` = token·서명이 확인된 **온라인** 메시지(반영·이력 모두)의 중앙 수신 시각(폐쇄망 반입은 바꾸지 않는다). `GET /fleet` 응답 때 `online`(now − last_seen ≤ 3 × `PUREIRON_CONTROL_POLL_S`, 기본 180s)·`stale`·`never`로 계산하고 저장하지 않는다. stale 현장의 `current`는 마지막 보고값이고 시각은 `current.reported_at`이다.
 - control-db 장애는 503 `{"detail": "control-db unavailable"}`(원문은 로그에만).
 
 ## 내부 이벤트 버스
