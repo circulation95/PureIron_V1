@@ -1636,6 +1636,32 @@ PureIron_V1 core의 정본은 `services/core/src/pureiron_core/api/` 와 생성�
 - **감사 `project.patch`**: source `api`, `username` = admin, `target` = `alarm:<id>`·`tag:<path>`, `detail{kind, id|path, before, after, site_rev}` — before/after는 **바뀐 필드만**(`record.deadband`처럼 한 단계 펼침). `null` = 그 필드가 없음 = 스키마 기본값으로 돌아감 — 필드를 지운 경우와 기본값과 같은 값(예: `priority: "medium"`·`deadband: 0`)을 보낸 경우를 구분하지 않는다(정규형은 기본값을 생략하고, 동작은 둘이 같다).
 - 그 밖: 미인증 401, admin 미만 403, 쿠키 세션의 Origin 위반 403 `E_ORIGIN`(REST Origin 검사), site-db 장애 503. 활성 알람의 setpoint·deadband 변경은 같은 알람의 정의 교체라 조건이 계속 성립하면 ACK 상태를 잃지 않고, 해제되면 전이 한 번이다. 현장 드래프트 회수 흐름(`site_rev`·서명 export·게이트)은 [data-contracts](data-contracts.md) M5-2 절.
 
+## V1 중앙 control-api (`/api/v1`, M4-0 구현)
+
+정본은 `services/control-api/src/pureiron_control/api/*.py`와 생성된 `packages/contracts/openapi/control-api.json`(보안 스킴 `ControlToken` = bearer). 벤더 쪽 중앙 서비스이고 현장은 이것 없이도 동작한다(graceful degradation). 저장소·표는 [data-contracts](data-contracts.md) M4-0 절, 설정은 [runtime-config](runtime-config.md).
+
+| 메서드·경로 | 인증 | 동작 |
+|---|---|---|
+| `POST /sites` | admin | 본문 = Updater `enrollment.json`(`site-enrollment` 자기 서명 봉투) → 201 `{site_id, fingerprint, next_seq, token}`. token(`pis_…`)은 이 응답에만. 이미 등록 409, 봉투 위반 400 |
+| `POST /sites/{site}/rekey` | admin | 새 enrollment(키 분실 재등록) → 구 키 폐기, `{site_id, fingerprint, next_seq}` — `next_seq = max(last_seq+1, 봉투 next_report_seq)`(`seq_pending`이면 봉투 값 무시), 현장은 `enroll --next-seq`로 반영. payload site ≠ 경로 403, 미등록 404 |
+| `POST /sites/{site}/token` | admin | 현장 token 재발급(구 token 즉시 401) → `{site_id, token}` |
+| `POST /sites/{site}/heartbeat` | 현장 token + `site-heartbeat` 서명 | payload `{site_id, report_seq, current{product, project_version, gen}\|null, updater_phase, disk_state, at}` → `{outcome: applied\|history, last_seq}` |
+| `POST /sites/{site}/reports` | 현장 token + `site-report` 서명 | payload = Updater 보고 큐 파일(`metrics.write_report` 키) + `site_id`·`report_seq` → `{outcome, last_seq}` |
+| `GET /sites/{site}/desired` | 현장 token | 최신 게시 `{generation, bundle_url, sha256: "sha256:<hex>", size}`, `ETag: "<gen>"`, `If-None-Match` 일치 304, 게시 없음 404 — r4 Updater `poll.py`가 그대로 소비. `bundle_url`은 같은 출처 절대 경로(`/api/v1/sites/{site}/bundles/{gen}`) |
+| `GET /sites/{site}/bundles/{generation}` | 현장 token | `.pib`(`application/octet-stream`), `Range` 이어받기 206 |
+| `POST /sites/{site}/drafts` | 현장 token + `site-draft` 서명 | 본문 = `draft.tar`(`open_draft`로 검증, 상한 65 MiB) → 201 `{id, site_rev, base_site_rev, content_hash, sha256, size, …}` |
+| `GET /sites/{site}/drafts/latest` | admin | 마지막 `draft.tar`(헤더 `X-PureIron-Draft-Site-Rev`) → `pureiron-project absorb`에 넣는다. 없음 404 |
+| `PUT /bundles/{site}/{generation}` | ci | 본문 = 서명된 `.pib`(상한 `PUREIRON_CONTROL_MAX_BUNDLE_BYTES`) → 201. **gen ≤ 최신 게시 409**, 미등록 현장 404, `.pib`가 아니거나 manifest `site_id`·`generation` ≠ 경로 400, 상한 초과 413 |
+| `POST /offline-imports` | admin | 본문 = `pureiron-site report export` 파일(`site-reports` 봉투) 그대로 → 201 `{import_id, site_id, applied_total, history_total, last_seq}`. 미등록 404, 서명·형식(seq가 `first_seq..last_seq` 연속 아님 등) 400 |
+| `GET /fleet[?site=]` | admin·viewer | `[{site, desired{generation, sha256, size, product_version, project_version, published_at}, max_published_gen, current{product, project_version, gen, reported_at, source}, last_seen, connection, last_attempt{report_seq, source, received_at, generation, from, to, phase, result, code, started_at, ended_at}, disk_state, updater_phase, last_seq}]`. `?site=` 미등록 404(fleet `check-gen`의 "미등록만 gen 1") |
+| `GET /healthz` · `GET /readyz` | 없음 | 생존 · control-db + 스키마 envelope(벗어나면 503 — 부팅 자동 migrate 없음) |
+
+- **인증 표(C5)**: token 없음·모름·폐기 401(`WWW-Authenticate: Bearer`). 현장 token은 **자기 `{site}` 경로만** — 다른 현장 경로·사람 경로는 403. 사람·CI token(`pia_…`)은 역할 `admin`·`ci`·`viewer`로만 판정하고 현장 경로에는 403. 사람·CI token은 `pureiron-control token create --role`로만 발급하고 기본 계정은 없다. control-web 앞 Caddy basic auth(M4-3)는 이 인증을 대신하지 않는다.
+- **서명 검증 순서**: 현장 token·경로 → 본문 `payload.site_id`(서명 확인 전 값)가 경로와 다르면 **403** → 등록된 유효 site 키로 `sitesign.open_document` — 서명 불일치·용도 다름·형식 위반 **400**. 용도(`purpose`)는 봉투 서명에 들어가 heartbeat 서명을 보고로(또는 묶음으로) 쓸 수 없다. rekey 뒤 구 키 서명은 400.
+- **seq 규칙(C7)**: heartbeat·보고는 현장 하나의 `report_seq` 카운터를 함께 쓴다. `report_seq > last_seq`만 반영(`applied`: `last_seq`·current·last_attempt 갱신), 그 밖은 **이력만**(`history`, current·last_attempt 그대로) — 둘 다 200·201. 온라인·폐쇄망이 같은 함수(`PgReportStore.record`, 현장 행 잠금 한 트랜잭션)를 지나고 이력 행에 `source`(online·offline)·`outcome`을 남긴다. 성공(`result = succeeded`) 보고는 current를 `to` gen + 그 gen 게시 번들의 버전으로 바꾼다.
+- **연결 판정(C8)**: `last_seen` = 반영된 **온라인** 메시지의 중앙 수신 시각(폐쇄망 반입은 바꾸지 않는다). `GET /fleet` 응답 때 `online`(now − last_seen ≤ 3 × `PUREIRON_CONTROL_POLL_S`, 기본 180s)·`stale`·`never`로 계산하고 저장하지 않는다. stale 현장의 `current`는 마지막 보고값이고 시각은 `current.reported_at`이다.
+- control-db 장애는 503 `{"detail": "control-db unavailable"}`(원문은 로그에만).
+
 ## 내부 이벤트 버스
 
 V1 core `platform/bus.py` `EventBus`는 core 프로세스 내부 async pub/sub이다(외부 broker 계약이 아니다). 구독은 fnmatch 패턴.
@@ -1702,7 +1728,7 @@ PureIron V1은 현장 한 곳에 설치되는 **서비스 4개(collector·core·
 | `site-db` | TimescaleDB PG16(`pureiron/site-db:2.30.2-pg16`) | 마이그레이션 `0001~0013`, epoch 5 (r4) |
 | `ai` | core read-only API 소비 | 계약만, 첫 완료 범위 제외 |
 | Updater | 호스트 systemd 서비스(컨테이너 아님): 번들 검증·백업·마이그레이션·전환·롤백 | 완료(M2), VM 실측 30/30(r0→r1, r1→r2, r2→r3), 35/35(r3→r4) |
-| control-api | 벤더 내부 중앙 API: 등록·heartbeat·desired·reports·drafts·fleet | `GET /api/v1/healthz` 골격만(M4) |
+| control-api | 벤더 내부 중앙 API: 등록·heartbeat·desired·reports·drafts·fleet | M4-0 본체: 등록·token·heartbeat·desired(ETag)·번들 게시/내려받기(Range)·보고·폐쇄망 반입·드래프트·fleet, control-db(PostgreSQL 16) epoch 1. 현장 송신(Updater)은 M4-1, 배포 compose는 M4-3 |
 | control-web | 중앙 읽기 전용 표(basic auth) | 미착수(M4) |
 | `simulator` | 개발용 Modbus 시뮬레이터(compose profile `dev`) | `deploy/simulator/` |
 
@@ -1881,6 +1907,13 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
   다룬다(첫 트리 release로의 업데이트를 롤백하면 정의는 남는다 — `E_DEFINITIONS_LEFT` 경보, updater README runbook). 근거·한계는 `services/updater/src/pureiron_updater/backup.py`.
 - 폐쇄망 현장도 같은 `.pib`를 USB 등으로 반입해 같은 검증을 거친다. 설치는 install 번들(`deploy/install/`)로 오프라인 부트스트랩.
 - 이미지 신원 = config digest(release 기록 `deploy/releases/<r>.json`). 현장 이미지는 번들에서 `docker load`만 한다.
+- **중앙 control-api(M4-0)**: core와 같은 조립 방식 — `ControlRuntime.build(settings)` → `create_app(rt)`, 생성자
+  주입, `app.state`·전역 조회 금지, import-linter `services/control-api/.importlinter` (a) runtime/app·cli는 진입점만
+  (b) `api > {bundles·credentials·drafts·fleet·reports·sites} > platform` (c) 도메인 모듈끼리 import 금지(표가
+  겹치는 곳은 SQL만 공유). DB 풀·migrate 라이브러리는 `pureiron_core.platform`을 재사용하고, 현장 서명 봉투·`.pib`
+  메타데이터는 bundle-tools를 현장과 같은 코드로 쓴다(P3). 현장은 polling(`GET …/desired` → Range로 번들 → 자체
+  검증)만 하고 중앙이 현장에 접속하지 않는다. 폐쇄망 현장은 `report export` 파일을 USB로 반출해 `POST
+  /offline-imports`로 같은 seq 규칙에 넣는다. API·저장 세부는 [api-events](api-events.md)·[data-contracts](data-contracts.md).
 
 ## V1 구현 현황 (2026-10-17)
 
@@ -1891,7 +1924,7 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
 | M3a | collector(Modbus·링버퍼·replay), core tags·historian·정의, r2(epoch 3), VM 실측 r1→r2 30/30 | 완료 |
 | M3b | alarms·auth·audit·realtime·devices·history API, web 로그인 + 5화면, r3(epoch 4), VM 실측 r2→r3 30/30 | 완료 |
 | M3c | PLC 쓰기 경로(ADR-013 가드레일): M3c-0 REST Origin/CSRF·로그인 제한, M3c-1 계약·collector 쓰기·simulator, M3c-2 core 쓰기(writes·REST·감사) | 진행 중 — M3c-3 web 쓰기 화면 예정 |
-| M4 | control-api·control-web·fleet·release 파이프라인 | 예정 |
+| M4 | control-api·control-web·fleet·release 파이프라인 | 진행 중 — M4-0 control-api 본체(API·control-db·인증·seq 규칙). 현장 송신 M4-1·fleet/publish M4-2·control-web M4-3 예정 |
 | M5 | 프로젝트 수명주기(project-tools 완성, apply·드래프트 회수), r4(epoch 5), VM 실측 r3→r4 35/35 | 진행 중 — VM 실측 35/35 완료, `@r4` 태그·고객 테스트 repo ref 확정 남음 |
 
 진행 기록의 정본은 각 PR과 [data-contracts](data-contracts.md)의 release·실측 절이다.
@@ -2158,7 +2191,7 @@ services/core/src/pureiron_core/
 | 8절 로거 이름 | `getLogger("pureiron_updater")`, `getLogger("simulator")` | `__name__`으로 |
 | 5절 크기 단위 접미사 | `SIZE_LIMIT`(`deploy/bundle/build_bundle.py`), `METADATA_LIMIT`(`pureiron_bundle/pib.py`) | `_BYTES` 접미사 |
 | 5절 환경변수 접두 | updater `PUREIRON_POLL_INTERVAL_S`·`PUREIRON_CHECK_TIMEOUT_S`(서비스 전용인데 접두 없음) | **변경하지 않는다** — 현장 `.env`·compose와 맞물린 배포 계약 |
-| 7·9절 docstring | 모듈 docstring 없음: `services/control-api/src/pureiron_control/app.py`; 테스트 docstring 없음 17개(예: collector `test_modbus.py`·`test_plan.py`) | 손댈 때 채움 |
+| 7·9절 docstring | 테스트 docstring 없음 17개(예: collector `test_modbus.py`·`test_plan.py`) | 손댈 때 채움 |
 
 ## 13. 이 문서를 바꾸는 법
 
@@ -2626,6 +2659,30 @@ ADR-013(개정) 쓰기 경로의 계약과 collector 실행부다. core 쓰기 �
 - **private repo 접근 조건(foundation plan K6)**: PureIron_V1이 private이라 ① PureIron_V1 Actions access level `user`(같은 계정 소유 private repo만 호출 허용, REST `PUT /repos/{owner}/{repo}/actions/permissions/access`) ② 고객 repo도 `circulation95` 소유 ③ PureIron_V1 체크아웃은 App 토큰(App이 PureIron_V1에 설치돼 있어야 함). 고객 소유 repo가 필요해지면 `validate-project.yml`·project-tools를 공개 repo로 분리한다(K6 대안).
 - **App 키 신뢰 경계**: workflow가 토큰 범위를 PureIron_V1 contents read로 좁혀도, 키를 가진 사람은 App 권한 전체로 토큰을 직접 만들 수 있다. App(`pureiron-ci`)은 **PureIron_V1 한 repo에만**(Only select repositories) 설치돼 있고, 권한은 Contents read·Metadata read에 V1 CI용(M0) **Pull requests write·Commit statuses write**(`pull_requests`·`statuses`)가 더해져 있다. 고객 repo에 write 권한이 있는 사람은 workflow를 고쳐 이 키를 꺼낼 수 있으므로 키 = PureIron_V1에 대한 App 권한 전체(코드 읽기 + PR·commit status 쓰기)로 본다. 지금 이를 수용하는 근거: 모든 고객 repo가 `circulation95` 소유이고 write 권한자는 벤더뿐이라, 키를 꺼낼 수 있는 사람이 이미 PureIron_V1에 그 이상의 권한을 가진 사람이다. 전환 조건: 외부인(고객 엔지니어 등 벤더 밖)에게 고객 repo write 권한을 주기 **전에** 둘 중 하나를 고른다 — ① 고객 repo 전용 읽기 전용 App(Contents read만, PureIron_V1에만 설치)을 따로 만들고 모든 고객 repo의 secret을 그 App으로 교체 ② K6 대안(`validate-project.yml`·project-tools를 공개 repo로 분리). 키가 샌 것으로 의심되면 App에서 키를 새로 만들고 모든 고객 repo의 secret을 갱신한다.
 - **V1 안 검증**: foundation-ci `template-validate`(같은 workflow를 `./`로 호출, `project_dir: deploy/templates/pureiron-project`) → `template-outputs`(`content_hash` 형식·로컬 `pureiron-project hash`와 같음·`project_version` 빈 값). 외부 repo run(G1-8)은 [testing](testing.md) 11절.
+
+### V1 구현 현황 (M4-0 control-api 중앙 DB, 2026-11-01)
+
+벤더 쪽 중앙 저장소. 근거 plan `pureiron-m4.md` C5~C8, foundation plan §6.4·PD-3·PD-15. API 표면은 [api-events](api-events.md) control-api 절.
+
+- **control-db**: PostgreSQL 16(TimescaleDB 아님), asyncpg raw SQL(No ORM). 마이그레이션은 `services/control-api/migrations/0001_control_schema.sql`(epoch 1 = baseline) + `epochs.yaml` — core와 **같은 migrate 라이브러리**(`pureiron_core.platform.migrate`·`migrate_lint`)를 쓰는 별도 카탈로그다. CLI `pureiron-control migrate status [--json]|up [--to EPOCH] [--lock-timeout S]|verify|lint <dir> [--base-ref]`, 종료 코드는 core와 같다(0/2/3/4/5). 부팅 때 자동 실행하지 않는다 — `/readyz`가 envelope 밖이면 503. ADD-only lint는 G1 `migration-lint`가 control-api 디렉터리에도 돌린다(base에 아직 release 기록이 없어 epoch 불변 판정은 core release 기록 기준 — epoch 1은 바꿀 수 없다).
+- **표**(모든 시각 `timestamptz`, 원문 token 없음):
+
+| 표 | 내용 |
+|---|---|
+| `sites` | `site_id` PK, `registered_at`, `last_seq`(마지막 반영 `report_seq`, 등록 때 `next_report_seq − 1`), `last_seen`(반영된 온라인 메시지 수신 시각), `current` jsonb `{product, project_version, gen}`·`current_reported_at`·`current_source`(online·offline), `updater_phase`, `disk_state`, `last_attempt_id` → `apply_attempts` |
+| `site_keys` | site Ed25519 공개키 hex·지문, `revoked_at`(rekey가 찍음). 현장당 유효 키 하나(부분 unique index) |
+| `site_tokens` | 현장 token SHA-256(hex), `revoked_at`(재발급이 찍음). 현장당 유효 token 하나 |
+| `api_tokens` | 사람·CI token SHA-256, `name`(유효 token 사이 유일), `role` ∈ admin·ci·viewer, `revoked_at` |
+| `bundles` | `(site_id, generation)` PK, `sha256`(`sha256:<hex>`)·`size_bytes`, manifest에서 읽은 `product_version`·`project_id`·`project_version`·`fleet_commit`(표시용 — 서명 확인은 현장 Updater), `published_at`, `published_by` → `api_tokens`. 파일은 디스크 `<PUREIRON_CONTROL_DATA_DIR>/bundles/<site>/g<gen>.pib` |
+| `apply_attempts` | 받은 ApplyAttempt 보고 전부: `report_seq`, `source`, `outcome`(applied·history), `generation`, `result`, 서명된 payload jsonb, `received_at`, `offline_import_id` |
+| `heartbeats` | 받은 heartbeat 전부(`report_seq`·`source`·`outcome`·payload) — 보존 정책은 아직 없다(현장 1개 ≈ 1행/분) |
+| `offline_imports` | 반입 1회: `first_seq`·`last_seq`·`exported_at`·`file_sha256`·`applied_total`·`history_total`·`imported_by` |
+| `drafts` | 현장 드래프트 메타(`site_rev`·`base_site_rev`·`content_hash`·`exported_at`·`sha256`·`size_bytes`), 파일 `<data>/drafts/<site>/<sha256 hex>.tar` |
+
+- **게시 규칙(PD-15)**: `PUT /bundles/{site}/{gen}`은 업로드를 같은 디렉터리 임시 파일(`.upload-*.part`)로 받아 sha256·크기를 재고 manifest `site_id`·`generation`이 경로와 같은지 본 뒤, 현장 행 `FOR UPDATE` 아래에서 `gen > max(generation)`을 다시 확인하고 행 INSERT + 파일 이름 바꾸기를 한 트랜잭션에 한다. 거부된 업로드는 파일을 남기지 않는다. DesiredState = 최대 gen(revert도 gen+1 게시).
+- **seq·current 규칙(C7)**: [api-events](api-events.md) control-api 절. 같은 seq 재전송·같은 파일 재반입은 이력 행만 늘린다(중복 제거 없음, 감사용).
+- **현장 쪽 짝**: enrollment·`report export` 파일 형식은 Updater(`pureiron_updater.enroll`) 그대로, 서명 용도는 bundle-tools `sitesign` — 이번에 `site-heartbeat`·`site-report`(온라인 한 건)를 추가했고 기존 용도·봉투 형식은 바꾸지 않았다. Updater 송신(heartbeat 루프·보고 온라인 전송·`export --upload`)은 M4-1.
+- **검증**: 단위(인증 표·seq 규칙·연결 판정 경계 180/181s·payload 형식·봉투 site 추출·업로드 상한·설정·OpenAPI 경로·import-linter 음성) + control-db 통합(`deploy/compose/control.dev.yml`, 테스트마다 새 DB → CLI `migrate up` → `token create`): gen 역행 409·타 site token 403(현장 경로 5개)·서명 불일치/변조/용도 위반 400·payload 타 site 403·seq ≤ last_seq 반입 이력만(current·last_attempt 그대로)·180s 초과 stale·반입 `source=offline`(connection `never` 유지)·desired ETag 304·Range 206·rekey 뒤 구 키 400·token 재발급/폐기 401·드래프트 업로드/회수, 그리고 r4 Updater `poll.ControlApi`가 실제 HTTP로 desired·304·Range 이어받기를 소비.
 
 ---
 
@@ -3446,6 +3503,24 @@ PureIron 런타임 설정의 정본은 `backend/src/pureiron/config.py`의 `Sett
 
 core의 초 단위 값(`…_S`)은 양의 유한 수만 받는다 — 0·음수·`nan`·`inf`는 기동 시 `SettingsError`로 실패한다(M3b-0). compose core는 `stop_grace_period: 25s`다(종료 예산은 [data-contracts](data-contracts.md) M3a-3 historian 현황).
 
+### V1 control-api 환경변수 (M4-0 구현)
+
+정본은 `services/control-api/src/pureiron_control/settings.py`. 벤더 쪽 중앙(M4 C3: 개발 PC WSL compose, 운영 compose는 M4-3 `deploy/central`)에서만 쓴다. 비밀값은 파일 경로로만 받는다.
+
+| 변수 | 기본값 | 의미 |
+|---|---|---|
+| `PUREIRON_CONTROL_DB_DSN` | `postgresql://pureiron@localhost:5432/pureiron_control` | control-db(PostgreSQL 16) 접속(비밀번호 제외) |
+| `PUREIRON_CONTROL_DB_PASSWORD_FILE` | 없음 | control-db 비밀번호 파일 |
+| `PUREIRON_CONTROL_HTTP_HOST` / `_HTTP_PORT` | `127.0.0.1` / `8100` | REST `/api/v1`(앞단 Caddy가 TLS) |
+| `PUREIRON_CONTROL_DATA_DIR` | `/var/lib/pureiron-control` | 게시 번들 `bundles/<site>/g<gen>.pib`·드래프트 `drafts/<site>/<sha256>.tar` |
+| `PUREIRON_CONTROL_POLL_S` | `60` | 현장 poll 주기 가정. `GET /fleet`의 `online` = `last_seen` ≤ 3 × 이 값(기본 180 s, C8) — 현장 Updater `PUREIRON_POLL_INTERVAL_S`와 맞춘다 |
+| `PUREIRON_CONTROL_MAX_BUNDLE_BYTES` | `17179869184`(16 GiB) | `PUT /bundles` 업로드 상한(넘으면 413) |
+| `PUREIRON_CONTROL_MIGRATIONS_DIR` | 소스 트리 `services/control-api/migrations` | 이미지(M4-3)에서는 설치 경로 |
+| `PUREIRON_RELEASE` | 패키지 버전 | `schema_migrations.release` 기록값 |
+| `PUREIRON_DEV_CONTROL_DB_PORT` | `25433` | 개발·통합 테스트 compose(`deploy/compose/control.dev.yml`) control-db 호스트 포트 |
+
+초·바이트 값은 양의 유한 수만 받고 잘못된 값은 기동 시 `SettingsError`(CLI 종료 코드 4)다. 사람·CI token은 env가 아니라 `pureiron-control token create --role admin|ci|viewer --name <이름>`으로만 만든다(원문은 그때 한 번만 출력, DB에는 SHA-256).
+
 ---
 
 <!-- source: docs/wiki/sot/testing.md -->
@@ -3779,15 +3854,15 @@ E2E/NF:
 | job | 내용 | 실행 조건 |
 |---|---|---|
 | `lint-type` | `uv sync --locked`, ruff check·format, pyright strict(패키지 6 + `packages/contracts` + `deploy`), 억제 주석·`app.state` grep 0건 | 항상 |
-| `import-linter` | core 계약 3종 + 음성 fixture(`services/core/tests/test_importlinter_negative.py`) | 항상 |
+| `import-linter` | core 계약 3종 + 음성 fixture(`services/core/tests/test_importlinter_negative.py`), control-api 계약 3종 + 음성 사례(`services/control-api/tests/test_importlinter.py`) | 항상 |
 | `unit` | `pytest services packages deploy`(통합 제외) | 항상 |
 | `contracts-diff` | `buf lint`·`buf breaking`(FILE), `oasdiff breaking --fail-on ERR`, `schema_diff.py` — base에 파일이 없으면 notice 후 통과 | 항상 |
 | `contracts-drift` | OpenAPI export·proto 생성·`schema.d.ts`·project-tools 스키마 복사 후 `git status` 변경 0 | 항상 |
-| `migration-lint` | `pureiron-core migrate lint services/core/migrations --base-ref $BASE_REF` | 항상 |
+| `migration-lint` | `pureiron-core migrate lint services/core/migrations --base-ref $BASE_REF` + `pureiron-control migrate lint services/control-api/migrations --base-ref $BASE_REF` | 항상 |
 | `no-customer-branching` | `(project_id\|site_id) == "…"` 리터럴, `deploy/lint/customer-names.txt` 이름 0건(제품 `src/`만) | 항상 |
 | `web` | `npm ci`, `tsc --noEmit`, `eslint --max-warnings 0`, `vite build` | 항상 |
 | `template-validate` → `template-outputs` | G1-8 V1 안 대리: 고객 repo와 같은 reusable workflow `validate-project.yml`을 `./`로 불러 `deploy/templates/pureiron-project`를 validate·`fmt --check`·hash → 출력 `content_hash`가 `sha256:` 형식이고 로컬 `pureiron-project hash`와 같으며 `project_version`이 빈 값(태그 실행 아님)인지 확인. 자기 호출은 `project/`·`pureiron-v1/`가 같은 트리라 hash 비교로는 경로 분리를 못 잡으므로 reusable 안에서 도구·프로젝트 경로를 직접 확인한다. 경로 분리·`project_version` 태그 분기는 외부 run(G1-8)에서 검증. 로컬 대응은 `unit`의 `deploy/tests/test_project_template.py` | CI만(`g1.sh`에 없는 job), 항상 |
-| `integration-compose` | 이미지 빌드 → compose(`pureiron-it`, `PUREIRON_IT_PROJECT`로 변경 가능) site-db → `migrate up` → 전체 기동 → `pytest -m "integration and not perf"`(readyz 200, migrate 종료코드, Timescale 객체, edit-lock 경쟁, historian DB, 시뮬레이터 100태그·collector kill, collector 30 s 네트워크 분리 replay, 현장 PATCH·드래프트 게이트·서명 export(M5-2)) | 항상 |
+| `integration-compose` | 이미지 빌드 → compose(`pureiron-it`, `PUREIRON_IT_PROJECT`로 변경 가능) site-db → `migrate up` → 전체 기동 → `pytest -m "integration and not perf"`(readyz 200, migrate 종료코드, Timescale 객체, edit-lock 경쟁, historian DB, 시뮬레이터 100태그·collector kill, collector 30 s 네트워크 분리 replay, 현장 PATCH·드래프트 게이트·서명 export(M5-2)) 이어서 control-api 통합(`deploy/compose/control.dev.yml` control-db PostgreSQL 16만, 프로젝트 `<PUREIRON_IT_PROJECT>-control`·포트 `PUREIRON_DEV_CONTROL_DB_PORT`(25433), 테스트마다 새 DB → `pureiron-control migrate up`: gen 역행 409·타 site 403·서명 400·seq 규칙·stale·offline·ETag 304·Range 206·r4 Updater poll 클라이언트 호환, M4-0). | 항상 |
 | `web-e2e` | 이미지 빌드 → `uv sync` → compose(`pureiron-it`) site-db → `migrate up` → 전체 기동 → core 쓰기 스위치 켬(`PUREIRON_WRITES_ENABLED=true`) → 시뮬레이터 100태그 + 쓰기 선언 2개(설정값 `sim/sp_float`·명령 `sim/start`) + 허가 조건 coil `sim/remote_ok` + 알람 1개 정의 apply·CLI 계정(engineer·operator·viewer) → 쓰기 검사 통과 대기 → Playwright chromium 스모크(로그인 → Overview GOOD → Alarms ACK 1회 → Trend canvas → Devices 연결됨 → Audit `alarm.ack` → 로그아웃 뒤 보호 경로 리다이렉트, 조회자 권한, 로그인 실패 고정 문구) + 쓰기(M3c-3: 설정값 CONFIRMED·표 값 갱신, 조회자 쓰기 버튼 없음, 허가 조건 거짓 → 검사 거부, 명령 확인 2단계 → 장비 수신, confirm 응답을 바꿔(core에 보내지 않음) "장비 수신, 값 미확인"·"결과 모름" 문구, 명령 더블클릭·Enter 연타가 2단계 확인을 건너뛰지 않음, 전송 중 Esc 반복에도 대화상자 유지, confirm 409·410·404·503 문구). 결과·trace·스크린샷 `artifacts/web-e2e/`, CI는 성공·실패 모두 `artifacts/web-e2e/` 전체(스크린샷 포함)를 artifact로 올린다. 명세는 `services/web/e2e/`, 정본은 [frontend](frontend.md) 16절 | 항상(CI: integration-compose 다음 job) |
 | `perf-ingest` | 이미지 빌드 → `PUREIRON_SIM_REGISTERS=2000` compose → 2,000태그·poll 1 s 60 s 측정(r3부터 알람 정의 50개 + 전 태그 구독 WS 1개를 붙여서) → `artifacts/perf/<PUREIRON_PERF_RELEASE:-r3>/ingest.json`(batch/s·샘플/s·write_lag p50/p95/max·buffer max·drop·CPU/RSS·분당 행, r3부터 `alarms`·`ws` 수신 통계). 기록만, 합격선 없음 | 수동 |
 | `n-minus-1` | 현재 커밋 core를 `pureiron/core:ci-<sha>`로 빌드해 migrate한 DB에서, 직전 epoch release 기록(`deploy/releases/r<N>.json`, 번호 순)의 core-test 이미지를 실행. 이미지가 없으면 image store(`PUREIRON_IMAGE_STORE`, 기본 `~/pureiron/images/<release>/`)의 tar를 load하고 config digest를 기록과 대조. 테스트와 별개로 N-1 앱의 `migrate status --json`이 N 스키마에서 envelope 안인지 확인. `deploy/build/n_minus_1_waivers.json`의 테스트만 deselect(waiver 테스트는 따로 돌려 여전히 실패해야 하고, 본 실행은 통과 ≥ 1·deselect 수 == waiver 수). 현재 epoch 5(r4) × r3 core-test. epoch 1이면 notice 후 통과 | 마이그레이션·`db` 경로 변경 PR, master push, nightly, `full-gate` 라벨 |

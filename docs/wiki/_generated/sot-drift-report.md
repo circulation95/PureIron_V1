@@ -36,6 +36,7 @@ api-events.md 에 미기재된 소스 프리픽스: (없음)
 - /api/v1
 - /api/v1/devices
 - /api/v1/project
+- /api/v1/sites/{site}/bundles/{gen}
 - /api/v1/ws
 - /docs
 - /metrics
