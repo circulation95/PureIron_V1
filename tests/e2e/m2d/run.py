@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -372,9 +373,10 @@ def step_vm(ctx: Context) -> None:
     pub = golden.ensure_ssh_key(E2E / "ssh").read_text(encoding="utf-8")
     vm_dir = E2E / "vms" / VM_NAME
     hyperv.remove(VM_NAME, vm_dir / "disk.vhdx")
-    seed = golden.write_seed_iso(
-        vm_dir / "seed.iso", golden.seed_files("site-a", VM_IP, pub, golden.Network())
+    files = golden.seed_files(
+        "site-a", VM_IP, pub, golden.Network(), field=field_endpoints(FIXTURE)
     )
+    seed = golden.write_seed_iso(vm_dir / "seed.iso", files)
     hyperv.create_vm(hyperv.VmSpec(VM_NAME, vm_dir / "disk.vhdx", seed, SWITCH), GOLDEN)
     reclaim_host_memory()
     hyperv.start(VM_NAME)
@@ -392,7 +394,7 @@ def step_vm(ctx: Context) -> None:
     ctx.record(ITEM_VM_BOOT, True, ssh_after_s=round(waited, 1))
     ctx.record(
         ITEM_OS_QUIET,
-        not any(ctx.nft_before.values()),
+        no_external(ctx.nft_before),
         baseline=ctx.nft_before,
         dns_lookups=boot_lookups,
     )
@@ -422,6 +424,36 @@ def nft_accumulate(
         before = last.get(key, 0)
         merged[key] = merged.get(key, 0) + (value - before if value >= before else value)
     return merged
+
+
+def no_external(counters: dict[str, int]) -> bool:
+    """외부 접속 카운터가 모두 0인가. `field_fwd`(선언된 현장 장비 폴링)는 외부 접속이 아니다."""
+    return not any(value for name, value in counters.items() if name != golden.FIELD_RULE)
+
+
+def field_endpoints(directory: Path) -> tuple[golden.Endpoint, ...]:
+    """`directory` 트리가 선언한 modbus TCP 장비 끝점(host, port), 정렬·중복 제거. VM 번들의 트리
+    (fixture `acme`·그 m5 사본·absorb 결과)는 장비가 같다. 스키마가 `port`를 필수로 두어 기본값은
+    없다. nft `ip daddr`에 넣으므로 host는 IPv4 주소여야 한다."""
+    project = load_project(directory)
+    if not project.ok:
+        raise E2EError(f"{directory}: " + "; ".join(project.problems))
+    found: set[golden.Endpoint] = set()
+    for f in project.files:
+        device = f.data
+        if f.kind is not Kind.DEVICE or not isinstance(device, dict):
+            continue
+        host, port = device.get("host"), device.get("port")
+        if device.get("protocol") != "modbus_tcp" or not isinstance(host, str):
+            continue
+        if not isinstance(port, int):
+            raise E2EError(f"{f.relpath}: port missing")
+        try:
+            address = ipaddress.IPv4Address(host)
+        except ValueError as exc:
+            raise E2EError(f"{f.relpath}: host {host!r} is not an IPv4 address") from exc
+        found.add((str(address), port))
+    return tuple(sorted(found))
 
 
 LOOKUP = re.compile(r"Looking up RR for (\S+) IN \S+")
@@ -1497,9 +1529,10 @@ def step_report(ctx: Context) -> None:
     nft_mark(ctx, vm())
     ctx.record(
         ITEM_NO_EXTERNAL,
-        not any(ctx.nft_total.values()),
+        no_external(ctx.nft_total),
         baseline=ctx.nft_before,
         total=ctx.nft_total,
+        field_fwd=ctx.nft_total.get(golden.FIELD_RULE, 0),
         dns_lookups=ctx.dns_lookups,
     )
     ctx.out.mkdir(parents=True, exist_ok=True)

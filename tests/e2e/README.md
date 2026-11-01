@@ -107,7 +107,7 @@ uv run python tests/e2e/m2d/run.py destroy         # VM·차분 디스크 삭제
 | `install` | runbook 2단계(메타데이터만 전용 디렉터리에 추출 → `bootstrap-verify.sh` sha256·root 지문 대조) → `install.sh --offline-time-confirmed` → enroll → g1 → 서비스 시작. `/readyz` 200, overlay2 + classic store, 실행 이미지 `.Id` == BASE config digest. 압축 chunk 이력 시드, c0 기반(DB epoch == BASE epoch·BASE 산출물·NEXT 테이블 없음·압축 chunk·이력 행) 확인 후 체크포인트 `c0` |
 | `scenarios` | `c0`에서 거부(다른 현장 `E_SITE`·변조 `E_DIGEST`) exit 1, 같은 gen 재빌드는 no-op exit 0(R-7 멱등) — 모두 core `StartedAt`·실행 이미지 불변 / `c0`에서 BASE→NEXT(압축 DB 위 NEXT epoch migrate) 성공 + NEXT 스키마(epoch 5·`project_files`·0010~0012 테이블·인덱스·1m/1h CAGG와 실시간 집계·0008/0009 열·압축 chunk 유지) → 낮은 gen `E_GEN` 거부 → M5 확인 ⓐ~ⓓ / `c0`에서 FAULT → 5분 안에 BASE digest + `failed` + 전환기 경보 `E_DEFINITIONS_LEFT` → 정상 NEXT 트리 번들로 경보 해제 |
 | `crash` | phase(`fetched`~`rolling_back`)마다 `systemctl kill -s KILL pureiron-updater`와 `Restart-VM -Type Reset -Force` 각 1회 → 10분 안에 수렴(결과·실행 이미지·편집 잠금 해제) |
-| `report` | nftables 외부 접속 카운터(`ext_out_v4`·`dns_out`·`ext_out_v6`·`ext_fwd`)의 **누적** 합 0 (`vm` 단계 기준값도 따로 0이어야 한다). `results.json`의 `missing`은 35개 중 기록되지 않은 항목 |
+| `report` | nftables 외부 접속 카운터(`ext_out_v4`·`dns_out`·`ext_out_v6`·`ext_fwd`)의 **누적** 합 0 (`vm` 단계 기준값도 따로 0이어야 한다). 선언 장비 폴링 `field_fwd`는 판정에서 빼고 누적값만 증거로 남긴다. `results.json`의 `missing`은 35개 중 기록되지 않은 항목 |
 
 거부 보고는 번들 sha256 12자로 찾는다(`reports/<started>-g<gen>-<sha12>.json`) — 커밋 전 거부는 서명을
 믿기 전이라 gen이 `unknown`이다. 낮은 gen 번들은 적용된 gen보다 **뒤에** 빌드한다 — 먼저 만든 번들은
@@ -147,7 +147,15 @@ crash 지점의 실제 의미: 감시자는 상태 파일이 그 phase로 **저�
 **직전**마다 카운터를 읽어 누적하고(`nft_mark`), 직후 기준을 c0 값·0으로 다시 잡는다. 외부 DNS 패킷은 모두
 systemd-resolved가 보내므로(컨테이너 질의도 Docker 내장 DNS → resolved), seed가 resolved를 디버그 로그로 두고
 하네스가 표시마다 조회 이름을 모은다(`dns_lookups`) — 카운터가 0이 아니면 그 이름이 출처 증거다.
+`dns_lookups`의 이름 자체는 판정 대상이 아니다: `core` 같은 컨테이너 서비스 이름은 그 컨테이너가 없는 동안
+(crash 구간) Docker 내장 DNS가 resolved로 넘긴 것이고, resolved가 로컬에서 답하면(`dns_out` 0) 외부 접속이 아니다.
+
+`field_fwd`: 번들 트리가 선언한 현장 장비(`devices/*.yaml`의 modbus TCP host·port, 하네스가 fixture에서 읽어
+seed에 넘긴다)로 가는 eth0 전달은 `ext_fwd` **앞** 규칙이 세고 `accept`로 이 감시 체인만 빠져나간다(docker 체인은
+그대로 거친다). collector의 장비 폴링은 제품 의도대로의 동작이라 외부 접속이 아니다 — r4 트리(fixture `acme`의
+`plc-1` = 10.0.0.5:502)부터 생긴다(VM 1차 실측 `ext_fwd` 216). 정확히 선언된 host:port TCP만 빠지고 그 밖의
+eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 않는다.
 
 ## 단위 테스트
 
-`tests/e2e/tests/` — phase 순서·상태 읽기·nft 규칙·seed ISO 왕복·PowerShell 인용·수렴 판정·release 쌍(BASE·NEXT 기록 대조 필수·crash 순서·항목 35개·c0/NEXT 스키마 집합 판정·전환기 경보·M5 확인 판정(트리·PATCH·absorb·재적용)·gen 배정)·store symlink 다시 연결·`ensure_image` 적재 조건·스테이징 진단 기록(`stage_for_window`). G1 `unit`에 포함된다.
+`tests/e2e/tests/` — phase 순서·상태 읽기·nft 규칙(현장 장비 `field_fwd` 규칙 위치·끝점 추출·외부 접속 판정)·seed ISO 왕복·PowerShell 인용·수렴 판정·release 쌍(BASE·NEXT 기록 대조 필수·crash 순서·항목 35개·c0/NEXT 스키마 집합 판정·전환기 경보·M5 확인 판정(트리·PATCH·absorb·재적용)·gen 배정)·store symlink 다시 연결·`ensure_image` 적재 조건·스테이징 진단 기록(`stage_for_window`). G1 `unit`에 포함된다.

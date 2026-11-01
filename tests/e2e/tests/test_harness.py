@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import re
+import shutil
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path, PureWindowsPath
@@ -60,6 +61,48 @@ def test_nft_audit_counts_every_rule_by_name() -> None:
     assert not {"fwd", "forward", "output", "input"} & set(chains)
     # docker0 IGMP(224.0.0.22)는 링크 밖으로 나가지 않는다 — 외부 접속으로 세지 않는다.
     assert "224.0.0.0/4" in dict(golden.OUT_RULES)["ext_out_v4"]
+
+
+AUDIT_FWD_WITHOUT_FIELD = """\
+    chain audit_fwd {
+        type filter hook forward priority -10; policy accept;
+        oifname "eth0" counter log prefix "e2e-ext_fwd " comment "ext_fwd"
+    }
+"""
+"""r4 이전(현장 장비 끝점 없음)의 `audit_fwd` 체인 — 끝점이 없으면 출력이 이와 같아야 한다."""
+
+
+def fwd_chain(text: str) -> list[str]:
+    return text.split("chain audit_fwd {", 1)[1].split("    }", 1)[0].strip().splitlines()
+
+
+def test_nft_audit_without_field_is_unchanged() -> None:
+    text = golden.nft_audit("10.77.0.0/24")
+    assert AUDIT_FWD_WITHOUT_FIELD in text
+    assert golden.FIELD_RULE not in text
+    assert golden.nft_audit("10.77.0.0/24", ()) == text
+
+
+def test_nft_audit_field_rule_precedes_ext_fwd() -> None:
+    """r4 실측: collector의 선언 장비(10.0.0.5:502) 폴링이 ext_fwd 216으로 잡혔다."""
+    text = golden.nft_audit("10.77.0.0/24", (("10.0.0.5", 502), ("10.0.0.6", 5020)))
+    rules = [line.strip() for line in fwd_chain(text)[1:]]
+    assert rules == [
+        'oifname "eth0" ip daddr . tcp dport { 10.0.0.5 . 502, 10.0.0.6 . 5020 } '
+        'counter accept comment "field_fwd"',
+        'oifname "eth0" counter log prefix "e2e-ext_fwd " comment "ext_fwd"',
+    ]
+    # 나가는 쪽(audit_out)은 끝점과 무관하다.
+    plain = golden.nft_audit("10.77.0.0/24")
+    assert text.split("chain audit_fwd", 1)[0] == plain.split("chain audit_fwd", 1)[0]
+
+
+def test_seed_files_carry_field_rule() -> None:
+    field = (("10.0.0.5", 502),)
+    user_data = golden.seed_files("site-a", "10.77.0.10", "k", golden.Network(), field)
+    text = user_data["user-data"].decode()
+    assert '      oifname "eth0" ip daddr . tcp dport { 10.0.0.5 . 502 } counter accept' in text
+    assert text.index('comment "field_fwd"') < text.index('comment "ext_fwd"')
 
 
 def test_seed_masks_phone_home_before_network() -> None:
@@ -168,6 +211,45 @@ def test_nft_accumulate_survives_reset_and_restore() -> None:
     assert run.nft_accumulate(total, {"dns_out": 5}, {"dns_out": 1}) == {"dns_out": 4}
     # 리셋 직후 기준 {} → 처음 보는 키는 0부터
     assert run.nft_accumulate(total, {}, {"ext_out_v4": 2}) == {"dns_out": 3, "ext_out_v4": 2}
+    # 현장 장비 폴링(field_fwd)도 같이 모은다 — 판정에서만 뺀다
+    assert run.nft_accumulate({}, {"field_fwd": 3}, {"field_fwd": 10}) == {"field_fwd": 7}
+
+
+@pytest.mark.parametrize(
+    ("counters", "quiet"),
+    [
+        ({}, True),
+        ({"ext_out_v4": 0, "dns_out": 0, "ext_out_v6": 0, "ext_fwd": 0}, True),
+        ({"ext_fwd": 0, "field_fwd": 216}, True),  # r4 실측 — 선언 장비 폴링뿐
+        ({"ext_fwd": 1, "field_fwd": 216}, False),
+        ({"dns_out": 2, "field_fwd": 0}, False),
+        ({"ext_out_v6": 1}, False),
+    ],
+)
+def test_no_external_ignores_only_field_fwd(counters: dict[str, int], quiet: bool) -> None:
+    """ITEM_OS_QUIET(기준값)·ITEM_NO_EXTERNAL(누적)이 같은 판정을 쓴다."""
+    assert run.no_external(counters) is quiet
+
+
+def test_field_endpoints_read_fixture(tmp_path: Path) -> None:
+    assert run.FIXTURE == bundles.FIXTURE
+    assert run.field_endpoints(run.FIXTURE) == (("10.0.0.5", 502),)
+    # m5 사본(absorbs만 뺀 것)도 장비가 같다
+    m5 = bundles.unabsorbed_copy(bundles.FIXTURE, tmp_path / "m5")
+    assert run.field_endpoints(m5) == (("10.0.0.5", 502),)
+
+
+def test_field_endpoints_sorted_and_reject_hostname(tmp_path: Path) -> None:
+    tree = tmp_path / "acme"
+    shutil.copytree(run.FIXTURE, tree)
+    (tree / "devices" / "plc-0.yaml").write_text(
+        "host: 10.0.0.4\nid: plc-0\nport: 5020\nprotocol: modbus_tcp\n", "utf-8"
+    )
+    assert run.field_endpoints(tree) == (("10.0.0.4", 5020), ("10.0.0.5", 502))
+    plc = tree / "devices" / "plc-1.yaml"
+    plc.write_text(plc.read_text("utf-8").replace("10.0.0.5", "plc-1.local"), "utf-8")
+    with pytest.raises(run.E2EError, match="not an IPv4 address"):
+        run.field_endpoints(tree)
 
 
 @pytest.mark.parametrize(("value", "want"), [("7141", 7141), (12, 12), ({"error": "x"}, -1)])
