@@ -20,7 +20,7 @@ sources:
   - deploy/releases/r3.json
   - deploy/releases/r4.json
   - https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/wiki/sot/architecture.md
-last_verified: 2026-10-17
+last_verified: 2026-11-01
 ---
 
 # Architecture SOT
@@ -64,7 +64,7 @@ PureIron V1은 현장 한 곳에 설치되는 **서비스 4개(collector·core·
 | `web` | nginx + React(로그인 + 태그 현황·알람/ACK·트렌드·장비 상태·감사 로그) | 로그인 + 5화면, WS 실시간, Playwright 스모크 (M3b) |
 | `site-db` | TimescaleDB PG16(`pureiron/site-db:2.30.2-pg16`) | 마이그레이션 `0001~0013`, epoch 5 (r4) |
 | `ai` | core read-only API 소비 | 계약만, 첫 완료 범위 제외 |
-| Updater | 호스트 systemd 서비스(컨테이너 아님): 번들 검증·백업·마이그레이션·전환·롤백 | 완료(M2), VM 실측 30/30(r0→r1, r1→r2, r2→r3) |
+| Updater | 호스트 systemd 서비스(컨테이너 아님): 번들 검증·백업·마이그레이션·전환·롤백 | 완료(M2), VM 실측 30/30(r0→r1, r1→r2, r2→r3), 35/35(r3→r4) |
 | control-api | 벤더 내부 중앙 API: 등록·heartbeat·desired·reports·drafts·fleet | `GET /api/v1/healthz` 골격만(M4) |
 | control-web | 중앙 읽기 전용 표(basic auth) | 미착수(M4) |
 | `simulator` | 개발용 Modbus 시뮬레이터(compose profile `dev`) | `deploy/simulator/` |
@@ -255,7 +255,7 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
 | M3b | alarms·auth·audit·realtime·devices·history API, web 로그인 + 5화면, r3(epoch 4), VM 실측 r2→r3 30/30 | 완료 |
 | M3c | PLC 쓰기 경로(ADR-013 가드레일): M3c-0 REST Origin/CSRF·로그인 제한, M3c-1 계약·collector 쓰기·simulator, M3c-2 core 쓰기(writes·REST·감사) | 진행 중 — M3c-3 web 쓰기 화면 예정 |
 | M4 | control-api·control-web·fleet·release 파이프라인 | 예정 |
-| M5 | 프로젝트 수명주기(project-tools 완성, apply·드래프트 회수) | 진행 중 — M5-0 번들 프로젝트 적용·트리 백업/복원 |
+| M5 | 프로젝트 수명주기(project-tools 완성, apply·드래프트 회수), r4(epoch 5), VM 실측 r3→r4 35/35 | 진행 중 — VM 실측 35/35 완료, `@r4` 태그·고객 테스트 repo ref 확정 남음 |
 
 진행 기록의 정본은 각 PR과 [data-contracts](data-contracts.md)의 release·실측 절이다.
 

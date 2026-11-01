@@ -95,12 +95,12 @@
     },
     {
       "audience": "both",
-      "bytes": 12736,
+      "bytes": 17191,
       "id": "report-vm-e2e-runs",
-      "last_verified": "2026-10-17",
+      "last_verified": "2026-11-01",
       "path": "docs/wiki/reports/vm-e2e-runs.md",
       "section_count": 5,
-      "sha256": "e226eb08cabc3a17975d87a00ba9f253f89b2d372ac7f2fffed3c41bb2aa1bc1",
+      "sha256": "291b389e167387c02b96ad119e1be996519c46d466f6ad4ea83303d8304056ff",
       "source_globs": [],
       "sources": [
         "tests/e2e/README.md",
@@ -110,7 +110,8 @@
         "deploy/releases/r2.json",
         "deploy/releases/r3.json",
         "deploy/releases/r4.json",
-        "tests/e2e/infra/vm.py"
+        "tests/e2e/infra/vm.py",
+        "tests/e2e/infra/golden.py"
       ],
       "status": "canonical",
       "title": "Hyper-V VM 실측 기록 — release 쌍별 M2d 하네스 결과"
@@ -153,12 +154,12 @@
     },
     {
       "audience": "both",
-      "bytes": 23196,
+      "bytes": 23562,
       "id": "sot-architecture",
-      "last_verified": "2026-10-17",
+      "last_verified": "2026-11-01",
       "path": "docs/wiki/sot/architecture.md",
       "section_count": 18,
-      "sha256": "6a420932a1b4e4504f4d71699dbc8f60daa70971f9c43e82e6c7d16fdf9df167",
+      "sha256": "3e9c31838f86b6042a784b5f8c4330591119d85fe1d611960eab2571a3812175",
       "source_globs": [],
       "sources": [
         "services/core/src/pureiron_core/runtime.py",
@@ -217,12 +218,12 @@
     },
     {
       "audience": "both",
-      "bytes": 93903,
+      "bytes": 94574,
       "id": "sot-data-contracts",
       "last_verified": "2026-08-22",
       "path": "docs/wiki/sot/data-contracts.md",
       "section_count": 30,
-      "sha256": "7259b2127f7bdefe8cf81166a0ddc04727556674e8b6c75e52a954abc5a0974a",
+      "sha256": "b8d9c5360df583743edaaf74d06891d19a2f9c3d87448b8ab5b43bd552fce946",
       "source_globs": [
         "projects/demo-coffee/**/*.yaml",
         "projects/demo-coffee/**/*.json"

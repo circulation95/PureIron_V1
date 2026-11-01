@@ -13,7 +13,8 @@ sources:
   - deploy/releases/r3.json
   - deploy/releases/r4.json
   - tests/e2e/infra/vm.py
-last_verified: 2026-10-17
+  - tests/e2e/infra/golden.py
+last_verified: 2026-11-01
 ---
 
 # Hyper-V VM 실측 기록
@@ -56,9 +57,9 @@ plan M2 종료 조건 실측.
 - 번들: install 80 MB, r3 현장 번들 740 MB(site-db 599 MB, core 61 MB), 빌드 약 60 s.
 - **1차 실패와 수정**: crash 14건이 `staged_before_window`만 false(복구 판정은 모두 true). 14건은 정확히 "apply ssh가 끝날 때 crash 감시자 ssh가 살아 있던" 케이스였다(감시자가 먼저 끝나는 `verified`, CLI 대상 `fetched`는 통과). 실측을 콘솔에서 띄우면 동시에 도는 ssh 둘이 같은 콘솔 stdin을 물려받는다 → `tests/e2e/infra/vm.py`의 ssh·scp를 모두 `stdin=DEVNULL`(`ssh -n`과 같음)로 띄우게 고쳤다. 2차는 같은 조건(콘솔 실행, 14건 모두 `watcher_alive` true)에서 통과했다. 하네스는 crash마다 `stage`(apply rc·시도 횟수·창까지 여유·감시자 생존)를 결과에 남긴다.
 
-## M5 마감 r3→r4 (run `<VM 실측 뒤 기록>`, `<결과>`/35, 초안 2026-11-01)
+## M5 마감 r3→r4 (run `20261101T035728Z`, 35/35 PASS, missing 0, 2026-11-01)
 
-> **초안** — 하네스·로컬 사전 검증까지의 기록이다. run id·결과·수치는 VM 실측 뒤 채운다(`<…>` 자리). 그 전에는 이 절을 실측 근거로 쓰지 않는다.
+하네스 HEAD `072df90`(`chore/m5-close-r4`), 제품 r4 = `d115f95` 기록(2026.11.0, epoch 5). 1차 run `20261101T022914Z`(HEAD `6d0a6dc`)는 34/35 — 하네스 판정 결함 1건을 고친 2차가 이 기록이다(맨 아래 "1차 실패와 수정"). 제품 코드는 바꾸지 않았다.
 
 같은 하네스, 쌍 r3→r4(fault `r4f`). r4는 Updater가 번들 프로젝트 트리를 적용하는 첫 release다(M5-0). 그래서 r3→r4 업그레이드가 VM에서 처음 실제 트리를 적용하고, 항목이 35개로 늘었다(S4의 30개 + M5 확인 4개 + 전환기 경보 해제 1개).
 
@@ -88,9 +89,20 @@ plan M2 종료 조건 실측.
 
 **로컬 사전 검증(VM 전, 2026-11-01).** compose `pureiron-it-m5c`에서 Updater 순서(r3 migrate → r3 메타 apply → 시드 → r4 migrate → r4 `project apply --tar`)를 손으로 밟아 하네스 판정 함수에 실측값을 넣었다: c0·NEXT 스키마·ⓐ·ⓑ(교차 Origin PATCH는 403 `E_ORIGIN`)·ⓒ(`verify_bundle`이 드래프트 있으면 `E_DRAFT`, 없으면 통과, CLI `gate` exit 1)·ⓓ(실제 `export_draft` 서명 → absorb `absorbs[site-a]: (absent) -> 2` → gate 통과 → 재적용 base = site_rev = 2) 모두 통과. 트리를 적용한 epoch 5 DB 위 r3 core·collector·web(r4→r3 하강)은 readyz 200, `migrate status` cur 5·app_expected 4·`unknown_applied` [13], 태그 5/5 GOOD, core·collector 오류 로그 0, 다시 r4로 올려도 같다. r4 위 r3 메타 apply(트리 유지)·r4 트리 백업(`export --with-state`)·복원도 통과. Updater 전체 경로(잠금·백업·롤백·경보·메트릭·보고)와 uid 10001 권한 경로는 VM 몫이다.
 
-- 폐쇄망 부트스트랩 + g1(r3) `<s>`. c0 = epoch 4 + 압축 chunk `<n>`, `project_files` 없음.
-- r3→r4 `<s>`(`switching` `<s>`, `migrating` `<s>`) → epoch 5, `project_files` `<n>`행.
-- M5 ⓐ~ⓓ: `<결과>`.
-- r4′ → `E_HEALTH` + `E_DEFINITIONS_LEFT`, `<s>` 안에 r3 digest 복귀 + `failed`, 경보 해제 `<결과>`.
-- crash 18회 `<범위>` 안에 수렴, r4↔r3 오가는 시도(트리 적용된 epoch 5 DB 위 r3 앱 하강 포함) `<결과>`. nftables 외부 접속 시도 누적 `<n>`.
-- 번들: install `<MB>`, r4 현장 번들 `<MB>`, 빌드 `<s>`.
+**실측 결과(2차, `results.json` 그대로).**
+
+- 폐쇄망 부트스트랩 + g1(r3) 52.7 s, `/readyz` 200, overlay2 + classic image store, 실행 이미지 = r3. c0 = epoch 4 + 압축 chunk 3 + 이력 7141행, `project_files` 없음(c0 판정 `epoch`·`base_schema`·`next_absent`·`compressed_chunks`·`seed_rows` 모두 참).
+- 거부: `E_SITE`·`E_DIGEST` exit 1, 같은 gen 재빌드 no-op exit 0, r4 위 낮은 gen `E_GEN` exit 1 — 모두 core `StartedAt`·실행 이미지 불변(S4와 같음).
+- r3→r4(g2) 25.4 s(`switching` 11.5 s, `fetched` 4.5 s, `migrating` 2.1 s, `locked` 1.9 s, 나머지 각 0.1 s 미만) → `succeeded`, epoch 5, `project_files` 4행, 장비 `plc-1`·태그 5·알람 `temp-high`·`temp-low`(c0 시드 `e2e-dev`·`e2e/tag`는 retire). CAGG 2개 실시간 집계·BASE 열/테이블/인덱스·압축 chunk 3·이력 7141행 보존, 경보 없음, `updater_failed_manual` 0.
+- M5 ⓐ~ⓓ 4/4 통과.
+  - ⓐ `GET /api/v1/project` = `acme` `v1`, content_hash `sha256:bf7f88d2…99c6`, `site_rev` 0 == `base_site_rev` 0, DB `project_files` 4행·정의 = fixture.
+  - ⓑ `e2e-admin` 생성 rc 0 → web 로그인 200(세션 쿠키) → `line1/temp` record PATCH 200(`site_rev` 1, deadband 0.5→0.8·max_interval_s 60→30) → `temp-high` setpoint PATCH 200(80→82.5, `site_rev` 2) → readback = PATCH 값, base 0 그대로.
+  - ⓒ absorb 안 한 repo로 만든 g3 → exit 1 `E_DRAFT`, core `StartedAt`·이미지 불변.
+  - ⓓ export(`site_rev` 2, base 0, draft hash `sha256:361cb5d2…1fed`) → absorb rc 0(`absorbs[site-a]: (absent) -> 2`, 바뀐 파일 3개) → `gate --draft` rc 0 → g4 `succeeded` 13.8 s, content_hash = 흡수 트리, `base_site_rev == site_rev == 2`, PATCH 값 유지, 편집 잠금 해제.
+- 전환기 롤백(c0 위 r4f g2): `failed`, code `E_HEALTH`, 135.0 s 안에 r3 digest 복귀(5분 기준 통과; `checking` 90.2 s·`rolling_back` 19.3 s·`switching` 11.4 s). Updater 경보 `g2: E_HEALTH E_DEFINITIONS_LEFT`, `expected_alarm`(경보 항목·보고 `logs`의 `E_DEFINITIONS_LEFT`·`failed_manual` false) 참, 메트릭 `updater_failed_manual` 1. 편집 잠금 해제·이력 행 보존.
+- 경보 해제: 그 상태에서 정상 r4 트리 번들 g5 → `succeeded` 22.5 s, 경보 없음, `updater_failed_manual` 0. 트리 재적용 판정(`project_version`·`base_site_rev`·`project_files`·`devices`·`tags`·`alarms`) 모두 참 — 경보는 정의를 실제로 교체한 트리 release 성공이 지웠다.
+- crash 18회 모두 16.7~105.5 s 안에 수렴(`fetched`·`verified` 94.6~105.5 s, 나머지 16.7~53.4 s). r4↔r3를 오가며 r3 시도 7회(g7~g19 홀수, 트리를 적용한 epoch 5 DB 위 r3 앱 하강)도 모두 `succeeded`. `rolling_back` 2건(r4 위 r4f)은 `failed`/`E_HEALTH`이고 트리 백업이 있어 경보 없음. service 대상 16회는 스테이징이 창보다 75.5~80.4 s 먼저 끝났다(apply rc 0, 1회).
+- 외부 접속: `vm` 기준값 5개 카운터 모두 0. 설치 이후 누적 `ext_out_v4` 0·`dns_out` 0·`ext_out_v6` 0·`ext_fwd` 0, `field_fwd` 217. `dns_lookups` `{core: 12}`는 판정 대상이 아니다 — 하네스 README 설명대로 core 컨테이너가 없는 동안(crash 구간) Docker 내장 DNS가 resolved로 넘긴 이름이고, `dns_out` 0이라 resolved가 로컬에서 답했다.
+- **"외부 접속 시도 0"의 정의가 S4까지와 다르다.** M5 마감부터 선언 장비 폴링 `field_fwd`는 판정에서 뺀다. `field_fwd`는 eth0으로 나가는 forward 중 IPv4·TCP·번들 트리가 선언한 장비 host·port 쌍(이번 fixture `10.0.0.5:502`)만이다. 다른 목적지·포트, UDP, IPv6, VM 자신의 송신(`audit_out`)은 여전히 `ext_*`·`dns_out`에 잡힌다. S4까지는 트리가 적용되지 않아 collector가 장비를 폴링하지 않았으므로 이 구분이 없었다. 정본 정의는 [`tests/e2e/README.md`](../../../tests/e2e/README.md) nftables 절.
+- 번들: install 80 MB, r4 현장 번들 745 MB(site-db 599 MB, core 66 MB), r3 740 MB, 현장 번들 24개 빌드 각 59~63 s.
+- **1차 실패와 수정**: 1차 run `20261101T022914Z`(HEAD `6d0a6dc`)는 34/35로 `no external connection …`만 실패했다 — 누적 `ext_fwd` 216, 나머지 0. 커널 로그 216건이 모두 `172.18.0.5 → 10.0.0.5:502` TCP SYN(collector → fixture 장비 `plc-1`)이었다. r4가 처음 트리를 적용해 collector가 선언 장비를 폴링하기 시작한 것이라 외부 접속이 아니고, 하네스가 이를 외부로 센 판정 결함이었다. `072df90`에서 선언 장비 끝점을 `field_fwd` 규칙으로 `ext_fwd`보다 앞에 분리하고 판정에서 그 키만 뺐다(단위 테스트가 규칙 위치·끝점 추출·판정을 고정). 2차는 같은 폴링이 `field_fwd` 217로 가고 `ext_fwd` 0이었다.
