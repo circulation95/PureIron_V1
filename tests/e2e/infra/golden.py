@@ -8,7 +8,9 @@
 - seed ISO(label `cidata`): 사용자 `pureiron`(SSH 키, sudo), 내부 전용 vSwitch 고정 IP,
   OS의 외부 접속 시도(시간 동기·apt·snap·motd)를 끄고, 외부로 나가려는 패킷을 세는 nftables
   테이블 `inet e2e_audit`를 둔다. 기본 경로·DNS는 호스트(전달하지 않음)로 두어 외부 접속 *시도*가
-  카운터에 잡히게 한다(경로가 없으면 패킷이 생기지 않아 0이 당연해진다).
+  카운터에 잡히게 한다(경로가 없으면 패킷이 생기지 않아 0이 당연해진다). 선언된 현장 장비
+  끝점(`field`)으로의 전달은 `field_fwd`로 따로 센다. golden은 프로젝트 트리를 모르므로 끝점은
+  호출자가 넘긴다.
 """
 
 from __future__ import annotations
@@ -52,9 +54,27 @@ OUT_RULES = (
     ("ext_out_v6", "ip6 daddr != {{ ::1, fe80::/10, ff00::/8 }}"),
 )
 FWD_RULES = (("ext_fwd", 'oifname "eth0"'),)
+FIELD_RULE = "field_fwd"
+"""선언된 현장 장비(host·TCP port)로 나가는 전달 — collector 폴링이라 외부 접속이 아니다."""
+
+Endpoint = tuple[str, int]
+"""(IPv4 주소, TCP port)."""
 
 
-def nft_audit(cidr: str) -> str:
+def field_rule(field: tuple[Endpoint, ...]) -> list[str]:
+    """`field` 끝점으로의 eth0 전달을 `ext_fwd` 앞에서 세고 빠져나간다. 끝점이 없으면 규칙도
+    없다."""
+    if not field:
+        return []
+    targets = ", ".join(f"{host} . {port}" for host, port in field)
+    return [
+        # accept는 이 base chain(e2e_audit) 평가만 끝낸다 — docker 등 다른 체인은 그대로 거친다.
+        f"        {FWD_RULES[0][1]} ip daddr . tcp dport {{ {targets} }} counter accept "
+        f'comment "{FIELD_RULE}"'
+    ]
+
+
+def nft_audit(cidr: str, field: tuple[Endpoint, ...] = ()) -> str:
     def rules(items: tuple[tuple[str, str], ...]) -> list[str]:
         return [
             f'        {match.format(cidr=cidr)} counter log prefix "e2e-{name} " comment "{name}"'
@@ -70,6 +90,7 @@ def nft_audit(cidr: str) -> str:
             "    }",
             "    chain audit_fwd {",  # `fwd`는 nft 예약어
             "        type filter hook forward priority -10; policy accept;",
+            *field_rule(field),
             *rules(FWD_RULES),
             "    }",
             "}",
@@ -208,8 +229,10 @@ def ensure_ssh_key(directory: Path) -> Path:
     return key.with_suffix(".pub")
 
 
-def seed_files(hostname: str, ip: str, ssh_pub: str, net: Network) -> dict[str, bytes]:
-    nft = "".join(f"      {line}\n" for line in nft_audit(net.cidr).splitlines())
+def seed_files(
+    hostname: str, ip: str, ssh_pub: str, net: Network, field: tuple[Endpoint, ...] = ()
+) -> dict[str, bytes]:
+    nft = "".join(f"      {line}\n" for line in nft_audit(net.cidr, field).splitlines())
     user_data = USER_DATA.format(hostname=hostname, ssh_pub=ssh_pub.strip(), nft=nft.rstrip("\n"))
     network = NETWORK_CONFIG.format(ip=ip, prefix=net.prefix, host_ip=net.host_ip)
     meta = f"instance-id: {hostname}\nlocal-hostname: {hostname}\n"

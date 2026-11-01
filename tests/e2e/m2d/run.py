@@ -4,8 +4,9 @@
     uv run python tests/e2e/m2d/run.py all --from crash   # 앞 단계 결과(context)를 이어서
     uv run python tests/e2e/m2d/run.py destroy            # VM·차분 디스크 삭제(golden은 둔다)
 
-release 쌍은 `release_pair.py`(`BASE`→`NEXT`, 헬스 실패 `FAULT`)가 정한다 — S4: r2(epoch 3)→r3
-(epoch 4), fault r3'(`r3f`). 아래의 BASE·NEXT·FAULT는 그 값이다.
+release 쌍은 `release_pair.py`(`BASE`→`NEXT`, 헬스 실패 `FAULT`)가 정한다 — M5 마감:
+r3(epoch 4)→r4(epoch 5, 프로젝트 트리를 적용하는 첫 release), fault r4'(`r4f`). 아래의
+BASE·NEXT·FAULT는 그 값이다.
 
 단계(`STEPS`):
 1. `prepare` — WSL runner의 저장소 사본에서 FAULT 기록, 설치 번들(실빌드: deb 수집·Updater
@@ -18,8 +19,14 @@ release 쌍은 `release_pair.py`(`BASE`→`NEXT`, 헬스 실패 `FAULT`)가 정�
    `c0`를 만든다.
 4. `scenarios` — `c0`에서 거부(다른 현장 `E_SITE`·변조 `E_DIGEST`) exit 1과 같은 gen 재빌드 no-op
    exit 0(R-7 멱등), 모두 core `StartedAt`·실행 이미지 불변. `c0`에서 BASE→NEXT(압축 DB 위 NEXT
-   epoch migrate) 성공 + NEXT 스키마 확인 → 그 위에서 낮은 gen `E_GEN` 거부. `c0`에서 FAULT →
-   5분 안에 BASE digest 복귀 + `failed`.
+   epoch migrate) 성공 + NEXT 스키마 확인 → 그 위에서 낮은 gen `E_GEN` 거부. 이어서 M5 확인 4개
+   (`step_m5`): ⓐ 트리 적용(`project_files`·정의·`site_rev == base_site_rev`) ⓑ web 경유 admin
+   로그인 → 태그·알람 운영 값 PATCH(site_rev +2, DB 정의 일치) ⓒ absorb하지 않은 repo로 만든 번들
+   `E_DRAFT` 거부 ⓓ `pureiron-site project export` → 호스트 → WSL `absorb`·`gate` → 그 트리 번들
+   적용(`base_site_rev == site_rev`, PATCH 값 유지). `c0`에서 FAULT → 5분 안에 BASE digest 복귀 +
+   `failed` — r3(트리 이전) 위의 첫 트리 release 실패라 전환기 롤백이다: 경보 `E_DEFINITIONS_LEFT`
+   (보고 `failed_manual` False, 메트릭 `updater_failed_manual 1`). 그 상태에서 정상 NEXT 트리
+   번들 → `succeeded` + 경보 해제(updater README runbook, 리뷰 N-1).
 5. `crash` — phase마다 `systemctl kill -s KILL pureiron-updater`와 `Restart-VM -Force`를 1회씩.
    서비스가 그 시도를 실행하도록 창이 조금 뒤에 열리는 번들을 CLI로 스테이징하고(`verified` 대기),
    VM 쪽 `crash_at.py`가 해당 phase 진입 순간 프로세스를 얼린 뒤 kill/리셋한다. `migrating`은
@@ -36,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -57,15 +65,19 @@ import hyperv
 from release_pair import (
     BASE,
     BASE_COLUMNS,
+    BASE_INDEXES,
+    BASE_TABLES,
     CAGGS,
     EPOCHS,
     FAULT,
     NEXT,
-    NEXT_INDEXES,
     NEXT_TABLES,
     RELEASES,
 )
 from vm import Vm, VmError
+
+from pureiron_project.project import load_project
+from pureiron_project.schema import Kind
 
 REPO = Path(__file__).resolve().parents[3]
 E2E = Path(os.environ.get("PUREIRON_E2E_ROOT", r"C:\PureIron_e2e"))
@@ -82,6 +94,8 @@ INSTALL_RELEASE = RELEASES[BASE]
 """설치 번들 manifest `release`(이미지는 싣지 않는다 — 실행 release는 g1 현장 번들이 정한다)."""
 APP_SERVICES = ("core", "collector", "web", "site-db")
 REMOTE = "/home/pureiron/e2e"
+SITE_SCRIPTS = ("crash_at.py", "probe.py", "site_api.py")
+STATE_DIR = "/var/lib/pureiron/state"
 INCOMING = "/home/pureiron/incoming"
 WINDOW_LEAD_S = 150
 CONVERGE_S = 600
@@ -108,8 +122,13 @@ ITEM_SAME_GEN = "same gen rebuild → no-op"
 ITEM_UPGRADE = f"{BASE}→{NEXT} on compressed epoch-{EPOCHS[BASE]} DB"
 ITEM_SCHEMA = f"{NEXT} schema after upgrade"
 ITEM_LOWER_GEN = "reject lower gen"
-ITEM_FAULT = f"{NEXT}' health failure → rollback"
+ITEM_TREE = f"{NEXT} project tree applied (project_files, definitions, base_site_rev)"
+ITEM_PATCH = "site PATCH via web (admin login, tag + alarm) → site_rev +2"
+ITEM_DRAFT_GATE = "reject unabsorbed site drafts (E_DRAFT)"
+ITEM_ABSORB = "draft export → absorb → gate → reapply (PATCH kept, base_site_rev == site_rev)"
+ITEM_FAULT = f"{NEXT}' health failure → rollback (transition, E_DEFINITIONS_LEFT)"
 ITEM_ROLLBACK_TIME = f"rollback within 5 min to {BASE} digests"
+ITEM_ALARM_CLEAR = f"{NEXT} tree bundle after transition rollback → succeeded, alarm cleared"
 ITEM_NO_EXTERNAL = "no external connection attempts since install (nftables, accumulated)"
 
 
@@ -152,7 +171,8 @@ def crash_plan() -> list[CrashCase]:
 
 
 def expected_items() -> list[str]:
-    """`all` 한 번이 남기는 결과 항목 이름(30개, 순서대로) — 실측끼리 30/30으로 비교한다."""
+    """`all` 한 번이 남기는 결과 항목 이름(35개, 순서대로) — 실측끼리 35/35로 비교한다. S4까지의
+    30개에 M5 확인 4개(트리·PATCH·드래프트 게이트·absorb 재적용)와 전환기 경보 해제 1개를 더했다."""
     return [
         ITEM_VM_BOOT,
         ITEM_OS_QUIET,
@@ -163,8 +183,13 @@ def expected_items() -> list[str]:
         ITEM_UPGRADE,
         ITEM_SCHEMA,
         ITEM_LOWER_GEN,
+        ITEM_TREE,
+        ITEM_PATCH,
+        ITEM_DRAFT_GATE,
+        ITEM_ABSORB,
         ITEM_FAULT,
         ITEM_ROLLBACK_TIME,
+        ITEM_ALARM_CLEAR,
         *(case.name for case in crash_plan()),
         ITEM_NO_EXTERNAL,
     ]
@@ -254,14 +279,18 @@ def sync_repo() -> None:
     )
 
 
-def build_site_bundle(ctx: Context, gen: int, release: str, window_open_at: datetime) -> Path:
+def build_site_bundle(
+    ctx: Context, gen: int, release: str, window_open_at: datetime, project_dir: str | None = None
+) -> Path:
+    """`project_dir`(WSL 경로)가 없으면 fixture `acme` 트리를 싣는다."""
     out = BUNDLES / ctx.run_id
     start = window_open_at.strftime("%Y-%m-%dT%H:%M:%SZ")
     end = (window_open_at + timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    project = f" --project-dir '{project_dir}'" if project_dir else ""
     wsl(
         f"uv run --no-sync python tests/e2e/m2d/bundles.py site --work {WSL_HOME}/work "
         f"--out '{golden.wsl_path(out)}' --gen {gen} --product {RELEASES[release]} "
-        f"--window-start {start} --window-end {end} --site {SITE}"
+        f"--window-start {start} --window-end {end} --site {SITE}{project}"
     )
     built = out / f"pureiron-{SITE}-g{gen}.pib"
     metrics = json.loads(built.with_name(built.stem + ".bundle-metrics.json").read_text("utf-8"))
@@ -285,7 +314,7 @@ def digests_of(release_json: dict[str, object]) -> dict[str, str]:
 
 def check_record(name: str, record: dict[str, object]) -> None:
     """release 기록이 쌍의 기대(달력 버전·스키마 epoch·앱 envelope [epoch, epoch + 1])와 같은지 —
-    다르면 잘못된 기반에서 30개를 돌리게 되므로 prepare에서 멈춘다. envelope는 롤백 판정(BASE
+    다르면 잘못된 기반에서 35개를 돌리게 되므로 prepare에서 멈춘다. envelope는 롤백 판정(BASE
     앱이 NEXT epoch DB에서 ready)의 전제다."""
     schema = cast(dict[str, object], record.get("schema") or {})
     epoch = EPOCHS[name]
@@ -344,9 +373,10 @@ def step_vm(ctx: Context) -> None:
     pub = golden.ensure_ssh_key(E2E / "ssh").read_text(encoding="utf-8")
     vm_dir = E2E / "vms" / VM_NAME
     hyperv.remove(VM_NAME, vm_dir / "disk.vhdx")
-    seed = golden.write_seed_iso(
-        vm_dir / "seed.iso", golden.seed_files("site-a", VM_IP, pub, golden.Network())
+    files = golden.seed_files(
+        "site-a", VM_IP, pub, golden.Network(), field=field_endpoints(FIXTURE)
     )
+    seed = golden.write_seed_iso(vm_dir / "seed.iso", files)
     hyperv.create_vm(hyperv.VmSpec(VM_NAME, vm_dir / "disk.vhdx", seed, SWITCH), GOLDEN)
     reclaim_host_memory()
     hyperv.start(VM_NAME)
@@ -354,7 +384,7 @@ def step_vm(ctx: Context) -> None:
     waited = host.wait_ssh(timeout_s=900)
     host.run("cloud-init status --wait >/dev/null; test -f /var/lib/e2e-ready", timeout_s=900)
     host.run(f"mkdir -p {REMOTE} {INCOMING}")
-    for script in ("crash_at.py", "probe.py"):
+    for script in SITE_SCRIPTS:
         host.put(REPO / "tests" / "e2e" / "site" / script, f"{REMOTE}/{script}")
     ctx.nft_before = nft_counters(host)
     ctx.nft_last = dict(ctx.nft_before)
@@ -364,7 +394,7 @@ def step_vm(ctx: Context) -> None:
     ctx.record(ITEM_VM_BOOT, True, ssh_after_s=round(waited, 1))
     ctx.record(
         ITEM_OS_QUIET,
-        not any(ctx.nft_before.values()),
+        no_external(ctx.nft_before),
         baseline=ctx.nft_before,
         dns_lookups=boot_lookups,
     )
@@ -394,6 +424,44 @@ def nft_accumulate(
         before = last.get(key, 0)
         merged[key] = merged.get(key, 0) + (value - before if value >= before else value)
     return merged
+
+
+AUDIT_COUNTERS = frozenset(name for name, _ in (*golden.OUT_RULES, *golden.FWD_RULES))
+"""판정에 꼭 있어야 하는 외부 접속 카운터 이름. `field_fwd`는 끝점이 없으면 규칙도 없다."""
+
+
+def no_external(counters: dict[str, int]) -> bool:
+    """외부 접속 카운터가 모두 있고 0인가. 하나라도 없으면(nft 출력 형식·규칙이 바뀌어 못 읽음)
+    거짓이다 — 빈 카운터가 통과하지 않게. `field_fwd`(선언된 현장 장비 폴링)는 외부 접속이
+    아니다."""
+    if not counters.keys() >= AUDIT_COUNTERS:
+        return False
+    return not any(value for name, value in counters.items() if name != golden.FIELD_RULE)
+
+
+def field_endpoints(directory: Path) -> tuple[golden.Endpoint, ...]:
+    """`directory` 트리가 선언한 modbus TCP 장비 끝점(host, port), 정렬·중복 제거. VM 번들의 트리
+    (fixture `acme`·그 m5 사본·absorb 결과)는 장비가 같다. 스키마가 `port`를 필수로 두어 기본값은
+    없다. nft `ip daddr`에 넣으므로 host는 IPv4 주소여야 한다."""
+    project = load_project(directory)
+    if not project.ok:
+        raise E2EError(f"{directory}: " + "; ".join(project.problems))
+    found: set[golden.Endpoint] = set()
+    for f in project.files:
+        device = f.data
+        if f.kind is not Kind.DEVICE or not isinstance(device, dict):
+            continue
+        host, port = device.get("host"), device.get("port")
+        if device.get("protocol") != "modbus_tcp" or not isinstance(host, str):
+            continue
+        if not isinstance(port, int):
+            raise E2EError(f"{f.relpath}: port missing")
+        try:
+            address = ipaddress.IPv4Address(host)
+        except ValueError as exc:
+            raise E2EError(f"{f.relpath}: host {host!r} is not an IPv4 address") from exc
+        found.add((str(address), port))
+    return tuple(sorted(found))
 
 
 LOOKUP = re.compile(r"Looking up RR for (\S+) IN \S+")
@@ -489,6 +557,25 @@ def as_int(value: object) -> int:
         return -1
 
 
+E_DEFINITIONS_LEFT = "E_DEFINITIONS_LEFT"
+"""전환기 롤백 경보 코드(updater `phases.E_DEFINITIONS_LEFT`, README runbook)."""
+FAULT_CODE = "E_HEALTH"
+"""FAULT(r4f) 시도의 보고 `code` — checking phase의 health 실패(updater `phases.E_HEALTH`)."""
+ALARM_METRIC = "updater_failed_manual"
+
+
+def alarm_has(alarm: object, code: str) -> bool:
+    """Updater 경보(`g<gen>: <code> …` 항목을 `; `로 이은 문자열)에 `code`로 끝나는 항목이
+    있는가."""
+    return isinstance(alarm, str) and any(part.endswith(code) for part in alarm.split("; "))
+
+
+def metric(snap: dict[str, object], name: str) -> float | None:
+    """probe `metrics`(textfile 메트릭) 값. 못 읽었으면 None."""
+    value = cast(dict[str, object], snap.get("metrics") or {}).get(name)
+    return float(value) if isinstance(value, int | float) else None
+
+
 def judge_attempt(
     snap: dict[str, object],
     report: dict[str, object],
@@ -496,17 +583,43 @@ def judge_attempt(
     expect: str,
     want_digests: dict[str, str],
     want_applied: int | None,
+    expect_alarm: str | None = None,
+    expect_code: str | None = None,
+    check_metric: bool = False,
 ) -> dict[str, bool]:
     """끝난 시도 판정 항목(모두 참이어야 통과). `last_result`는 `failed_manual`도 `failed`로
-    접으므로(metrics.result_of) 자동 롤백 실패는 경보·보고의 `failed_manual`로 따로 본다."""
+    접으므로(metrics.result_of) 자동 롤백 실패는 경보·보고의 `failed_manual`로 따로 본다.
+
+    `expect_alarm`이 없으면 경보가 없어야 한다(`no_manual_alarm`). 있으면(전환기 롤백
+    `E_DEFINITIONS_LEFT`) 그 코드의 경보 항목이 있고, 보고 `logs`에도 그 코드가 있으며, 자동 롤백
+    자체는 성공(`failed_manual` False)이어야 한다(`expected_alarm`). `expect_code`가 있으면 보고
+    `code`(실패한 phase의 코드)가 그 값이어야 한다(`code`) — 전환기 경보는 어느 phase에서 실패했든
+    붙으므로 실패 원인은 이것으로 고정한다. `check_metric`이면 textfile 메트릭
+    `updater_failed_manual`이 경보 유무(1/0)와 같아야 한다 — crash 케이스에는 켜지 않는다
+    (`_finish`가 상태 저장 뒤 메트릭을 쓰므로 그 사이 kill이면 메트릭만 이전 값일 수 있다). 비crash
+    항목도 서비스 tick이 시도를 집었다면(CLI가 exit 2 재시도를 다 쓴 경우) 그 사이(수 ms)에 probe가
+    끼어 거짓 실패할 수 있으나, 확률이 무시할 만해 다시 보지 않는다."""
     state = updater_state(snap)
-    return {
-        "result": state.get("last_result") == expect,
-        "no_manual_alarm": state.get("alarm") is None and report.get("failed_manual") is False,
+    manual_ok = report.get("failed_manual") is False
+    checks: dict[str, bool] = {"result": state.get("last_result") == expect}
+    if expect_code is not None:
+        checks["code"] = report.get("code") == expect_code
+    if expect_alarm is None:
+        checks["no_manual_alarm"] = state.get("alarm") is None and manual_ok
+    else:
+        checks["expected_alarm"] = (
+            alarm_has(state.get("alarm"), expect_alarm)
+            and expect_alarm in str(report.get("logs") or "")
+            and manual_ok
+        )
+    if check_metric:
+        checks["alarm_metric"] = metric(snap, ALARM_METRIC) == (0 if expect_alarm is None else 1)
+    checks |= {
         "applied_gen": state.get("applied_gen") == want_applied,
         "images_match": running_digests(snap) == want_digests,
         "edit_unlocked": edit_unlocked(snap),
     }
+    return checks
 
 
 # ---------------------------------------------------------------- 설치
@@ -597,6 +710,18 @@ def names(db: dict[str, object], key: str) -> frozenset[str]:
     return frozenset(n for n in value.split(",") if n) if isinstance(value, str) else frozenset()
 
 
+def base_schema_kept(db: dict[str, object]) -> bool:
+    """BASE(epoch 4)까지의 산출물: 1m·1h CAGG와 실시간 집계, 0008·0009 열, 0010~0012
+    테이블·인덱스."""
+    return (
+        names(db, "caggs") == CAGGS
+        and names(db, "realtime_caggs") == CAGGS
+        and names(db, "columns") >= BASE_COLUMNS
+        and names(db, "tables") >= BASE_TABLES
+        and names(db, "indexes") >= BASE_INDEXES
+    )
+
+
 def judge_c0(db: dict[str, object]) -> dict[str, bool]:
     """체크포인트 c0 기반: BASE epoch와 그 산출물, 압축 chunk가 있는 이력, NEXT 산출물 없음 —
     업그레이드가 압축 DB 위에서 실제 마이그레이션을 하고 이력 보존(`rows_kept`)을 잴 수 있어야
@@ -604,9 +729,7 @@ def judge_c0(db: dict[str, object]) -> dict[str, bool]:
     tables = names(db, "tables")
     return {
         "epoch": db.get("epoch") == str(EPOCHS[BASE]),
-        "base_schema": names(db, "caggs") == CAGGS
-        and names(db, "realtime_caggs") == CAGGS
-        and names(db, "columns") >= BASE_COLUMNS,
+        "base_schema": base_schema_kept(db),
         "next_absent": bool(tables) and tables.isdisjoint(NEXT_TABLES),
         "compressed_chunks": as_int(db.get("compressed_chunks")) > 0,
         "seed_rows": as_int(db.get("tag_history_rows")) > 0,
@@ -614,15 +737,17 @@ def judge_c0(db: dict[str, object]) -> dict[str, bool]:
 
 
 def judge_next_schema(db: dict[str, object]) -> dict[str, bool]:
-    """업그레이드 뒤 NEXT(r3) 스키마: epoch 4, 0010~0012 테이블·인덱스, BASE 산출물 유지(1분·1시간
-    CAGG와 실시간 집계, 0008·0009 열), 압축 chunk 유지."""
+    """업그레이드 뒤 NEXT(r4) 스키마: epoch 5, 0013 `project_files`, BASE 산출물 유지(1분·1시간
+    CAGG와 실시간 집계, 0008·0009 열, 0010~0012 테이블·인덱스), 압축 chunk 유지. NEXT의 이름 붙은
+    인덱스는 없어 `next_indexes`는 보지 않는다(`release_pair.NEXT_INDEXES`)."""
     return {
         "epoch": db.get("epoch") == str(EPOCHS[NEXT]),
         "next_tables": names(db, "tables") >= NEXT_TABLES,
-        "next_indexes": names(db, "indexes") >= NEXT_INDEXES,
         "caggs": names(db, "caggs") == CAGGS,
         "realtime_caggs": names(db, "realtime_caggs") == CAGGS,
         "base_columns": names(db, "columns") >= BASE_COLUMNS,
+        "base_tables": names(db, "tables") >= BASE_TABLES,
+        "base_indexes": names(db, "indexes") >= BASE_INDEXES,
         "compressed_chunks": as_int(db.get("compressed_chunks")) > 0,
     }
 
@@ -722,10 +847,26 @@ def core_started_at(snap: dict[str, object]) -> object:
 
 
 def apply_and_check(
-    ctx: Context, name: str, gen: int, release: str, *, expect: str, prev: str
+    ctx: Context,
+    name: str,
+    gen: int,
+    release: str,
+    *,
+    expect: str,
+    prev: str,
+    project_dir: str | None = None,
+    expect_alarm: str | None = None,
+    expect_code: str | None = None,
+    check_metric: bool = False,
+    extra: Callable[[dict[str, object]], dict[str, bool]] | None = None,
+    note: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    """번들을 만들어 적용하고 끝난 시도를 판정해 `name`으로 기록한다. `extra`는 끝난 스냅샷에서
+    더 볼 판정, `note`는 결과에 함께 남길 앞 단계 증거다. 실패하면 보고 `logs`도 남긴다."""
     host = vm()
-    pib = build_site_bundle(ctx, gen, release, datetime.now(UTC) - timedelta(minutes=5))
+    pib = build_site_bundle(
+        ctx, gen, release, datetime.now(UTC) - timedelta(minutes=5), project_dir
+    )
     applied_before = updater_state(probe(host)).get("applied_gen")
     started = time.monotonic()
     stage(host, pib, check=False)
@@ -739,9 +880,14 @@ def apply_and_check(
         expect=expect,
         want_digests=want,
         want_applied=gen if expect == "succeeded" else cast(int | None, applied_before),
+        expect_alarm=expect_alarm,
+        expect_code=expect_code,
+        check_metric=check_metric,
     )
     rows = as_int(db_of(snap).get("tag_history_rows"))
     checks["rows_kept"] = rows >= ctx.seed_rows > 0
+    if extra is not None:
+        checks |= extra(snap)
     ok = all(checks.values())
     detail: dict[str, object] = {
         "gen": gen,
@@ -756,6 +902,9 @@ def apply_and_check(
         "verify_s": report.get("verify_s"),
         "load_s": report.get("load_s"),
         "phase_durations_s": report.get("phase_durations_s"),
+        "failed_manual_metric": metric(snap, ALARM_METRIC),
+        "logs": None if ok else report.get("logs"),
+        **(note or {}),
     }
     ctx.record(name, ok, **detail)
     host.run(f"sudo rm -f {INCOMING}/{pib.name}", check=False)
@@ -772,20 +921,25 @@ def stage_untouched(
     want_code: str | None,
     want: str,
 ) -> None:
-    """적용되면 안 되는 번들: CLI 종료 코드·거부 코드, core `StartedAt`·실행 이미지 불변."""
+    """적용되면 안 되는 번들: CLI 종료 코드·거부 코드, core `StartedAt`·실행 이미지 불변. 실패하면
+    CLI stderr 끝과 보고 `logs`를 남긴다."""
     before = probe(host)
     result = stage(host, pib, check=False)
     after = probe(host)
     unchanged = core_started_at(after) == core_started_at(before)
     images_ok = running_digests(after) == ctx.digests[want]
-    code = report_for(host, pib).get("code")
+    report = report_for(host, pib)
+    code = report.get("code")
+    ok = result.returncode == want_exit and code == want_code and unchanged and images_ok
     ctx.record(
         name,
-        result.returncode == want_exit and code == want_code and unchanged and images_ok,
+        ok,
         exit=result.returncode,
         code=code,
         core_started_at_unchanged=unchanged,
         images_match=images_ok,
+        stderr=None if ok else result.stderr[-TAIL_CHARS:],
+        logs=None if ok else report.get("logs"),
     )
     host.run(f"sudo rm -f {INCOMING}/{pib.name}", check=False)
 
@@ -799,8 +953,361 @@ def restore_c0(ctx: Context) -> None:
     vm().wait_ssh()
 
 
+# ---------------------------------------------------------------- M5 확인(트리·PATCH·드래프트)
+
+FIXTURE = REPO / "packages" / "project-tools" / "fixtures" / "acme"
+PROJECT_VERSION = "v1"
+"""`bundles.py site` fleet 파일의 `project.version` — `GET /project`의 `version`이 된다."""
+E2E_ADMIN = "e2e-admin"
+ADMIN_PASSWORD = f"{REMOTE}/e2e-admin.pw"
+"""VM에서 만든 e2e admin 비밀번호(root 0600, 호스트로 나가지 않는다)."""
+PATCH_TAG = "line1/temp"
+PATCH_TAG_BODY: dict[str, object] = {"record": {"deadband": 0.8, "max_interval_s": 30}}
+"""fixture `record: {deadband: 0.5, max_interval_s: 60}`의 운영 값 변경."""
+PATCH_ALARM = "temp-high"
+PATCH_ALARM_BODY: dict[str, object] = {"setpoint": 82.5}
+"""fixture `setpoint: 80`의 운영 값 변경."""
+PATCHES = 2
+"""바꾸는 PATCH 수 — 하나마다 site_rev +1."""
+
+
+def scenario_gens(gen: int) -> dict[str, int]:
+    """`scenarios`가 쓰는 generation(`gen` = 시작 시 `ctx.next_gen`). NEXT 줄(업그레이드 → ⓒ → ⓓ)은
+    차례로 올라가고, FAULT·경보 해제는 c0(applied g1) 복원 뒤라 업그레이드와 같은 gen부터 다시
+    쓸 수 있지만 경보 해제는 번들 파일 이름(`g<gen>-<release>`)이 NEXT 줄과 겹치지 않게 그 뒤로
+    둔다. `next`는 crash 단계의 시작 gen."""
+    return {
+        "upgrade": gen,
+        "draft_gate": gen + 1,
+        "absorb": gen + 2,
+        "fault": gen,
+        "alarm_clear": gen + 3,
+        "next": gen + 4,
+    }
+
+
+DRAFT_REMOTE = f"{REMOTE}/draft.tar"
+ENROLLMENT_REMOTE = f"{REMOTE}/enrollment.json"
+ABSORBED_HASH = re.compile(r"^ok: (sha256:[0-9a-f]{64})$", re.MULTILINE)
+
+
+@dataclass(frozen=True)
+class TreeExpect:
+    """번들에 실은 프로젝트 트리에서 DB·`GET /project`에 있어야 할 값."""
+
+    files: int
+    content_hash: str
+    devices: frozenset[str]
+    tags: frozenset[str]
+    alarms: frozenset[str]
+
+
+def tree_expect(directory: Path) -> TreeExpect:
+    project = load_project(directory)
+    if not project.ok:
+        raise E2EError(f"{directory}: " + "; ".join(project.problems))
+    keys = {Kind.DEVICE: "id", Kind.TAG_LIST: "path", Kind.ALARM_LIST: "id"}
+    found: dict[Kind, set[str]] = {kind: set() for kind in keys}
+    for f in project.files:
+        key = keys.get(f.kind)
+        items = [f.data] if isinstance(f.data, dict) else f.data if isinstance(f.data, list) else []
+        for item in items:
+            value = item.get(key) if key is not None and isinstance(item, dict) else None
+            if isinstance(value, str):
+                found[f.kind].add(value)
+    return TreeExpect(
+        files=len(project.files),
+        content_hash=project.content_hash(),
+        devices=frozenset(found[Kind.DEVICE]),
+        tags=frozenset(found[Kind.TAG_LIST]),
+        alarms=frozenset(found[Kind.ALARM_LIST]),
+    )
+
+
+def project_body(snap: dict[str, object]) -> dict[str, object]:
+    project = cast(dict[str, object], snap.get("project") or {})
+    return (
+        cast(dict[str, object], project.get("body") or {}) if project.get("status") == 200 else {}
+    )
+
+
+def revs(body: object) -> tuple[int, int] | None:
+    """`GET /project` 본문의 (site_rev, base_site_rev), 못 읽으면 None."""
+    if not isinstance(body, dict):
+        return None
+    state = cast(dict[str, object], body)
+    site, base = state.get("site_rev"), state.get("base_site_rev")
+    return (site, base) if isinstance(site, int) and isinstance(base, int) else None
+
+
+def judge_tree(snap: dict[str, object], want: TreeExpect) -> dict[str, bool]:
+    """ⓐ NEXT 트리 적용: `GET /project`의 version·content_hash가 번들 트리이고 드래프트가 없으며
+    (`site_rev == base_site_rev`), DB `project_files` 행 수 = 트리 파일 수, retire되지 않은 장비·
+    태그·알람이 트리와 같다(c0 시드 장비·태그는 트리 교체로 retire된다)."""
+    body, db = project_body(snap), db_of(snap)
+    rev = revs(body)
+    return {
+        "project_version": body.get("version") == PROJECT_VERSION
+        and body.get("content_hash") == want.content_hash,
+        "base_site_rev": rev is not None and rev[0] == rev[1],
+        "project_files": as_int(db.get("project_files")) == want.files,
+        "devices": names(db, "device_ids") == want.devices,
+        "tags": names(db, "tag_paths") == want.tags,
+        "alarms": names(db, "alarm_ids") == want.alarms,
+    }
+
+
+def judge_fixture_tree(snap: dict[str, object]) -> dict[str, bool]:
+    """fixture 트리(`build_site_bundle` 기본값)를 실은 번들이 적용된 상태인가 — `judge_tree`."""
+    return judge_tree(snap, tree_expect(FIXTURE))
+
+
+def definitions(db: dict[str, object], key: str) -> dict[str, dict[str, object]]:
+    """probe `tag_defs`·`alarm_defs`(JSON 문자열)를 path·id → 정의로. 못 읽으면 빈 dict."""
+    value = db.get(key)
+    try:
+        parsed: object = json.loads(value) if isinstance(value, str) else {}
+    except ValueError:
+        return {}
+    return cast(dict[str, dict[str, object]], parsed) if isinstance(parsed, dict) else {}
+
+
+def patch_kept(db: dict[str, object]) -> bool:
+    """DB 정의에 ⓑ의 PATCH 값이 그대로 있는가(태그·알람 둘 다)."""
+    tag = definitions(db, "tag_defs").get(PATCH_TAG, {})
+    alarm = definitions(db, "alarm_defs").get(PATCH_ALARM, {})
+    return all(tag.get(k) == v for k, v in PATCH_TAG_BODY.items()) and all(
+        alarm.get(k) == v for k, v in PATCH_ALARM_BODY.items()
+    )
+
+
+def reply(out: dict[str, object], key: str) -> tuple[int, object]:
+    """`site_api.py` 출력의 `[상태, 본문]`, 없으면 (0, None)."""
+    value = out.get(key)
+    if isinstance(value, list):
+        pair = cast(list[object], value)
+        if len(pair) == 2 and isinstance(pair[0], int):
+            return pair[0], pair[1]
+    return 0, None
+
+
+def judge_patch(out: dict[str, object], db: dict[str, object]) -> dict[str, bool]:
+    """ⓑ 현장 PATCH: web 경유 로그인(세션 쿠키) → 태그·알람 PATCH가 각각 200이고 site_rev를 하나씩
+    올리며, 끝난 뒤 site_rev = 전 + 2·base_site_rev 그대로(흡수 전 드래프트), DB 정의 = PATCH 값."""
+    before = revs(reply(out, "project_before")[1])
+    after = revs(reply(out, "project_after")[1])
+    login, _ = reply(out, "login")
+    rev0 = before[0] if before is not None else -1
+
+    def patched(key: str, want_rev: int) -> bool:
+        status, body = reply(out, key)
+        site_rev = cast(dict[str, object], body).get("site_rev") if isinstance(body, dict) else None
+        return status == 200 and site_rev == want_rev
+
+    return {
+        "login": login == 200 and out.get("session_cookie") is True,
+        "tag_patch": patched("tag", rev0 + 1),
+        "alarm_patch": patched("alarm", rev0 + PATCHES),
+        "site_rev": before is not None
+        and after is not None
+        and after == (before[0] + PATCHES, before[1]),
+        "readback": patch_kept(db),
+    }
+
+
+def judge_absorb(result: dict[str, object], want_rev: int) -> dict[str, bool]:
+    """ⓓ WSL 단계: `absorb` exit 0이고 `absorbs[site]`를 서명된 site_rev로 기록, `gate --draft`
+    통과."""
+    absorb = cast(dict[str, object], result.get("absorb") or {})
+    gate = cast(dict[str, object], result.get("gate") or {})
+    lines = str(absorb.get("stdout") or "").splitlines()
+    return {
+        "absorb": absorb.get("rc") == 0,
+        "absorbs_rev": any(
+            line.startswith(f"absorbs[{SITE}]:") and line.endswith(f"-> {want_rev}")
+            for line in lines
+        ),
+        "gate": gate.get("rc") == 0,
+    }
+
+
+def absorbed_hash(result: dict[str, object]) -> str | None:
+    absorb = cast(dict[str, object], result.get("absorb") or {})
+    found = ABSORBED_HASH.search(str(absorb.get("stdout") or ""))
+    return found[1] if found else None
+
+
+def judge_reapplied(
+    snap: dict[str, object], want_rev: int, content_hash: str | None
+) -> dict[str, bool]:
+    """ⓓ 재적용 뒤: 흡수한 트리가 적용됐고(content_hash) 드래프트 기준점이 PATCH 뒤 site_rev로
+    옮겨졌으며(`base_site_rev == site_rev == want_rev`) PATCH 값이 DB 정의에 남았다."""
+    body = project_body(snap)
+    return {
+        "content_hash": content_hash is not None and body.get("content_hash") == content_hash,
+        "base_site_rev": revs(body) == (want_rev, want_rev),
+        "patch_kept": patch_kept(db_of(snap)),
+    }
+
+
+def compose_core() -> str:
+    return (
+        "$(docker ps -q --filter label=com.docker.compose.project=pureiron "
+        "--filter label=com.docker.compose.service=core)"
+    )
+
+
+def site_patch(host: Vm) -> tuple[dict[str, object], dict[str, object]]:
+    """e2e admin(CLI 전용 계정, VM에서 만든 비밀번호)을 만들고 web 경유로 태그·알람을 PATCH한다.
+    (site_api 출력, 계정 생성 결과)."""
+    created = host.run(
+        as_root(
+            "umask 077 && python3 -c 'import secrets; print(secrets.token_urlsafe(24))' "
+            f"> {ADMIN_PASSWORD} && cid={compose_core()} && "
+            f'docker exec -i "$cid" pureiron-core users add {E2E_ADMIN} --role admin --json '
+            f"< {ADMIN_PASSWORD}"
+        ),
+        check=False,
+    )
+    admin: dict[str, object] = {
+        "rc": created.returncode,
+        "stdout": created.stdout[-TAIL_CHARS:],
+        "stderr": created.stderr[-TAIL_CHARS:],
+    }
+    if created.returncode != 0:
+        return {}, admin
+    host.put(REPO / "tests" / "e2e" / "site" / "site_api.py", f"{REMOTE}/site_api.py")
+    try:
+        out = host.json(
+            f"sudo python3 {REMOTE}/site_api.py patch --username {E2E_ADMIN} "
+            f"--password-file {ADMIN_PASSWORD} --tag {PATCH_TAG} "
+            f"--tag-body {shlex.quote(json.dumps(PATCH_TAG_BODY))} --alarm {PATCH_ALARM} "
+            f"--alarm-body {shlex.quote(json.dumps(PATCH_ALARM_BODY))}"
+        )
+    except (VmError, ValueError) as exc:
+        return {"error": str(exc)[-TAIL_CHARS:]}, admin
+    return out, admin
+
+
+def step_m5(ctx: Context, gens: dict[str, int]) -> None:
+    """업그레이드(NEXT, fixture 트리) 위 M5 확인 ⓐ~ⓓ. gen은 `scenario_gens`(ⓒ 거부 `draft_gate`,
+    ⓓ 적용 `absorb`)."""
+    host = vm()
+    # ⓐ 트리 적용
+    snap = probe(host)
+    tree = judge_fixture_tree(snap)
+    db = db_of(snap)
+    ctx.record(
+        ITEM_TREE,
+        all(tree.values()),
+        checks=tree,
+        project=project_body(snap),
+        db={k: db.get(k) for k in ("project_files", "device_ids", "tag_paths", "alarm_ids")},
+    )
+    # ⓑ web 경유 admin 로그인 → 태그·알람 운영 값 PATCH
+    out, admin = site_patch(host)
+    after = db_of(probe(host))
+    patch_checks = {"admin_created": admin["rc"] == 0, **judge_patch(out, after)}
+    ctx.record(
+        ITEM_PATCH,
+        all(patch_checks.values()),
+        checks=patch_checks,
+        admin=admin,
+        replies=out,
+        tag_def=definitions(after, "tag_defs").get(PATCH_TAG),
+        alarm_def=definitions(after, "alarm_defs").get(PATCH_ALARM),
+    )
+    patched = revs(reply(out, "project_after")[1])
+    want_rev = patched[0] if patched is not None else -1
+    # ⓒ absorb하지 않은 repo(fixture에서 absorbs만 뺀 사본)로 만든 번들 → E_DRAFT
+    repo = wsl(
+        f"uv run --no-sync python tests/e2e/m2d/bundles.py m5-project --work {WSL_HOME}/work"
+    )
+    unabsorbed = build_site_bundle(
+        ctx,
+        gens["draft_gate"],
+        NEXT,
+        datetime.now(UTC) - timedelta(minutes=5),
+        repo.strip().splitlines()[-1],
+    )
+    stage_untouched(
+        ctx, ITEM_DRAFT_GATE, host, unabsorbed, want_exit=1, want_code="E_DRAFT", want=NEXT
+    )
+    # ⓓ export → 호스트 → WSL absorb·gate → 흡수한 트리로 번들 → 적용
+    reapply_absorbed(ctx, host, gens["absorb"], want_rev)
+
+
+def reapply_absorbed(ctx: Context, host: Vm, gen: int, want_rev: int) -> None:
+    export = host.run(
+        as_root(
+            f"pureiron-site project export --out {DRAFT_REMOTE} && "
+            f"chown pureiron: {DRAFT_REMOTE} && "
+            f"install -o pureiron -m 0644 {STATE_DIR}/enrollment.json {ENROLLMENT_REMOTE}"
+        ),
+        check=False,
+    )
+    note: dict[str, object] = {
+        "export": {
+            "rc": export.returncode,
+            "stdout": export.stdout[-TAIL_CHARS:],
+            "stderr": export.stderr[-TAIL_CHARS:],
+        }
+    }
+    if export.returncode != 0:
+        ctx.record(ITEM_ABSORB, False, **note)
+        return
+    local = BUNDLES / ctx.run_id / "m5"
+    draft, enrollment = local / "draft.tar", local / "enrollment.json"
+    host.get(DRAFT_REMOTE, draft)
+    host.get(ENROLLMENT_REMOTE, enrollment)
+    raw = wsl(
+        f"uv run --no-sync python tests/e2e/m2d/bundles.py absorb --work {WSL_HOME}/work "
+        f"--draft '{golden.wsl_path(draft)}' --site-key '{golden.wsl_path(enrollment)}' "
+        f"--site {SITE}"
+    )
+    result = cast(dict[str, object], json.loads(raw.strip().splitlines()[-1]))
+    note["absorb"] = result
+    absorb_checks = judge_absorb(result, want_rev)
+    if not all(absorb_checks.values()):
+        ctx.record(ITEM_ABSORB, False, checks=absorb_checks, **note)
+        return
+    content_hash = absorbed_hash(result)
+    apply_and_check(
+        ctx,
+        ITEM_ABSORB,
+        gen,
+        NEXT,
+        expect="succeeded",
+        prev=NEXT,
+        project_dir=str(result["dir"]),
+        extra=lambda snap: {**absorb_checks, **judge_reapplied(snap, want_rev, content_hash)},
+        note=note,
+    )
+
+
+M5_ITEMS = (ITEM_TREE, ITEM_PATCH, ITEM_DRAFT_GATE, ITEM_ABSORB)
+
+
+def m5_guarded(
+    ctx: Context, gens: dict[str, int], step: Callable[[Context, dict[str, int]], None] = step_m5
+) -> None:
+    """M5 확인을 돌리되 전송·WSL 예외(`VmError`·golden.wsl `RuntimeError`·`ValueError` 등)가
+    `all` 전체를 끊지 않게 한다 — 이번 호출에서 기록되지 않은 M5 항목을 실패(`error` = 예외 끝)로
+    남기고 돌아가, 호출자가 `restore_c0`부터 이어 간다. 이전 실행이 남긴 같은 이름 결과는 이번
+    기록으로 치지 않는다."""
+    before = list(ctx.results)
+    try:
+        step(ctx, gens)
+    except Exception as exc:
+        recorded = {r["name"] for r in ctx.results if not any(r is b for b in before)}
+        for name in M5_ITEMS:
+            if name not in recorded:
+                ctx.record(name, False, error=repr(exc)[-TAIL_CHARS:])
+
+
 def step_scenarios(ctx: Context) -> None:
-    gen = ctx.next_gen
+    gens = scenario_gens(ctx.next_gen)
+    gen = gens["upgrade"]
     # 거부 코드(VM 수동 1회): 다른 현장, 변조 — c0(applied g1 = BASE) 위에서
     other = BUNDLES / ctx.run_id / f"pureiron-site-b-g{gen}.pib"
     wsl(
@@ -833,16 +1340,40 @@ def step_scenarios(ctx: Context) -> None:
     # cert 단계의 `max_seen_created_at` 역행(E_CERT)에 먼저 걸린다(첫 실측).
     lower = build_site_bundle(ctx, 1, NEXT, datetime.now(UTC) - timedelta(days=1))
     stage_untouched(ctx, ITEM_LOWER_GEN, vm(), lower, want_exit=1, want_code="E_GEN", want=NEXT)
-    # c0에서 FAULT → 5분 안에 BASE 복귀 + failed
+    m5_guarded(ctx, gens)
+    # c0에서 FAULT → 5분 안에 BASE 복귀 + failed. BASE는 트리를 모르는 release라 롤백은 state만
+    # 되돌리고 실패한 gen의 정의가 남는다 — 설계된 전환기 경보 E_DEFINITIONS_LEFT(제품 결함 아님).
     restore_c0(ctx)
-    rb = apply_and_check(ctx, ITEM_FAULT, gen, FAULT, expect="failed", prev=BASE)
+    rb = apply_and_check(
+        ctx,
+        ITEM_FAULT,
+        gens["fault"],
+        FAULT,
+        expect="failed",
+        prev=BASE,
+        expect_alarm=E_DEFINITIONS_LEFT,
+        expect_code=FAULT_CODE,
+        check_metric=True,
+    )
     ctx.record(
         ITEM_ROLLBACK_TIME,
         bool(rb["images_match"]) and float(str(rb["seconds"])) <= ROLLBACK_LIMIT_S,
         seconds=rb["seconds"],
         code=rb["code"],
     )
-    ctx.next_gen = gen + 1
+    # 그 상태에서 정상 NEXT 트리 번들 → succeeded + 경보 해제(트리 release 성공만 지운다, N-1).
+    # 경보 해제는 manifest만 보고 하므로 정의·project_state를 실제로 다시 썼는지도 본다.
+    apply_and_check(
+        ctx,
+        ITEM_ALARM_CLEAR,
+        gens["alarm_clear"],
+        NEXT,
+        expect="succeeded",
+        prev=BASE,
+        check_metric=True,
+        extra=judge_fixture_tree,
+    )
+    ctx.next_gen = gens["next"]
     ctx.save()
 
 
@@ -1006,9 +1537,10 @@ def step_report(ctx: Context) -> None:
     nft_mark(ctx, vm())
     ctx.record(
         ITEM_NO_EXTERNAL,
-        not any(ctx.nft_total.values()),
+        no_external(ctx.nft_total),
         baseline=ctx.nft_before,
         total=ctx.nft_total,
+        field_fwd=ctx.nft_total.get(golden.FIELD_RULE, 0),
         dns_lookups=ctx.dns_lookups,
     )
     ctx.out.mkdir(parents=True, exist_ok=True)

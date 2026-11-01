@@ -95,12 +95,12 @@
     },
     {
       "audience": "both",
-      "bytes": 6427,
+      "bytes": 17191,
       "id": "report-vm-e2e-runs",
-      "last_verified": "2026-10-17",
+      "last_verified": "2026-11-01",
       "path": "docs/wiki/reports/vm-e2e-runs.md",
-      "section_count": 4,
-      "sha256": "6289076fbb391e344cf56e799ce1dde24573dc66ff073d8308e4ff8c9d0ca063",
+      "section_count": 5,
+      "sha256": "291b389e167387c02b96ad119e1be996519c46d466f6ad4ea83303d8304056ff",
       "source_globs": [],
       "sources": [
         "tests/e2e/README.md",
@@ -109,7 +109,9 @@
         "deploy/releases/r1.json",
         "deploy/releases/r2.json",
         "deploy/releases/r3.json",
-        "tests/e2e/infra/vm.py"
+        "deploy/releases/r4.json",
+        "tests/e2e/infra/vm.py",
+        "tests/e2e/infra/golden.py"
       ],
       "status": "canonical",
       "title": "Hyper-V VM 실측 기록 — release 쌍별 M2d 하네스 결과"
@@ -152,12 +154,12 @@
     },
     {
       "audience": "both",
-      "bytes": 23190,
+      "bytes": 23562,
       "id": "sot-architecture",
-      "last_verified": "2026-10-17",
+      "last_verified": "2026-11-01",
       "path": "docs/wiki/sot/architecture.md",
       "section_count": 18,
-      "sha256": "4577554981478e2668d51ccca6f2cf0e33028a6fee15e9b8167195602e5410d8",
+      "sha256": "3e9c31838f86b6042a784b5f8c4330591119d85fe1d611960eab2571a3812175",
       "source_globs": [],
       "sources": [
         "services/core/src/pureiron_core/runtime.py",
@@ -173,6 +175,7 @@
         "packages/contracts/collector.proto",
         "deploy/compose/site.compose.yml",
         "deploy/releases/r3.json",
+        "deploy/releases/r4.json",
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/wiki/sot/architecture.md"
       ],
       "status": "canonical",
@@ -215,12 +218,12 @@
     },
     {
       "audience": "both",
-      "bytes": 93134,
+      "bytes": 94574,
       "id": "sot-data-contracts",
       "last_verified": "2026-08-22",
       "path": "docs/wiki/sot/data-contracts.md",
       "section_count": 30,
-      "sha256": "1d5f0f84861f4e139e702690f5f4a940a0687bc414b3c302bedf03504581b5cc",
+      "sha256": "b8d9c5360df583743edaaf74d06891d19a2f9c3d87448b8ab5b43bd552fce946",
       "source_globs": [
         "projects/demo-coffee/**/*.yaml",
         "projects/demo-coffee/**/*.json"
@@ -320,7 +323,7 @@
       "last_verified": "2026-08-22",
       "path": "docs/wiki/sot/testing.md",
       "section_count": 18,
-      "sha256": "337a5b7265389a3efa6e7555dfcc68b34f7025f0b792826d778aad9326e7822f",
+      "sha256": "48cdf55787a487c71e5dc754d34edbb9a367aa8f63fb4217366920c7e4ce2e65",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/pyproject.toml",
