@@ -1,11 +1,24 @@
 [project]
 name = "pureiron-control-api"
 version = "0.1.0"
-description = "중앙 control-api — M4에서 구현"
+description = "중앙 control-api — 현장 등록·자격증명·heartbeat·DesiredState·보고·fleet 조회(ADR-022)"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi>=0.118",
+    "uvicorn>=0.37",
+    "asyncpg>=0.30",
+    # migrate 라이브러리(카탈로그·epoch envelope·적용·lint)와 DB 풀을 core와 같은 코드로 쓴다(M4 C6).
+    "pureiron-core",
+    # 현장 서명 봉투(sitesign)·.pib 메타데이터 읽기(P3: 현장과 같은 검증 코드).
+    "pureiron-bundle-tools",
 ]
+
+[tool.uv.sources]
+pureiron-core = { workspace = true }
+pureiron-bundle-tools = { workspace = true }
+
+[project.scripts]
+pureiron-control = "pureiron_control.cli:main"
 
 [build-system]
 requires = ["uv_build==0.10.12"]

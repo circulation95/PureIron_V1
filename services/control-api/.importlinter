@@ -1,0 +1,45 @@
+# control-api boundary contracts (same shape as services/core/.importlinter, ADR-019).
+# Run from services/control-api: `uv run lint-imports`.
+# Keep this file ASCII: import-linter reads it with the locale encoding (cp949 on Korean Windows).
+# A new domain module must be added to (a), (b) and (c); tests/test_importlinter.py fails when a
+# pureiron_control module is not classified.
+[importlinter]
+root_package = pureiron_control
+include_external_packages = False
+
+[importlinter:contract:entrypoints]
+name = (a) runtime/app are imported only by entry points
+type = forbidden
+source_modules =
+    pureiron_control.api
+    pureiron_control.bundles
+    pureiron_control.credentials
+    pureiron_control.drafts
+    pureiron_control.fleet
+    pureiron_control.reports
+    pureiron_control.sites
+    pureiron_control.platform
+forbidden_modules =
+    pureiron_control.runtime
+    pureiron_control.app
+    pureiron_control.cli
+    pureiron_control.cli_admin
+
+[importlinter:contract:layers]
+name = (b) api > domain > platform
+type = layers
+layers =
+    pureiron_control.api
+    pureiron_control.bundles : pureiron_control.credentials : pureiron_control.drafts : pureiron_control.fleet : pureiron_control.reports : pureiron_control.sites
+    pureiron_control.platform
+
+[importlinter:contract:domain-independence]
+name = (c) domain modules do not import each other
+type = independence
+modules =
+    pureiron_control.bundles
+    pureiron_control.credentials
+    pureiron_control.drafts
+    pureiron_control.fleet
+    pureiron_control.reports
+    pureiron_control.sites
