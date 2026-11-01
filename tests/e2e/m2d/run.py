@@ -519,6 +519,8 @@ def as_int(value: object) -> int:
 
 E_DEFINITIONS_LEFT = "E_DEFINITIONS_LEFT"
 """전환기 롤백 경보 코드(updater `phases.E_DEFINITIONS_LEFT`, README runbook)."""
+FAULT_CODE = "E_HEALTH"
+"""FAULT(r4f) 시도의 보고 `code` — checking phase의 health 실패(updater `phases.E_HEALTH`)."""
 ALARM_METRIC = "updater_failed_manual"
 
 
@@ -542,6 +544,7 @@ def judge_attempt(
     want_digests: dict[str, str],
     want_applied: int | None,
     expect_alarm: str | None = None,
+    expect_code: str | None = None,
     check_metric: bool = False,
 ) -> dict[str, bool]:
     """끝난 시도 판정 항목(모두 참이어야 통과). `last_result`는 `failed_manual`도 `failed`로
@@ -549,12 +552,18 @@ def judge_attempt(
 
     `expect_alarm`이 없으면 경보가 없어야 한다(`no_manual_alarm`). 있으면(전환기 롤백
     `E_DEFINITIONS_LEFT`) 그 코드의 경보 항목이 있고, 보고 `logs`에도 그 코드가 있으며, 자동 롤백
-    자체는 성공(`failed_manual` False)이어야 한다(`expected_alarm`). `check_metric`이면 textfile
-    메트릭 `updater_failed_manual`이 경보 유무(1/0)와 같아야 한다 — crash 케이스에는 켜지 않는다
-    (`_finish`가 상태 저장 뒤 메트릭을 쓰므로 그 사이 kill이면 메트릭만 이전 값일 수 있다)."""
+    자체는 성공(`failed_manual` False)이어야 한다(`expected_alarm`). `expect_code`가 있으면 보고
+    `code`(실패한 phase의 코드)가 그 값이어야 한다(`code`) — 전환기 경보는 어느 phase에서 실패했든
+    붙으므로 실패 원인은 이것으로 고정한다. `check_metric`이면 textfile 메트릭
+    `updater_failed_manual`이 경보 유무(1/0)와 같아야 한다 — crash 케이스에는 켜지 않는다
+    (`_finish`가 상태 저장 뒤 메트릭을 쓰므로 그 사이 kill이면 메트릭만 이전 값일 수 있다). 비crash
+    항목도 서비스 tick이 시도를 집었다면(CLI가 exit 2 재시도를 다 쓴 경우) 그 사이(수 ms)에 probe가
+    끼어 거짓 실패할 수 있으나, 확률이 무시할 만해 다시 보지 않는다."""
     state = updater_state(snap)
     manual_ok = report.get("failed_manual") is False
     checks: dict[str, bool] = {"result": state.get("last_result") == expect}
+    if expect_code is not None:
+        checks["code"] = report.get("code") == expect_code
     if expect_alarm is None:
         checks["no_manual_alarm"] = state.get("alarm") is None and manual_ok
     else:
@@ -807,6 +816,7 @@ def apply_and_check(
     prev: str,
     project_dir: str | None = None,
     expect_alarm: str | None = None,
+    expect_code: str | None = None,
     check_metric: bool = False,
     extra: Callable[[dict[str, object]], dict[str, bool]] | None = None,
     note: dict[str, object] | None = None,
@@ -831,6 +841,7 @@ def apply_and_check(
         want_digests=want,
         want_applied=gen if expect == "succeeded" else cast(int | None, applied_before),
         expect_alarm=expect_alarm,
+        expect_code=expect_code,
         check_metric=check_metric,
     )
     rows = as_int(db_of(snap).get("tag_history_rows"))
@@ -1006,6 +1017,11 @@ def judge_tree(snap: dict[str, object], want: TreeExpect) -> dict[str, bool]:
     }
 
 
+def judge_fixture_tree(snap: dict[str, object]) -> dict[str, bool]:
+    """fixture 트리(`build_site_bundle` 기본값)를 실은 번들이 적용된 상태인가 — `judge_tree`."""
+    return judge_tree(snap, tree_expect(FIXTURE))
+
+
 def definitions(db: dict[str, object], key: str) -> dict[str, dict[str, object]]:
     """probe `tag_defs`·`alarm_defs`(JSON 문자열)를 path·id → 정의로. 못 읽으면 빈 dict."""
     value = db.get(key)
@@ -1139,7 +1155,7 @@ def step_m5(ctx: Context, gens: dict[str, int]) -> None:
     host = vm()
     # ⓐ 트리 적용
     snap = probe(host)
-    tree = judge_tree(snap, tree_expect(FIXTURE))
+    tree = judge_fixture_tree(snap)
     db = db_of(snap)
     ctx.record(
         ITEM_TREE,
@@ -1229,6 +1245,26 @@ def reapply_absorbed(ctx: Context, host: Vm, gen: int, want_rev: int) -> None:
     )
 
 
+M5_ITEMS = (ITEM_TREE, ITEM_PATCH, ITEM_DRAFT_GATE, ITEM_ABSORB)
+
+
+def m5_guarded(
+    ctx: Context, gens: dict[str, int], step: Callable[[Context, dict[str, int]], None] = step_m5
+) -> None:
+    """M5 확인을 돌리되 전송·WSL 예외(`VmError`·golden.wsl `RuntimeError`·`ValueError` 등)가
+    `all` 전체를 끊지 않게 한다 — 이번 호출에서 기록되지 않은 M5 항목을 실패(`error` = 예외 끝)로
+    남기고 돌아가, 호출자가 `restore_c0`부터 이어 간다. 이전 실행이 남긴 같은 이름 결과는 이번
+    기록으로 치지 않는다."""
+    before = list(ctx.results)
+    try:
+        step(ctx, gens)
+    except Exception as exc:
+        recorded = {r["name"] for r in ctx.results if not any(r is b for b in before)}
+        for name in M5_ITEMS:
+            if name not in recorded:
+                ctx.record(name, False, error=repr(exc)[-TAIL_CHARS:])
+
+
 def step_scenarios(ctx: Context) -> None:
     gens = scenario_gens(ctx.next_gen)
     gen = gens["upgrade"]
@@ -1264,7 +1300,7 @@ def step_scenarios(ctx: Context) -> None:
     # cert 단계의 `max_seen_created_at` 역행(E_CERT)에 먼저 걸린다(첫 실측).
     lower = build_site_bundle(ctx, 1, NEXT, datetime.now(UTC) - timedelta(days=1))
     stage_untouched(ctx, ITEM_LOWER_GEN, vm(), lower, want_exit=1, want_code="E_GEN", want=NEXT)
-    step_m5(ctx, gens)
+    m5_guarded(ctx, gens)
     # c0에서 FAULT → 5분 안에 BASE 복귀 + failed. BASE는 트리를 모르는 release라 롤백은 state만
     # 되돌리고 실패한 gen의 정의가 남는다 — 설계된 전환기 경보 E_DEFINITIONS_LEFT(제품 결함 아님).
     restore_c0(ctx)
@@ -1276,6 +1312,7 @@ def step_scenarios(ctx: Context) -> None:
         expect="failed",
         prev=BASE,
         expect_alarm=E_DEFINITIONS_LEFT,
+        expect_code=FAULT_CODE,
         check_metric=True,
     )
     ctx.record(
@@ -1284,7 +1321,8 @@ def step_scenarios(ctx: Context) -> None:
         seconds=rb["seconds"],
         code=rb["code"],
     )
-    # 그 상태에서 정상 NEXT 트리 번들 → succeeded + 경보 해제(트리 release 성공만 지운다, N-1)
+    # 그 상태에서 정상 NEXT 트리 번들 → succeeded + 경보 해제(트리 release 성공만 지운다, N-1).
+    # 경보 해제는 manifest만 보고 하므로 정의·project_state를 실제로 다시 썼는지도 본다.
     apply_and_check(
         ctx,
         ITEM_ALARM_CLEAR,
@@ -1293,6 +1331,7 @@ def step_scenarios(ctx: Context) -> None:
         expect="succeeded",
         prev=BASE,
         check_metric=True,
+        extra=judge_fixture_tree,
     )
     ctx.next_gen = gens["next"]
     ctx.save()

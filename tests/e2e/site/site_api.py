@@ -38,8 +38,9 @@ BROWSER_HEADERS = {
 
 def call(
     method: str, path: str, body: object | None = None, cookie: str | None = None
-) -> tuple[int, Any, dict[str, str]]:
-    """(상태, JSON 본문 또는 텍스트, 응답 헤더). 비안전 메서드에는 브라우저 헤더를 싣는다."""
+) -> tuple[int, Any, list[str]]:
+    """(상태, JSON 본문 또는 텍스트, 응답 `Set-Cookie` 헤더 전부). 비안전 메서드에는 브라우저
+    헤더를 싣는다."""
     headers: dict[str, str] = {} if method == "GET" else dict(BROWSER_HEADERS)
     if cookie is not None:
         headers["Cookie"] = f"{SESSION_COOKIE}={cookie}"
@@ -54,12 +55,14 @@ def call(
         parsed: Any = json.loads(raw or b"null")
     except ValueError:
         parsed = raw.decode(errors="replace")[:500]
-    return status, parsed, {k.lower(): v for k, v in got.items()}
+    return status, parsed, [str(v) for v in got.get_all("Set-Cookie") or []]
 
 
-def session_of(headers: dict[str, str]) -> str | None:
+def session_of(set_cookies: list[str]) -> str | None:
+    """`Set-Cookie` 헤더들(쿠키가 여럿이면 헤더도 여럿)에서 세션 쿠키 값."""
     cookie = SimpleCookie()
-    cookie.load(headers.get("set-cookie", ""))
+    for header in set_cookies:
+        cookie.load(header)
     morsel = cookie.get(SESSION_COOKIE)
     return None if morsel is None else morsel.value
 
@@ -67,10 +70,10 @@ def session_of(headers: dict[str, str]) -> str | None:
 def patch(args: argparse.Namespace) -> dict[str, Any]:
     password = Path(args.password_file).read_text(encoding="utf-8").splitlines()[0]
     out: dict[str, Any] = {"project_before": call("GET", "/api/v1/project")[:2]}
-    status, body, headers = call(
+    status, body, set_cookies = call(
         "POST", "/api/v1/auth/login", {"username": args.username, "password": password}
     )
-    token = session_of(headers)
+    token = session_of(set_cookies)
     # 토큰은 출력하지 않는다(로그에 남는 결과 파일)
     user: Any = cast(dict[str, Any], body).get("user") if isinstance(body, dict) else body
     out["login"] = [status, {"user": user}]

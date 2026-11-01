@@ -562,7 +562,7 @@ TRANSITION: dict[str, object] = {
 
 
 def test_judge_attempt_expects_transition_alarm() -> None:
-    report: dict[str, object] = {"failed_manual": False, "logs": LEFT_LOGS}
+    report: dict[str, object] = {"failed_manual": False, "logs": LEFT_LOGS, "code": "E_HEALTH"}
     checks = run.judge_attempt(
         TRANSITION,
         report,
@@ -570,28 +570,44 @@ def test_judge_attempt_expects_transition_alarm() -> None:
         want_digests=WANT,
         want_applied=3,
         expect_alarm=run.E_DEFINITIONS_LEFT,
+        expect_code=run.FAULT_CODE,
         check_metric=True,
     )
     assert all(checks.values())
     assert "no_manual_alarm" not in checks
+    assert checks["code"]
     # S4 기본 판정(경보 없음 기대)이면 같은 상태가 실패한다 — c0(r3)에서 r4f는 설계상 경보를 세운다
     default = run.judge_attempt(
         TRANSITION, report, expect="failed", want_digests=WANT, want_applied=3
     )
     assert not default["no_manual_alarm"]
     assert "alarm_metric" not in default
+    assert "code" not in default  # expect_code가 없으면 보고 code를 판정하지 않는다
+
+
+FAULT_REPORT: dict[str, object] = {"failed_manual": False, "logs": LEFT_LOGS, "code": "E_HEALTH"}
 
 
 @pytest.mark.parametrize(
     ("alarm", "report", "metric", "failing"),
     [
-        (None, {"failed_manual": False, "logs": LEFT_LOGS}, 0.0, "expected_alarm"),
-        ("g2: E_HEALTH", {"failed_manual": False, "logs": LEFT_LOGS}, 1.0, "expected_alarm"),
-        (LEFT_ALARM, {"failed_manual": False, "logs": "rollback ok"}, 1.0, "expected_alarm"),
-        (LEFT_ALARM, {"failed_manual": True, "logs": LEFT_LOGS}, 1.0, "expected_alarm"),
+        (None, FAULT_REPORT, 0.0, "expected_alarm"),
+        ("g2: E_HEALTH", FAULT_REPORT, 1.0, "expected_alarm"),
+        (LEFT_ALARM, {**FAULT_REPORT, "logs": "rollback ok"}, 1.0, "expected_alarm"),
+        (LEFT_ALARM, {**FAULT_REPORT, "failed_manual": True}, 1.0, "expected_alarm"),
         (LEFT_ALARM, {}, 1.0, "expected_alarm"),  # 보고를 못 찾으면 통과시키지 않는다
-        (LEFT_ALARM, {"failed_manual": False, "logs": LEFT_LOGS}, 0.0, "alarm_metric"),
-        (LEFT_ALARM, {"failed_manual": False, "logs": LEFT_LOGS}, None, "alarm_metric"),
+        (LEFT_ALARM, {}, 1.0, "code"),
+        (LEFT_ALARM, FAULT_REPORT, 0.0, "alarm_metric"),
+        (LEFT_ALARM, FAULT_REPORT, None, "alarm_metric"),
+        # health가 아닌 phase 실패도 전환기 경보는 똑같이 붙는다 — 보고 code로만 가려진다
+        (
+            "g2: E_SWITCH E_DEFINITIONS_LEFT",
+            {**FAULT_REPORT, "code": "E_SWITCH"},
+            1.0,
+            "code",
+        ),
+        (LEFT_ALARM, {**FAULT_REPORT, "code": "E_MIGRATE"}, 1.0, "code"),
+        (LEFT_ALARM, {**FAULT_REPORT, "code": None}, 1.0, "code"),
     ],
 )
 def test_judge_attempt_transition_alarm_flags(
@@ -609,9 +625,13 @@ def test_judge_attempt_transition_alarm_flags(
         want_digests=WANT,
         want_applied=3,
         expect_alarm=run.E_DEFINITIONS_LEFT,
+        expect_code=run.FAULT_CODE,
         check_metric=True,
     )
     assert not checks[failing]
+    # 실패한 판정 외에는 기준 상태 그대로다(매개변수가 엉뚱한 곳을 깨지 않는다)
+    if alarm == LEFT_ALARM and metric == 1.0 and report.get("logs") == LEFT_LOGS:
+        assert {k for k, ok in checks.items() if not ok} == {failing}
 
 
 def test_judge_attempt_alarm_cleared_by_tree_release() -> None:
@@ -641,6 +661,19 @@ def test_judge_attempt_alarm_cleared_by_tree_release() -> None:
     checks = judge(left)
     assert not checks["no_manual_alarm"]
     assert not checks["alarm_metric"]
+
+
+def test_alarm_clear_sees_tree_rewritten() -> None:
+    """ITEM_ALARM_CLEAR의 `extra`: 경보 해제는 manifest만 보고 하므로, 롤백이 되돌린 r3 메타
+    (content_hash = r3 번들 값)가 fixture 트리로 다시 쓰였는지를 본다."""
+    assert all(run.judge_fixture_tree(TREE_SNAP).values())
+    # 정의 교체 없이 메타만 남은 성공(회귀)이면 GET /project content_hash가 r3 값이다
+    r3_meta = with_body(content_hash="sha256:" + "33" * 32)
+    assert not run.judge_fixture_tree(r3_meta)["project_version"]
+    # 트리 적용이 project_files·정의를 쓰지 않았으면(BASE DB 그대로) 그 항목들이 실패한다
+    untouched = {**TREE_SNAP, "db": C0_DB}
+    failing = {k for k, ok in run.judge_fixture_tree(untouched).items() if not ok}
+    assert failing == {"project_files", "devices", "tags", "alarms"}
 
 
 def test_alarm_has_matches_joined_entries() -> None:
@@ -833,8 +866,42 @@ def test_unabsorbed_copy_drops_only_absorbs(tmp_path: Path) -> None:
 
 def test_site_api_session_cookie() -> None:
     cookie = "pureiron_session=tok123; HttpOnly; Max-Age=28800; Path=/api; SameSite=strict"
-    assert site_api.session_of({"set-cookie": cookie}) == "tok123"
-    assert site_api.session_of({}) is None
+    assert site_api.session_of([cookie]) == "tok123"
+    assert site_api.session_of([]) is None
+    # Set-Cookie가 여럿이어도(CSRF 쿠키 등) 앞뒤 순서와 무관하게 세션 쿠키를 찾는다
+    other = "pureiron_csrf=x9; Path=/; SameSite=strict"
+    assert site_api.session_of([other, cookie]) == "tok123"
+    assert site_api.session_of([cookie, other]) == "tok123"
+    assert site_api.session_of([other]) is None
     # 비안전 메서드의 브라우저 헤더: Origin = web(요청 Host와 같은 host:port), same-origin
     assert site_api.BROWSER_HEADERS["Origin"] == site_api.WEB
     assert site_api.BROWSER_HEADERS["Sec-Fetch-Site"] == "same-origin"
+
+
+def test_m5_guarded_records_unreached_items_and_returns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M5 블록의 전송·WSL 예외: 이번에 기록한 항목은 그대로, 못 간 항목만 실패(`error`)로 남기고
+    돌아온다(호출자가 restore_c0부터 이어 간다). 이전 실행의 같은 이름 결과는 덮어쓴다."""
+    monkeypatch.setattr(run, "STATE_FILE", tmp_path / "state.json")  # 실제 state.json 보호
+    ctx = run.Context(run_id="t", artifacts=str(tmp_path))
+    ctx.record(run.ITEM_ABSORB, True, stale=True)  # 이전 실행(`--from scenarios`)이 남긴 결과
+    ctx.record(run.ITEM_UPGRADE, True)
+
+    def broken(c: run.Context, gens: dict[str, int]) -> None:
+        c.record(run.ITEM_TREE, True)
+        raise run.VmError("scp exited 255: connection reset")
+
+    run.m5_guarded(ctx, {}, broken)
+    by_name = {r["name"]: r for r in ctx.results}
+    assert by_name[run.ITEM_TREE]["ok"] is True
+    assert by_name[run.ITEM_UPGRADE]["ok"] is True
+    for name in (run.ITEM_PATCH, run.ITEM_DRAFT_GATE, run.ITEM_ABSORB):
+        assert by_name[name]["ok"] is False
+        assert "connection reset" in str(by_name[name]["error"])
+    assert "stale" not in by_name[run.ITEM_ABSORB]
+    assert set(run.M5_ITEMS) <= set(run.expected_items())
+    # 예외가 없으면 아무것도 덧붙이지 않는다
+    calm = run.Context(run_id="t", artifacts=str(tmp_path))
+    run.m5_guarded(calm, {}, lambda c, g: None)
+    assert calm.results == []
