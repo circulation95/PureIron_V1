@@ -426,8 +426,16 @@ def nft_accumulate(
     return merged
 
 
+AUDIT_COUNTERS = frozenset(name for name, _ in (*golden.OUT_RULES, *golden.FWD_RULES))
+"""판정에 꼭 있어야 하는 외부 접속 카운터 이름. `field_fwd`는 끝점이 없으면 규칙도 없다."""
+
+
 def no_external(counters: dict[str, int]) -> bool:
-    """외부 접속 카운터가 모두 0인가. `field_fwd`(선언된 현장 장비 폴링)는 외부 접속이 아니다."""
+    """외부 접속 카운터가 모두 있고 0인가. 하나라도 없으면(nft 출력 형식·규칙이 바뀌어 못 읽음)
+    거짓이다 — 빈 카운터가 통과하지 않게. `field_fwd`(선언된 현장 장비 폴링)는 외부 접속이
+    아니다."""
+    if not counters.keys() >= AUDIT_COUNTERS:
+        return False
     return not any(value for name, value in counters.items() if name != golden.FIELD_RULE)
 
 

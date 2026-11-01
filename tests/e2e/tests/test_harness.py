@@ -215,20 +215,30 @@ def test_nft_accumulate_survives_reset_and_restore() -> None:
     assert run.nft_accumulate({}, {"field_fwd": 3}, {"field_fwd": 10}) == {"field_fwd": 7}
 
 
+QUIET_COUNTERS = {"ext_out_v4": 0, "dns_out": 0, "ext_out_v6": 0, "ext_fwd": 0}
+
+
 @pytest.mark.parametrize(
     ("counters", "quiet"),
     [
-        ({}, True),
-        ({"ext_out_v4": 0, "dns_out": 0, "ext_out_v6": 0, "ext_fwd": 0}, True),
-        ({"ext_fwd": 0, "field_fwd": 216}, True),  # r4 실측 — 선언 장비 폴링뿐
-        ({"ext_fwd": 1, "field_fwd": 216}, False),
-        ({"dns_out": 2, "field_fwd": 0}, False),
-        ({"ext_out_v6": 1}, False),
+        (QUIET_COUNTERS, True),
+        ({**QUIET_COUNTERS, "field_fwd": 217}, True),  # r4 VM 2차 실측 — 선언 장비 폴링뿐
+        ({**QUIET_COUNTERS, "ext_fwd": 1, "field_fwd": 216}, False),
+        ({**QUIET_COUNTERS, "dns_out": 2, "field_fwd": 0}, False),
+        ({**QUIET_COUNTERS, "ext_out_v6": 1}, False),
     ],
 )
 def test_no_external_ignores_only_field_fwd(counters: dict[str, int], quiet: bool) -> None:
     """ITEM_OS_QUIET(기준값)·ITEM_NO_EXTERNAL(누적)이 같은 판정을 쓴다."""
     assert run.no_external(counters) is quiet
+
+
+@pytest.mark.parametrize("missing", ["ext_out_v4", "dns_out", "ext_out_v6", "ext_fwd"])
+def test_no_external_requires_every_audit_counter(missing: str) -> None:
+    """nft 출력을 못 읽어 카운터가 비거나 빠지면 '외부 접속 없음'이 거짓 통과하지 않는다."""
+    assert run.no_external({}) is False
+    partial = {name: 0 for name in QUIET_COUNTERS if name != missing}
+    assert run.no_external({**partial, "field_fwd": 0}) is False
 
 
 def test_field_endpoints_read_fixture(tmp_path: Path) -> None:
