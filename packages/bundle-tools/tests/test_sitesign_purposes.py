@@ -1,4 +1,4 @@
-"""site 서명 용도(purpose) 도메인 분리: 온라인 heartbeat·report 서명은 다른 용도로 열리지 않는다(M4).
+"""site 서명 용도 도메인 분리: 온라인 heartbeat·report 서명은 다른 용도로 열리지 않는다(M4).
 
 기존 용도(enrollment·reports·draft)의 값·봉투 형식은 그대로다 — 현장 r4 Updater가 이미 그 값으로
 서명한 파일을 control-api가 같은 함수로 연다.

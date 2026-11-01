@@ -45,10 +45,11 @@ class SitePurpose(StrEnum):
     DRAFT = "site-draft"
     """현장 드래프트(운영 값 PATCH가 실린 유효 트리, `draft.tar`의 `draft.json`)."""
     HEARTBEAT = "site-heartbeat"
-    """온라인 heartbeat 한 건(`report_seq`·현재 gen·Updater 단계, control-api `POST …/heartbeat`)."""
+    """온라인 heartbeat 한 건(`report_seq`·현재 gen·Updater 단계, `POST …/heartbeat`)."""
     REPORT = "site-report"
-    """온라인 ApplyAttempt 보고 한 건(`report_seq` 포함, control-api `POST …/reports`). 묶음
-    `site-reports`(USB 반출)와 용도를 나눠 한 건짜리 서명을 묶음으로(또는 그 반대로) 쓸 수 없게 한다."""
+    """온라인 ApplyAttempt 보고 한 건(`report_seq` 포함, `POST …/reports`). 묶음
+    `site-reports`(USB 반출)와 용도를 나눠 한 건짜리 서명을 묶음으로(또는 그 반대로)
+    쓸 수 없게 한다."""
 
 
 DRAFT_ENVELOPE = "draft.json"
