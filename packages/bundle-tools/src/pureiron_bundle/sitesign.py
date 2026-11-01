@@ -1,4 +1,5 @@
-"""현장 site key 서명 문서(PD-3): enrollment 파일·report export·현장 드래프트(M5-2).
+"""현장 site key 서명 문서(PD-3): enrollment 파일·report export·현장 드래프트(M5-2)·온라인
+heartbeat·보고(M4).
 
 현장은 설치 때 만든 Ed25519 site key(raw 32B seed)로 자기 문서에 서명하고, control-api(M4)는
 같은 함수로 검증한다(P3). 봉투 형식:
@@ -43,6 +44,11 @@ class SitePurpose(StrEnum):
     """ApplyAttempt 보고 묶음(폐쇄망 USB 반출, `report_seq` 포함)."""
     DRAFT = "site-draft"
     """현장 드래프트(운영 값 PATCH가 실린 유효 트리, `draft.tar`의 `draft.json`)."""
+    HEARTBEAT = "site-heartbeat"
+    """온라인 heartbeat 한 건(`report_seq`·현재 gen·Updater 단계, control-api `POST …/heartbeat`)."""
+    REPORT = "site-report"
+    """온라인 ApplyAttempt 보고 한 건(`report_seq` 포함, control-api `POST …/reports`). 묶음
+    `site-reports`(USB 반출)와 용도를 나눠 한 건짜리 서명을 묶음으로(또는 그 반대로) 쓸 수 없게 한다."""
 
 
 DRAFT_ENVELOPE = "draft.json"
