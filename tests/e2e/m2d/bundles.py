@@ -4,17 +4,28 @@
     uv run --no-sync python tests/e2e/m2d/bundles.py site --work W --out O --gen 2 \\
         --product 2026.10.3-fault1 --window-start 2026-10-05T00:00:00Z --window-end ...
     uv run --no-sync python tests/e2e/m2d/bundles.py install --work W --out O --release 2026.10.2
+    uv run --no-sync python tests/e2e/m2d/bundles.py m5-project --work W
+    uv run --no-sync python tests/e2e/m2d/bundles.py absorb --work W --draft D --site-key E
 
-release 쌍(`BASE`·`NEXT`·`FAULT`)은 `release_pair.py`가 정한다(S4: r2→r3, fault r3f).
+release 쌍(`BASE`·`NEXT`·`FAULT`)은 `release_pair.py`가 정한다(M5 마감: r3→r4, fault r4f).
 
-- `fault-release`: `FAULT`(r3', `2026.10.3-fault1`) — `NEXT` 이미지 그대로에 collector만 세션을 맺지
+- `fault-release`: `FAULT`(r4', `2026.11.0-fault1`) — `NEXT` 이미지 그대로에 collector만 세션을 맺지
   않는 파생 이미지(`sleep`). core는 healthy라 `up --wait`는 통과하고 `/readyz`(collector 세션)가
   실패해 `checking`에서 `E_HEALTH` → 롤백을 일으킨다. 저장소 `deploy/releases`는 건드리지 않고
   `W/releases`(저장소 release 기록 전부의 사본 + `FAULT`)와 `W/store`(`BASE`·`NEXT`는 실제 image
   store를 가리키는 symlink)에 둔다. 기록을 전부 옮기는 것은 `compat_app_min`이 저장소와 같게
   나오도록이다.
 - `site`: fleet 현장 파일을 쓰고 `deploy/bundle/build_bundle.py`로 서명 번들을 만든다(release는
-  `--releases W/releases`에서 `version == --product`로 찾는다).
+  `--releases W/releases`에서 `version == --product`로 찾는다). 프로젝트 트리는 `--project-dir`
+  (기본 fixture `acme`).
+- `m5-project`(M5 확인 ⓒ·ⓓ): `W/m5/repo` = fixture `acme` 사본에서 `project.yaml absorbs`를 뺀 것 —
+  "아직 absorb하지 않은 고객 repo". fixture는 `absorbs: {site-a: 3}`라 그대로 쓰면 VM의 현장
+  site_rev(PATCH 2번 = 2)가 3 이하여서 드래프트 게이트가 통과하고(ⓒ가 `E_DRAFT`를 못 본다) absorb는
+  리비전 퇴행(2 < 3) 충돌이 된다(ⓓ). 그 밖의 파일은 fixture와 바이트까지 같다.
+- `absorb`(ⓓ): `W/m5/repo`를 `W/m5/absorbed`로 새로 복사하고 `pureiron-project absorb`(VM이
+  서명한 draft.tar + VM `enrollment.json`) → `pureiron-project gate --draft`를 차례로 실행한다. 각
+  종료 코드와 출력을 JSON 한 줄로 내고 판정은 `run.py`가 한다(실패해도 exit 0 — 결과에 증거를
+  남기려고).
 - `install`: `fetch_debs.sh` → `build_updater.sh` → `build_install_bundle.py`(실빌드, 네트워크
   필요). 설치 번들은 이미지를 싣지 않는다 — `--release`는 manifest `release`·파일 이름에만 쓰인다.
 """
@@ -36,7 +47,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "deploy" / "build")
 from images import config_digest_from_tar, config_digest_of_image, image_store
 from release_pair import BASE, FAULT, NEXT, RELEASES
 
+from pureiron_project import canonical
+from pureiron_project.project import load_project
+
 ROOT = Path(__file__).resolve().parents[3]
+FIXTURE = ROOT / "packages" / "project-tools" / "fixtures" / "acme"
 
 KEYS = Path.home() / "pureiron" / "keys" / "test"
 FAULT_NAME, FAULT_VERSION, FAULT_BASE = FAULT, RELEASES[FAULT], NEXT
@@ -159,7 +174,15 @@ def fault_release(work: Path) -> Path:
 
 
 def site(
-    work: Path, out: Path, *, gen: int, product: str, start: str, end: str, site_id: str
+    work: Path,
+    out: Path,
+    *,
+    gen: int,
+    product: str,
+    start: str,
+    end: str,
+    site_id: str,
+    project_dir: Path = FIXTURE,
 ) -> Path:
     fleet = work / "sites" / f"{site_id}-g{gen}.yaml"
     fleet.parent.mkdir(parents=True, exist_ok=True)
@@ -179,7 +202,7 @@ def site(
         "--fleet-file",
         str(fleet),
         "--project-dir",
-        str(ROOT / "packages" / "project-tools" / "fixtures" / "acme"),
+        str(project_dir),
         "--release-key",
         str(KEYS / "release.key"),
         "--cert-dir",
@@ -196,6 +219,50 @@ def site(
         str(work / "store"),
     )
     return out / f"pureiron-{site_id}-g{gen}.pib"
+
+
+def unabsorbed_copy(source: Path, dest: Path) -> Path:
+    """`source` 트리를 `dest`에 새로 복사하고 `project.yaml`에서 `absorbs`만 뺀다(정규형으로 다시
+    쓴다). 결과가 유효한 프로젝트가 아니면 멈춘다."""
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(source, dest)
+    meta = dest / "project.yaml"
+    doc = cast(dict[str, canonical.Json], canonical.load(meta.read_text("utf-8"), "project.yaml"))
+    doc.pop("absorbs", None)
+    meta.write_text(canonical.dump(doc), encoding="utf-8", newline="\n")
+    project = load_project(dest)
+    if not project.ok:
+        raise SystemExit(f"{dest}: " + "; ".join(project.problems))
+    return dest
+
+
+def m5_project(work: Path) -> Path:
+    return unabsorbed_copy(FIXTURE, work / "m5" / "repo")
+
+
+def _tool(*cmd: str) -> dict[str, object]:
+    done = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, check=False)
+    return {"rc": done.returncode, "stdout": done.stdout[-2000:], "stderr": done.stderr[-2000:]}
+
+
+def absorb(work: Path, draft: Path, site_key: Path, site_id: str) -> dict[str, object]:
+    """ⓓ: 아직 absorb하지 않은 repo 사본에 현장 드래프트를 회수하고 게이트를 사전 점검한다."""
+    repo, absorbed = work / "m5" / "repo", work / "m5" / "absorbed"
+    if not repo.is_dir():
+        raise SystemExit(f"{repo} missing (bundles.py m5-project)")
+    if absorbed.exists():
+        shutil.rmtree(absorbed)
+    shutil.copytree(repo, absorbed)
+    project = ("uv", "run", "--no-sync", "pureiron-project")
+    key = ("--site", site_id, "--draft", str(draft), "--site-key", str(site_key))
+    result: dict[str, object] = {
+        "dir": str(absorbed),
+        "absorb": _tool(*project, "absorb", *key, str(absorbed)),
+    }
+    if cast(dict[str, object], result["absorb"])["rc"] == 0:
+        result["gate"] = _tool(*project, "gate", str(absorbed), *key)
+    return result
 
 
 def install(work: Path, out: Path, release: str) -> Path:
@@ -242,6 +309,14 @@ def main(argv: list[str] | None = None) -> int:
     site_cmd.add_argument("--window-start", required=True)
     site_cmd.add_argument("--window-end", required=True)
     site_cmd.add_argument("--site", default="site-a")
+    site_cmd.add_argument("--project-dir", type=Path, default=FIXTURE)
+    m5 = sub.add_parser("m5-project")
+    m5.add_argument("--work", type=Path, required=True)
+    absorb_cmd = sub.add_parser("absorb")
+    absorb_cmd.add_argument("--work", type=Path, required=True)
+    absorb_cmd.add_argument("--draft", type=Path, required=True)
+    absorb_cmd.add_argument("--site-key", type=Path, required=True)
+    absorb_cmd.add_argument("--site", default="site-a")
     install_cmd = sub.add_parser("install")
     install_cmd.add_argument("--work", type=Path, required=True)
     install_cmd.add_argument("--out", type=Path, required=True)
@@ -260,8 +335,13 @@ def main(argv: list[str] | None = None) -> int:
                 start=args.window_start,
                 end=args.window_end,
                 site_id=args.site,
+                project_dir=args.project_dir,
             )
         )
+    elif args.command == "m5-project":
+        print(m5_project(args.work))
+    elif args.command == "absorb":
+        print(json.dumps(absorb(args.work, args.draft, args.site_key, args.site)))
     else:
         print(install(args.work, args.out, args.release))
     return 0

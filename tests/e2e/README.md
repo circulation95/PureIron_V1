@@ -31,23 +31,53 @@ image store(`~/pureiron/images`, `PUREIRON_IMAGE_STORE`)의 BASE·NEXT tar(`<이
 ## release 쌍
 
 실측할 release 쌍은 `m2d/release_pair.py` 한 곳에 있다 — 설치 g1 = `BASE`, 업그레이드 `BASE`→`NEXT`,
-헬스 실패 롤백 `FAULT`(`NEXT` 파생), 기대 epoch `EPOCHS`. 결과 항목 30개(`run.expected_items()`) 이름도
-여기서 나온다.
+헬스 실패 롤백 `FAULT`(`NEXT` 파생), 기대 epoch `EPOCHS`. 결과 항목 35개(`run.expected_items()`) 이름도
+여기서 나온다(S4까지 30개, M5 마감에서 M5 확인 4개 + 전환기 경보 해제 1개를 더했다).
 
 | 실측 | BASE | NEXT | FAULT | c0 | 업그레이드 마이그레이션 |
 |---|---|---|---|---|---|
 | M2(run 20261005T055523Z, 30/30) | r0 `2026.10.0` (epoch 1) | r1 `2026.10.1` (epoch 2) | `r1f` `2026.10.1-fault1` | epoch 1 + 압축 chunk | 0006·0007(1h CAGG) |
 | S3(run 20261009T231040Z, 30/30) | r1 `2026.10.1` (epoch 2) | r2 `2026.10.2` (epoch 3) | `r2f` `2026.10.2-fault1` | epoch 2(1h CAGG 있음) + 압축 chunk | 0008·0009(정의 jsonb, CAGG 실시간 집계, `project_state.historian`) |
-| **S4(run 20261017T132857Z, 30/30, 현재)** | r2 `2026.10.2` (epoch 3) | r3 `2026.10.3` (epoch 4) | `r3f` `2026.10.3-fault1` | epoch 3(1m·1h CAGG 실시간 집계, 0008·0009 열) + 압축 chunk, epoch 4 테이블 없음 | 0010~0012(`users`·`sessions`, `audit_log`, `alarms`·`alarm_journal`과 인덱스) |
+| S4(run 20261017T132857Z, 30/30) | r2 `2026.10.2` (epoch 3) | r3 `2026.10.3` (epoch 4) | `r3f` `2026.10.3-fault1` | epoch 3(1m·1h CAGG 실시간 집계, 0008·0009 열) + 압축 chunk, epoch 4 테이블 없음 | 0010~0012(`users`·`sessions`, `audit_log`, `alarms`·`alarm_journal`과 인덱스) |
+| **M5 마감(현재)** | r3 `2026.10.3` (epoch 4) | r4 `2026.11.0` (epoch 5) | `r4f` `2026.11.0-fault1` | epoch 4(0010~0012 테이블·인덱스, 1m·1h CAGG 실시간 집계, 0008·0009 열) + 압축 chunk, `project_files` 없음 | 0013(`project_files`, 이름 붙은 인덱스 없음) + 첫 프로젝트 트리 적용 |
 
-항목 이름 중 release가 들어가는 5개는 쌍을 따라간다: `install bundle bootstrap + g1(r2) on offline VM`,
-`r2→r3 on compressed epoch-3 DB`, `r3 schema after upgrade`, `r3' health failure → rollback`,
-`rollback within 5 min to r2 digests`(S3에서는 `g1(r1)`·`r1→r2 … epoch-2`·`r2 schema`·`r2'`·`to r1`).
+항목 이름 중 release가 들어가는 것은 쌍을 따라간다: `install bundle bootstrap + g1(r3) on offline VM`,
+`r3→r4 on compressed epoch-4 DB`, `r4 schema after upgrade`, `rollback within 5 min to r3 digests`,
+`r4 project tree applied …`, `r4' health failure → rollback (transition, E_DEFINITIONS_LEFT)`,
+`r4 tree bundle after transition rollback → succeeded, alarm cleared`(S4에서는 `g1(r2)`·`r2→r3 … epoch-3`·
+`r3 schema`·`r3' health failure → rollback`·`to r2`).
 
-스키마 판정은 이름 집합으로 비교한다(`release_pair.py`의 `CAGGS`·`BASE_COLUMNS`·`NEXT_TABLES`·
-`NEXT_INDEXES`, probe `db`의 `caggs`·`realtime_caggs`·`tables`·`indexes`·`columns`). c0는 BASE epoch 산출물이
-있고 NEXT 테이블이 없어야 하며, 업그레이드 뒤에는 NEXT 테이블·인덱스가 생기고 BASE 산출물이 남아야 한다.
-쌍을 바꿀 때는 새 NEXT epoch의 migration SQL을 읽고 이 집합들을 함께 바꾼다.
+스키마 판정은 이름 집합으로 비교한다(`release_pair.py`의 `CAGGS`·`BASE_COLUMNS`·`BASE_TABLES`·`BASE_INDEXES`·
+`NEXT_TABLES`, probe `db`의 `caggs`·`realtime_caggs`·`tables`·`indexes`·`columns`). c0는 BASE epoch 산출물이
+있고 NEXT 테이블이 없어야 하며, 업그레이드 뒤에는 NEXT 테이블이 생기고 BASE 산출물이 남아야 한다. 0013은
+이름 붙은 인덱스를 만들지 않아 `NEXT_INDEXES`는 빈 집합이고 판정 항목에서 뺐다(빈 집합 포함 검사는 늘
+참). 쌍을 바꿀 때는 새 NEXT epoch의 migration SQL을 읽고 이 집합들을 함께 바꾼다(지난 NEXT 산출물은
+BASE로 옮긴다).
+
+### M5 마감에서 바뀐 판정
+
+- **전환기 롤백**: r4는 프로젝트 트리를 적용하는 첫 release다. `c0`(r3)에서 `FAULT`(r4f)는 r4 이미지가
+  트리를 적용한 뒤 헬스에서 실패하고, 직전 r3 core는 트리를 모르므로 롤백은 project_state만 되돌린다 —
+  설계상 `failed` + 경보 `g<gen>: E_HEALTH E_DEFINITIONS_LEFT`, 보고 `failed_manual` false·`logs`에
+  `E_DEFINITIONS_LEFT`, 메트릭 `updater_failed_manual 1`(updater README runbook). `judge_attempt`의
+  `expect_alarm`·`check_metric`이 이를 본다(제품 결함이 아니다). 이어서 정상 r4 트리 번들을 적용하면
+  `succeeded`이고 경보가 지워져야 한다(트리 release 성공만 지운다, 리뷰 N-1). crash의 `rolling_back` 2건은
+  r4 위의 r4f라 트리 백업이 있어 경보가 없어야 한다(기존 판정 그대로).
+- **M5 확인 4개**(업그레이드 직후 r4 위, 낮은 gen 거부 다음):
+  ⓐ 트리 적용 — `GET /api/v1/project`의 version·content_hash = 번들 트리, `site_rev == base_site_rev`,
+  DB `project_files` 행 수 = 트리 파일 수(fixture 4), retire되지 않은 장비·태그·알람 = 트리(c0 시드 장비·
+  태그는 트리 교체로 retire). ⓑ 현장 PATCH — core 컨테이너에서 `pureiron-core users add e2e-admin --role admin`
+  (비밀번호는 VM에서 만든 파일, 호스트로 나가지 않는다) → `site/site_api.py`가 web 경유로 로그인(세션 쿠키)·
+  `PATCH /api/v1/project/tags/line1/temp`(record)·`/alarms/temp-high`(setpoint), 비안전 요청마다
+  `Origin`(= web)·`Sec-Fetch-Site: same-origin`(M3c-0 OriginGuard), 로그인 1회(throttle) → site_rev +2,
+  base 그대로, DB 정의 = PATCH 값. ⓒ 드래프트 게이트 — absorb하지 않은 repo(`bundles.py m5-project`: fixture
+  사본에서 `absorbs`만 뺀 것. fixture의 `absorbs: {site-a: 3}`은 VM site_rev 2보다 커서 그대로면 게이트가
+  통과한다)로 만든 번들 → exit 1·`E_DRAFT`·core `StartedAt`·이미지 불변. ⓓ export→absorb→재적용 —
+  VM `pureiron-site project export --out` + `state/enrollment.json`을 호스트로 scp → WSL `bundles.py absorb`
+  (`pureiron-project absorb --draft --site-key` → `gate --draft`) → 그 디렉터리로 번들(`site --project-dir`) →
+  `succeeded`, content_hash = 흡수한 트리, `base_site_rev == site_rev`(= 2), PATCH 값 유지, 편집 잠금 해제.
+- probe가 `metrics`(`state/metrics/updater.prom`)와 `db`의 `project_files`·`device_ids`·`tag_paths`·
+  `alarm_ids`·`tag_defs`·`alarm_defs`를 더 낸다. gen 배정은 `run.scenario_gens()`.
 
 r3부터 core API에 사용자 세션 인증이 있다. 하네스(probe)가 읽는 HTTP 경로 `/api/v1/readyz`·`GET /api/v1/project`는
 무인증이라 그대로 쓴다(Updater의 편집 잠금은 Updater 토큰).
@@ -75,9 +105,9 @@ uv run python tests/e2e/m2d/run.py destroy         # VM·차분 디스크 삭제
 | `prepare` | WSL 사본에서 FAULT(`r3f`: NEXT 이미지에 collector가 세션을 맺지 않는 파생 → `/readyz` 503. 로컬 NEXT 이미지 digest가 기록과 다르면 store tar를 다시 load, 파생 뒤 core·web digest == NEXT 기록 확인), release 기록 version·epoch·앱 envelope [epoch, epoch + 1] 대조, 설치 번들 **실빌드**(`fetch_debs.sh`·`build_updater.sh`, manifest release = BASE), g1(BASE) |
 | `vm` | golden(클라우드 이미지 → 64 GiB 동적 VHDX, 읽기 전용) 위 차분 디스크, seed ISO(cloud-init: 사용자·고정 IP·OS phone-home 끄기·nftables 감시 테이블) |
 | `install` | runbook 2단계(메타데이터만 전용 디렉터리에 추출 → `bootstrap-verify.sh` sha256·root 지문 대조) → `install.sh --offline-time-confirmed` → enroll → g1 → 서비스 시작. `/readyz` 200, overlay2 + classic store, 실행 이미지 `.Id` == BASE config digest. 압축 chunk 이력 시드, c0 기반(DB epoch == BASE epoch·BASE 산출물·NEXT 테이블 없음·압축 chunk·이력 행) 확인 후 체크포인트 `c0` |
-| `scenarios` | `c0`에서 거부(다른 현장 `E_SITE`·변조 `E_DIGEST`) exit 1, 같은 gen 재빌드는 no-op exit 0(R-7 멱등) — 모두 core `StartedAt`·실행 이미지 불변 / `c0`에서 BASE→NEXT(압축 DB 위 NEXT epoch migrate) 성공 + NEXT 스키마(epoch 4·0010~0012 테이블·인덱스·1m/1h CAGG와 실시간 집계·0008/0009 열·압축 chunk 유지) → 낮은 gen `E_GEN` 거부 / `c0`에서 FAULT → 5분 안에 BASE digest + `failed` |
+| `scenarios` | `c0`에서 거부(다른 현장 `E_SITE`·변조 `E_DIGEST`) exit 1, 같은 gen 재빌드는 no-op exit 0(R-7 멱등) — 모두 core `StartedAt`·실행 이미지 불변 / `c0`에서 BASE→NEXT(압축 DB 위 NEXT epoch migrate) 성공 + NEXT 스키마(epoch 5·`project_files`·0010~0012 테이블·인덱스·1m/1h CAGG와 실시간 집계·0008/0009 열·압축 chunk 유지) → 낮은 gen `E_GEN` 거부 → M5 확인 ⓐ~ⓓ / `c0`에서 FAULT → 5분 안에 BASE digest + `failed` + 전환기 경보 `E_DEFINITIONS_LEFT` → 정상 NEXT 트리 번들로 경보 해제 |
 | `crash` | phase(`fetched`~`rolling_back`)마다 `systemctl kill -s KILL pureiron-updater`와 `Restart-VM -Type Reset -Force` 각 1회 → 10분 안에 수렴(결과·실행 이미지·편집 잠금 해제) |
-| `report` | nftables 외부 접속 카운터(`ext_out_v4`·`dns_out`·`ext_out_v6`·`ext_fwd`)의 **누적** 합 0 (`vm` 단계 기준값도 따로 0이어야 한다). `results.json`의 `missing`은 30개 중 기록되지 않은 항목 |
+| `report` | nftables 외부 접속 카운터(`ext_out_v4`·`dns_out`·`ext_out_v6`·`ext_fwd`)의 **누적** 합 0 (`vm` 단계 기준값도 따로 0이어야 한다). `results.json`의 `missing`은 35개 중 기록되지 않은 항목 |
 
 거부 보고는 번들 sha256 12자로 찾는다(`reports/<started>-g<gen>-<sha12>.json`) — 커밋 전 거부는 서명을
 믿기 전이라 gen이 `unknown`이다. 낮은 gen 번들은 적용된 gen보다 **뒤에** 빌드한다 — 먼저 만든 번들은
@@ -120,4 +150,4 @@ systemd-resolved가 보내므로(컨테이너 질의도 Docker 내장 DNS → re
 
 ## 단위 테스트
 
-`tests/e2e/tests/` — phase 순서·상태 읽기·nft 규칙·seed ISO 왕복·PowerShell 인용·수렴 판정·release 쌍(BASE·NEXT 기록 대조 필수·crash 순서·항목 30개·c0/NEXT 스키마 집합 판정)·store symlink 다시 연결·`ensure_image` 적재 조건·스테이징 진단 기록(`stage_for_window`). G1 `unit`에 포함된다.
+`tests/e2e/tests/` — phase 순서·상태 읽기·nft 규칙·seed ISO 왕복·PowerShell 인용·수렴 판정·release 쌍(BASE·NEXT 기록 대조 필수·crash 순서·항목 35개·c0/NEXT 스키마 집합 판정·전환기 경보·M5 확인 판정(트리·PATCH·absorb·재적용)·gen 배정)·store symlink 다시 연결·`ensure_image` 적재 조건·스테이징 진단 기록(`stage_for_window`). G1 `unit`에 포함된다.

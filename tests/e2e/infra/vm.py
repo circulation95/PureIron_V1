@@ -101,6 +101,20 @@ class Vm:
         if result.returncode != 0:
             raise VmError(f"scp {local.name} failed: {result.stderr.strip()}")
 
+    def get(self, remote: str, local: Path, *, timeout_s: float = 600) -> None:
+        """VM 파일을 호스트로(사용자 `pureiron`이 읽을 수 있어야 한다)."""
+        local.parent.mkdir(parents=True, exist_ok=True)
+        result = subprocess.run(
+            [_tool("scp"), *self._opts(), "-q", f"{USER}@{self.ip}:{remote}", str(local)],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise VmError(f"scp {remote} failed: {result.stderr.strip()}")
+
     def reachable(self) -> bool:
         try:
             return self.run("true", timeout_s=15, check=False).returncode == 0
