@@ -1116,7 +1116,7 @@ python scripts/wiki.py check
 
 > **시점 스냅샷 (`docs/wiki/reports/`)** — 이 문서는 불변 계약이 아니라 각 실측 run 시점의 **결과 기록**이다. 하네스·제품이 그 뒤에 바뀌었을 수 있으므로, 여기 적힌 수치를 근거로 결론을 쓰기 전에 해당 run의 `results.json`이나 새 실측으로 다시 확인한다. 새 실측을 하면 절을 더하고 `last_verified`를 갱신한다. 하네스 구성·판정의 정본은 [`tests/e2e/README.md`](../../../tests/e2e/README.md), 계약 쪽 요약은 [data-contracts](../sot/data-contracts.md)의 M2d VM 절이다.
 
-M2d 하네스(`tests/e2e`, PD-24)를 release 쌍(`tests/e2e/m2d/release_pair.py`)마다 한 번씩 `run.py all`로 돌린 결과다. 항목은 매번 30개(`run.expected_items()`)이고, 결과 파일은 `artifacts/e2e/m2d-<run>/results.json`·`bundle-metrics.json`(gitignore)이다.
+M2d 하네스(`tests/e2e`, PD-24)를 release 쌍(`tests/e2e/m2d/release_pair.py`)마다 한 번씩 `run.py all`로 돌린 결과다. 항목은 S4까지 30개, M5 마감부터 35개(`run.expected_items()`)이고, 결과 파일은 `artifacts/e2e/m2d-<run>/results.json`·`bundle-metrics.json`(gitignore)이다.
 
 ## M2 r0→r1 (run `20261005T055523Z`, 30/30 PASS)
 
@@ -1151,6 +1151,45 @@ plan M2 종료 조건 실측.
 - crash 18회 모두 16~99 s 안에 수렴(`fetched`·`verified` 94~99 s, 나머지 16~57 s). service 대상 16회는 스테이징이 창보다 78~82 s 먼저 끝났다(apply rc 0, 1회). nftables 외부 접속 시도 누적 0.
 - 번들: install 80 MB, r3 현장 번들 740 MB(site-db 599 MB, core 61 MB), 빌드 약 60 s.
 - **1차 실패와 수정**: crash 14건이 `staged_before_window`만 false(복구 판정은 모두 true). 14건은 정확히 "apply ssh가 끝날 때 crash 감시자 ssh가 살아 있던" 케이스였다(감시자가 먼저 끝나는 `verified`, CLI 대상 `fetched`는 통과). 실측을 콘솔에서 띄우면 동시에 도는 ssh 둘이 같은 콘솔 stdin을 물려받는다 → `tests/e2e/infra/vm.py`의 ssh·scp를 모두 `stdin=DEVNULL`(`ssh -n`과 같음)로 띄우게 고쳤다. 2차는 같은 조건(콘솔 실행, 14건 모두 `watcher_alive` true)에서 통과했다. 하네스는 crash마다 `stage`(apply rc·시도 횟수·창까지 여유·감시자 생존)를 결과에 남긴다.
+
+## M5 마감 r3→r4 (run `<VM 실측 뒤 기록>`, `<결과>`/35, 초안 2026-11-01)
+
+> **초안** — 하네스·로컬 사전 검증까지의 기록이다. run id·결과·수치는 VM 실측 뒤 채운다(`<…>` 자리). 그 전에는 이 절을 실측 근거로 쓰지 않는다.
+
+같은 하네스, 쌍 r3→r4(fault `r4f`). r4는 Updater가 번들 프로젝트 트리를 적용하는 첫 release다(M5-0). 그래서 r3→r4 업그레이드가 VM에서 처음 실제 트리를 적용하고, 항목이 35개로 늘었다(S4의 30개 + M5 확인 4개 + 전환기 경보 해제 1개).
+
+**항목 대응(S4 30개 → 35개).** 이름이 쌍을 따라 바뀐 것과 새 항목만 적는다. 나머지(`vm boot`·`OS quiet`·`reject site`·`reject tampered`·`same gen rebuild → no-op`·`reject lower gen`·crash 18개·`no external connection …`)는 이름 그대로다.
+
+| S4(30) | M5 마감(35) | 판정 변화 |
+|---|---|---|
+| `install bundle bootstrap + g1(r2) on offline VM` | `install bundle bootstrap + g1(r3) on offline VM` | c0 = epoch 4: BASE 산출물에 0010~0012 테이블·인덱스 포함, `project_files` 없음 |
+| `r2→r3 on compressed epoch-3 DB` | `r3→r4 on compressed epoch-4 DB` | 같음(첫 트리 적용 포함) |
+| `r3 schema after upgrade` | `r4 schema after upgrade` | `next_tables` = `project_files`, `next_indexes` 없음(0013에 이름 붙은 인덱스 없음), `base_tables`·`base_indexes`(epoch 4 산출물 유지) 추가 |
+| — | `r4 project tree applied (project_files, definitions, base_site_rev)` | 새 ⓐ |
+| — | `site PATCH via web (admin login, tag + alarm) → site_rev +2` | 새 ⓑ |
+| — | `reject unabsorbed site drafts (E_DRAFT)` | 새 ⓒ |
+| — | `draft export → absorb → gate → reapply (PATCH kept, base_site_rev == site_rev)` | 새 ⓓ |
+| `r3' health failure → rollback` | `r4' health failure → rollback (transition, E_DEFINITIONS_LEFT)` | 경보 없음 → **전환기 경보 기대**(아래) |
+| `rollback within 5 min to r2 digests` | `rollback within 5 min to r3 digests` | 같음(300 s) |
+| — | `r4 tree bundle after transition rollback → succeeded, alarm cleared` | 새(전환기 경보 해제) |
+
+**전환기 경보 판정.** `c0`(r3, 트리 이전)에서 `r4f`를 적용하면 r4 이미지가 트리를 적용한 뒤 헬스에서 실패하고, 백업을 만든 직전 r3 core는 트리를 모르므로 롤백은 project_state만 되돌린다 — r4f가 적용한 장비·태그·알람 정의는 남는다. 이것은 설계된 동작이고(updater README runbook `E_DEFINITIONS_LEFT`, data-contracts M5-0 한계) 제품 결함이 아니다. 하네스는 다음을 모두 요구한다: 결과 `failed`, 실행 이미지 = r3 digest(5분 안), Updater 경보에 `… E_DEFINITIONS_LEFT` 항목, 보고 `logs`에 `E_DEFINITIONS_LEFT`·`failed_manual` false(자동 롤백 자체는 성공), 메트릭 `updater_failed_manual 1`. 이어서 그 상태에서 정상 r4 트리 번들을 적용하면 `succeeded`와 경보·메트릭 해제(0)를 요구한다 — 경보는 정의를 실제로 교체한 트리 release 성공만 지운다(리뷰 N-1). runbook 수동 복구(`apply-definitions`를 직전 이미지로)는 VM에서 하지 않는다(단위·recover 하네스가 고정). crash의 `rolling_back` 2건은 r4 위의 r4f라 트리 백업이 있어 경보가 없어야 한다(기존 판정).
+
+**M5 확인 4개**(업그레이드 r4 위, 낮은 gen 거부 다음, FAULT용 c0 복원 앞):
+
+- ⓐ 트리 적용: `GET /api/v1/project` version `v1`·content_hash = fixture `acme`, `site_rev == base_site_rev`; DB `project_files` 4행, retire되지 않은 장비·태그·알람 = fixture(c0 시드 장비·태그는 트리 교체로 retire).
+- ⓑ 현장 PATCH: core 컨테이너 `pureiron-core users add e2e-admin --role admin`(비밀번호는 VM에서 생성) → web 경유 로그인(세션 쿠키) → `line1/temp` record·`temp-high` setpoint PATCH(비안전 요청마다 `Origin`·`Sec-Fetch-Site: same-origin`) → site_rev 0→2, base 0 그대로, DB 정의 = PATCH 값.
+- ⓒ 드래프트 게이트: absorb하지 않은 repo로 만든 g3 → exit 1·`E_DRAFT`·core `StartedAt`·이미지 불변. fixture는 `absorbs: {site-a: 3}`이라 그대로 쓰면 site_rev 2 ≤ 3으로 게이트가 통과한다 — 하네스는 `absorbs`만 뺀 사본을 쓴다.
+- ⓓ export→absorb→재적용: `pureiron-site project export` + `state/enrollment.json` → 호스트 → WSL `pureiron-project absorb --draft --site-key` → `gate --draft` → 그 트리로 g4 → `succeeded`, content_hash = 흡수한 트리, `base_site_rev == site_rev == 2`, PATCH 값 유지, 편집 잠금 해제.
+
+**로컬 사전 검증(VM 전, 2026-11-01).** compose `pureiron-it-m5c`에서 Updater 순서(r3 migrate → r3 메타 apply → 시드 → r4 migrate → r4 `project apply --tar`)를 손으로 밟아 하네스 판정 함수에 실측값을 넣었다: c0·NEXT 스키마·ⓐ·ⓑ(교차 Origin PATCH는 403 `E_ORIGIN`)·ⓒ(`verify_bundle`이 드래프트 있으면 `E_DRAFT`, 없으면 통과, CLI `gate` exit 1)·ⓓ(실제 `export_draft` 서명 → absorb `absorbs[site-a]: (absent) -> 2` → gate 통과 → 재적용 base = site_rev = 2) 모두 통과. 트리를 적용한 epoch 5 DB 위 r3 core·collector·web(r4→r3 하강)은 readyz 200, `migrate status` cur 5·app_expected 4·`unknown_applied` [13], 태그 5/5 GOOD, core·collector 오류 로그 0, 다시 r4로 올려도 같다. r4 위 r3 메타 apply(트리 유지)·r4 트리 백업(`export --with-state`)·복원도 통과. Updater 전체 경로(잠금·백업·롤백·경보·메트릭·보고)와 uid 10001 권한 경로는 VM 몫이다.
+
+- 폐쇄망 부트스트랩 + g1(r3) `<s>`. c0 = epoch 4 + 압축 chunk `<n>`, `project_files` 없음.
+- r3→r4 `<s>`(`switching` `<s>`, `migrating` `<s>`) → epoch 5, `project_files` `<n>`행.
+- M5 ⓐ~ⓓ: `<결과>`.
+- r4′ → `E_HEALTH` + `E_DEFINITIONS_LEFT`, `<s>` 안에 r3 digest 복귀 + `failed`, 경보 해제 `<결과>`.
+- crash 18회 `<범위>` 안에 수렴, r4↔r3 오가는 시도(트리 적용된 epoch 5 DB 위 r3 앱 하강 포함) `<결과>`. nftables 외부 접속 시도 누적 `<n>`.
+- 번들: install `<MB>`, r4 현장 번들 `<MB>`, 빌드 `<s>`.
 
 ---
 
@@ -1649,7 +1688,7 @@ PureIron V1은 현장 한 곳에 설치되는 **서비스 4개(collector·core·
 | `collector` | 장비 통신, `ValueBatch`·`DeviceHealth` 송신. 무상태·DB 접근 없음, 60s 메모리 링버퍼 | Modbus TCP 드라이버·링버퍼·replay·DeviceHealth (M3a) |
 | `core` | 태그·이력·장비 상태·프로젝트 적용 + 알람·인증·감사·실시간(M3b), REST `/api/v1`, gRPC 서버 | acquisition·tags·historian·project (M3a), 알람·인증·감사·WS·`/api/v1/devices` (M3b) |
 | `web` | nginx + React(로그인 + 태그 현황·알람/ACK·트렌드·장비 상태·감사 로그) | 로그인 + 5화면, WS 실시간, Playwright 스모크 (M3b) |
-| `site-db` | TimescaleDB PG16(`pureiron/site-db:2.30.2-pg16`) | 마이그레이션 `0001~0012`, epoch 4 (r3) |
+| `site-db` | TimescaleDB PG16(`pureiron/site-db:2.30.2-pg16`) | 마이그레이션 `0001~0013`, epoch 5 (r4) |
 | `ai` | core read-only API 소비 | 계약만, 첫 완료 범위 제외 |
 | Updater | 호스트 systemd 서비스(컨테이너 아님): 번들 검증·백업·마이그레이션·전환·롤백 | 완료(M2), VM 실측 30/30(r0→r1, r1→r2, r2→r3) |
 | control-api | 벤더 내부 중앙 API: 등록·heartbeat·desired·reports·drafts·fleet | `GET /api/v1/healthz` 골격만(M4) |
@@ -1811,8 +1850,8 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
   부팅 시 자동 실행하지 않는다(Updater `migrating` 단계 또는 운영자가 실행).
 - 마이그레이션을 포함한 release만 schema epoch를 +1 한다. 앱은 `app_expected ≤ 현재 epoch ≤ app_max_compatible`일 때만
   ready다 → 한 단계 이전 앱으로 롤백할 수 있다.
-- 현재: r0 = epoch 1, r1 = epoch 2, r2 = epoch 3(`0009`), **r3 = epoch 4**(`0010~0012`). 미release epoch 5 = `0013`
-  (`project_files`, M5-0) — r4로 release한다. 세부(테이블·CAGG·lint 규칙·release 기록)는 [data-contracts](data-contracts.md).
+- 현재: r0 = epoch 1, r1 = epoch 2, r2 = epoch 3(`0009`), r3 = epoch 4(`0010~0012`), **r4 = epoch 5**(`0013`
+  `project_files`, M5-0, 2026.11.0). 세부(테이블·CAGG·lint 규칙·release 기록)는 [data-contracts](data-contracts.md).
 
 ## 배포 · 중앙 (ADR-022, ADR-023)
 
@@ -2418,6 +2457,7 @@ window: { recurring: { tz: Asia/Seoul, days: [sat, sun], start: "02:00", end: "0
 - **r1 = epoch 2**(`deploy/releases/r1.json`, 2026.10.1): `tag_history_1h`(1시간 CAGG, 1분 CAGG와 같은 열 `avg·min·max·last·samples`). 1분 CAGG 위에 계층으로 쌓지 않고 원본 `tag_history`에서 직접 집계한다 — 1시간 refresh가 1분 policy 범위(1일)에 묶이지 않게(압축 chunk도 읽음). 앱 envelope는 [2, 3] — r0 앱(envelope [1, 2])은 epoch 2 DB에서 계속 ready다(롤백 경로).
 - **r2 = epoch 3**(`deploy/releases/r2.json`, 2026.10.2, S3): `0008`(장비·태그 정의 jsonb)·`0009`(historian 설정·CAGG 실시간 집계, 아래 M3a-3 절). 앱 envelope는 [3, 4] — r1 앱(envelope [2, 3])은 epoch 3 DB에서 계속 ready다(롤백 경로).
 - **r3 = epoch 4**(`deploy/releases/r3.json`, 2026.10.3, S4·M3b 마감): `0010`(사용자·세션)·`0011`(감사 기록)·`0012`(알람 정의·저널). 테이블만 더하고 기존 객체는 바꾸지 않는다. 앱 envelope는 [4, 5] — r2 앱(envelope [3, 4])은 epoch 4 DB에서도 ready 조건(envelope)을 만족한다(롤백 경로). 근거는 g1 n-minus-1: r2 이미지 자신의 `migrate status`가 epoch 4 DB에서 cur=4·app_expected 3·envelope 안·checksum ok·`unknown_applied` [10, 11, 12], 같은 DB에서 r2 core-test 실패 0·waiver 0(새 DB·compose 전용 테스트는 설계상 skip). VM 실측 r2→r3 30/30(run `20261017T132857Z`, [vm-e2e-runs](../reports/vm-e2e-runs.md)): 압축 chunk가 있는 epoch 3 DB에서 25 s, r3′ 헬스 실패 → 135 s 안에 r2 digest 복귀, crash 18회 수렴.
+- **r4 = epoch 5**(`deploy/releases/r4.json`, 2026.11.0, M5 마감): `0013`(`project_files`, 적용된 프로젝트 트리 원본)만 더한다. 앱 envelope는 [5, 6] — r3 앱(envelope [4, 5])은 epoch 5 DB에서도 ready다(롤백 경로). 근거는 g1 n-minus-1(r3 이미지 `migrate status` cur=5·app_expected 4·envelope 안·`unknown_applied` [13], r3 core-test 실패 0)과 로컬 사전 검증(트리를 적용한 epoch 5 DB 위 r3 core·collector·web → readyz 200·태그 수집 GOOD). r4는 Updater가 번들 트리를 적용하는 첫 release라 r3 현장의 첫 업데이트가 헬스에서 실패하면 전환기 롤백(`E_DEFINITIONS_LEFT`, 아래 M5-0 절 한계)이다. VM 실측 r3→r4는 [vm-e2e-runs](../reports/vm-e2e-runs.md) M5 마감 절.
 - **CAGG 조회 계약**(1분·1시간 공통):
   - `samples` = bucket의 행 수(`count(*)`, `value_num`이 NULL인 bool·BAD 행 포함)라 `avg(value_num)`의 분모와 다르다. 가중 롤업에 쓰지 않는다(필요하면 다음 epoch에 `count(value_num)` 열을 더한다).
   - `materialized_only`(기본 true)라 policy가 아직 채우지 않은 구간은 원본으로 돌아가 읽지 않는다. 1시간 CAGG의 최신 구간은 `end_offset` 1시간 + 주기 1시간으로 최대 약 2시간 늦다 — 소비자(M3a historian)는 최근 구간을 1분 CAGG·원본과 합쳐 읽는다.
@@ -3739,7 +3779,7 @@ E2E/NF:
 | `integration-compose` | 이미지 빌드 → compose(`pureiron-it`, `PUREIRON_IT_PROJECT`로 변경 가능) site-db → `migrate up` → 전체 기동 → `pytest -m "integration and not perf"`(readyz 200, migrate 종료코드, Timescale 객체, edit-lock 경쟁, historian DB, 시뮬레이터 100태그·collector kill, collector 30 s 네트워크 분리 replay, 현장 PATCH·드래프트 게이트·서명 export(M5-2)) | 항상 |
 | `web-e2e` | 이미지 빌드 → `uv sync` → compose(`pureiron-it`) site-db → `migrate up` → 전체 기동 → core 쓰기 스위치 켬(`PUREIRON_WRITES_ENABLED=true`) → 시뮬레이터 100태그 + 쓰기 선언 2개(설정값 `sim/sp_float`·명령 `sim/start`) + 허가 조건 coil `sim/remote_ok` + 알람 1개 정의 apply·CLI 계정(engineer·operator·viewer) → 쓰기 검사 통과 대기 → Playwright chromium 스모크(로그인 → Overview GOOD → Alarms ACK 1회 → Trend canvas → Devices 연결됨 → Audit `alarm.ack` → 로그아웃 뒤 보호 경로 리다이렉트, 조회자 권한, 로그인 실패 고정 문구) + 쓰기(M3c-3: 설정값 CONFIRMED·표 값 갱신, 조회자 쓰기 버튼 없음, 허가 조건 거짓 → 검사 거부, 명령 확인 2단계 → 장비 수신, confirm 응답을 바꿔(core에 보내지 않음) "장비 수신, 값 미확인"·"결과 모름" 문구, 명령 더블클릭·Enter 연타가 2단계 확인을 건너뛰지 않음, 전송 중 Esc 반복에도 대화상자 유지, confirm 409·410·404·503 문구). 결과·trace·스크린샷 `artifacts/web-e2e/`, CI는 성공·실패 모두 `artifacts/web-e2e/` 전체(스크린샷 포함)를 artifact로 올린다. 명세는 `services/web/e2e/`, 정본은 [frontend](frontend.md) 16절 | 항상(CI: integration-compose 다음 job) |
 | `perf-ingest` | 이미지 빌드 → `PUREIRON_SIM_REGISTERS=2000` compose → 2,000태그·poll 1 s 60 s 측정(r3부터 알람 정의 50개 + 전 태그 구독 WS 1개를 붙여서) → `artifacts/perf/<PUREIRON_PERF_RELEASE:-r3>/ingest.json`(batch/s·샘플/s·write_lag p50/p95/max·buffer max·drop·CPU/RSS·분당 행, r3부터 `alarms`·`ws` 수신 통계). 기록만, 합격선 없음 | 수동 |
-| `n-minus-1` | 현재 커밋 core를 `pureiron/core:ci-<sha>`로 빌드해 migrate한 DB에서, 직전 epoch release 기록(`deploy/releases/r<N>.json`, 번호 순)의 core-test 이미지를 실행. 이미지가 없으면 image store(`PUREIRON_IMAGE_STORE`, 기본 `~/pureiron/images/<release>/`)의 tar를 load하고 config digest를 기록과 대조. 테스트와 별개로 N-1 앱의 `migrate status --json`이 N 스키마에서 envelope 안인지 확인. `deploy/build/n_minus_1_waivers.json`의 테스트만 deselect(waiver 테스트는 따로 돌려 여전히 실패해야 하고, 본 실행은 통과 ≥ 1·deselect 수 == waiver 수). 현재 epoch 4(r3) × r2 core-test. epoch 1이면 notice 후 통과 | 마이그레이션·`db` 경로 변경 PR, master push, nightly, `full-gate` 라벨 |
+| `n-minus-1` | 현재 커밋 core를 `pureiron/core:ci-<sha>`로 빌드해 migrate한 DB에서, 직전 epoch release 기록(`deploy/releases/r<N>.json`, 번호 순)의 core-test 이미지를 실행. 이미지가 없으면 image store(`PUREIRON_IMAGE_STORE`, 기본 `~/pureiron/images/<release>/`)의 tar를 load하고 config digest를 기록과 대조. 테스트와 별개로 N-1 앱의 `migrate status --json`이 N 스키마에서 envelope 안인지 확인. `deploy/build/n_minus_1_waivers.json`의 테스트만 deselect(waiver 테스트는 따로 돌려 여전히 실패해야 하고, 본 실행은 통과 ≥ 1·deselect 수 == waiver 수). 현재 epoch 5(r4) × r3 core-test. epoch 1이면 notice 후 통과 | 마이그레이션·`db` 경로 변경 PR, master push, nightly, `full-gate` 라벨 |
 | `repro-build` | 캐시 없이 2회 빌드해 core·collector·web·simulator·core-test config digest 동일 확인(site-db 제외) | Dockerfile·`uv.lock`·`package-lock.json`·`deploy/build/` 변경 PR, master push, nightly, `full-gate` 라벨 |
 
 - **G1-8 고객 repo workflow**(M5-3b): V1 안 대리는 위 `template-*` job. 외부 run = private 테스트 repo `circulation95/pureiron-project-acme-test`(PureIron_V1 Actions access `user`, secret `PUREIRON_CI_APP_ID`·`PUREIRON_CI_APP_KEY`)에 템플릿을 복사하고 workflow ref를 검증할 브랜치로 바꿔 PR → run 로그 `content_hash` = 로컬 `pureiron-project hash deploy/templates/pureiron-project`, 이어서 태그 `v1` push → `project_version: v1`. 계약·접근 조건은 [data-contracts](data-contracts.md) M5-3b 절. 외부 run은 M5-3b 브랜치 push 뒤 실행한다(2026-10-30 기준 미실행).

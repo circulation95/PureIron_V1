@@ -18,6 +18,7 @@ sources:
   - packages/contracts/collector.proto
   - deploy/compose/site.compose.yml
   - deploy/releases/r3.json
+  - deploy/releases/r4.json
   - https://github.com/circulation95/PureIron_ignition/blob/legacy-final/docs/wiki/sot/architecture.md
 last_verified: 2026-10-17
 ---
@@ -61,7 +62,7 @@ PureIron V1은 현장 한 곳에 설치되는 **서비스 4개(collector·core·
 | `collector` | 장비 통신, `ValueBatch`·`DeviceHealth` 송신. 무상태·DB 접근 없음, 60s 메모리 링버퍼 | Modbus TCP 드라이버·링버퍼·replay·DeviceHealth (M3a) |
 | `core` | 태그·이력·장비 상태·프로젝트 적용 + 알람·인증·감사·실시간(M3b), REST `/api/v1`, gRPC 서버 | acquisition·tags·historian·project (M3a), 알람·인증·감사·WS·`/api/v1/devices` (M3b) |
 | `web` | nginx + React(로그인 + 태그 현황·알람/ACK·트렌드·장비 상태·감사 로그) | 로그인 + 5화면, WS 실시간, Playwright 스모크 (M3b) |
-| `site-db` | TimescaleDB PG16(`pureiron/site-db:2.30.2-pg16`) | 마이그레이션 `0001~0012`, epoch 4 (r3) |
+| `site-db` | TimescaleDB PG16(`pureiron/site-db:2.30.2-pg16`) | 마이그레이션 `0001~0013`, epoch 5 (r4) |
 | `ai` | core read-only API 소비 | 계약만, 첫 완료 범위 제외 |
 | Updater | 호스트 systemd 서비스(컨테이너 아님): 번들 검증·백업·마이그레이션·전환·롤백 | 완료(M2), VM 실측 30/30(r0→r1, r1→r2, r2→r3) |
 | control-api | 벤더 내부 중앙 API: 등록·heartbeat·desired·reports·drafts·fleet | `GET /api/v1/healthz` 골격만(M4) |
@@ -223,8 +224,8 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
   부팅 시 자동 실행하지 않는다(Updater `migrating` 단계 또는 운영자가 실행).
 - 마이그레이션을 포함한 release만 schema epoch를 +1 한다. 앱은 `app_expected ≤ 현재 epoch ≤ app_max_compatible`일 때만
   ready다 → 한 단계 이전 앱으로 롤백할 수 있다.
-- 현재: r0 = epoch 1, r1 = epoch 2, r2 = epoch 3(`0009`), **r3 = epoch 4**(`0010~0012`). 미release epoch 5 = `0013`
-  (`project_files`, M5-0) — r4로 release한다. 세부(테이블·CAGG·lint 규칙·release 기록)는 [data-contracts](data-contracts.md).
+- 현재: r0 = epoch 1, r1 = epoch 2, r2 = epoch 3(`0009`), r3 = epoch 4(`0010~0012`), **r4 = epoch 5**(`0013`
+  `project_files`, M5-0, 2026.11.0). 세부(테이블·CAGG·lint 규칙·release 기록)는 [data-contracts](data-contracts.md).
 
 ## 배포 · 중앙 (ADR-022, ADR-023)
 
