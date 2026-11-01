@@ -75,7 +75,8 @@ $hits"
 job_import_linter() {
   log "import-linter"
   (cd services/core && uv run lint-imports --no-cache)
-  uv run pytest services/core/tests/test_importlinter_negative.py -q
+  (cd services/control-api && uv run lint-imports --no-cache)
+  uv run pytest services/core/tests/test_importlinter_negative.py services/control-api/tests/test_importlinter.py -q
 }
 
 job_unit() {
@@ -154,6 +155,7 @@ job_contracts_diff() {
 job_migration_lint() {
   log "migration-lint (base: $BASE_REF)"
   uv run pureiron-core migrate lint services/core/migrations --base-ref "$BASE_REF"
+  uv run pureiron-control migrate lint services/control-api/migrations --base-ref "$BASE_REF"
 }
 
 job_no_customer_branching() {
@@ -187,6 +189,8 @@ job_integration_compose() {
   log "integration-compose"
   bash deploy/build/build_images.sh
   uv run pytest services/core/tests/integration -m "integration and not perf" -q
+  # control-api: control-db(PostgreSQL 16, deploy/compose/control.dev.yml)만 올린다(M4-0).
+  uv run pytest services/control-api/tests/integration -m integration -q
 }
 
 job_web_e2e() {
