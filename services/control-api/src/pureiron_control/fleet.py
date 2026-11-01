@@ -24,7 +24,8 @@ STALE_AFTER_POLLS = 3
 type Record = asyncpg.Record
 
 FLEET_SQL = """
-SELECT s.site_id, s.last_seq, s.last_seen, s.current, s.current_reported_at, s.current_source,
+SELECT s.site_id, s.last_heartbeat_seq, s.last_report_seq, s.last_seen, s.current,
+       s.current_reported_at, s.current_source,
        s.updater_phase, s.disk_state,
        d.generation AS desired_gen, d.sha256 AS desired_sha256, d.size_bytes AS desired_size,
        d.product_version AS desired_product, d.project_version AS desired_project_version,
@@ -95,7 +96,8 @@ class FleetRow:
     last_attempt: LastAttempt | None
     disk_state: str | None
     updater_phase: str | None
-    last_seq: int
+    last_heartbeat_seq: int
+    last_report_seq: int
 
     @property
     def max_published_gen(self) -> int | None:
@@ -157,5 +159,6 @@ class PgFleetReader:
             last_attempt=attempt,
             disk_state=r["disk_state"],
             updater_phase=r["updater_phase"],
-            last_seq=r["last_seq"],
+            last_heartbeat_seq=r["last_heartbeat_seq"],
+            last_report_seq=r["last_report_seq"],
         )

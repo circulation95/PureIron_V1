@@ -5,11 +5,14 @@
 - 테스트마다 새 데이터베이스 → `pureiron-control migrate up`(CLI 그대로) → `ControlRuntime`
   (시계 주입) + `TestClient`(lifespan 포함). 사람·CI token은 `pureiron-control token create`로만
   만든다.
+- 경합 시험(`Central.concurrently`)은 같은 DB에 런타임을 하나 더 만들어 `httpx2.AsyncClient` +
+  `ASGITransport`로 요청을 한 이벤트 루프에서 `asyncio.gather`한다(TestClient는 하나씩 보낸다).
 - `PUREIRON_IT_KEEP=1`: 끝나도 compose를 내리지 않는다(디버깅).
 """
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import io
 import json
@@ -24,6 +27,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import cast
 
+import asyncpg
+import httpx2 as httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -159,6 +164,50 @@ class Central:
 
     def as_role(self, role: str) -> dict[str, str]:
         return self.auth(self.api_token(role))
+
+    def fetch(self, sql: str, *args: object) -> list[asyncpg.Record]:
+        """이 중앙의 control-db에 직접 질의한다(저장 형태 단언용)."""
+
+        async def go() -> list[asyncpg.Record]:
+            rt = ControlRuntime.build(self.settings, clock=self.clock)
+            await rt.start()
+            try:
+                async with rt.db.connection() as conn:
+                    return list(await conn.fetch(sql, *args))
+            finally:
+                await rt.stop()
+
+        return asyncio.run(go())
+
+    def concurrently(self, *requests: Request) -> list[httpx.Response]:
+        """요청들을 같은 DB의 새 앱에 동시에 보낸다(응답은 요청 순서)."""
+
+        async def go() -> list[httpx.Response]:
+            rt = ControlRuntime.build(self.settings, clock=self.clock)
+            await rt.start()  # ASGITransport는 lifespan을 돌리지 않는다
+            try:
+                transport = httpx.ASGITransport(app=create_app(rt))
+                async with httpx.AsyncClient(transport=transport, base_url="http://control") as c:
+                    return list(
+                        await asyncio.gather(
+                            *(
+                                c.request(r.method, r.url, content=r.content, headers=r.headers)
+                                for r in requests
+                            )
+                        )
+                    )
+            finally:
+                await rt.stop()
+
+        return asyncio.run(go())
+
+
+@dataclass(frozen=True, slots=True)
+class Request:
+    method: str
+    url: str
+    content: bytes
+    headers: Mapping[str, str]
 
 
 @pytest.fixture

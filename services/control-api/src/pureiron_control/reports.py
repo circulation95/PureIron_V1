@@ -1,10 +1,13 @@
 """heartbeat·ApplyAttempt 보고 반영(plan M4 C7): 온라인·폐쇄망 모두 `PgReportStore.record`로.
 
-seq 규칙(`judge_seq`): `report_seq > last_seq` → 반영(`applied`), 그 밖 → 이력만(`history`). 둘 다
-이력 행(`heartbeats`·`apply_attempts`, `source`·`outcome` 기록)을 남기고 호출자에게는 성공(200)이다.
-반영될 때만 바뀌는 것:
+seq 규칙(`judge_seq`): 현장의 `report_seq` 카운터는 heartbeat·보고 공용이지만(R2 — 온라인·USB가
+겹치지 않게) 반영 수위는 **종류별**이다(`SeqMarks`). 메시지는 자기 종류의 수위보다 클 때만 반영
+(`applied`), 그 밖 → 이력만(`history`). 수위가 하나면 끊겼다 늦게 재전송된 보고(seq 11)가 그 사이
+성공한 heartbeat(seq 12)에 가려 `last_attempt`에 영영 안 남는다 — 실패한 업데이트가 안 보인다.
+둘 다 이력 행(`heartbeats`·`apply_attempts`, `source`·`outcome` 기록)을 남기고 호출자에게는
+성공(200)이다. 반영될 때만 바뀌는 것:
 
-- 공통: `sites.last_seq`.
+- 공통: 그 종류의 수위(`sites.last_heartbeat_seq`·`last_report_seq`).
 - heartbeat: `current`(현장이 보고한 product·project_version·gen)·`current_reported_at`
   (서명된 `at`)·`updater_phase`·`disk_state`.
 - 보고: `last_attempt_id`. 결과가 `succeeded`면 `current`도 — gen = `to`, 버전은 그 gen의 게시 번들.
@@ -12,7 +15,9 @@ seq 규칙(`judge_seq`): `report_seq > last_seq` → 반영(`applied`), 그 밖 
   token·서명이 확인된 요청은 그 현장이 지금 연결돼 있다는 증거다(seq가 밀린 재전송이라도). 폐쇄망
   반입은 `last_seen`을 바꾸지 않는다(중앙이 그 현장을 "본" 것이 아니다).
 
-서명·현장 일치는 호출자(api)가 확인한 뒤 여기 온다. payload 형식 위반은 `ReportFormatError`(400).
+서명·현장 일치는 호출자(api)가 확인한 뒤 여기 온다. payload 형식 위반은 `ReportFormatError`(400) —
+DB 열 범위를 넘는 정수(seq bigint, gen 계열 integer)와 jsonb가 받지 않는 NUL 문자도 여기서 막는다
+(저장 단계 500이 되면 그 파일·큐 맨 앞 메시지를 영원히 보낼 수 없다).
 """
 
 from __future__ import annotations
@@ -26,9 +31,12 @@ from enum import StrEnum
 from pureiron_bundle.sitesign import Json
 from pureiron_bundle.verify import AttemptResult
 from pureiron_control.platform.clock import Clock
+from pureiron_control.platform.seqmarks import MessageKind, SeqMarks
 from pureiron_core.platform.db import Connection, Database
 
-LOCK_SITE_SQL = "SELECT last_seq FROM sites WHERE site_id = $1 FOR UPDATE"
+LOCK_SITE_SQL = """
+SELECT last_heartbeat_seq, last_report_seq FROM sites WHERE site_id = $1 FOR UPDATE
+"""
 INSERT_IMPORT_SQL = """
 INSERT INTO offline_imports (site_id, first_seq, last_seq, exported_at, file_sha256, imported_at,
                              imported_by)
@@ -50,11 +58,13 @@ RETURNING id
 """
 APPLY_HEARTBEAT_SQL = """
 UPDATE sites
-   SET last_seq = $2, current = $3::jsonb, current_reported_at = $4, current_source = $5,
+   SET last_heartbeat_seq = $2, current = $3::jsonb, current_reported_at = $4, current_source = $5,
        updater_phase = $6, disk_state = $7
  WHERE site_id = $1
 """
-APPLY_ATTEMPT_SQL = "UPDATE sites SET last_seq = $2, last_attempt_id = $3 WHERE site_id = $1"
+APPLY_ATTEMPT_SQL = """
+UPDATE sites SET last_report_seq = $2, last_attempt_id = $3 WHERE site_id = $1
+"""
 APPLY_CURRENT_SQL = """
 UPDATE sites SET current = $2::jsonb, current_reported_at = $3, current_source = $4
  WHERE site_id = $1
@@ -62,7 +72,14 @@ UPDATE sites SET current = $2::jsonb, current_reported_at = $3, current_source =
 BUNDLE_VERSIONS_SQL = """
 SELECT product_version, project_version FROM bundles WHERE site_id = $1 AND generation = $2
 """
-TOUCH_SQL = "UPDATE sites SET last_seen = $2 WHERE site_id = $1"
+# 시각은 잠금을 잡기 전에 잰다 — 동시 요청이 먼저 쓴 더 늦은 시각을 되돌리지 않는다.
+TOUCH_SQL = """
+UPDATE sites SET last_seen = GREATEST(coalesce(last_seen, $2), $2) WHERE site_id = $1
+"""
+SEQ_MAX = 2**63 - 1
+"""`report_seq`·`first_seq`·`last_seq` 상한(bigint)."""
+GEN_MAX = 2**31 - 1
+"""generation 계열(`generation`·`to`·`from`·`current.gen`) 상한(integer — `bundles.generation`)."""
 
 
 class Source(StrEnum):
@@ -75,8 +92,8 @@ class SeqOutcome(StrEnum):
     HISTORY = "history"
 
 
-def judge_seq(last_seq: int, report_seq: int) -> SeqOutcome:
-    return SeqOutcome.APPLIED if report_seq > last_seq else SeqOutcome.HISTORY
+def judge_seq(marks: SeqMarks, kind: MessageKind, report_seq: int) -> SeqOutcome:
+    return SeqOutcome.APPLIED if report_seq > marks.of(kind) else SeqOutcome.HISTORY
 
 
 class ReportError(Exception):
@@ -124,6 +141,10 @@ class AttemptReport:
 type Message = Heartbeat | AttemptReport
 
 
+def kind_of(message: Message) -> MessageKind:
+    return MessageKind.HEARTBEAT if isinstance(message, Heartbeat) else MessageKind.REPORT
+
+
 @dataclass(frozen=True, slots=True)
 class ReportBundle:
     """폐쇄망 `site-reports` 봉투 payload(Updater `report export`)."""
@@ -146,7 +167,7 @@ class OfflineImport:
 @dataclass(frozen=True, slots=True)
 class RecordResult:
     outcomes: tuple[SeqOutcome, ...]
-    last_seq: int
+    marks: SeqMarks
     import_id: int | None = None
 
     @property
@@ -160,18 +181,32 @@ class RecordResult:
 
 def _seq(payload: Mapping[str, Json], key: str = "report_seq") -> int:
     value = payload.get(key)
-    if type(value) is not int or value < 1:
-        raise ReportFormatError(f"payload.{key} must be an integer >= 1")
+    if type(value) is not int or not 1 <= value <= SEQ_MAX:
+        raise ReportFormatError(f"payload.{key} must be an integer in 1..{SEQ_MAX}")
     return value
 
 
-def _optional_int(payload: Mapping[str, Json], key: str) -> int | None:
+def _optional_gen(payload: Mapping[str, Json], key: str) -> int | None:
     value = payload.get(key)
     if value is None:
         return None
-    if type(value) is not int:
-        raise ReportFormatError(f"payload.{key} must be an integer or null")
+    if type(value) is not int or not 0 <= value <= GEN_MAX:
+        raise ReportFormatError(f"payload.{key} must be an integer in 0..{GEN_MAX} or null")
     return value
+
+
+def _reject_nul(value: Json, where: str = "payload") -> None:
+    """jsonb는 NUL 문자(JSON `\\u0000`)를 받지 않는다 — 저장 전에 400으로 거부한다(키·값·중첩)."""
+    if isinstance(value, str):
+        if "\x00" in value:
+            raise ReportFormatError(f"{where} must not contain NUL (\\u0000)")
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            _reject_nul(key, f"{where} key")
+            _reject_nul(item, f"{where}.{key}")
+    elif isinstance(value, list):
+        for item in value:
+            _reject_nul(item, f"{where}[]")
 
 
 def _optional_text(payload: Mapping[str, Json], key: str) -> str | None:
@@ -195,13 +230,14 @@ def _timestamp(payload: Mapping[str, Json], key: str) -> datetime:
 
 
 def parse_heartbeat(payload: Mapping[str, Json]) -> Heartbeat:
+    _reject_nul(dict(payload))
     raw_current = payload.get("current")
     current: Current | None = None
     if isinstance(raw_current, dict):
         current = Current(
             product=_optional_text(raw_current, "product"),
             project_version=_optional_text(raw_current, "project_version"),
-            gen=_optional_int(raw_current, "gen"),
+            gen=_optional_gen(raw_current, "gen"),
         )
     elif raw_current is not None:
         raise ReportFormatError("payload.current must be an object or null")
@@ -216,13 +252,15 @@ def parse_heartbeat(payload: Mapping[str, Json]) -> Heartbeat:
 
 
 def parse_report(payload: Mapping[str, Json]) -> AttemptReport:
+    _reject_nul(dict(payload))
+    _optional_gen(payload, "from")  # 열에는 없지만 fleet `last_attempt.from`으로 낸다
     result = payload.get("result")
     if not isinstance(result, str) or not result:
         raise ReportFormatError("payload.result must be a non-empty string")
     return AttemptReport(
         report_seq=_seq(payload),
-        generation=_optional_int(payload, "generation"),
-        to=_optional_int(payload, "to"),
+        generation=_optional_gen(payload, "generation"),
+        to=_optional_gen(payload, "to"),
         result=result,
         ended_at=_timestamp(payload, "ended_at"),
         payload=payload,
@@ -230,6 +268,7 @@ def parse_report(payload: Mapping[str, Json]) -> AttemptReport:
 
 
 def parse_report_bundle(payload: Mapping[str, Json]) -> ReportBundle:
+    _reject_nul(dict(payload))
     site_id, fingerprint = payload.get("site_id"), payload.get("key_fingerprint")
     exported_at, reports = payload.get("exported_at"), payload.get("reports")
     if not (isinstance(site_id, str) and isinstance(fingerprint, str)):
@@ -344,21 +383,23 @@ class PgReportStore:
         received_at = self._clock()
         ordered = sorted(messages, key=lambda m: m.report_seq)
         async with self._db.connection() as conn, conn.transaction():
-            last_seq = await conn.fetchval(LOCK_SITE_SQL, site_id)
-            if not isinstance(last_seq, int):
+            row = await conn.fetchrow(LOCK_SITE_SQL, site_id)
+            if row is None:
                 raise ReportSiteNotFoundError(f"site {site_id!r} is not registered")
+            marks = SeqMarks(heartbeat=row["last_heartbeat_seq"], report=row["last_report_seq"])
             import_id = await _insert_import(conn, site_id, offline, received_at)
             batch = _Batch(conn, site_id, source, received_at, import_id)
             outcomes: list[SeqOutcome] = []
             for message in ordered:
-                outcome = judge_seq(last_seq, message.report_seq)
+                kind = kind_of(message)
+                outcome = judge_seq(marks, kind, message.report_seq)
                 await batch.store(message, outcome)
                 outcomes.append(outcome)
                 if outcome is SeqOutcome.APPLIED:
-                    last_seq = message.report_seq
+                    marks = marks.advanced(kind, message.report_seq)
             if source is Source.ONLINE:
                 await conn.execute(TOUCH_SQL, site_id, received_at)
-            result = RecordResult(tuple(outcomes), last_seq, import_id)
+            result = RecordResult(tuple(outcomes), marks, import_id)
             if import_id is not None:
                 await conn.execute(
                     COUNT_IMPORT_SQL, import_id, result.applied_total, result.history_total

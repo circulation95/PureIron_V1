@@ -7,7 +7,7 @@
 
 ## SOT 요약
 - **sot-agent-rules** (18KB/14절) — LLM 에이전트가 PureIron에서 작업할 때 따르는 규칙의 **정본**이다. ([docs/wiki/sot/agent-rules.md](wiki/sot/agent-rules.md))
-- **sot-api-events** (39KB/17절) — PureIron의 REST prefix, WebSocket wire protocol, Chat SSE event, 내부 event bus topic 계약이다. ([docs/wiki/sot/api-events.md](wiki/sot/api-events.md))
+- **sot-api-events** (41KB/17절) — PureIron의 REST prefix, WebSocket wire protocol, Chat SSE event, 내부 event bus topic 계약이다. ([docs/wiki/sot/api-events.md](wiki/sot/api-events.md))
 - **sot-architecture** (24KB/18절) — PureIron V1은 현장 한 곳에 설치되는 **서비스 4개(collector·core·web·site-db) + 호스트 Updater**와, 벤더 쪽 **중앙 ([docs/wiki/sot/architecture.md](wiki/sot/architecture.md))
 - **sot-coding-style** (21KB/14절) — 이 문서는 PureIron_V1 새 코드(`services/`·`packages/`·`deploy/`·`tests/e2e/`)를 **어떻게 쓰는가**의 정본이다. ([docs/wiki/sot/coding-style.md](wiki/sot/coding-style.md))
 - **sot-data-contracts** (97KB/31절) — PureIron의 DB 스키마와 YAML/JSON 설정 파일 계약이다. ([docs/wiki/sot/data-contracts.md](wiki/sot/data-contracts.md))

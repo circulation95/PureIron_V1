@@ -6,13 +6,17 @@
   `manifest.json`을 읽어 `site_id`·`generation`이 경로와 같은지 본다(서명 확인은 현장 Updater 몫 —
   여기서 읽은 버전은 fleet 표시용이다). 이름 바꾸기는 DB 행과 같은 트랜잭션 안에서 커밋 직전에 한다:
   커밋이 실패해도 남는 것은 아직 게시되지 않은 gen의 파일뿐이고 다음 업로드가 덮어쓴다.
+- 데이터 디렉터리 쓰기 실패(`OSError` — 디스크 가득·권한)는 `BundleStorageError`(507)다. 이동은
+  DB 연결 본문 안에서 일어나므로 `OSError`를 그대로 두면 연결 계층이 control-db 장애(503)로 바꾼다 —
+  운영자가 DB를 의심하고 게시 도구가 일시 장애로 재시도하게 된다.
 - DesiredState = 그 현장의 최신 게시 번들(revert도 gen+1 게시라 늘 최댓값이다).
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -58,6 +62,25 @@ class GenerationConflictError(BundleError):
 
 class BundleFormatError(BundleError):
     """`.pib`가 아니거나 manifest가 경로의 site·gen과 다르다(400)."""
+
+
+class BundleStorageError(BundleError):
+    """데이터 디렉터리에 번들 파일을 쓰지 못했다(507). `OSError`의 하위가 아니다 — DB 연결 계층이
+    control-db 장애로 바꾸지 않게."""
+
+
+@contextmanager
+def _storage(action: str) -> Generator[None]:
+    try:
+        yield
+    except OSError as exc:
+        raise BundleStorageError(f"{action}: {exc}") from exc
+
+
+def place_bundle(spooled: SpooledFile, target: Path) -> None:
+    """임시 파일을 게시 이름으로 옮긴다. 파일 시스템 오류는 `BundleStorageError`."""
+    with _storage(f"cannot place bundle file {target}"):
+        place(spooled, target)
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,7 +130,8 @@ class BundleStore:
         latest = await self._latest(site_id)
         if generation <= latest:
             raise GenerationConflictError(generation, latest)
-        spooled = await spool(chunks, self._root / site_id, limit_bytes=self._max_bytes)
+        with _storage("cannot spool bundle upload"):
+            spooled = await spool(chunks, self._root / site_id, limit_bytes=self._max_bytes)
         try:
             manifest = await self._checked_manifest(spooled, site_id, generation)
             return await self._commit(spooled, manifest, published_by)
@@ -161,7 +185,8 @@ class BundleStore:
                 bundle.published_at,
                 published_by,
             )
-            await asyncio.to_thread(place, spooled, self.path(bundle.site_id, bundle.generation))
+            target = self.path(bundle.site_id, bundle.generation)
+            await asyncio.to_thread(place_bundle, spooled, target)
         return bundle
 
     async def desired(self, site_id: str) -> PublishedBundle | None:

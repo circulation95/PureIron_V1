@@ -1,4 +1,5 @@
-"""seq 규칙과 보고 payload 형식(plan M4 C7): seq > last_seq만 반영, 나머지는 이력, 형식 위반 400."""
+"""seq 규칙과 보고 payload 형식(plan M4 C7): 종류별 수위보다 큰 seq만 반영, 나머지는 이력,
+형식 위반(열 범위 밖 정수·NUL 포함) 400."""
 
 from __future__ import annotations
 
@@ -7,6 +8,7 @@ from datetime import UTC, datetime
 import pytest
 
 from pureiron_bundle.sitesign import Json
+from pureiron_control.platform.seqmarks import MessageKind, SeqMarks
 from pureiron_control.reports import (
     Current,
     ReportFormatError,
@@ -18,21 +20,43 @@ from pureiron_control.reports import (
 )
 
 AT = "2026-11-01T09:00:00+00:00"
+SEQ_MAX = 9_223_372_036_854_775_807  # PostgreSQL bigint 최댓값
+GEN_MAX = 2_147_483_647  # PostgreSQL integer 최댓값
+
+HB, REPORT = MessageKind.HEARTBEAT, MessageKind.REPORT
 
 
 @pytest.mark.parametrize(
-    ("last_seq", "report_seq", "expected"),
+    ("marks", "kind", "report_seq", "expected"),
     [
-        (0, 1, SeqOutcome.APPLIED),
-        (4, 5, SeqOutcome.APPLIED),
-        (4, 9, SeqOutcome.APPLIED),  # 빈틈(전송 실패분)은 막지 않는다 — 늦게 오면 이력
-        (5, 5, SeqOutcome.HISTORY),  # 같은 seq 재전송(응답 유실)
-        (5, 3, SeqOutcome.HISTORY),  # 늦게 온 폐쇄망 반입
-        (5, 1, SeqOutcome.HISTORY),
+        (SeqMarks(heartbeat=0, report=0), REPORT, 1, SeqOutcome.APPLIED),
+        (SeqMarks(heartbeat=0, report=4), REPORT, 5, SeqOutcome.APPLIED),
+        # 빈틈(전송 실패분)은 막지 않는다 — 늦게 오면 이력
+        (SeqMarks(heartbeat=0, report=4), REPORT, 9, SeqOutcome.APPLIED),
+        (SeqMarks(heartbeat=0, report=5), REPORT, 5, SeqOutcome.HISTORY),  # 재전송(응답 유실)
+        (SeqMarks(heartbeat=0, report=5), REPORT, 3, SeqOutcome.HISTORY),  # 늦은 폐쇄망 반입
+        (SeqMarks(heartbeat=5, report=0), HB, 5, SeqOutcome.HISTORY),
+        (SeqMarks(heartbeat=5, report=0), HB, 6, SeqOutcome.APPLIED),
+        # 보고 11이 끊겼다가 heartbeat 12 뒤에 도착 → 반영(heartbeat 수위에 가리지 않는다).
+        (SeqMarks(heartbeat=12, report=10), REPORT, 11, SeqOutcome.APPLIED),
+        # 반대로 늦게 온 heartbeat는 보고 수위와 상관없이 자기 수위로만 판정한다.
+        (SeqMarks(heartbeat=12, report=10), HB, 11, SeqOutcome.HISTORY),
+        (SeqMarks(heartbeat=3, report=12), HB, 4, SeqOutcome.APPLIED),
     ],
 )
-def test_seq_rule(last_seq: int, report_seq: int, expected: SeqOutcome) -> None:
-    assert judge_seq(last_seq, report_seq) is expected
+def test_seq_rule(
+    marks: SeqMarks, kind: MessageKind, report_seq: int, expected: SeqOutcome
+) -> None:
+    assert judge_seq(marks, kind, report_seq) is expected
+
+
+def test_seq_marks_advance_per_kind_and_next_seq_is_shared() -> None:
+    marks = SeqMarks(heartbeat=12, report=10).advanced(REPORT, 11)
+    assert marks == SeqMarks(heartbeat=12, report=11)
+    assert marks.advanced(HB, 13) == SeqMarks(heartbeat=13, report=11)
+    # 카운터는 공용 — rekey 다음 seq는 두 수위 중 큰 값 + 1.
+    assert marks.next_seq == 13
+    assert SeqMarks(heartbeat=2, report=7).next_seq == 8
 
 
 def _report(seq: int, **overrides: Json) -> dict[str, Json]:
@@ -70,6 +94,13 @@ def test_heartbeat_payload_is_parsed() -> None:
     assert (beat.updater_phase, beat.disk_state) == ("idle", "ok")
 
 
+def test_column_range_edges_are_accepted() -> None:
+    beat = parse_heartbeat({"report_seq": SEQ_MAX, "current": {"gen": GEN_MAX}, "at": AT})
+    assert (beat.report_seq, beat.current) == (SEQ_MAX, Current(None, None, GEN_MAX))
+    report = parse_report(_report(SEQ_MAX, generation=GEN_MAX, to=GEN_MAX, **{"from": 0}))
+    assert (report.report_seq, report.generation, report.to) == (SEQ_MAX, GEN_MAX, GEN_MAX)
+
+
 def test_heartbeat_without_applied_bundle_has_no_current() -> None:
     beat = parse_heartbeat({"report_seq": 1, "current": None, "at": AT})
     assert beat.current is None
@@ -88,6 +119,11 @@ def test_heartbeat_without_applied_bundle_has_no_current() -> None:
         ({"report_seq": 1, "at": AT, "current": "g3"}, "current"),
         ({"report_seq": 1, "at": AT, "current": {"gen": "3"}}, "gen"),
         ({"report_seq": 1, "at": AT, "disk_state": 5}, "disk_state"),
+        ({"report_seq": SEQ_MAX + 1, "at": AT}, "report_seq"),  # bigint 밖
+        ({"report_seq": 1, "at": AT, "current": {"gen": GEN_MAX + 1}}, "gen"),  # integer 밖
+        ({"report_seq": 1, "at": AT, "current": {"gen": -1}}, "gen"),
+        ({"report_seq": 1, "at": AT, "updater_phase": "idle\u0000"}, "NUL"),  # jsonb 거부
+        ({"report_seq": 1, "at": AT, "extra\u0000": 1}, "NUL"),
     ],
 )
 def test_malformed_heartbeat_is_rejected(payload: dict[str, Json], match: str) -> None:
@@ -113,6 +149,11 @@ def test_report_payload_is_parsed() -> None:
         ({"result": ""}, "result"),
         ({"to": "3"}, "to"),
         ({"ended_at": None}, "ended_at"),
+        ({"to": GEN_MAX + 1}, "to"),
+        ({"generation": GEN_MAX + 1}, "generation"),
+        ({"from": GEN_MAX + 1}, "from"),
+        ({"logs": "step 1\u0000step 2"}, "NUL"),  # 외부 명령 출력을 그대로 담은 로그
+        ({"timeline": {"verifying": ["\u0000"]}}, "NUL"),
     ],
 )
 def test_malformed_report_is_rejected(overrides: dict[str, Json], match: str) -> None:
@@ -154,6 +195,8 @@ def test_report_export_bundle_is_parsed_in_order() -> None:
         ({"first_seq": 0}, "first_seq"),
         ({"key_fingerprint": None}, "key_fingerprint"),
         ({"reports": ["x"]}, "objects"),
+        ({"first_seq": SEQ_MAX + 1}, "first_seq"),
+        ({"reports": [_report(4, logs="\u0000"), _report(5), _report(6)]}, "NUL"),
     ],
 )
 def test_inconsistent_export_bundle_is_rejected(overrides: dict[str, Json], match: str) -> None:

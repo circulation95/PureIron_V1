@@ -62,7 +62,10 @@ class FleetSite(BaseModel):
     last_attempt: AttemptInfo | None
     disk_state: str | None
     updater_phase: str | None
-    last_seq: int
+    last_heartbeat_seq: int = Field(description="마지막 반영 heartbeat report_seq")
+    last_report_seq: int = Field(
+        description="마지막 반영 보고 report_seq(온라인·폐쇄망) — 카운터는 공용, 수위는 종류별"
+    )
 
 
 def _text(payload: dict[str, Json], key: str) -> str | None:
@@ -121,7 +124,8 @@ def _fleet_site(row: FleetRow) -> FleetSite:
         last_attempt=None if row.last_attempt is None else _attempt(row.last_attempt),
         disk_state=row.disk_state,
         updater_phase=row.updater_phase,
-        last_seq=row.last_seq,
+        last_heartbeat_seq=row.last_heartbeat_seq,
+        last_report_seq=row.last_report_seq,
     )
 
 

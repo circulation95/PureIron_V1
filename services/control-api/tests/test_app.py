@@ -51,6 +51,14 @@ def test_openapi_has_the_control_surface(client: TestClient) -> None:
     assert operations == EXPECTED_OPERATIONS
 
 
+def test_publish_generation_is_bounded_by_the_integer_column(client: TestClient) -> None:
+    """`bundles.generation`은 integer — 넘는 gen은 16 GiB를 받기 전에 422(리뷰 L-3)."""
+    put = client.get("/openapi.json").json()["paths"]["/api/v1/bundles/{site}/{generation}"]["put"]
+    schemas = {p["name"]: p["schema"] for p in put["parameters"]}
+    assert (schemas["generation"]["minimum"], schemas["generation"]["maximum"]) == (1, 2**31 - 1)
+    assert "507" in put["responses"]
+
+
 @pytest.mark.parametrize(
     ("method", "path"),
     [

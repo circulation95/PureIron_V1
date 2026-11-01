@@ -1,9 +1,10 @@
 """현장 등록·재등록·토큰 재발급(PD-3, foundation §6.4): enrollment 봉투 → site 키 + 온라인 token.
 
 - enrollment 파일은 Updater `enroll`이 쓴 `site-enrollment` 봉투(자기 키 서명 = 개인키 보유 증명).
-- 등록은 `last_seq = next_report_seq - 1`로 시작한다. rekey는 구 키를 폐기하고(구 키로 서명된
-  보고는 이후 400) 다음 seq `max(last_seq + 1, 봉투 next_report_seq)`를 돌려준다
-  (`seq_pending`이면 봉투 값은 무시) — 현장은 이 값을 `enroll --next-seq`로 반영한다.
+- 등록은 종류별 수위 둘 다 `next_report_seq - 1`로 시작한다. rekey는 구 키를 폐기하고(구 키로
+  서명된 보고는 이후 400) 다음 seq `max(두 수위 중 큰 값 + 1, 봉투 next_report_seq)`를 돌려준다
+  (`seq_pending`이면 봉투 값은 무시, 카운터는 공용) — 현장은 이 값을 `enroll --next-seq`로 반영한다.
+- 동시 등록은 `INSERT … ON CONFLICT DO NOTHING`으로 판정한다: 늦은 쪽은 409(`SiteExistsError`).
 - token 원문은 발급 응답에만 나간다(DB에는 SHA-256).
 """
 
@@ -18,10 +19,16 @@ from pureiron_bundle import keys
 from pureiron_bundle.manifest import SchemaName, contract_schema
 from pureiron_bundle.sitesign import SignedDocumentError, SitePurpose, open_document
 from pureiron_control.platform.clock import Clock
+from pureiron_control.platform.seqmarks import SeqMarks
 from pureiron_control.platform.tokens import TokenKind, new_token, token_sha256
 from pureiron_core.platform.db import Connection, Database
 
-INSERT_SITE_SQL = "INSERT INTO sites (site_id, registered_at, last_seq) VALUES ($1, $2, $3)"
+INSERT_SITE_SQL = """
+INSERT INTO sites (site_id, registered_at, last_heartbeat_seq, last_report_seq)
+VALUES ($1, $2, $3, $3)
+ON CONFLICT (site_id) DO NOTHING
+RETURNING site_id
+"""
 INSERT_KEY_SQL = """
 INSERT INTO site_keys (site_id, public_key, fingerprint, created_at) VALUES ($1, $2, $3, $4)
 """
@@ -33,7 +40,9 @@ REVOKE_TOKENS_SQL = """
 UPDATE site_tokens SET revoked_at = $2 WHERE site_id = $1 AND revoked_at IS NULL
 """
 ACTIVE_KEY_SQL = "SELECT public_key FROM site_keys WHERE site_id = $1 AND revoked_at IS NULL"
-LOCK_SITE_SQL = "SELECT last_seq FROM sites WHERE site_id = $1 FOR UPDATE"
+LOCK_SITE_SQL = """
+SELECT last_heartbeat_seq, last_report_seq FROM sites WHERE site_id = $1 FOR UPDATE
+"""
 
 
 class SiteError(Exception):
@@ -121,10 +130,10 @@ class PgSiteRegistry:
         # 상태를 잃은 현장(seq_pending)의 첫 등록도 seq 1부터다 — 중앙에 이전 기록이 없다.
         next_seq = 1 if enrollment.seq_pending else enrollment.next_report_seq
         async with self._db.connection() as conn, conn.transaction():
-            exists = await conn.fetchval("SELECT 1 FROM sites WHERE site_id = $1", site_id)
-            if exists is not None:
+            # 확인 후 INSERT는 동시 등록에서 PK 위반 500이 된다 — 충돌은 INSERT 자체로 판정한다.
+            inserted = await conn.fetchval(INSERT_SITE_SQL, site_id, self._clock(), next_seq - 1)
+            if inserted is None:
                 raise SiteExistsError(f"site {site_id!r} is already registered (use rekey)")
-            await conn.execute(INSERT_SITE_SQL, site_id, self._clock(), next_seq - 1)
             await self._add_key(conn, enrollment)
             token = await self._issue_token(conn, site_id)
         return Registration(site_id, enrollment.fingerprint, next_seq), token
@@ -133,13 +142,14 @@ class PgSiteRegistry:
         if enrollment.site_id != site_id:
             raise EnrollmentError(f"enrollment is for site {enrollment.site_id!r}, not {site_id!r}")
         async with self._db.connection() as conn, conn.transaction():
-            last_seq = await conn.fetchval(LOCK_SITE_SQL, site_id)
-            if not isinstance(last_seq, int):
+            row = await conn.fetchrow(LOCK_SITE_SQL, site_id)
+            if row is None:
                 raise SiteNotFoundError(f"site {site_id!r} is not registered")
+            marks = SeqMarks(heartbeat=row["last_heartbeat_seq"], report=row["last_report_seq"])
             offered = 0 if enrollment.seq_pending else enrollment.next_report_seq
-            next_seq = max(last_seq + 1, offered)
+            next_seq = max(marks.next_seq, offered)
             await conn.execute(REVOKE_KEYS_SQL, site_id, self._clock())
-            # last_seq는 그대로 둔다: 다음 seq는 현장이 `--next-seq`로 맞추고, 그보다 큰 seq만
+            # 수위는 그대로 둔다: 다음 seq는 현장이 `--next-seq`로 맞추고, 그보다 큰 seq만
             # 반영된다는 규칙(C7)이 이미 순서를 지킨다.
             await self._add_key(conn, enrollment)
         return Registration(site_id, enrollment.fingerprint, next_seq)

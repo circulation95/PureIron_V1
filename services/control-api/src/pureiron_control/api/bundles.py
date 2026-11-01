@@ -4,7 +4,8 @@
   `If-None-Match`가 같으면 304, 게시가 없으면 404 — 현장 Updater `poll.py`가 이 형태를 소비한다.
   `bundle_url`은 같은 출처의 절대 경로다(Updater는 같은 출처에만 token을 보낸다).
 - `GET /sites/{site}/bundles/{generation}` → `.pib`(`Range` 이어받기 206).
-- `PUT /bundles/{site}/{generation}`(ci) → 게시. gen ≤ 최신 게시 409, manifest가 경로와 다르면 400.
+- `PUT /bundles/{site}/{generation}`(ci) → 게시. gen ≤ 최신 게시 409, manifest가 경로와 다르면 400,
+  데이터 디렉터리 쓰기 실패 507(고정 detail — 원인은 로그에만).
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from pureiron_control.api.guard import Guard, SitePath
 from pureiron_control.bundles import (
     BundleFormatError,
     BundleSiteNotFoundError,
+    BundleStorageError,
     BundleStore,
     GenerationConflictError,
     PublishedBundle,
@@ -32,8 +34,11 @@ from pureiron_control.platform.files import UploadTooLargeError
 log = logging.getLogger(__name__)
 
 BUNDLE_MEDIA_TYPE = "application/octet-stream"
+BUNDLE_STORAGE_UNAVAILABLE = "bundle storage unavailable"
+GENERATION_MAX = 2**31 - 1
+"""`bundles.generation` 열(integer) 상한 — 넘는 gen은 16 GiB를 다 받기 전에 422."""
 
-Generation = Annotated[int, Path(ge=1, description="번들 generation(PD-15)")]
+Generation = Annotated[int, Path(ge=1, le=GENERATION_MAX, description="번들 generation(PD-15)")]
 
 
 class DesiredOut(BaseModel):
@@ -124,6 +129,7 @@ def build_bundles_router(*, store: BundleStore, guard: Guard, api_prefix: str) -
             404: {"description": "미등록 현장"},
             409: {"description": "gen ≤ 최신 게시"},
             413: {},
+            507: {"description": "데이터 디렉터리 쓰기 실패"},
         },
     )
     async def publish(
@@ -144,6 +150,11 @@ def build_bundles_router(*, store: BundleStore, guard: Guard, api_prefix: str) -
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         except UploadTooLargeError as exc:
             raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, detail=str(exc)) from exc
+        except BundleStorageError as exc:
+            log.error("bundle publish failed, data directory not writable: %s", exc)
+            raise HTTPException(
+                status.HTTP_507_INSUFFICIENT_STORAGE, detail=BUNDLE_STORAGE_UNAVAILABLE
+            ) from exc
         return _published(bundle)
 
     return router

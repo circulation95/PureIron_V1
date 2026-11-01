@@ -1642,24 +1642,24 @@ PureIron_V1 core의 정본은 `services/core/src/pureiron_core/api/` 와 생성�
 
 | 메서드·경로 | 인증 | 동작 |
 |---|---|---|
-| `POST /sites` | admin | 본문 = Updater `enrollment.json`(`site-enrollment` 자기 서명 봉투) → 201 `{site_id, fingerprint, next_seq, token}`. token(`pis_…`)은 이 응답에만. 이미 등록 409, 봉투 위반 400 |
-| `POST /sites/{site}/rekey` | admin | 새 enrollment(키 분실 재등록) → 구 키 폐기, `{site_id, fingerprint, next_seq}` — `next_seq = max(last_seq+1, 봉투 next_report_seq)`(`seq_pending`이면 봉투 값 무시), 현장은 `enroll --next-seq`로 반영. payload site ≠ 경로 403, 미등록 404 |
+| `POST /sites` | admin | 본문 = Updater `enrollment.json`(`site-enrollment` 자기 서명 봉투) → 201 `{site_id, fingerprint, next_seq, token}`. token(`pis_…`)은 이 응답에만. 이미 등록 409(동시 등록도 `INSERT … ON CONFLICT DO NOTHING`으로 늦은 쪽 409), 봉투 위반 400 |
+| `POST /sites/{site}/rekey` | admin | 새 enrollment(키 분실 재등록) → 구 키 폐기, `{site_id, fingerprint, next_seq}` — `next_seq = max(max(last_heartbeat_seq, last_report_seq)+1, 봉투 next_report_seq)`(카운터 공용, `seq_pending`이면 봉투 값 무시), 현장은 `enroll --next-seq`로 반영. payload site ≠ 경로 403, 미등록 404. **현장 token은 바꾸지 않는다** — 키 유출 대응이면 `POST /sites/{site}/token` 재발급도 함께 한다 |
 | `POST /sites/{site}/token` | admin | 현장 token 재발급(구 token 즉시 401) → `{site_id, token}` |
-| `POST /sites/{site}/heartbeat` | 현장 token + `site-heartbeat` 서명 | payload `{site_id, report_seq, current{product, project_version, gen}\|null, updater_phase, disk_state, at}` → `{outcome: applied\|history, last_seq}` |
-| `POST /sites/{site}/reports` | 현장 token + `site-report` 서명 | payload = Updater 보고 큐 파일(`metrics.write_report` 키) + `site_id`·`report_seq` → `{outcome, last_seq}` |
+| `POST /sites/{site}/heartbeat` | 현장 token + `site-heartbeat` 서명 | payload `{site_id, report_seq, current{product, project_version, gen}\|null, updater_phase, disk_state, at}` → `{outcome: applied\|history, last_seq}`(`last_seq` = heartbeat 수위) |
+| `POST /sites/{site}/reports` | 현장 token + `site-report` 서명 | payload = Updater 보고 큐 파일(`metrics.write_report` 키) + `site_id`·`report_seq` → `{outcome, last_seq}`(`last_seq` = 보고 수위) |
 | `GET /sites/{site}/desired` | 현장 token | 최신 게시 `{generation, bundle_url, sha256: "sha256:<hex>", size}`, `ETag: "<gen>"`, `If-None-Match` 일치 304, 게시 없음 404 — r4 Updater `poll.py`가 그대로 소비. `bundle_url`은 같은 출처 절대 경로(`/api/v1/sites/{site}/bundles/{gen}`) |
 | `GET /sites/{site}/bundles/{generation}` | 현장 token | `.pib`(`application/octet-stream`), `Range` 이어받기 206 |
 | `POST /sites/{site}/drafts` | 현장 token + `site-draft` 서명 | 본문 = `draft.tar`(`open_draft`로 검증, 상한 65 MiB) → 201 `{id, site_rev, base_site_rev, content_hash, sha256, size, …}` |
 | `GET /sites/{site}/drafts/latest` | admin | 마지막 `draft.tar`(헤더 `X-PureIron-Draft-Site-Rev`) → `pureiron-project absorb`에 넣는다. 없음 404 |
-| `PUT /bundles/{site}/{generation}` | ci | 본문 = 서명된 `.pib`(상한 `PUREIRON_CONTROL_MAX_BUNDLE_BYTES`) → 201. **gen ≤ 최신 게시 409**, 미등록 현장 404, `.pib`가 아니거나 manifest `site_id`·`generation` ≠ 경로 400, 상한 초과 413 |
-| `POST /offline-imports` | admin | 본문 = `pureiron-site report export` 파일(`site-reports` 봉투) 그대로 → 201 `{import_id, site_id, applied_total, history_total, last_seq}`. 미등록 404, 서명·형식(seq가 `first_seq..last_seq` 연속 아님 등) 400 |
-| `GET /fleet[?site=]` | admin·viewer | `[{site, desired{generation, sha256, size, product_version, project_version, published_at}, max_published_gen, current{product, project_version, gen, reported_at, source}, last_seen, connection, last_attempt{report_seq, source, received_at, generation, from, to, phase, result, code, started_at, ended_at}, disk_state, updater_phase, last_seq}]`. `?site=` 미등록 404(fleet `check-gen`의 "미등록만 gen 1") |
+| `PUT /bundles/{site}/{generation}` | ci | 본문 = 서명된 `.pib`(상한 `PUREIRON_CONTROL_MAX_BUNDLE_BYTES`) → 201. **gen ≤ 최신 게시 409**, 미등록 현장 404, `.pib`가 아니거나 manifest `site_id`·`generation` ≠ 경로 400, 상한 초과 413, 경로 gen > 2³¹−1 422(본문 받기 전), 데이터 디렉터리 쓰기 실패 507 `{"detail": "bundle storage unavailable"}`(control-db 503과 구분 — 원인은 로그에만) |
+| `POST /offline-imports` | admin | 본문 = `pureiron-site report export` 파일(`site-reports` 봉투) 그대로 → 201 `{import_id, site_id, applied_total, history_total, last_seq}`(`last_seq` = 보고 수위 — 묶음은 보고 종류). 미등록 404, 서명·형식(seq가 `first_seq..last_seq` 연속 아님 등) 400 |
+| `GET /fleet[?site=]` | admin·viewer | `[{site, desired{generation, sha256, size, product_version, project_version, published_at}, max_published_gen, current{product, project_version, gen, reported_at, source}, last_seen, connection, last_attempt{report_seq, source, received_at, generation, from, to, phase, result, code, started_at, ended_at}, disk_state, updater_phase, last_heartbeat_seq, last_report_seq}]`. `?site=` 미등록 404(fleet `check-gen`의 "미등록만 gen 1") |
 | `GET /healthz` · `GET /readyz` | 없음 | 생존 · control-db + 스키마 envelope(벗어나면 503 — 부팅 자동 migrate 없음) |
 
 - **인증 표(C5)**: token 없음·모름·폐기 401(`WWW-Authenticate: Bearer`). 현장 token은 **자기 `{site}` 경로만** — 다른 현장 경로·사람 경로는 403. 사람·CI token(`pia_…`)은 역할 `admin`·`ci`·`viewer`로만 판정하고 현장 경로에는 403. 사람·CI token은 `pureiron-control token create --role`로만 발급하고 기본 계정은 없다. control-web 앞 Caddy basic auth(M4-3)는 이 인증을 대신하지 않는다.
 - **서명 검증 순서**: 현장 token·경로 → 본문 `payload.site_id`(서명 확인 전 값)가 경로와 다르면 **403** → 등록된 유효 site 키로 `sitesign.open_document` — 서명 불일치·용도 다름·형식 위반 **400**. 용도(`purpose`)는 봉투 서명에 들어가 heartbeat 서명을 보고로(또는 묶음으로) 쓸 수 없다. rekey 뒤 구 키 서명은 400.
-- **seq 규칙(C7)**: heartbeat·보고는 현장 하나의 `report_seq` 카운터를 함께 쓴다. `report_seq > last_seq`만 반영(`applied`: `last_seq`·current·last_attempt 갱신), 그 밖은 **이력만**(`history`, current·last_attempt 그대로) — 둘 다 200·201. 온라인·폐쇄망이 같은 함수(`PgReportStore.record`, 현장 행 잠금 한 트랜잭션)를 지나고 이력 행에 `source`(online·offline)·`outcome`을 남긴다. 성공(`result = succeeded`) 보고는 current를 `to` gen + 그 gen 게시 번들의 버전으로 바꾼다.
-- **연결 판정(C8)**: `last_seen` = token·서명이 확인된 **온라인** 메시지(반영·이력 모두)의 중앙 수신 시각(폐쇄망 반입은 바꾸지 않는다). `GET /fleet` 응답 때 `online`(now − last_seen ≤ 3 × `PUREIRON_CONTROL_POLL_S`, 기본 180s)·`stale`·`never`로 계산하고 저장하지 않는다. stale 현장의 `current`는 마지막 보고값이고 시각은 `current.reported_at`이다.
+- **seq 규칙(C7)**: heartbeat·보고는 현장 하나의 `report_seq` 카운터를 함께 쓰지만(R2 — 온라인·USB가 겹치지 않게) **반영 수위는 종류별**이다(`sites.last_heartbeat_seq`·`last_report_seq`). 메시지는 **자기 종류의 수위보다 큰 seq**만 반영(`applied`: 그 수위·current·last_attempt 갱신), 그 밖은 **이력만**(`history`, current·last_attempt 그대로) — 둘 다 200·201. 폐쇄망 반입 묶음(`site-reports`)은 보고 종류다. 수위가 하나면 끊겼다 재전송된 보고 seq 11이 그 사이 성공한 heartbeat seq 12에 가려 `last_attempt`에 남지 않는다(실패한 업데이트가 안 보임) — 종류별 수위는 이 순서를 현장 구현에 기대지 않고 중앙이 보장한다. 한 묶음 안에서 seq가 수위를 가로지르면 수위 이하만 이력이고 나머지는 반영된다. payload 정수가 열 범위를 넘으면(seq > 2⁶³−1, `generation`·`to`·`from`·`current.gen` ∉ 0..2³¹−1) 또는 문자열·키에 NUL(`\u0000` — jsonb 거부)이 있으면 저장 전 400이다(500이면 그 USB 파일·큐 맨 앞 메시지를 영원히 못 보낸다). 온라인·폐쇄망이 같은 함수(`PgReportStore.record`, 현장 행 잠금 한 트랜잭션)를 지나고 이력 행에 `source`(online·offline)·`outcome`을 남긴다. 성공(`result = succeeded`) 보고는 current를 `to` gen + 그 gen 게시 번들의 버전으로 바꾼다.
+- **연결 판정(C8)**: `last_seen` = token·서명이 확인된 **온라인** 메시지(반영·이력 모두)의 중앙 수신 시각(폐쇄망 반입은 바꾸지 않는다, 동시 요청이 더 늦은 값을 되돌리지 않게 `GREATEST`). `GET /fleet` 응답 때 `online`(now − last_seen ≤ 3 × `PUREIRON_CONTROL_POLL_S`, 기본 180s)·`stale`·`never`로 계산하고 저장하지 않는다. stale 현장의 `current`는 마지막 보고값이고 시각은 `current.reported_at`이다.
 - control-db 장애는 503 `{"detail": "control-db unavailable"}`(원문은 로그에만).
 
 ## 내부 이벤트 버스
@@ -2669,7 +2669,7 @@ ADR-013(개정) 쓰기 경로의 계약과 collector 실행부다. core 쓰기 �
 
 | 표 | 내용 |
 |---|---|
-| `sites` | `site_id` PK, `registered_at`, `last_seq`(마지막 반영 `report_seq`, 등록 때 `next_report_seq − 1`), `last_seen`(token·서명이 확인된 온라인 메시지 수신 시각, 반영 여부 무관), `current` jsonb `{product, project_version, gen}`·`current_reported_at`·`current_source`(online·offline), `updater_phase`, `disk_state`, `last_attempt_id` → `apply_attempts` |
+| `sites` | `site_id` PK, `registered_at`, `last_heartbeat_seq`·`last_report_seq`(종류별 마지막 반영 `report_seq` — 카운터는 공용, 둘 다 등록 때 `next_report_seq − 1`), `last_seen`(token·서명이 확인된 온라인 메시지 수신 시각, 반영 여부 무관), `current` jsonb `{product, project_version, gen}`·`current_reported_at`·`current_source`(online·offline), `updater_phase`, `disk_state`, `last_attempt_id` → `apply_attempts` |
 | `site_keys` | site Ed25519 공개키 hex·지문, `revoked_at`(rekey가 찍음). 현장당 유효 키 하나(부분 unique index) |
 | `site_tokens` | 현장 token SHA-256(hex), `revoked_at`(재발급이 찍음). 현장당 유효 token 하나 |
 | `api_tokens` | 사람·CI token SHA-256, `name`(유효 token 사이 유일), `role` ∈ admin·ci·viewer, `revoked_at` |
@@ -2679,10 +2679,10 @@ ADR-013(개정) 쓰기 경로의 계약과 collector 실행부다. core 쓰기 �
 | `offline_imports` | 반입 1회: `first_seq`·`last_seq`·`exported_at`·`file_sha256`·`applied_total`·`history_total`·`imported_by` |
 | `drafts` | 현장 드래프트 메타(`site_rev`·`base_site_rev`·`content_hash`·`exported_at`·`sha256`·`size_bytes`), 파일 `<data>/drafts/<site>/<sha256 hex>.tar` |
 
-- **게시 규칙(PD-15)**: `PUT /bundles/{site}/{gen}`은 업로드를 같은 디렉터리 임시 파일(`.upload-*.part`)로 받아 sha256·크기를 재고 manifest `site_id`·`generation`이 경로와 같은지 본 뒤, 현장 행 `FOR UPDATE` 아래에서 `gen > max(generation)`을 다시 확인하고 행 INSERT + 파일 이름 바꾸기를 한 트랜잭션에 한다. 거부된 업로드는 파일을 남기지 않는다. DesiredState = 최대 gen(revert도 gen+1 게시).
+- **게시 규칙(PD-15)**: `PUT /bundles/{site}/{gen}`은 업로드를 같은 디렉터리 임시 파일(`.upload-*.part`)로 받아 sha256·크기를 재고 manifest `site_id`·`generation`이 경로와 같은지 본 뒤, 현장 행 `FOR UPDATE` 아래에서 `gen > max(generation)`을 다시 확인하고 행 INSERT + 파일 이름 바꾸기를 한 트랜잭션에 한다. 거부된 업로드는 파일을 남기지 않는다. 같은 gen 동시 업로드는 그 잠금이 줄을 세워 201 하나·409 하나, 디스크 파일 하나다. 파일 쓰기 `OSError`는 `BundleStorageError`(507)로 바꿔 연결 계층의 control-db 장애(503) 분류를 피한다. DesiredState = 최대 gen(revert도 gen+1 게시).
 - **seq·current 규칙(C7)**: [api-events](api-events.md) control-api 절. 같은 seq 재전송·같은 파일 재반입은 이력 행만 늘린다(중복 제거 없음, 감사용).
 - **현장 쪽 짝**: enrollment·`report export` 파일 형식은 Updater(`pureiron_updater.enroll`) 그대로, 서명 용도는 bundle-tools `sitesign` — 이번에 `site-heartbeat`·`site-report`(온라인 한 건)를 추가했고 기존 용도·봉투 형식은 바꾸지 않았다. Updater 송신(heartbeat 루프·보고 온라인 전송·`export --upload`)은 M4-1.
-- **검증**: 단위(인증 표·seq 규칙·연결 판정 경계 180/181s·payload 형식·봉투 site 추출·업로드 상한·설정·OpenAPI 경로·import-linter 음성) + control-db 통합(`deploy/compose/control.dev.yml`, 테스트마다 새 DB → CLI `migrate up` → `token create`): gen 역행 409·타 site token 403(현장 경로 5개)·서명 불일치/변조/용도 위반 400·payload 타 site 403·seq ≤ last_seq 반입 이력만(current·last_attempt 그대로)·180s 초과 stale·반입 `source=offline`(connection `never` 유지)·desired ETag 304·Range 206·rekey 뒤 구 키 400·token 재발급/폐기 401·드래프트 업로드/회수, 그리고 r4 Updater `poll.ControlApi`가 실제 HTTP로 desired·304·Range 이어받기를 소비.
+- **검증**: 단위(인증 표·종류별 seq 규칙(보고 11이 heartbeat 12 뒤 → 반영)·열 범위·NUL 400·저장 오류 507·연결 판정 경계 180/181s·payload 형식·봉투 site 추출·업로드 상한·설정·OpenAPI 경로·import-linter 음성) + control-db 통합(`deploy/compose/control.dev.yml`, 테스트마다 새 DB → CLI `migrate up` → `token create`): gen 역행 409·타 site token 403(현장 경로 5개)·서명 불일치/변조/용도 위반 400·payload 타 site 403·seq ≤ 보고 수위 반입 이력만(current·last_attempt 그대로)·늦게 재전송된 보고는 더 큰 heartbeat 뒤에도 반영·한 USB 파일이 수위를 가로지르면 이력/반영 분할·같은 gen 동시 PUT 201+409·동시 등록 201+409·180s 초과 stale·반입 `source=offline`(connection `never` 유지)·desired ETag 304·Range 206·rekey 뒤 구 키 400·token 재발급/폐기 401·드래프트 업로드/회수, 그리고 r4 Updater `poll.ControlApi`가 실제 HTTP로 desired·304·Range 이어받기를 소비.
 
 ---
 

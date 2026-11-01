@@ -1,8 +1,9 @@
 """control-api 종료 기준(foundation M4, plan M4-0)을 실제 PostgreSQL 16 위에서 확인한다.
 
-gen 역행 PUT 409 · 다른 현장 token 403 · 서명 불일치 400 · seq ≤ last_seq 반입은 이력만
+gen 역행 PUT 409 · 다른 현장 token 403 · 서명 불일치 400 · seq ≤ 그 종류의 수위 반입은 이력만
 (current 미갱신) · last_seen 180s 초과 stale · 폐쇄망 반입 source=offline · desired ETag 304 ·
-번들 Range 206.
+번들 Range 206. 리뷰 r1: 종류별 수위(늦은 보고가 heartbeat에 가리지 않음)·USB 파일 안
+수위 가로지르기·같은 gen 동시 PUT·동시 등록 409.
 enrollment·폐쇄망 보고 파일은 실제 Updater 코드(`pureiron_updater.enroll`)가 만든다.
 """
 
@@ -15,8 +16,9 @@ from typing import cast
 import pytest
 
 from pureiron_bundle.sitesign import SitePurpose
+from pureiron_control.platform.tokens import token_sha256
 
-from .conftest import Central
+from .conftest import Central, Request
 from .site_kit import Site, build_pib
 
 pytestmark = pytest.mark.integration
@@ -94,7 +96,10 @@ def test_registration_is_admin_only_and_returns_the_token_once(
     forged = enrollment.replace(b'"site-a"', b'"site-c"')
     bad = central.client.post("/api/v1/sites", content=forged, headers=central.as_role("admin"))
     assert bad.status_code == 400
-    # token 원문은 DB에 없다(조회는 SHA-256으로만 된다).
+    # token 원문은 DB에 없고 SHA-256만 있다 — 그 해시로 인증된다.
+    stored = central.fetch("SELECT token_sha256 FROM site_tokens WHERE site_id = 'site-a'")
+    assert [r["token_sha256"] for r in stored] == [token_sha256(token)]
+    assert central.fetch("SELECT 1 FROM site_tokens WHERE token_sha256 = $1", token) == []
     assert (
         central.client.get("/api/v1/sites/site-a/desired", headers=central.auth(token)).status_code
         == 404
@@ -168,7 +173,8 @@ def test_signature_mismatch_report_is_400_and_foreign_payload_is_403(
         == 403
     )
     # 어느 것도 반영되지 않았다.
-    assert fleet_row(central, "site-a")["last_seq"] == 0
+    row = fleet_row(central, "site-a")
+    assert (row["last_heartbeat_seq"], row["last_report_seq"]) == (0, 0)
 
 
 def test_generation_regression_is_409(central: Central, site_a: Site, tmp_path: Path) -> None:
@@ -272,23 +278,31 @@ def test_offline_import_at_or_below_last_seq_is_history_only(
         2,
         1,
     )
-    # 온라인 heartbeat seq 5 → 반영(current gen 7, online).
+    # 온라인 heartbeat seq 5 → 반영(current gen 7, online). 보고 수위(2)는 그대로다.
     beat = central.client.post(
         "/api/v1/sites/site-a/heartbeat", content=site_a.heartbeat(5, gen=7), headers=headers
     )
     assert beat.json() == {"outcome": "applied", "last_seq": 5}
-    # 늦게 반출된 보고(seq 3 ≤ last_seq 5) → 이력만, current·last_attempt 그대로.
+    # 온라인 보고 seq 6(실패) → 보고 수위 6.
+    online = central.client.post(
+        "/api/v1/sites/site-a/reports",
+        content=site_a.report(6, to=3, result="failed"),
+        headers=headers,
+    )
+    assert online.json() == {"outcome": "applied", "last_seq": 6}
+    # 늦게 반출된 보고(seq 3 ≤ 보고 수위 6) → 이력만, current·last_attempt 그대로.
     site_a.queue_report(to=3, result="failed")
     late = central.client.post(
         "/api/v1/offline-imports", content=site_a.export(tmp_path / "usb2"), headers=admin
     )
     assert late.status_code == 201
     assert (late.json()["applied_total"], late.json()["history_total"]) == (0, 1)
+    assert late.json()["last_seq"] == 6
     row = fleet_row(central, "site-a")
     current = cast(JsonObject, row["current"])
     assert (current["gen"], current["source"]) == (7, "online")
-    assert cast(JsonObject, row["last_attempt"])["report_seq"] == 2
-    assert row["last_seq"] == 5
+    assert cast(JsonObject, row["last_attempt"])["report_seq"] == 6
+    assert (row["last_heartbeat_seq"], row["last_report_seq"]) == (5, 6)
     # 같은 파일을 다시 반입해도 이력만 늘고 상태는 그대로다.
     again = central.client.post("/api/v1/offline-imports", content=first, headers=admin)
     assert (again.json()["applied_total"], again.json()["history_total"]) == (0, 2)
@@ -395,6 +409,13 @@ def test_rekey_revokes_the_old_key_and_returns_next_seq(central: Central, site_a
         ).json()["last_seq"]
         == 3
     )
+    # 카운터는 공용 — heartbeat 수위 6이 더 크면 다음 seq는 7이다.
+    assert (
+        central.client.post(
+            "/api/v1/sites/site-a/heartbeat", content=site_a.heartbeat(6, gen=1), headers=headers
+        ).json()["last_seq"]
+        == 6
+    )
     new_enrollment = site_a.enroll(re_enroll=True)
     admin = central.as_role("admin")
     assert (
@@ -407,7 +428,7 @@ def test_rekey_revokes_the_old_key_and_returns_next_seq(central: Central, site_a
         "/api/v1/sites/site-a/rekey", content=new_enrollment, headers=admin
     )
     assert rekeyed.status_code == 200, rekeyed.text
-    assert rekeyed.json()["next_seq"] == 4
+    assert rekeyed.json()["next_seq"] == 7
     # 구 키 서명은 이제 400, 새 키 서명은 반영.
     assert (
         central.client.post(
@@ -416,14 +437,126 @@ def test_rekey_revokes_the_old_key_and_returns_next_seq(central: Central, site_a
         == 400
     )
     assert central.client.post(
-        "/api/v1/sites/site-a/reports", content=site_a.report(4, to=1), headers=headers
-    ).json() == {"outcome": "applied", "last_seq": 4}
+        "/api/v1/sites/site-a/reports", content=site_a.report(7, to=1), headers=headers
+    ).json() == {"outcome": "applied", "last_seq": 7}
     assert (
         central.client.post(
             "/api/v1/sites/site-x/rekey", content=new_enrollment, headers=admin
         ).status_code
         == 403
     )
+
+
+def test_late_report_after_newer_heartbeat_is_still_applied(
+    central: Central, site_a: Site, tmp_path: Path
+) -> None:
+    """리뷰 M-1: 보고 seq 11 전송이 끊기고 heartbeat seq 12가 먼저 성공해도, 재전송된 보고 11은
+    보고 수위(10)보다 크므로 반영된다 — 실패한 업데이트가 fleet `last_attempt`에 보인다."""
+    headers = central.auth(register(central, site_a))
+    publish(central, tmp_path, "site-a", 1)
+    ok = central.client.post(
+        "/api/v1/sites/site-a/reports", content=site_a.report(10, to=1), headers=headers
+    )
+    assert ok.json() == {"outcome": "applied", "last_seq": 10}
+    beat = central.client.post(
+        "/api/v1/sites/site-a/heartbeat", content=site_a.heartbeat(12, gen=1), headers=headers
+    )
+    assert beat.json() == {"outcome": "applied", "last_seq": 12}
+    late = central.client.post(
+        "/api/v1/sites/site-a/reports",
+        content=site_a.report(11, to=2, result="failed"),
+        headers=headers,
+    )
+    assert late.json() == {"outcome": "applied", "last_seq": 11}
+    row = fleet_row(central, "site-a")
+    attempt = cast(JsonObject, row["last_attempt"])
+    assert (attempt["report_seq"], attempt["result"], attempt["to"]) == (11, "failed", 2)
+    assert (row["last_heartbeat_seq"], row["last_report_seq"]) == (12, 11)
+    assert cast(JsonObject, row["current"])["gen"] == 1  # 실패 보고는 current를 바꾸지 않는다
+    # 같은 보고를 또 보내면(응답 유실) 이번에는 이력만.
+    again = central.client.post(
+        "/api/v1/sites/site-a/reports",
+        content=site_a.report(11, to=2, result="failed"),
+        headers=headers,
+    )
+    assert again.json() == {"outcome": "history", "last_seq": 11}
+
+
+def test_offline_file_crossing_the_report_mark_splits_history_and_applied(
+    central: Central, site_a: Site, tmp_path: Path
+) -> None:
+    """리뷰 L-8 (c): 보고 수위 5, USB 파일 seq 4..7 → 4·5 이력, 6·7 반영, last_attempt = 7."""
+    headers = central.auth(register(central, site_a))
+    admin = central.as_role("admin")
+    for to in (1, 2, 3):
+        site_a.queue_report(to=to)
+    first = central.client.post(
+        "/api/v1/offline-imports", content=site_a.export(tmp_path / "usb1"), headers=admin
+    )
+    assert (first.json()["applied_total"], first.json()["last_seq"]) == (3, 3)
+    online = central.client.post(
+        "/api/v1/sites/site-a/reports", content=site_a.report(5, to=3), headers=headers
+    )
+    assert online.json() == {"outcome": "applied", "last_seq": 5}
+    for to in (4, 5, 6, 7):
+        site_a.queue_report(to=to, result="failed")
+    crossing = central.client.post(
+        "/api/v1/offline-imports", content=site_a.export(tmp_path / "usb2"), headers=admin
+    )
+    assert crossing.status_code == 201, crossing.text
+    body = crossing.json()
+    assert (body["applied_total"], body["history_total"], body["last_seq"]) == (2, 2, 7)
+    rows = central.fetch(
+        "SELECT report_seq, outcome FROM apply_attempts WHERE offline_import_id = $1"
+        " ORDER BY report_seq",
+        body["import_id"],
+    )
+    assert [(r["report_seq"], r["outcome"]) for r in rows] == [
+        (4, "history"),
+        (5, "history"),
+        (6, "applied"),
+        (7, "applied"),
+    ]
+    row = fleet_row(central, "site-a")
+    attempt = cast(JsonObject, row["last_attempt"])
+    assert (attempt["report_seq"], attempt["source"], attempt["to"]) == (7, "offline", 7)
+    assert row["last_report_seq"] == 7
+
+
+def test_concurrent_same_generation_publish_is_one_201_and_one_409(
+    central: Central, site_a: Site, tmp_path: Path
+) -> None:
+    """리뷰 L-8 (a): 같은 gen PUT 두 개가 동시에 오면 현장 행 잠금이 줄을 세워 하나만 게시된다."""
+    register(central, site_a)
+    ci = central.as_role("ci")
+    pibs = [
+        build_pib(tmp_path / f"race-{i}.pib", "site-a", 1, project_version=f"v{i}").read_bytes()
+        for i in (1, 2)
+    ]
+    responses = central.concurrently(
+        *(Request("PUT", "/api/v1/bundles/site-a/1", pib, ci) for pib in pibs)
+    )
+    assert sorted(r.status_code for r in responses) == [201, 409]
+    winner = pibs[[r.status_code for r in responses].index(201)]
+    # 디스크에는 이긴 쪽 파일 하나만 남는다(진 쪽 임시 파일도 지워진다).
+    site_dir = central.settings.data_dir / "bundles" / "site-a"
+    assert sorted(p.name for p in site_dir.iterdir()) == ["g1.pib"]
+    assert (site_dir / "g1.pib").read_bytes() == winner
+    desired = cast(JsonObject, fleet_row(central, "site-a")["desired"])
+    assert desired["sha256"] == "sha256:" + hashlib.sha256(winner).hexdigest()
+
+
+def test_concurrent_registration_of_the_same_site_is_one_201_and_one_409(
+    central: Central, site_a: Site
+) -> None:
+    """리뷰 L-4: 같은 enrollment 동시 등록 → PK 위반 500이 아니라 409."""
+    enrollment = site_a.enroll()
+    admin = central.as_role("admin")
+    responses = central.concurrently(
+        *(Request("POST", "/api/v1/sites", enrollment, admin) for _ in range(2))
+    )
+    assert sorted(r.status_code for r in responses) == [201, 409]
+    assert [r["n"] for r in central.fetch("SELECT count(*) AS n FROM site_tokens")] == [1]
 
 
 def test_site_token_reissue_and_api_token_revoke(central: Central, site_a: Site) -> None:

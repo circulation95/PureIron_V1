@@ -3,7 +3,8 @@
 - `POST /sites/{site}/heartbeat`·`/reports`: 현장 token(자기 `{site}`) + 본문 서명(`site-heartbeat`·
   `site-report`, 등록된 site 키). payload `site_id`가 경로와 다르면 403, 서명 불일치 400.
 - `POST /offline-imports`(admin): Updater `report export` 파일(`site-reports` 봉투) 그대로.
-- seq가 마지막 반영 seq 이하인 메시지는 이력으로만 남고 응답은 200(`outcome: history`)이다.
+- seq가 그 종류(heartbeat·보고)의 마지막 반영 seq 이하인 메시지는 이력으로만 남고 응답은
+  200(`outcome: history`)이다. 폐쇄망 반입 묶음은 보고 종류다.
 """
 
 from __future__ import annotations
@@ -39,7 +40,9 @@ class Recorded(BaseModel):
     outcome: SeqOutcome = Field(
         description="applied = 반영(current·last_attempt 갱신), history = seq ≤ last_seq라 이력만"
     )
-    last_seq: int = Field(description="이 현장의 마지막 반영 report_seq")
+    last_seq: int = Field(
+        description="이 메시지 종류(heartbeat 또는 보고)의 마지막 반영 report_seq — 수위는 종류별"
+    )
 
 
 class OfflineImported(BaseModel):
@@ -47,7 +50,7 @@ class OfflineImported(BaseModel):
     site_id: str
     applied_total: int
     history_total: int
-    last_seq: int
+    last_seq: int = Field(description="보고 종류의 마지막 반영 report_seq")
 
 
 def _bad_request(exc: Exception) -> HTTPException:
@@ -92,7 +95,7 @@ def build_reports_router(
             result = await reports.record(site, [parse_heartbeat(payload)], source=Source.ONLINE)
         except ReportFormatError as exc:
             raise _bad_request(exc) from exc
-        return Recorded(outcome=result.outcomes[0], last_seq=result.last_seq)
+        return Recorded(outcome=result.outcomes[0], last_seq=result.marks.heartbeat)
 
     @router.post(
         "/sites/{site}/reports",
@@ -107,7 +110,7 @@ def build_reports_router(
             result = await reports.record(site, [parse_report(payload)], source=Source.ONLINE)
         except ReportFormatError as exc:
             raise _bad_request(exc) from exc
-        return Recorded(outcome=result.outcomes[0], last_seq=result.last_seq)
+        return Recorded(outcome=result.outcomes[0], last_seq=result.marks.report)
 
     @router.post(
         "/offline-imports",
@@ -141,7 +144,7 @@ def build_reports_router(
             site_id=site,
             applied_total=result.applied_total,
             history_total=result.history_total,
-            last_seq=result.last_seq,
+            last_seq=result.marks.report,
         )
 
     return router
