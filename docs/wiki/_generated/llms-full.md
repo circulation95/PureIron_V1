@@ -1645,12 +1645,12 @@ PureIron_V1 core의 정본은 `services/core/src/pureiron_core/api/` 와 생성�
 | `POST /sites` | admin | 본문 = Updater `enrollment.json`(`site-enrollment` 자기 서명 봉투) → 201 `{site_id, fingerprint, next_seq, token}`. token(`pis_…`)은 이 응답에만. 이미 등록 409(동시 등록도 `INSERT … ON CONFLICT DO NOTHING`으로 늦은 쪽 409), 봉투 위반 400 |
 | `POST /sites/{site}/rekey` | admin | 새 enrollment(키 분실 재등록) → 구 키 폐기, `{site_id, fingerprint, next_seq}` — `next_seq = max(max(last_heartbeat_seq, last_report_seq)+1, 봉투 next_report_seq)`(카운터 공용, `seq_pending`이면 봉투 값 무시), 현장은 `enroll --next-seq`로 반영. payload site ≠ 경로 403, 미등록 404. **현장 token은 바꾸지 않는다** — 키 유출 대응이면 `POST /sites/{site}/token` 재발급도 함께 한다 |
 | `POST /sites/{site}/token` | admin | 현장 token 재발급(구 token 즉시 401) → `{site_id, token}` |
-| `POST /sites/{site}/heartbeat` | 현장 token + `site-heartbeat` 서명 | payload `{site_id, report_seq, current{product, project_version, gen}\|null, updater_phase, disk_state, at}` → `{outcome: applied\|history, last_seq}`(`last_seq` = heartbeat 수위) |
+| `POST /sites/{site}/heartbeat` | 현장 token + `site-heartbeat` 서명 | payload `{site_id, report_seq, current{product, project_version, gen}\|null, updater_phase, disk_state, at}` → `{outcome: applied\|history, last_seq}`(`last_seq` = heartbeat 수위). Updater 0.2.0(M4-1)이 tick마다 보내는 값: `current` = **적용된** generation의 manifest `{product_release.version, project.version, gen}`(시도 진행 중에도 적용된 값, 적용 전 null), `updater_phase` = 경보가 있으면 `failed_manual`, 진행 중 시도가 있으면 그 phase(`fetched`…`rolling_back`), 없으면 `idle`, `disk_state` = `PUREIRON_ROOT` 사용률 ≥ 0.90 `critical`·≥ 0.80 `warn`·그 밖 `ok`, `at` = 현장 시각(UTC RFC 3339) |
 | `POST /sites/{site}/reports` | 현장 token + `site-report` 서명 | payload = Updater 보고 큐 파일(`metrics.write_report` 키) + `site_id`·`report_seq` → `{outcome, last_seq}`(`last_seq` = 보고 수위) |
-| `GET /sites/{site}/desired` | 현장 token | 최신 게시 `{generation, bundle_url, sha256: "sha256:<hex>", size}`, `ETag: "<gen>"`, `If-None-Match` 일치 304, 게시 없음 404 — r4 Updater `poll.py`가 그대로 소비. `bundle_url`은 같은 출처 절대 경로(`/api/v1/sites/{site}/bundles/{gen}`) |
+| `GET /sites/{site}/desired` | 현장 token | 최신 게시 `{generation, bundle_url, sha256: "sha256:<hex>", size}`, `ETag: "<gen>"`, `If-None-Match` 일치 304, 게시 없음 404 — r4 Updater `poll.py`가 그대로 소비. `bundle_url`은 같은 출처 절대 경로(`/api/v1/sites/{site}/bundles/{gen}`). token이 확인된 요청은 응답(200·304·404)과 무관하게 `last_seen`을 갱신한다(M4-1 E3 — heartbeat를 보내지 않는 r4 현장도 연결이 보인다) |
 | `GET /sites/{site}/bundles/{generation}` | 현장 token | `.pib`(`application/octet-stream`), `Range` 이어받기 206 |
-| `POST /sites/{site}/drafts` | 현장 token + `site-draft` 서명 | 본문 = `draft.tar`(`open_draft`로 검증, 상한 65 MiB) → 201 `{id, site_rev, base_site_rev, content_hash, sha256, size, …}` |
-| `GET /sites/{site}/drafts/latest` | admin | 마지막 `draft.tar`(헤더 `X-PureIron-Draft-Site-Rev`) → `pureiron-project absorb`에 넣는다. 없음 404 |
+| `POST /sites/{site}/drafts` | 현장 token + `site-draft` 서명 | 본문 = `draft.tar`(`open_draft`로 검증, 상한 65 MiB) → 201 `{id, site_rev, base_site_rev, content_hash, sha256, size, …}`. Updater `project export --upload`(M4-1)가 보낸다. payload `site_rev`·`base_site_rev` ∉ 0..2⁶³−1, `content_hash`·`exported_at`의 NUL·짝 없는 서로게이트 400, 미등록 404, 데이터 디렉터리 쓰기 실패 507 `{"detail": "draft storage unavailable"}`(행도 롤백, 파일 없음) |
+| `GET /sites/{site}/drafts/latest` | admin | **가장 높은 `site_rev`**(같으면 나중에 받은 것)의 `draft.tar`(헤더 `X-PureIron-Draft-Site-Rev`) → `pureiron-project absorb`에 넣는다. 늦게 재전송된 낮은 리비전이 새 드래프트를 가리지 않는다(M4-1 L-5). 없음 404 |
 | `PUT /bundles/{site}/{generation}` | ci | 본문 = 서명된 `.pib`(상한 `PUREIRON_CONTROL_MAX_BUNDLE_BYTES`) → 201. **gen ≤ 최신 게시 409**, 미등록 현장 404, `.pib`가 아니거나 manifest `site_id`·`generation` ≠ 경로 400, 상한 초과 413, 경로 gen > 2³¹−1 422(본문 받기 전), 데이터 디렉터리 쓰기 실패 507 `{"detail": "bundle storage unavailable"}`(control-db 503과 구분 — 원인은 로그에만) |
 | `POST /offline-imports` | admin | 본문 = `pureiron-site report export` 파일(`site-reports` 봉투) 그대로 → 201 `{import_id, site_id, applied_total, history_total, last_seq}`(`last_seq` = 보고 수위 — 묶음은 보고 종류). 미등록 404, 서명·형식(seq가 `first_seq..last_seq` 연속 아님 등) 400 |
 | `GET /fleet[?site=]` | admin·viewer | `[{site, desired{generation, sha256, size, product_version, project_version, published_at}, max_published_gen, current{product, project_version, gen, reported_at, source}, last_seen, connection, last_attempt{report_seq, source, received_at, generation, from, to, phase, result, code, started_at, ended_at}, disk_state, updater_phase, last_heartbeat_seq, last_report_seq}]`. `?site=` 미등록 404(fleet `check-gen`의 "미등록만 gen 1") |
@@ -1659,7 +1659,7 @@ PureIron_V1 core의 정본은 `services/core/src/pureiron_core/api/` 와 생성�
 - **인증 표(C5)**: token 없음·모름·폐기 401(`WWW-Authenticate: Bearer`). 현장 token은 **자기 `{site}` 경로만** — 다른 현장 경로·사람 경로는 403. 사람·CI token(`pia_…`)은 역할 `admin`·`ci`·`viewer`로만 판정하고 현장 경로에는 403. 사람·CI token은 `pureiron-control token create --role`로만 발급하고 기본 계정은 없다. control-web 앞 Caddy basic auth(M4-3)는 이 인증을 대신하지 않는다.
 - **서명 검증 순서**: 현장 token·경로 → 본문 `payload.site_id`(서명 확인 전 값)가 경로와 다르면 **403** → 등록된 유효 site 키로 `sitesign.open_document` — 서명 불일치·용도 다름·형식 위반 **400**. 용도(`purpose`)는 봉투 서명에 들어가 heartbeat 서명을 보고로(또는 묶음으로) 쓸 수 없다. rekey 뒤 구 키 서명은 400.
 - **seq 규칙(C7)**: heartbeat·보고는 현장 하나의 `report_seq` 카운터를 함께 쓰지만(R2 — 온라인·USB가 겹치지 않게) **반영 수위는 종류별**이다(`sites.last_heartbeat_seq`·`last_report_seq`). 메시지는 **자기 종류의 수위보다 큰 seq**만 반영(`applied`: 그 수위·last_attempt·(`current_seq`보다 크면) current 갱신), 그 밖은 **이력만**(`history`, current·last_attempt 그대로) — 둘 다 200·201. 폐쇄망 반입 묶음(`site-reports`)은 보고 종류다. 수위가 하나면 끊겼다 재전송된 보고 seq 11이 그 사이 성공한 heartbeat seq 12에 가려 `last_attempt`에 남지 않는다(실패한 업데이트가 안 보임) — 종류별 수위는 이 순서를 현장 구현에 기대지 않고 중앙이 보장한다. 한 묶음 안에서 seq가 수위를 가로지르면 수위 이하만 이력이고 나머지는 반영된다. **current는 두 종류 공용이라 공용 카운터 순서(`sites.current_seq`)로 한 번 더 거른다** — 반영된 메시지라도 `current_seq`보다 큰 seq만 current를 쓰고 `current_seq`를 그 seq로 올린다(늦게 온 heartbeat 11은 heartbeat 수위로 반영돼 `updater_phase`·`disk_state`는 바꾸지만, 먼저 반영된 성공 보고 12의 current는 덮지 않는다). payload 정수가 열 범위를 넘으면(seq > 2⁶³−1, `generation`·`to`·`from`·`current.gen` ∉ 0..2³¹−1) 또는 문자열·키에 저장할 수 없는 문자(NUL `\u0000` — jsonb·text 거부, 짝 없는 서로게이트 `\ud800`..`\udfff` — UTF-8 인코딩 불가)가 있으면 저장 전 400이다 — 서로게이트는 서명 확인 단계(`open_document`, JCS 직렬화 불가 → `SignedDocumentError`)에서 먼저 400이 되고, payload 검사는 서명 경로를 거치지 않는 호출자를 위한 방어로 남는다(500이면 그 USB 파일·큐 맨 앞 메시지를 영원히 못 보낸다). 온라인·폐쇄망이 같은 함수(`PgReportStore.record`, 현장 행 잠금 한 트랜잭션)를 지나고 이력 행에 `source`(online·offline)·`outcome`을 남긴다. 성공(`result = succeeded`) 보고는 current를 `to` gen + 그 gen 게시 번들의 버전으로 바꾼다.
-- **연결 판정(C8)**: `last_seen` = token·서명이 확인된 **온라인** 메시지(반영·이력 모두)의 중앙 수신 시각(폐쇄망 반입은 바꾸지 않는다, 동시 요청이 더 늦은 값을 되돌리지 않게 `GREATEST`). `GET /fleet` 응답 때 `online`(now − last_seen ≤ 3 × `PUREIRON_CONTROL_POLL_S`, 기본 180s)·`stale`·`never`로 계산하고 저장하지 않는다. stale 현장의 `current`는 마지막 보고값이고 시각은 `current.reported_at`이다.
+- **연결 판정(C8)**: `last_seen` = token·서명이 확인된 **온라인** 메시지(반영·이력 모두)와 token이 확인된 `GET /desired` polling(M4-1 E3)의 중앙 수신 시각(폐쇄망 반입은 바꾸지 않는다, 동시 요청이 더 늦은 값을 되돌리지 않게 `GREATEST`). `GET /fleet` 응답 때 `online`(now − last_seen ≤ 3 × `PUREIRON_CONTROL_POLL_S`, 기본 180s)·`stale`·`never`로 계산하고 저장하지 않는다. stale 현장의 `current`는 마지막 보고값이고 시각은 `current.reported_at`이다.
 - control-db 장애는 503 `{"detail": "control-db unavailable"}`(원문은 로그에만).
 
 ## 내부 이벤트 버스
@@ -1728,7 +1728,7 @@ PureIron V1은 현장 한 곳에 설치되는 **서비스 4개(collector·core·
 | `site-db` | TimescaleDB PG16(`pureiron/site-db:2.30.2-pg16`) | 마이그레이션 `0001~0013`, epoch 5 (r4) |
 | `ai` | core read-only API 소비 | 계약만, 첫 완료 범위 제외 |
 | Updater | 호스트 systemd 서비스(컨테이너 아님): 번들 검증·백업·마이그레이션·전환·롤백 | 완료(M2), VM 실측 30/30(r0→r1, r1→r2, r2→r3), 35/35(r3→r4) |
-| control-api | 벤더 내부 중앙 API: 등록·heartbeat·desired·reports·drafts·fleet | M4-0 본체: 등록·token·heartbeat·desired(ETag)·번들 게시/내려받기(Range)·보고·폐쇄망 반입·드래프트·fleet, control-db(PostgreSQL 16) epoch 1. 현장 송신(Updater)은 M4-1, 배포 compose는 M4-3 |
+| control-api | 벤더 내부 중앙 API: 등록·heartbeat·desired·reports·drafts·fleet | M4-0 본체: 등록·token·heartbeat·desired(ETag)·번들 게시/내려받기(Range)·보고·폐쇄망 반입·드래프트·fleet, control-db(PostgreSQL 16) epoch 1. M4-1: Updater 0.2.0이 tick마다 heartbeat·보고를 보내고 `project export --upload`로 드래프트를 올린다, 쓰기 스위치는 서명된 번들(`site_config`)로만. 배포 compose는 M4-3 |
 | control-web | 중앙 읽기 전용 표(basic auth) | 미착수(M4) |
 | `simulator` | 개발용 Modbus 시뮬레이터(compose profile `dev`) | `deploy/simulator/` |
 
@@ -1924,7 +1924,7 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
 | M3a | collector(Modbus·링버퍼·replay), core tags·historian·정의, r2(epoch 3), VM 실측 r1→r2 30/30 | 완료 |
 | M3b | alarms·auth·audit·realtime·devices·history API, web 로그인 + 5화면, r3(epoch 4), VM 실측 r2→r3 30/30 | 완료 |
 | M3c | PLC 쓰기 경로(ADR-013 가드레일): M3c-0 REST Origin/CSRF·로그인 제한, M3c-1 계약·collector 쓰기·simulator, M3c-2 core 쓰기(writes·REST·감사) | 진행 중 — M3c-3 web 쓰기 화면 예정 |
-| M4 | control-api·control-web·fleet·release 파이프라인 | 진행 중 — M4-0 control-api 본체(API·control-db·인증·seq 규칙). 현장 송신 M4-1·fleet/publish M4-2·control-web M4-3 예정 |
+| M4 | control-api·control-web·fleet·release 파이프라인 | 진행 중 — M4-0 control-api 본체(API·control-db·인증·seq 규칙), M4-1 현장 송신(heartbeat·보고 온라인 전송·드래프트 업로드·쓰기 스위치 서명화, Updater 0.2.0). fleet/publish M4-2·control-web M4-3 예정 |
 | M5 | 프로젝트 수명주기(project-tools 완성, apply·드래프트 회수), r4(epoch 5), VM 실측 r3→r4 35/35 | 진행 중 — VM 실측 35/35 완료, `@r4` 태그·고객 테스트 repo ref 확정 남음 |
 
 진행 기록의 정본은 각 PR과 [data-contracts](data-contracts.md)의 release·실측 절이다.
@@ -2415,7 +2415,7 @@ historian: { retention_days: 365, default_deadband: 0.0, default_max_interval_s:
 ```
 
 - 정규화: YAML 1.2 strict(중복 키·anchor·커스텀 tag 거부), 숫자 RFC 8785, 기본값 생략, POSIX 상대 경로, UTF-8 NFC, LF, 키 정렬. `content_hash = sha256(정렬된 (경로, 정규화 내용))`, 버전 = 고객 repo 태그 `vN`.
-- 현장 드래프트: `PATCH`마다 `site_rev += 1`(리셋 없음, 구현됨 — 아래 M5-2 절), 적용 시 `base_site_rev = site_rev`(구현됨, 아래 M5-0 절). 배포 게이트: `absorbs[site]`가 있으면 `site_rev ≤ absorbs[site]`, 없으면 `site_rev == base_site_rev`, 아니면 `E_DRAFT`(구현됨 — bundle verify ⑥·Updater `locked`·`pureiron-project gate`).
+- 현장 드래프트: `PATCH`마다 `site_rev += 1`(리셋 없음, 구현됨 — 아래 M5-2 절), 적용 시 `base_site_rev = site_rev`(구현됨, 아래 M5-0 절). 배포 게이트: 남은 드래프트가 없거나(`site_rev == base_site_rev`) `absorbs[site]`가 있고 `site_rev == absorbs[site]`일 때만 통과, 아니면 `E_DRAFT`(M4-1 E2 개정 — 백업 복원으로 `site_rev`가 absorbs 아래로 내려간 뒤의 드래프트도 거부. 구현됨 — bundle verify ⑥·Updater `locked`·`pureiron-project gate`).
 - 회수(구현됨, 아래 M5-3a 절): 서명된 현장 `draft.tar` → 벤더가 고객 repo에서 `pureiron-project absorb`(PATCH 허용 필드만 필드 단위 병합 + `absorbs.<site>` 기록 + 커밋 trailer) → PR은 운영자. 고객 repo 템플릿·검증 workflow는 M5-3b.
 - 비밀값은 `secret://<name>` 참조만.
 - legacy 변환기 1차 범위: `project.json`, Modbus TCP 연결·태그, 상·하한 알람. OPC-UA·UDT·scripts·dashboard·expression/query 태그·shelve·`auth/users.json`은 **미지원으로 보고**.
@@ -2449,9 +2449,10 @@ generation: 17                      # PR마다 +1
 product: 2026.11.0
 project: { repo: pureiron-project-acme, version: v3 }
 window: { recurring: { tz: Asia/Seoul, days: [sat, sun], start: "02:00", end: "05:00" } }
+writes: { enabled: true }           # 선택(M4-1) — 없으면 쓰기 끔
 ```
 
-- `.pib` manifest 주요 필드: `site_id`, `generation`, `created_at`, `product_release{version, min_updater, images{<svc>{config_digest, tag}}, schema{target, app_expected, app_max_compatible, compat_app_min}}`, `project{project_id, version, content_hash, absorbs}`, `files{경로: sha256}`, `trust_update`, `fleet_commit`.
+- `.pib` manifest 주요 필드: `site_id`, `generation`, `created_at`, `product_release{version, min_updater, images{<svc>{config_digest, tag}}, schema{target, app_expected, app_max_compatible, compat_app_min}}`, `project{project_id, version, content_hash, absorbs}`, `files{경로: sha256}`, `trust_update`, `fleet_commit`, 선택 `site_config{writes_enabled}`(M4-1 — 쓰기를 켠 번들에만 있다).
 - 거부 코드: `E_SIG`, `E_CERT`, `E_SITE`, `E_GEN`, `E_DIGEST`, `E_SCHEMA`, `E_UPDATER`, `E_DRAFT`(+ PoC 서명 단계 `E_APPROVAL`).
 
 ### V1 구현 현황 (M1, 2026-10-04)
@@ -2483,7 +2484,7 @@ window: { recurring: { tz: Asia/Seoul, days: [sat, sun], start: "02:00", end: "0
 - **편집 잠금**: core HTTP(`/api/v1/project/edit-lock`, web 프록시 경유)로 잡고 푼다. HTTP가 없으면 site-db에서 `psql`로 updater 잠금만 푼다(core 이미지 버전 무관). 풀지 못하면 종료 phase로 남아 다음 tick에 다시 푼다. 커밋된 대기 시도는 새 번들이 검증상 더 높은 generation일 때만, 잠금을 풀고 보고한 뒤 대체된다.
 - **일시 장애**: docker 데몬이 없으면 진행·복구하지 않고 기다린다. `migrating`은 `up --wait site-db` 뒤에 실행한다(재부팅 직후 DB 복구 대기).
 - **Updater 실패 코드**(ApplyAttempt `code`, 번들 거부 코드와 별개): `E_LOAD`(이미지 적재), `E_BACKUP`, `E_MIGRATE`, `E_SWITCH`, `E_HEALTH`, `E_SUPERSEDED`(커밋된 대기 시도를 새 번들이 대체), `E_BUNDLE`(커밋 후 번들 사본 소실).
-- **결과 기록**: `state/reports/*.json`(ApplyAttempt 필드 — 서명·전송은 M2c/M4), `state/metrics/updater.prom`.
+- **결과 기록**: `state/reports/*.json`(ApplyAttempt 필드 — 서명·전송은 M2c `report export`·M4-1 온라인 전송, 아래 M4-1 절), `state/metrics/updater.prom`.
 - **아직 없음**: GOOD 비율·첫 batch 신호(core 태그 품질 지표 = M3a, 그 전엔 ready + collector 세션만), 서비스 메트릭 60 s 스크랩(M3a), enroll·report export·systemd unit·설치 번들(→ 아래 M2c 절), 실제 docker·VM crash 실측(M2d).
 
 ### V1 구현 현황 (M2c 설치 번들·부트스트랩·systemd·enroll, 2026-10-05)
@@ -2617,7 +2618,7 @@ ADR-013(개정) 쓰기 경로의 계약과 collector 실행부다. core 쓰기 �
 - **`pureiron-site project export --out draft.tar`**(P6, Updater CLI): 등록(`enroll`) 전·키 불일치면 core를 부르지 않고 exit 3, 적용된 generation이 없거나 core 실패·출력 위반이면 exit 1(파일 없음). 적용된 generation의 core 이미지로 `export --draft`(쓰기 mount `state/draft-export/`, 컨테이너 uid 소유 0700 — 백업과 같은 규칙으로 정확히 두 일반 파일만, 링크를 따르지 않고 읽은 뒤 지운다) → 봉투 → `draft.tar`. `site_rev == base_site_rev`(흡수할 드래프트 없음)여도 파일은 쓰고 `note: no site drafts …`를 출력한다.
 - **드래프트 파일 형식**(`draft.tar`): 비압축 POSIX tar(PAX), 정확히 두 일반 파일 `draft.json` → `project.tar`(경로 UTF-8 바이트 순, mtime 0·uid/gid 0·빈 uname/gname·0644). `draft.json` = sitesign 봉투 `{"format": 1, "purpose": "site-draft", "payload": {…}, "signature": "<hex>"}`(서명 대상 = JCS `{format, payload, purpose}` — enrollment·report 서명과 도메인 분리), payload = `{site_id, site_rev, base_site_rev, content_hash, exported_at(UTC RFC 3339 Z), project_tar_sha256("sha256:<hex>")}`.
 - **검증 `pureiron_bundle.sitesign.open_draft(data, public, *, site_id) → (payload, project.tar)`**(P7, bundle-tools): 등록된 site 공개키와 그 현장 id로만(자기 키 검증 없음). payload `site_id`가 기대 현장과 다르면(그 현장 키로 서명했어도) `SignedDocumentError`. 두 파일 외 항목·중복·누락·링크·크기 초과(전체 65 MiB, 봉투 64 KiB)·tar 형식 오류·다른 purpose·서명 불일치·payload 형식(site_rev·base 음 아닌 정수, 나머지 문자열)·`project_tar_sha256` 불일치는 `SignedDocumentError`. tar 헤더는 `tarsafe`(적대적 헤더 제한)로 읽는다. 트리 내용 검증·`content_hash` 재계산은 absorb(M5-3)가 한다.
-- **게이트**: 드래프트가 있는 현장(`site_rev > base_site_rev`)에 absorbs 없는 번들은 `E_DRAFT`(bundle verify ⑥·Updater `locked` 재검사, `check_draft_gate`). 벤더가 `absorbs[site] ≥ site_rev`로 회수한 번들만 통과한다.
+- **게이트**: 드래프트가 있는 현장(`site_rev > base_site_rev`)에 absorbs 없는 번들은 `E_DRAFT`(bundle verify ⑥·Updater `locked` 재검사, `check_draft_gate`). 벤더가 지금 리비전을 정확히 회수한(`absorbs[site] == site_rev`) 번들만 통과한다(M4-1 E2 — 처음엔 `≥`였다).
 - **검증**: core 단위(허용·거부 필드 표, null 제거, 기본값 생략·정규 숫자, no-op, admin 미만 403·Origin 403·오류 매핑 423/404/422/503, 활성 ACK 알람 setpoint PATCH), core 통합 site-db(rev·감사 같은 트랜잭션, no-op, 잠금 423·없음/retire 404 무변경, 감사 트리거 실패 전체 롤백, 다른 연결이 정의 적용 advisory lock을 쥔 동안 대기 상한 뒤 503 경로·무변경과 풀리면 대기하던 PATCH 성공, Updater 잠금 획득과 동시 실행 시 결과가 (PATCH 성공 + 획득 site_rev +1)·(423) 둘뿐, `--draft` PATCH 반영·바이트 동일·트리 없음 exit 4), bundle-tools(결정적 tar, 다른 키·위조·다른 purpose·다른 site_id·tar 변조·항목 추가/누락/중복·payload 형식 거부), Updater 단위(등록 전·적용 전·core 실패·출력 위반·작업 디렉터리 준비 실패 거부, 같은 입력 같은 바이트, CLI 종료 코드·안내), compose(트리 apply → PATCH 3회 → site_rev +3 → 게이트 `E_DRAFT`/통과 → 잠금 중 423 → 실제 core 컨테이너로 `export_draft` → `open_draft` + 트리 content_hash·PATCH 값; compose 하네스에 Updater 설치가 없어 Updater 쪽은 같은 argv 모양의 테스트 `Compose` 어댑터로 부른다).
 
 ### V1 구현 현황 (M5-3a 드래프트 회수 absorb·gate, 2026-10-30)
@@ -2683,6 +2684,23 @@ ADR-013(개정) 쓰기 경로의 계약과 collector 실행부다. core 쓰기 �
 - **seq·current 규칙(C7)**: [api-events](api-events.md) control-api 절. 같은 seq 재전송·같은 파일 재반입은 이력 행만 늘린다(중복 제거 없음, 감사용).
 - **현장 쪽 짝**: enrollment·`report export` 파일 형식은 Updater(`pureiron_updater.enroll`) 그대로, 서명 용도는 bundle-tools `sitesign` — 이번에 `site-heartbeat`·`site-report`(온라인 한 건)를 추가했고 기존 용도·봉투 형식은 바꾸지 않았다. Updater 송신(heartbeat 루프·보고 온라인 전송·`export --upload`)은 M4-1.
 - **검증**: 단위(인증 표·종류별 seq 규칙(보고 11이 heartbeat 12 뒤 → 반영)·current 공용 순서(늦은 heartbeat → 반영·current 불변)·열 범위·NUL·짝 없는 서로게이트 400·저장 오류 507·연결 판정 경계 180/181s·payload 형식·봉투 site 추출·업로드 상한·설정·OpenAPI 경로·import-linter 음성) + control-db 통합(`deploy/compose/control.dev.yml`, 테스트마다 새 DB → CLI `migrate up` → `token create`): gen 역행 409·타 site token 403(현장 경로 5개)·서명 불일치/변조/용도 위반 400·payload 타 site 403·seq ≤ 보고 수위 반입 이력만(current·last_attempt 그대로)·늦게 재전송된 보고는 더 큰 heartbeat 뒤에도 반영·늦게 온 heartbeat는 더 새 성공 보고의 current를 덮지 않음·한 USB 파일이 수위를 가로지르면 이력/반영 분할·같은 gen 동시 PUT 201+409·동시 등록 201+409·180s 초과 stale·반입 `source=offline`(connection `never` 유지)·desired ETag 304·Range 206·rekey 뒤 구 키 400·token 재발급/폐기 401·드래프트 업로드/회수, 그리고 r4 Updater `poll.ControlApi`가 실제 HTTP로 desired·304·Range 이어받기를 소비.
+
+### V1 구현 현황 (M4-1 현장 송신·쓰기 스위치 서명화, 2026-11-02)
+
+현장 Updater가 control-api로 heartbeat·보고·드래프트를 보내고, 쓰기 스위치가 서명된 번들로만 켜진다. 근거 plan `pureiron-m4-1.md` E1~E12, `pureiron-m4.md` C2·C7·C11·§6. API 쪽 변화는 [api-events](api-events.md) control-api 절.
+
+- **보고 seq 불변식(E5, N-b)**: 한 보고는 **처음 매긴 seq 하나로만** 나간다. 보고가 처음 나갈 때(온라인 전송이든 `report export`든) `outbox.assign`이 공용 카운터(`site.json next_report_seq`, heartbeat와 공유)에서 seq를 예약(원자적 교체 = fsync)하고 그 값을 **큐 파일 자체에 `report_seq`로 써 넣는다**. 이후 어느 경로로 다시 나가든 파일의 값이다. 예약 뒤 파일 쓰기 전에 죽으면 seq 하나가 빈다(중앙은 종류별 수위만 보므로 무해). crash 뒤 `_finish`가 보고를 다시 써도 이미 매긴 seq는 유지하고, 이미 `exported/`·`rejected/`에 있는 이름은 다시 큐에 넣지 않는다.
+- **큐 디렉터리**(`state/reports/`): `*.json` 대기(이름 = 시도 시작 시각순) → `exported/`(중앙 200 또는 USB 묶음에 들어감) / `rejected/`(중앙 400 — 형식 위반이라 영원히 받지 않는다. 큐 맨 앞을 막지 않게 빼고 파일은 보존, 오류 로그 + `updater_reports_rejected_total`). 송신 카운터는 `state/outbox.json`. 보고의 문자열은 쓸 때·읽을 때 저장 가능한 UTF-8로 정리한다(E11 — `surrogateescape`로 읽힌 명령 출력 바이트는 원래 바이트로 되돌려 깨진 부분만 U+FFFD, 그 밖 짝 없는 서로게이트는 `?`, NUL은 U+FFFD — JCS 서명 실패·중앙 400으로 큐가 막히지 않게).
+- **`report export`(E7)**: 저장된 seq가 있는 파일은 그 값, 없는 파일만 새로 예약한다. seq 순으로 정렬해 **빈틈없는 구간마다 묶음(`site-reports`) 하나**(중앙 `parse_report_bundle`이 묶음 안 연속을 요구) — 온라인 실패분(seq 3)과 새 보고(seq 5·6)는 `…-000003-000003`·`…-000005-000006` 두 파일이 된다. 새 코드는 저널을 쓰지 않는다. r4가 끊기며 남긴 `reports/.export.journal{first_seq, names}`은 어떤 송신보다 먼저 그 seq를 아직 대기 중인 파일에 써 넣고 지운다(`settle_journal` — r4가 다시 냈을 묶음과 같은 보고·같은 seq, 이미 `exported/`로 옮겨진 파일은 r4가 묶음을 이미 썼다는 뜻이라 둔다).
+- **heartbeat(E4)**: 서비스 tick(`PUREIRON_POLL_INTERVAL_S`, 기본 60 s)마다 1건, poll 뒤 advance 전. seq는 보내기 전에 예약하고 실패하면 버린다(재전송 없음). 값 정의는 api-events heartbeat 행. `seq_pending`이거나 미등록이면 heartbeat·보고 모두 보내지 않는다(경고 로그).
+- **온라인 보고 전송(E6)**: tick마다 대기 보고를 오래된 순으로 최대 20건, 봉투 `site-report` = 큐 파일 + `site_id`·`report_seq`. 200(applied·history) → `exported/`, 400 → `rejected/`, 401·403·404·5xx·연결 실패 → 그대로 두고 그 tick의 보고 전송을 멈춘다. 요청 제한 10 s. tick 순서 = recover → poll → heartbeat → 보고 → advance, 송신 단계의 예외는 로그만(서로·apply를 막지 않는다).
+- **드래프트 업로드(E8)**: `pureiron-site project export --out draft.tar --upload` — 파일을 만든 뒤 `POST /sites/{site}/drafts`(`application/x-tar`, 같은 출처 token). 201이 아니거나 닿지 못하면 exit 1이고 파일은 남는다(USB로도 쓸 수 있게). `PUREIRON_CONTROL_API` 미설정·미등록이면 export 전에 exit 3. 재시도 = 다시 실행(새 export) — 중앙 `drafts/latest`는 가장 높은 `site_rev`라 늦게 도착한 이전 파일이 가리지 않는다.
+- **쓰기 스위치(C2·E10)**: fleet 현장 파일 `writes: {enabled: bool}`(선택, 계약 `fleet-site.schema.json`) → `build_bundle`이 `true`일 때만 manifest 루트에 `site_config: {writes_enabled: true}`(선택, 계약 `manifest.schema.json`, 서명 대상)를 넣는다. 없음·false 번들에는 키 자체가 없어 **manifest·`.pib` 바이트가 M4-1 전 빌더와 같다**(같은 입력으로 master 빌더와 비교 확인). Updater는 generation `.env`에 `PUREIRON_WRITES_ENABLED=true|false`를 **늘** 쓰고(`Manifest.site_config.writes_enabled`, 없으면 false), docker compose 호출 환경에서 같은 키를 지운다 — compose 보간은 셸 환경이 `--env-file`보다 우선하므로, 안 지우면 systemd `EnvironmentFile=/etc/pureiron/updater.env`나 운영자 셸의 값이 `.env`를 덮는다. `updater.env`·프로세스 환경의 그 키는 무시하고 서비스 시작 때 경고 1회. core는 바뀌지 않았다(compose `${PUREIRON_WRITES_ENABLED:-false}` 그대로). **업그레이드 영향(R3)**: 그 키로 쓰기를 켜 두었던 현장은 0.2.0 Updater가 다음 generation을 적용할 때 꺼진다 — fleet 파일에 `writes.enabled: true`를 넣어 다시 켠다.
+- **`min_updater` 기본값(E1)**: Updater 패키지 버전과 묶지 않는다 — `build_bundle` 기본 `BASE_MIN_UPDATER = 0.1.0`(번들 형식이 요구할 때만 올림), 쓰기를 켠 번들은 `0.2.0`, `--min-updater`가 우선. Updater는 0.1.0 → **0.2.0**. r4 Updater(0.1.0)는 쓰기를 켠 번들을 `min_updater`(⑤ `E_UPDATER`)보다 먼저 manifest 계약 검증(서명 확인 직후, 루트 `additionalProperties: false`)에서 **`E_FORMAT`**으로 거부한다 — C2가 기대한 `E_UPDATER`는 아니지만 안전 방향(적용 안 함)은 같다. 꺼진 번들은 r4가 그대로 받는다.
+- **드래프트 게이트(E2, I-2)**: 위 배포 게이트 줄. `absorbs`에 content_hash가 없어 같은 번호에 다른 내용(복원 뒤 PATCH로 번호가 다시 같아짐)은 못 잡는다(백로그).
+- **관측(E12)**: `updater.prom`에 `updater_reports_pending`, `updater_reports_rejected_total`, `updater_heartbeat_last_success_timestamp_seconds`(없으면 0). 송신은 시도 종료와 따로 일어나므로 송신 줄만 바꿔 쓰고, 시도 종료가 파일을 다시 쓸 때도 송신 줄을 넣는다. `pureiron-site status`에 `reports pending: N`.
+- **control-api(E9, M4-0 리뷰 이관)**: `drafts` 표는 그대로(새 마이그레이션 없음). 드래프트 파일은 현장 행 잠금 + INSERT와 같은 트랜잭션 안에서 쓰고, 실패하면 롤백하고 이번 요청이 만든 파일을 지운다(고아 파일 없음). `site_rev`·`base_site_rev`·enrollment `next_report_seq`는 bigint 상한(`platform/seqmarks.SEQ_MAX`), 드래프트 `content_hash`·`exported_at`은 NUL·짝 없는 서로게이트 검사(`platform/storable`, 보고와 공용). 서명(JCS)은 2⁵³−1 넘는 정수를 직렬화하지 못하므로 그 위 값은 서명 단계에서 먼저 400이고 범위 검사는 방어선이다.
+- **검증**: Updater 단위(seq 예약·할당 crash 지점 — 예약 뒤·파일 쓰기 뒤·묶음 뒤 이동 전·전송 뒤 이동 전, 온라인 실패분의 USB 반출 같은 seq, 연속 구간 분할, r4 저널 2종, 응답 표 200·400·401·403·404·500·연결 실패, tick당 20건, `seq_pending`·미등록 미송신, heartbeat 실패 버림·카운터 공유, 시도 중 `current` = 적용된 값, `disk_state` 경계, 서로게이트 보고 서명, `.env` 스위치 true·false·없음, compose 환경 키 제거, 무시+경고, `--upload` 성공·거부·미설정·연결 실패), bundle(쓰기 없음·false → `site_config` 없음 + 0.1.0 + 바이트 동일, true → `site_config` + 0.2.0, r4 계약 사본 fixture `deploy/tests/fixtures/r4-schema/`로 false 통과·true 위반, 게이트 표), control-api 단위(드래프트·enrollment 범위·NUL·서로게이트, 저장 오류 507 분류, latest 정렬) + control-db 통합 `test_updater_send_db.py`(실제 control-api(uvicorn) + 실제 Updater `cli.tick`: fleet online·current·disk_state, 보고 2건과 heartbeat seq 교차, 중앙 중단 중 보고 → `report export` → 반입 applied → 같은 파일 온라인 재전송 history, 400 보고 `rejected/`, 드래프트 5·7·늦은 5 → latest 7, 드래프트 저장 실패 507 + 행·파일 없음, r4 desired polling만으로 `last_seen`).
 
 ---
 
@@ -3459,11 +3477,11 @@ PureIron 런타임 설정의 정본은 `backend/src/pureiron/config.py`의 `Sett
 
 - compose 프로젝트명 `pureiron` 고정(`-p pureiron`), 모든 이미지 `pureiron/<svc>:<release>` + `pull_policy: never`, 로드 후 `.Id == config_digest` assert.
 - 비밀값: `pureiron-site secret set <name>`으로 `state/secrets/`에 저장, 프로젝트는 `secret://<name>`만 참조. 중앙 토큰은 `control_api_token`.
-- 현장 CLI(`pureiron-site`): `enroll`, `apply <pib>`, `bundle verify <pib>`, `status`, `secret set`, `report export`, `project export`.
+- 현장 CLI(`pureiron-site`): `enroll`, `apply <pib>`, `bundle verify <pib>`, `status`, `secret set`, `report export`, `project export [--upload]`. 서비스 loop(`run`)는 `PUREIRON_CONTROL_API`가 있으면 tick마다 poll → heartbeat → 보고 전송(M4-1, [data-contracts](data-contracts.md) M4-1 절).
 - Redis 없음(ADR-008 개정). core `/readyz` = DB 연결 + 스키마 호환 범위 + collector 세션. 응답의 `acquisition`(plan_rev·장비 연결 수·태그 GOOD 수·`good_ratio`·ingest 누적 `live`/`stale`/`future`/`replay`)은 집계일 뿐 준비 판정에 쓰지 않으며, Updater `checking` 단계의 GOOD 비율 기준이 이 값을 쓴다(M3a). `historian`(버퍼 행 수·drop·쓰기 지연·`db_ok`·버린 샘플 수·site-db가 거부해 격리한 행 수)도 정보로만 낸다 — 이력 DB 쓰기가 막혀도 수집·현재값은 계속된다(M3a-3).
 - 장비·태그 정의: `pureiron-core apply-definitions <프로젝트 디렉터리>`가 project-tools로 검증한 뒤 `devices.definition`·`tags.definition`(jsonb)에 path 기준 upsert·retire 하고, `project.yaml`의 `historian`(기록 기본값, 정규형·비면 NULL)은 `project_state.historian`에 같은 트랜잭션으로 저장한다. 바뀐 것이 있을 때만 `project_state.definitions_rev`(= plan_rev)를 올린다. core는 이 rev를 주기적으로 읽어 collector에 새 plan을 보낸다(정식 project apply는 M5).
 - **dev/VM DB 주의(M3a-3 D12)**: D12로 epoch 3 내용이 0008 → 0009로 늘었다(release된 epoch는 2까지라 현장 영향 없음). 0008까지 적용된 dev/VM DB는 새 core를 올리기 전에 `pureiron-core migrate up`이 필수다 — `/readyz`·Updater는 epoch 번호만 보므로, 안 하면 `/readyz`는 ready인데 `project_state.historian` 열이 없어 정의 로드가 실패하고 plan이 적용되지 않아 수집 전체가 멈춘다.
-- 관측: core·collector `/metrics`, Updater가 60초마다 `state/metrics/<svc>.prom`·일별 jsonl로 기록, `/var/lib/pureiron` 사용률 경고 ≥ 0.80·위험 ≥ 0.90.
+- 관측: core·collector `/metrics`, Updater가 60초마다 `state/metrics/<svc>.prom`·일별 jsonl로 기록, `/var/lib/pureiron` 사용률 경고 ≥ 0.80·위험 ≥ 0.90(M4-1부터 heartbeat `disk_state` `warn`·`critical`). Updater 송신 메트릭 `updater_reports_pending`·`updater_reports_rejected_total`·`updater_heartbeat_last_success_timestamp_seconds`(M4-1).
 
 ### V1 환경변수 (M1~M3a 구현)
 
@@ -3489,7 +3507,7 @@ PureIron 런타임 설정의 정본은 `backend/src/pureiron/config.py`의 `Sett
 | `PUREIRON_AUTH_SESSION_ABSOLUTE_S` | core | `604800`(7 d) | 세션 절대 만료(로그인 기준, 사용 중이어도 끝남). 세션 쿠키 `Max-Age`도 이 값 |
 | `PUREIRON_AUTH_COOKIE_SECURE` | core | `false` | 세션 쿠키 `Secure` 속성(`true/false`, `1/0`, `yes/no`, `on/off`). 현장 web은 http라 기본 false — true면 브라우저가 http로는 쿠키를 보내지 않는다 |
 | `PUREIRON_REALTIME_BATCH_MS` | core | `250` | WS `tag_update` 합치기 주기(ms, 양의 정수). 구독한 태그의 변화는 이 주기마다 태그별 최신값만 보낸다(M3b-2). 알람·장비 이벤트는 주기와 무관하게 즉시 |
-| `PUREIRON_WRITES_ENABLED` | core·compose | `false` | 현장 PLC 쓰기 스위치(ADR-013 2항, M3c-2). 꺼지면 plan `writable` 전부 false·모든 쓰기 거부. 켜고 기동하면 감사 `writes.enabled_at_boot` 1행 + `/readyz.writes.enabled`. compose는 `${PUREIRON_WRITES_ENABLED:-false}`로 core에 넘긴다 |
+| `PUREIRON_WRITES_ENABLED` | core·compose | `false` | 현장 PLC 쓰기 스위치(ADR-013 2항, M3c-2). 꺼지면 plan `writable` 전부 false·모든 쓰기 거부. 켜고 기동하면 감사 `writes.enabled_at_boot` 1행 + `/readyz.writes.enabled`. compose는 `${PUREIRON_WRITES_ENABLED:-false}`로 core에 넘긴다. **현장에서는 fleet 현장 파일 `writes.enabled`로만 켠다**(M4-1 C2): 서명된 manifest `site_config.writes_enabled` → Updater 0.2.0이 generation `.env`에 늘 기록하고 compose 호출 환경에서는 이 키를 지운다 — `updater.env`·셸에 넣은 값은 무시(서비스 시작 경고) |
 | `PUREIRON_WRITE_CONFIRM_TTL_S` | core | `60` | 쓰기 prepare 뒤 confirm까지 허용 시간(초, 최대 3600) |
 | `PUREIRON_WRITE_TIMEOUT_S` | core | `10` | confirm이 collector 쓰기 결과를 기다리는 시한(초, 최대 60 = collector `timeout_ms` 상한). 넘으면 `NO_RESPONSE`. collector 보내기 기한 = 이 값 − 2s − 2 × 장비 `timeout_ms` |
 | `PUREIRON_CORE_GRPC` | collector | `127.0.0.1:50051` | core gRPC 주소(compose: `core:50051`) |
