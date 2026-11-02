@@ -90,3 +90,14 @@ def test_online_documents_need_the_registered_key(purpose: SitePurpose) -> None:
         open_document(data, purpose)
     with pytest.raises(SignedDocumentError, match="signature does not match"):
         open_document(data, purpose, keys.public_key(bytes(32)))
+
+
+def test_unpaired_surrogate_in_payload_is_a_signed_document_error() -> None:
+    """리뷰 r3 R3-1: JSON 이스케이프 `\\ud800`은 json.loads를 지나지만 서명 대상(JCS)으로
+    직렬화할 수 없다 — 처리되지 않은 CanonicalizationError(API 500) 대신
+    SignedDocumentError(400)다."""
+    data = dumps(sign_document(SEED, SitePurpose.REPORT, {**PAYLOAD, "logs": "ab"}))
+    tampered = data.replace(b'"ab"', b'"a\\ud800b"')
+    assert tampered != data
+    with pytest.raises(SignedDocumentError, match="non-UTF-8 code points"):
+        open_document(tampered, SitePurpose.REPORT, PUBLIC)

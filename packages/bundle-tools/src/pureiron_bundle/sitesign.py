@@ -116,7 +116,12 @@ def open_document(
         raw_signature = bytes.fromhex(signature)
     except ValueError as exc:
         raise SignedDocumentError(f"signature is not hex ({exc})") from exc
-    if not keys.verify(public, raw_signature, _signed_bytes(purpose, payload)):
+    try:
+        signed = _signed_bytes(purpose, payload)
+    except rfc8785.CanonicalizationError as exc:
+        # json.loads는 짝 없는 서로게이트(`\ud800`)를 받지만 JCS는 거부한다 — 서명할 수 없는 본문.
+        raise SignedDocumentError("payload contains non-UTF-8 code points") from exc
+    if not keys.verify(public, raw_signature, signed):
         raise SignedDocumentError("signature does not match")
     return payload
 

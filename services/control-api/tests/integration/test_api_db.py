@@ -511,13 +511,22 @@ def test_late_heartbeat_does_not_overwrite_current_of_a_newer_successful_report(
     assert cast(JsonObject, row["current"]) == before  # gen·reported_at·source 모두 그대로
     assert row["disk_state"] == "low"  # heartbeat 전용 필드는 heartbeat 수위로 반영
     assert (row["last_heartbeat_seq"], row["last_report_seq"]) == (11, 12)
-    # 다음 heartbeat(13)는 공용 카운터로도 더 새로우므로 current를 쓴다.
+    # 다음 heartbeat(14)는 공용 카운터로도 더 새로우므로 current를 쓴다.
     next_beat = central.client.post(
-        "/api/v1/sites/site-a/heartbeat", content=site_a.heartbeat(13, gen=2), headers=headers
+        "/api/v1/sites/site-a/heartbeat", content=site_a.heartbeat(14, gen=2), headers=headers
     )
-    assert next_beat.json() == {"outcome": "applied", "last_seq": 13}
+    assert next_beat.json() == {"outcome": "applied", "last_seq": 14}
     after = cast(JsonObject, fleet_row(central, "site-a")["current"])
     assert (after["gen"], after["product"]) == (2, "2026.11.0")
+    # 리뷰 r3 N3-b(재현 B): 늦게 재전송된 성공 보고 13(< current_seq 14)은 보고 수위(12)로는
+    # 반영(last_attempt)되지만 current는 그대로다.
+    resent = central.client.post(
+        "/api/v1/sites/site-a/reports", content=site_a.report(13, to=1), headers=headers
+    )
+    assert resent.json() == {"outcome": "applied", "last_seq": 13}
+    row = fleet_row(central, "site-a")
+    assert cast(JsonObject, row["last_attempt"])["report_seq"] == 13
+    assert cast(JsonObject, row["current"]) == after
 
 
 def test_offline_file_crossing_the_report_mark_splits_history_and_applied(

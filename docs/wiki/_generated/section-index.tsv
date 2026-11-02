@@ -106,7 +106,7 @@ sot-agent-rules	docs/wiki/sot/agent-rules.md	문서-읽기-규율-섹션-단위-
 sot-agent-rules	docs/wiki/sot/agent-rules.md	중복-방지-원칙	190	17	795	h2	중복 방지 원칙
 sot-agent-rules	docs/wiki/sot/agent-rules.md	자동-생성-vs-수기-관리-범위	207	8	773	h2	자동 생성 vs 수기 관리 범위
 sot-agent-rules	docs/wiki/sot/agent-rules.md	기여-흐름-raw--wiki--pr--review	215	15	1647	h2	기여 흐름 (raw → wiki → PR → review)
-sot-api-events	docs/wiki/sot/api-events.md	api--events-sot	17	252	41670	h1	API & Events SOT
+sot-api-events	docs/wiki/sot/api-events.md	api--events-sot	17	252	41928	h1	API & Events SOT
 sot-api-events	docs/wiki/sot/api-events.md	이-문서의-원천	25	8	868	h2	이 문서의 원천
 sot-api-events	docs/wiki/sot/api-events.md	라우터-프리픽스	33	31	2580	h2	라우터 프리픽스
 sot-api-events	docs/wiki/sot/api-events.md	주요-api-계약-요약	64	16	3308	h2	주요 API 계약 요약
@@ -121,7 +121,7 @@ sot-api-events	docs/wiki/sot/api-events.md	v1-알람실시간장비이력-api-ap
 sot-api-events	docs/wiki/sot/api-events.md	websocket-apiv1ws-v1-m3b-2	181	10	2259	h3	WebSocket `/api/v1/ws` (V1, M3b-2)
 sot-api-events	docs/wiki/sot/api-events.md	v1-쓰기-api-apiv1-m3c-2-구현	191	16	4861	h2	V1 쓰기 API (`/api/v1`, M3c-2 구현)
 sot-api-events	docs/wiki/sot/api-events.md	v1-현장-프로젝트-api-apiv1project-m1m5-2-구현	207	18	3672	h2	V1 현장 프로젝트 API (`/api/v1/project`, M1·M5-2 구현)
-sot-api-events	docs/wiki/sot/api-events.md	v1-중앙-control-api-apiv1-m4-0-구현	225	26	7482	h2	V1 중앙 control-api (`/api/v1`, M4-0 구현)
+sot-api-events	docs/wiki/sot/api-events.md	v1-중앙-control-api-apiv1-m4-0-구현	225	26	7740	h2	V1 중앙 control-api (`/api/v1`, M4-0 구현)
 sot-api-events	docs/wiki/sot/api-events.md	내부-이벤트-버스	251	18	1432	h2	내부 이벤트 버스
 sot-architecture	docs/wiki/sot/architecture.md	architecture-sot	28	270	23654	h1	Architecture SOT
 sot-architecture	docs/wiki/sot/architecture.md	이-문서의-원천	42	8	449	h2	이 문서의 원천

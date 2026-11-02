@@ -6,13 +6,16 @@ import json
 
 import pytest
 
+from pureiron_bundle import keys
 from pureiron_bundle.sitesign import (
+    Json,
     SitePurpose,
     dumps,
     pack_draft,
     sign_document,
 )
 from pureiron_control.platform.envelopes import claimed_draft_site, claimed_site
+from pureiron_control.sites import EnrollmentError, parse_enrollment
 
 SEED = bytes(range(32))
 
@@ -50,3 +53,19 @@ def test_unusable_draft_has_no_claimed_site(data: bytes) -> None:
 
 def test_draft_envelope_without_payload_has_no_claimed_site() -> None:
     assert claimed_draft_site(pack_draft(b"{}", b"tree")) is None
+
+
+def test_enrollment_with_unpaired_surrogate_is_an_enrollment_error() -> None:
+    """리뷰 r3 R3-1: 서명 단계에서 서로게이트를 거부해 `POST /sites`·rekey가 500이 아니라
+    400이다."""
+    public = keys.public_key(SEED)
+    payload: dict[str, Json] = {
+        "site_id": "site-a",
+        "public_key": public.hex(),
+        "fingerprint": keys.fingerprint(public),
+        "next_report_seq": 1,
+        "note": "ab",
+    }
+    data = dumps(sign_document(SEED, SitePurpose.ENROLLMENT, payload))
+    with pytest.raises(EnrollmentError, match="non-UTF-8 code points"):
+        parse_enrollment(data.replace(b'"ab"', b'"a\\ud800b"'))
