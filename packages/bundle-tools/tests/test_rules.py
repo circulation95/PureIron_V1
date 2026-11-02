@@ -110,11 +110,18 @@ def test_updater_version_is_semver_not_string_order() -> None:
 @pytest.mark.parametrize(
     ("absorbs", "draft", "ok"),
     [
-        ({"site-a": 3}, DraftState(site_rev=3, base_site_rev=1), True),
-        ({"site-a": 3}, DraftState(site_rev=4, base_site_rev=4), False),
-        ({}, DraftState(site_rev=2, base_site_rev=2), True),
-        ({"site-b": 9}, DraftState(site_rev=3, base_site_rev=2), False),
-        ({}, None, True),
+        # absorbs 있음: site_rev <·=·> absorbs, 드래프트 있음·없음(M4-1 E2, I-2)
+        pytest.param({"site-a": 3}, DraftState(3, 1), True, id="eq-absorbs-drafts"),
+        pytest.param({"site-a": 3}, DraftState(3, 3), True, id="eq-absorbs-no-drafts"),
+        pytest.param({"site-a": 3}, DraftState(4, 1), False, id="gt-absorbs-drafts"),
+        pytest.param({"site-a": 3}, DraftState(4, 4), True, id="gt-absorbs-no-drafts"),
+        pytest.param({"site-a": 3}, DraftState(2, 1), False, id="lt-absorbs-drafts-restored"),
+        pytest.param({"site-a": 3}, DraftState(1, 1), True, id="lt-absorbs-no-drafts"),
+        # absorbs 없음(다른 현장 흡수 포함)
+        pytest.param({}, DraftState(2, 2), True, id="no-absorbs-no-drafts"),
+        pytest.param({}, DraftState(3, 2), False, id="no-absorbs-drafts"),
+        pytest.param({"site-b": 9}, DraftState(3, 2), False, id="other-site-absorbs"),
+        pytest.param({}, None, True, id="pre-tree-core"),
     ],
 )
 def test_draft_gate(absorbs: dict[str, int], draft: DraftState | None, ok: bool) -> None:

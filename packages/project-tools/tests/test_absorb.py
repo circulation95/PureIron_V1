@@ -506,11 +506,13 @@ def test_absorb_defaults_to_current_directory(
 # ── gate ─────────────────────────────────────────────────────────────────────
 
 type GateCase = tuple[int | None, int, int, bool]
-"""(absorbs[site], site_rev, base_site_rev, 통과) — check_draft_gate 3분기(absorbs 있음 2가지)."""
+"""(absorbs[site], site_rev, base_site_rev, 통과) — check_draft_gate 분기(M4-1 E2 포함)."""
 
 GATE_CASES = [
     pytest.param((3, 3, 1, True), id="absorbed-up-to-site-rev"),
     pytest.param((3, 5, 3, False), id="drafts-after-absorbs"),
+    pytest.param((3, 2, 1, False), id="drafts-behind-absorbs"),  # M4-1 E2: 복원 뒤 퇴행
+    pytest.param((3, 5, 5, True), id="absorbs-no-drafts-left"),
     pytest.param((None, 4, 4, True), id="no-absorbs-no-drafts"),
     pytest.param((None, 5, 4, False), id="no-absorbs-with-drafts"),
 ]

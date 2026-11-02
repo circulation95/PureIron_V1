@@ -219,21 +219,28 @@ def check_updater_version(min_updater: str, updater_version: str) -> None:
 
 
 def check_draft_gate(site_id: str, absorbs: Mapping[str, int], draft: DraftState | None) -> None:
-    """드래프트 게이트(data-contracts). Updater가 lock 시점에 같은 함수로 재검사한다."""
-    if draft is None:
+    """드래프트 게이트(data-contracts). Updater가 lock 시점에 같은 함수로 재검사한다.
+
+    통과: 남은 드래프트가 없거나(`site_rev == base_site_rev`), 번들이 지금 현장 리비전을
+    정확히 흡수했다(`site_rev == absorbs[site]`). `absorbs`가 있어도 `site_rev`가 그보다 작으면서
+    드래프트가 남았으면 거부한다(M4-1 E2, I-2) — 백업 복원 등으로 `site_rev`가 뒤로 간 뒤 생긴
+    드래프트는 번들이 흡수한 것이 아니다. 같은 번호에 다른 내용(복원 뒤 PATCH로 번호가 다시
+    같아짐)은 못 잡는다.
+    """
+    if draft is None or draft.site_rev == draft.base_site_rev:
         return
     absorbed = absorbs.get(site_id)
-    if absorbed is not None:
-        if draft.site_rev > absorbed:
-            raise BundleRejectedError(
-                RejectCode.E_DRAFT,
-                f"site_rev {draft.site_rev} has drafts not absorbed (absorbs {absorbed})",
-            )
-    elif draft.site_rev != draft.base_site_rev:
+    if absorbed is None:
         raise BundleRejectedError(
             RejectCode.E_DRAFT,
             f"site_rev {draft.site_rev} != base_site_rev {draft.base_site_rev} "
             "(unabsorbed site drafts)",
+        )
+    if draft.site_rev != absorbed:
+        relation = "not absorbed" if draft.site_rev > absorbed else "behind the absorbed"
+        raise BundleRejectedError(
+            RejectCode.E_DRAFT,
+            f"site_rev {draft.site_rev} has drafts {relation} (absorbs {absorbed})",
         )
 
 
