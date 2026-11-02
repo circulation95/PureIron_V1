@@ -35,19 +35,25 @@
 
 ## 결과 기록
 
-- `state/reports/<시작시각>-g<gen>-<번들 sha256 12자>.json` — control-api ApplyAttempt 필드. 처음 나갈 때(온라인이든 `report export`든) `outbox.assign`이 공용 카운터에서 `report_seq`를 예약해 **파일에 써 넣고**, 이후 어느 경로든 그 값만 쓴다(한 보고 = seq 하나). 중앙이 받거나 USB 묶음에 들어가면 `reports/exported/`, 중앙이 400(형식 위반)이면 `reports/rejected/`(보존, 오류 로그). 문자열은 저장 가능한 UTF-8로 정리해 쓴다(서로게이트·NUL).
+- `state/reports/<시작시각>-g<gen>-<번들 sha256 12자>.json` — control-api ApplyAttempt 필드. 처음 나갈 때(온라인이든 `report export`든) `outbox.assign`이 공용 카운터에서 `report_seq`를 예약해 **파일에 써 넣고**, 이후 어느 경로든 그 값만 쓴다(한 보고 = seq 하나). 중앙이 받거나 USB 묶음에 들어가면 `reports/exported/`, 중앙이 영원히 받지 않으면(400 형식 위반·413 크기 초과) 또는 JSON으로 읽을 수 없는 파일이면 `reports/rejected/`(보존, 오류 로그, 자동 재전송 없음). 409(등록 키 불일치 — rekey 대기)는 큐에 남는다. 문자열은 저장 가능한 UTF-8로 정리해 쓴다(서로게이트·NUL).
 - `state/metrics/updater.prom` — `updater_last_result`, `updater_applied_generation`, `updater_failed_manual`(alarm 유무: `failed_manual` 또는 `E_DEFINITIONS_LEFT`), `updater_phase_duration_seconds{phase}` + 송신 `updater_reports_pending`, `updater_reports_rejected_total`, `updater_heartbeat_last_success_timestamp_seconds`(카운터는 `state/outbox.json`).
 
 ### 온라인 송신 (`send.py`·`outbox.py`, M4-1)
 
-`PUREIRON_CONTROL_API`가 있으면 서비스 tick(60 s)이 recover → poll → **heartbeat → 보고** → advance 순으로 돈다. 송신 단계의 실패는 로그만 남기고 apply를 막지 않는다. 미등록·`seq_pending`이면 둘 다 보내지 않는다.
+`PUREIRON_CONTROL_API`가 있으면 서비스 tick(60 s)이 recover → poll → **heartbeat → 보고** → advance 순으로 돈다. 송신 단계의 실패는 무엇이든(깨진 `site.key` 포함) 로그만 남기고 apply를 막지 않는다. 미등록·`seq_pending`·site 키를 못 읽음이면 둘 다 보내지 않는다. 남은 r4 저널은 어떤 seq 예약보다 먼저 정리한다.
 
 | 송신 | 내용 | 실패 |
 |---|---|---|
-| heartbeat | tick마다 1건 `POST /sites/{site}/heartbeat`(seq 예약 후): `current` = 적용된 gen의 manifest 버전(시도 중에도), `updater_phase` = 경보 `failed_manual` > 진행 phase > `idle`, `disk_state` = `PUREIRON_ROOT` 사용률 ok·warn(≥ 0.80)·critical(≥ 0.90) | 버린다(재전송 없음) |
-| 보고 | 대기 보고를 오래된 순 최대 20건 `POST /sites/{site}/reports` | 200 → `exported/`, 400 → `rejected/`, 그 밖·연결 실패 → 남기고 이 tick 중단 |
+| heartbeat | tick마다 1건 `POST /sites/{site}/heartbeat`(seq 예약 후): `current` = 적용된 gen의 manifest 버전(시도 중에도), `updater_phase` = 경보 `failed_manual` > 진행 phase > `idle`, `disk_state` = `PUREIRON_ROOT` 사용률 ok·warn(≥ 0.80)·critical(≥ 0.90) | 버린다(재전송 없음, 409 포함) |
+| 보고 | 대기 보고 최대 20건(이미 seq가 있는 파일 seq 순 → 나머지 이름순) `POST /sites/{site}/reports` | 200 → `exported/`, 400·413·읽을 수 없는 파일 → `rejected/`, 409(키 불일치)·그 밖·연결 실패 → 남기고 이 tick 중단 |
 
 요청 제한 10 s, token은 control-api와 같은 출처에만.
+
+운영 메모:
+
+- **키를 바꾼 뒤(`enroll --re-enroll`)**: 벤더가 새 `enrollment.json`으로 `POST /sites/{site}/rekey`를 실행할 때까지 중앙은 409 `site key mismatch (rekey pending?)`다. 보고는 큐에 남아 rekey 뒤 같은 seq로 나가고, heartbeat는 그동안 버려진다. `project export --upload`도 exit 1(파일 유지).
+- **`reports/rejected/`**: 자동으로 다시 보내지 않는다. 원인(로그의 HTTP 400·413 detail 또는 읽기 오류)을 확인한 뒤 고쳐 큐로 되돌리거나 USB 반입한다.
+- **백업 복원 뒤 드래프트**: 현장 `site_rev`가 되돌아가면 복원 전에 올린 더 높은 리비전이 중앙 `drafts/latest`를 가린다 — 그 사이 드래프트는 `project export` 파일을 USB로 전달한다.
 
 ### Runbook: `E_DEFINITIONS_LEFT`(전환기 롤백)
 
