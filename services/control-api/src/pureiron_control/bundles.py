@@ -9,7 +9,9 @@
 - 데이터 디렉터리 쓰기 실패(`OSError` — 디스크 가득·권한)는 `BundleStorageError`(507)다. 이동은
   DB 연결 본문 안에서 일어나므로 `OSError`를 그대로 두면 연결 계층이 control-db 장애(503)로 바꾼다 —
   운영자가 DB를 의심하고 게시 도구가 일시 장애로 재시도하게 된다.
-- DesiredState = 그 현장의 최신 게시 번들(revert도 gen+1 게시라 늘 최댓값이다).
+- DesiredState = 그 현장의 최신 게시 번들(revert도 gen+1 게시라 늘 최댓값이다). 현장 token이 확인된
+  polling(`polled`)은 `sites.last_seen`도 갱신한다(M4-1 E3) — heartbeat를 보내지 않는 r4 Updater
+  현장도 fleet에서 연결 상태로 보인다.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from pureiron_bundle.manifest import MANIFEST_FILE, Manifest, parse_manifest
 from pureiron_bundle.pib import open_pib
 from pureiron_control.platform.clock import Clock
 from pureiron_control.platform.files import SpooledFile, discard, place, spool
+from pureiron_control.platform.seen import touch
 from pureiron_core.platform.db import Database
 
 BUNDLES_DIR = "bundles"
@@ -191,6 +194,14 @@ class BundleStore:
 
     async def desired(self, site_id: str) -> PublishedBundle | None:
         async with self._db.connection() as conn:
+            row = await conn.fetchrow(DESIRED_SQL, site_id)
+        return None if row is None else PublishedBundle(**dict(row.items()))
+
+    async def polled(self, site_id: str) -> PublishedBundle | None:
+        """현장의 desired polling: `last_seen`을 남기고(게시가 없어도) DesiredState를 돌려준다."""
+        seen_at = self._clock()
+        async with self._db.connection() as conn:
+            await touch(conn, site_id, seen_at)
             row = await conn.fetchrow(DESIRED_SQL, site_id)
         return None if row is None else PublishedBundle(**dict(row.items()))
 

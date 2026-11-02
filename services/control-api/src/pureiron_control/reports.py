@@ -35,7 +35,9 @@ from enum import StrEnum
 from pureiron_bundle.sitesign import Json
 from pureiron_bundle.verify import AttemptResult
 from pureiron_control.platform.clock import Clock
-from pureiron_control.platform.seqmarks import MessageKind, SeqMarks
+from pureiron_control.platform.seen import touch
+from pureiron_control.platform.seqmarks import SEQ_MAX, MessageKind, SeqMarks
+from pureiron_control.platform.storable import UNSTORABLE_HINT, unstorable_at
 from pureiron_core.platform.db import Connection, Database
 
 LOCK_SITE_SQL = """
@@ -75,12 +77,6 @@ UPDATE sites
 BUNDLE_VERSIONS_SQL = """
 SELECT product_version, project_version FROM bundles WHERE site_id = $1 AND generation = $2
 """
-# 시각은 잠금을 잡기 전에 잰다 — 동시 요청이 먼저 쓴 더 늦은 시각을 되돌리지 않는다.
-TOUCH_SQL = """
-UPDATE sites SET last_seen = GREATEST(coalesce(last_seen, $2), $2) WHERE site_id = $1
-"""
-SEQ_MAX = 2**63 - 1
-"""`report_seq`·`first_seq`·`last_seq` 상한(bigint)."""
 GEN_MAX = 2**31 - 1
 """generation 계열(`generation`·`to`·`from`·`current.gen`) 상한(integer — `bundles.generation`)."""
 
@@ -207,29 +203,12 @@ def _optional_gen(payload: Mapping[str, Json], key: str) -> int | None:
     return value
 
 
-def _storable(text: str) -> bool:
-    try:
-        text.encode("utf-8")
-    except UnicodeEncodeError:
-        return False
-    return "\x00" not in text
-
-
 def _reject_unstorable(value: Json, where: str = "payload") -> None:
-    """저장할 수 없는 문자를 저장 전에 400으로 거부한다(키·값·중첩): jsonb·text는 NUL(JSON
-    `\\u0000`)을 받지 않고, 짝 없는 서로게이트(JSON `\\ud800`)는 UTF-8로 인코딩되지 않는다."""
-    if isinstance(value, str):
-        if not _storable(value):
-            raise ReportFormatError(
-                f"{where} must not contain NUL or unpaired surrogates (\\u0000, \\ud800-\\udfff)"
-            )
-    elif isinstance(value, dict):
-        for key, item in value.items():
-            _reject_unstorable(key, f"{where} key")
-            _reject_unstorable(item, f"{where}.{key}")
-    elif isinstance(value, list):
-        for item in value:
-            _reject_unstorable(item, f"{where}[]")
+    """저장할 수 없는 문자(NUL·짝 없는 서로게이트)를 저장 전에 400으로 거부한다
+    (`platform.storable`)."""
+    found = unstorable_at(value, where)
+    if found is not None:
+        raise ReportFormatError(f"{found} {UNSTORABLE_HINT}")
 
 
 def _optional_text(payload: Mapping[str, Json], key: str) -> str | None:
@@ -429,7 +408,7 @@ class PgReportStore:
                 if verdict.outcome is SeqOutcome.APPLIED:
                     marks = marks.advanced(kind, message.report_seq)
             if source is Source.ONLINE:
-                await conn.execute(TOUCH_SQL, site_id, received_at)
+                await touch(conn, site_id, received_at)
             result = RecordResult(tuple(outcomes), marks, import_id)
             if import_id is not None:
                 await conn.execute(

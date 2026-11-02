@@ -1266,6 +1266,9 @@
           "403": {
             "description": "Forbidden"
           },
+          "404": {
+            "description": "Not Found"
+          },
           "413": {
             "description": "Request Entity Too Large"
           },
@@ -1278,6 +1281,9 @@
               }
             },
             "description": "Validation Error"
+          },
+          "507": {
+            "description": "데이터 디렉터리 쓰기 실패"
           }
         },
         "security": [

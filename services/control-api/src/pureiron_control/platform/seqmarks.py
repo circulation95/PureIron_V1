@@ -1,13 +1,18 @@
 """report_seq 반영 수위(plan M4 C7): 카운터는 heartbeat·보고 공용, 수위는 종류별.
 
 `reports`(seq 규칙)와 `sites`(rekey 다음 seq)가 같은 값을 쓴다 — 도메인 모듈끼리 import하지 않게
-여기 둔다(import-linter 계약 (c)).
+여기 둔다(import-linter 계약 (c)). 저장 열 상한(`SEQ_MAX` = bigint)도 `reports`·`sites`·`drafts`가
+함께 쓴다(M4-0 리뷰 R-3).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+
+SEQ_MAX = 2**63 - 1
+"""`report_seq`·`first_seq`·`last_seq`·`next_report_seq`·드래프트 `site_rev` 계열 상한
+(bigint 열)."""
 
 
 class MessageKind(StrEnum):

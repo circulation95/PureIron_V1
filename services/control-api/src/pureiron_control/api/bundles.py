@@ -2,6 +2,7 @@
 
 - `GET /sites/{site}/desired` → `{generation, bundle_url, sha256, size}`, `ETag: "<gen>"`,
   `If-None-Match`가 같으면 304, 게시가 없으면 404 — 현장 Updater `poll.py`가 이 형태를 소비한다.
+  token이 확인된 요청은 응답(200·304·404)과 무관하게 `last_seen`을 갱신한다(M4-1 E3).
   `bundle_url`은 같은 출처의 절대 경로다(Updater는 같은 출처에만 token을 보낸다).
 - `GET /sites/{site}/bundles/{generation}` → `.pib`(`Range` 이어받기 206).
 - `PUT /bundles/{site}/{generation}`(ci) → 게시. gen ≤ 최신 게시 409, manifest가 경로와 다르면 400,
@@ -82,7 +83,7 @@ def build_bundles_router(*, store: BundleStore, guard: Guard, api_prefix: str) -
         responses={304: {"description": "If-None-Match = 현재 gen"}, 404: {}},
     )
     async def desired(request: Request, site: str = own_site) -> Response:
-        bundle = await store.desired(site)
+        bundle = await store.polled(site)
         if bundle is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="no bundle published")
         etag = etag_of(bundle.generation)

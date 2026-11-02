@@ -20,7 +20,7 @@ from pureiron_bundle import keys
 from pureiron_bundle.manifest import SchemaName, contract_schema
 from pureiron_bundle.sitesign import SignedDocumentError, SitePurpose, open_document
 from pureiron_control.platform.clock import Clock
-from pureiron_control.platform.seqmarks import SeqMarks
+from pureiron_control.platform.seqmarks import SEQ_MAX, SeqMarks
 from pureiron_control.platform.tokens import TokenKind, new_token, token_sha256
 from pureiron_core.platform.db import Connection, Database
 
@@ -94,8 +94,8 @@ def parse_enrollment(data: bytes) -> Enrollment:
     next_seq, pending = payload.get("next_report_seq"), payload.get("seq_pending", False)
     if not isinstance(site_id, str) or not re.fullmatch(site_id_pattern(), site_id):
         raise EnrollmentError(f"enrollment: invalid site_id {site_id!r}")
-    if type(next_seq) is not int or next_seq < 1:
-        raise EnrollmentError("enrollment: next_report_seq must be an integer >= 1")
+    if type(next_seq) is not int or not 1 <= next_seq <= SEQ_MAX:
+        raise EnrollmentError(f"enrollment: next_report_seq must be an integer in 1..{SEQ_MAX}")
     if not isinstance(pending, bool):
         raise EnrollmentError("enrollment: seq_pending must be a boolean")
     # open_document가 public_key(hex 32B)를 확인했다. 지문은 그 키에서 다시 계산해 맞춰 본다.
