@@ -11,7 +11,7 @@
 | `PUREIRON_ROOT` | `/var/lib/pureiron` | `{db,state,backups,bundles}` 상위 |
 | `PUREIRON_ROOT_PUB` | `/etc/pureiron/root.pub` | root 공개키(raw 32B) |
 | `PUREIRON_CORE_URL` | `http://127.0.0.1:<web port>/api/v1` | core API(web 프록시) |
-| `PUREIRON_CONTROL_API` | (없음) | control-api 기준 URL. 없으면 polling·heartbeat·보고 전송 안 함(폐쇄망: `apply`·`report export`만) |
+| `PUREIRON_CONTROL_API` | (없음) | control-api 기준 URL. 없으면 polling·송신 안 함(폐쇄망) |
 | `PUREIRON_CHECK_TIMEOUT_S` | `90` | `checking` 제한 시간 |
 | `PUREIRON_POLL_INTERVAL_S` | `60` | 서비스 loop 주기 |
 | `PUREIRON_WEB_BIND`·`PUREIRON_WEB_PORT` | compose 기본값 | 주면 generation `.env`에도 넣는다 |
