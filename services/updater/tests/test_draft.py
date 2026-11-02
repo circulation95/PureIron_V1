@@ -6,7 +6,10 @@ from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import replace
+import threading
+from collections.abc import Iterator
+from dataclasses import dataclass, field, replace
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -165,3 +168,91 @@ def test_cli_project_export(
 
     cli_site.world.tree = None
     assert cli.main(["project", "export", "--out", str(out)]) == cli.EXIT_FAILED
+
+
+@dataclass
+class DraftSink:
+    """`POST /sites/{site}/drafts`만 받는 로컬 control-api(상태는 `status`)."""
+
+    url: str = ""
+    status: int = 201
+    received: list[tuple[str, dict[str, str], bytes]] = field(
+        default_factory=list[tuple[str, dict[str, str], bytes]]
+    )
+
+
+@pytest.fixture
+def sink(monkeypatch: pytest.MonkeyPatch, cli_site: Site) -> Iterator[DraftSink]:
+    state = DraftSink()
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, format: str, *args: object) -> None:
+            return None
+
+        def do_POST(self) -> None:
+            body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            headers = {k.lower(): v for k, v in self.headers.items()}
+            state.received.append((self.path, headers, body))
+            self.send_response(state.status)
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    state.url = f"http://127.0.0.1:{httpd.server_address[1]}/api/v1"
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    token = _settings(cli_site).secrets_dir / "control_api_token"
+    token.parent.mkdir(parents=True, exist_ok=True)
+    token.write_text("pis_x\n", encoding="utf-8")
+    monkeypatch.setenv("PUREIRON_CONTROL_API", state.url)
+    yield state
+    httpd.shutdown()
+    httpd.server_close()
+
+
+def test_cli_project_export_upload(
+    cli_site: Site, sink: DraftSink, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """E8: 파일을 만든 뒤 `POST /sites/{site}/drafts`. 실패하면 exit 1이고 파일은 남는다."""
+    _ready(cli_site)
+    out = tmp_path / "draft.tar"
+    assert cli.main(["project", "export", "--out", str(out), "--upload"]) == cli.EXIT_OK
+    assert "uploaded:      HTTP 201" in capsys.readouterr().out
+    path, headers, body = sink.received[-1]
+    assert path == "/api/v1/sites/site-a/drafts"
+    assert headers["authorization"] == "Bearer pis_x"
+    assert headers["content-type"] == "application/x-tar"
+    assert body == out.read_bytes()
+
+    sink.status = 403
+    out.unlink()
+    assert cli.main(["project", "export", "--out", str(out), "--upload"]) == cli.EXIT_FAILED
+    assert "upload refused: HTTP 403" in capsys.readouterr().err
+    assert out.exists()
+
+
+def test_cli_upload_without_control_api_is_refused_before_export(
+    cli_site: Site,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("PUREIRON_CONTROL_API", raising=False)
+    _ready(cli_site)
+    ops = cli_site.world.ops
+    out = tmp_path / "draft.tar"
+    assert cli.main(["project", "export", "--out", str(out), "--upload"]) == cli.EXIT_CONFIG
+    assert "PUREIRON_CONTROL_API" in capsys.readouterr().err
+    assert cli_site.world.ops == ops
+    assert not out.exists()
+
+
+def test_cli_upload_unreachable_keeps_the_file(
+    cli_site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _ready(cli_site)
+    monkeypatch.setenv("PUREIRON_CONTROL_API", "http://127.0.0.1:9/api/v1")
+    out = tmp_path / "draft.tar"
+    assert cli.main(["project", "export", "--out", str(out), "--upload"]) == cli.EXIT_FAILED
+    assert out.exists()
