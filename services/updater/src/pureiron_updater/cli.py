@@ -47,9 +47,10 @@ from pureiron_updater import __version__
 from pureiron_updater.compose import ComposeCli
 from pureiron_updater.core import CoreHttp
 from pureiron_updater.draft import DraftError, export_draft
-from pureiron_updater.enroll import EnrollError, enroll, export_reports, load_identity
+from pureiron_updater.enroll import EnrollError, enroll, load_identity
 from pureiron_updater.images import DockerCli
 from pureiron_updater.metrics import result_of
+from pureiron_updater.outbox import export_reports
 from pureiron_updater.phases import AttemptInProgressError, Deps, Updater
 from pureiron_updater.poll import TOKEN_FILE, ControlApi, PollError, poll_once
 from pureiron_updater.recover import recover

@@ -1,4 +1,4 @@
-"""현장 등록(PD-3)과 폐쇄망 보고 묶음(`report export`).
+"""현장 등록(PD-3)과 `report_seq` 카운터 정본(`site.json`).
 
 `state/` 아래 파일:
 
@@ -7,16 +7,11 @@
   카운터의 정본. `seq_pending`은 상태를 잃고 재등록해 다음 seq를 아직 모르는 상태다.
 - `enrollment.json` — `site-enrollment` 서명 봉투(자기 키 서명 = 개인키 보유 증명). 벤더가
   control-api `POST /sites`(신규)·`POST /sites/{site}/rekey`(재등록)로 등록한다(M4).
-- `reports/*.json` — Updater 보고 대기열. `report export`가 `report_seq`를 매기고 site key로
-  서명한 묶음을 쓴 뒤 원본을 `reports/exported/`로 옮긴다.
+- `reports/*.json` — Updater 보고 대기열. seq 할당·온라인 전송·`report export`는 `outbox.py`.
 
 재등록 흐름: `enroll --re-enroll`(새 키) → 벤더가 rekey 등록 → 응답 `next_seq`를
 `enroll --site <id> --next-seq N`으로 반영(키는 그대로, 카운터만 올림 — 단조 증가만 허용).
 `site.json`이 남아 있으면 카운터를 이어 쓰므로 이 단계가 없어도 된다.
-
-`report export`는 저널(`reports/.export.journal`: 첫 seq + 묶을 파일 이름)을 먼저 쓰고 카운터를
-예약한 뒤 묶음을 쓰고 원본을 옮긴다. 어디서 죽어도 다음 실행이 저널대로 같은 seq·같은 보고를
-다시 내므로 seq가 재사용되거나 같은 보고가 다른 seq로 나가지 않는다.
 """
 
 from __future__ import annotations
@@ -35,15 +30,12 @@ from pureiron_bundle import keys
 from pureiron_bundle.manifest import Json, SchemaName, contract_schema
 from pureiron_bundle.sitesign import SitePurpose, dumps, sign_document
 from pureiron_bundle.trust import format_timestamp
-from pureiron_updater.metrics import REPORTS_DIR
+from pureiron_updater.metrics import EXPORTED_DIR, REJECTED_DIR, REPORTS_DIR
 from pureiron_updater.settings import SITE_ID_VAR, Settings, parse_env_file
 from pureiron_updater.state import StateError, StateStore, atomic_write, fsync_dir
 
 IDENTITY_FILE = "site.json"
 ENROLLMENT_FILE = "enrollment.json"
-EXPORTED_DIR = "exported"
-JOURNAL_FILE = ".export.journal"
-"""`.json`이 아닌 확장자 — `reports/*.json`을 보고로 읽는 다른 소비자(M4 전송)가 집지 않게."""
 
 
 class EnrollError(Exception):
@@ -92,7 +84,7 @@ def load_identity(state_dir: Path) -> SiteIdentity | None:
     return identity
 
 
-def _save_identity(state_dir: Path, identity: SiteIdentity) -> None:
+def save_identity(state_dir: Path, identity: SiteIdentity) -> None:
     text = json.dumps(asdict(identity), indent=2, sort_keys=True) + "\n"
     atomic_write(state_dir / IDENTITY_FILE, text.encode())
 
@@ -158,9 +150,10 @@ def _enrollment(settings: Settings, seed: bytes, identity: SiteIdentity, now: da
 
 def _has_history(settings: Settings) -> bool:
     """이 호스트가 이미 번들을 적용·보고한 적이 있는지(키·`site.json`만 잃은 경우 감지)."""
-    exported = settings.state_dir / REPORTS_DIR / EXPORTED_DIR
-    if exported.is_dir() and any(exported.iterdir()):
-        return True
+    queue = settings.state_dir / REPORTS_DIR
+    for done in (queue / EXPORTED_DIR, queue / REJECTED_DIR):
+        if done.is_dir() and any(done.iterdir()):
+            return True
     try:
         state = StateStore(settings.state_dir).load()
     except StateError:
@@ -216,7 +209,7 @@ def enroll(
             enrolled_at=format_timestamp(now),
             seq_pending=pending,
         )
-        _save_identity(state_dir, identity)
+        save_identity(state_dir, identity)
     elif identity is not None and key_file.exists():
         seed = keys.read_private_key(key_file)
         if keys.fingerprint(keys.public_key(seed)) != identity.fingerprint:
@@ -228,7 +221,7 @@ def enroll(
                     f"{identity.next_report_seq} (report_seq only moves forward)"
                 )
             identity = replace(identity, next_report_seq=next_seq, seq_pending=False)
-            _save_identity(state_dir, identity)
+            save_identity(state_dir, identity)
     elif identity is None and not key_file.exists():
         if next_seq is not None:
             raise EnrollError("--next-seq needs an enrolled site (or --re-enroll)")
@@ -244,7 +237,7 @@ def enroll(
             next_report_seq=1,
             enrolled_at=format_timestamp(now),
         )
-        _save_identity(state_dir, identity)
+        save_identity(state_dir, identity)
     else:
         raise EnrollError(
             f"{key_file} and {IDENTITY_FILE} disagree (one is missing) — use --re-enroll"
@@ -252,95 +245,3 @@ def enroll(
     if _env_file_site(settings) != site_id:
         set_env_value(settings.env_file, SITE_ID_VAR, site_id)
     return _enrollment(settings, seed, identity, now)
-
-
-# ── report export ─────────────────────────────────────────────────────────────
-
-
-def _load_journal(path: Path) -> tuple[int, list[str]] | None:
-    try:
-        data: object = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return None
-    except (OSError, ValueError) as exc:
-        raise EnrollError(f"{path}: unreadable export journal ({exc})") from exc
-    doc = cast(dict[str, object], data) if isinstance(data, dict) else {}
-    first, names = doc.get("first_seq"), doc.get("names")
-    if type(first) is not int or not isinstance(names, list):
-        raise EnrollError(f"{path}: malformed export journal")
-    return first, [str(n) for n in cast(list[object], names)]
-
-
-def _read_report(queue: Path, name: str) -> dict[str, Json]:
-    for path in (queue / name, queue / EXPORTED_DIR / name):
-        try:
-            data: object = json.loads(path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            continue
-        except (OSError, ValueError) as exc:
-            raise EnrollError(f"{path}: unreadable report ({exc})") from exc
-        if not isinstance(data, dict):
-            raise EnrollError(f"{path}: report is not a JSON object")
-        return cast(dict[str, Json], data)
-    raise EnrollError(f"report {name} listed in the export journal is missing")
-
-
-def export_reports(settings: Settings, out_dir: Path, *, now: datetime) -> tuple[Path, int] | None:
-    """대기 중 보고에 `report_seq`를 매겨 서명 묶음을 `out_dir`에 쓴다. 보고가 없으면 None.
-
-    끊긴 export(저널 있음)가 있으면 새 보고보다 먼저 그것을 같은 seq로 끝낸다.
-    """
-    state_dir = settings.state_dir
-    identity = load_identity(state_dir)
-    if identity is None:
-        raise EnrollError("not enrolled (run: pureiron-site enroll --site <id>)")
-    if identity.seq_pending:
-        raise EnrollError(
-            "report_seq is unknown after re-enrollment — apply the vendor's rekey answer first: "
-            f"pureiron-site enroll --site {identity.site_id} --next-seq <next_seq>"
-        )
-    seed = keys.read_private_key(settings.site_key_file)
-    if keys.fingerprint(keys.public_key(seed)) != identity.fingerprint:
-        raise EnrollError(f"{settings.site_key_file} does not match {IDENTITY_FILE}")
-    queue = state_dir / REPORTS_DIR
-    journal_file = queue / JOURNAL_FILE
-    journal = _load_journal(journal_file)
-    if journal is None:
-        names = (
-            sorted(p.name for p in queue.glob("*.json") if p.name != JOURNAL_FILE)
-            if queue.is_dir()
-            else []
-        )
-        if not names:
-            return None
-        journal = (identity.next_report_seq, names)
-        body = {"first_seq": journal[0], "names": names}
-        atomic_write(journal_file, (json.dumps(body, indent=2) + "\n").encode())
-    first, names = journal
-    last = first + len(names) - 1
-    if identity.next_report_seq <= last:  # seq 예약(저널 기록 뒤 여기서 죽어도 재실행이 다시 한다)
-        identity = replace(identity, next_report_seq=last + 1)
-        _save_identity(state_dir, identity)
-    reports: list[Json] = [
-        {**_read_report(queue, name), "report_seq": first + i} for i, name in enumerate(names)
-    ]
-    payload: dict[str, Json] = {
-        "site_id": identity.site_id,
-        "key_fingerprint": identity.fingerprint,
-        "exported_at": format_timestamp(now),
-        "first_seq": first,
-        "last_seq": last,
-        "reports": reports,
-    }
-    out_dir.mkdir(parents=True, exist_ok=True)
-    target = out_dir / f"pureiron-reports-{identity.site_id}-{first:06d}-{last:06d}.json"
-    atomic_write(target, dumps(sign_document(seed, SitePurpose.REPORTS, payload)))
-    exported = queue / EXPORTED_DIR
-    exported.mkdir(exist_ok=True)
-    for name in names:
-        source = queue / name
-        if source.exists():
-            source.replace(exported / name)
-    journal_file.unlink()
-    fsync_dir(queue)
-    return target, len(names)
