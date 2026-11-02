@@ -418,6 +418,18 @@ def test_explicit_min_updater_wins(setup: Setup) -> None:
     assert default_min_updater(writes=True) == "0.2.0"
 
 
+def test_writes_true_refuses_an_explicit_min_updater_below_0_2(
+    setup: Setup, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """리뷰 N2: 쓰기 켠 번들에 0.2.0 미만 `--min-updater`를 주면 조용히 받지 않고 빌드를
+    거부한다."""
+    setup.fleet.write_text(FLEET + "writes: { enabled: true }\n", encoding="utf-8")
+    assert main(setup.args(min_updater="0.1.9")) == 1
+    assert "writes.enabled needs --min-updater >= 0.2.0" in capsys.readouterr().err
+    assert not setup.pib.exists()
+    assert main(setup.args(min_updater="0.2.0")) == 0
+
+
 def test_invalid_writes_in_fleet_file_fails(setup: Setup) -> None:
     setup.fleet.write_text(FLEET + "writes: { enabled: yes-please }\n", encoding="utf-8")
     assert main(setup.args()) == 1

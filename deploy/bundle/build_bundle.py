@@ -13,7 +13,8 @@
   (r4 Updater가 그대로 받는다. r4의 manifest 스키마는 모르는 키를 `E_FORMAT`으로 거부한다).
 - `min_updater` 기본값(E1): 번들 형식이 요구하는 최소 Updater — 기본 `BASE_MIN_UPDATER`(0.1.0),
   쓰기 스위치를 켠 번들은 `WRITES_MIN_UPDATER`(0.2.0). Updater 패키지 버전과 묶지 않는다(올리면 모든
-  새 번들이 구 Updater 현장에서 `E_UPDATER`가 된다). `--min-updater`를 주면 그 값이 우선한다.
+  새 번들이 구 Updater 현장에서 `E_UPDATER`가 된다). `--min-updater`를 주면 그 값이 우선한다(쓰기를
+  켠 번들에 0.2.0 미만이면 빌드 거부).
 - release 기록 `deploy/releases/*.json` 중 `version == product`인 것: 이미지 config digest·태그,
   schema epoch. `compat_app_min` = envelope가 이 epoch를 포함하는 가장 오래된 정식 release.
 - image store(`images.image_store()`)의 `<release>/<svc>.tar`(release_record.py가 보관):
@@ -275,6 +276,11 @@ def build(args: argparse.Namespace) -> int:
     fleet = load_fleet_site(args.fleet_file)
     writes = writes_enabled(fleet)
     min_updater: str = args.min_updater or default_min_updater(writes=writes)
+    if writes and parse_semver(min_updater) < parse_semver(WRITES_MIN_UPDATER):
+        raise BuildError(
+            f"writes.enabled needs --min-updater >= {WRITES_MIN_UPDATER} (got {min_updater}): "
+            "older Updaters cannot apply the signed write switch"
+        )
     parse_semver(min_updater)
     records = load_releases(args.releases)
     record = find_release(records, cast(str, fleet["product"]))
