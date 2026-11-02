@@ -66,12 +66,14 @@ def _bad_request(exc: Exception) -> HTTPException:
     return HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
-def open_registered(data: bytes, site: str, purpose: SitePurpose, public: bytes) -> dict[str, Json]:
-    """등록 키로 봉투를 연다: 서명 불일치 409, 봉투·payload 형식 위반 400."""
+def open_registered(
+    data: bytes, site: str, purpose: SitePurpose, public: bytes, *, token: str | None = None
+) -> dict[str, Json]:
+    """등록 키로 봉투를 연다: 서명 불일치 409(경고 로그), 봉투·payload 형식 위반 400."""
     try:
         payload = open_document(data, purpose, public)
     except SignatureMismatchError as exc:
-        raise key_mismatch() from exc
+        raise key_mismatch(site, purpose, public, token=token) from exc
     except SignedDocumentError as exc:
         raise _bad_request(exc) from exc
     if payload.get("site_id") != site:
@@ -80,7 +82,12 @@ def open_registered(data: bytes, site: str, purpose: SitePurpose, public: bytes)
 
 
 async def _open_signed(
-    data: bytes, site: str, purpose: SitePurpose, registry: PgSiteRegistry
+    data: bytes,
+    site: str,
+    purpose: SitePurpose,
+    registry: PgSiteRegistry,
+    *,
+    token: str | None = None,
 ) -> dict[str, Json]:
     """경로 현장의 등록 키로 봉투를 연다: 다른 현장 payload 403, 미등록 404, 그 밖은
     `open_registered`."""
@@ -89,7 +96,7 @@ async def _open_signed(
     public = await registry.public_key(site)
     if public is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"site {site!r} is not registered")
-    return open_registered(data, site, purpose, public)
+    return open_registered(data, site, purpose, public, token=token)
 
 
 def build_reports_router(
@@ -141,7 +148,9 @@ def build_reports_router(
         site = claimed_site(data)
         if site is None:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="payload.site_id missing")
-        payload = await _open_signed(data, site, SitePurpose.REPORTS, registry)
+        payload = await _open_signed(
+            data, site, SitePurpose.REPORTS, registry, token=principal.name
+        )
         try:
             bundle = parse_report_bundle(payload)
             imported = OfflineImport(

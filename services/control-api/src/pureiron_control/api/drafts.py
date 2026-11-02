@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from pureiron_bundle.sitesign import DRAFT_LIMIT_BYTES
+from pureiron_bundle.sitesign import DRAFT_LIMIT_BYTES, SitePurpose
 from pureiron_control.api.body import binary_body, read_body
 from pureiron_control.api.errors import KEY_MISMATCH_RESPONSE, key_mismatch
 from pureiron_control.api.guard import Guard, SitePath
@@ -96,7 +96,7 @@ def build_drafts_router(*, registry: PgSiteRegistry, store: DraftStore, guard: G
         except DraftSignatureError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         except DraftKeyMismatchError as exc:
-            raise key_mismatch() from exc
+            raise key_mismatch(site, SitePurpose.DRAFT, public) from exc
         except DraftSiteNotFoundError as exc:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except DraftStorageError as exc:

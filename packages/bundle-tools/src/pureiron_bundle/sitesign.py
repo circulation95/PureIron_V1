@@ -123,6 +123,9 @@ def open_document(
         raw_signature = bytes.fromhex(signature)
     except ValueError as exc:
         raise SignedDocumentError(f"signature is not hex ({exc})") from exc
+    if len(raw_signature) != keys.SIGNATURE_LEN:
+        # 길이가 틀린 서명은 형식 위반(400)이다 — 키 불일치(409)로 보이지 않게(R2-N1).
+        raise SignedDocumentError(f"signature must be {keys.SIGNATURE_LEN} bytes")
     try:
         signed = _signed_bytes(purpose, payload)
     except rfc8785.CanonicalizationError as exc:

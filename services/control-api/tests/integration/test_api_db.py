@@ -148,7 +148,7 @@ def test_signature_mismatch_report_is_409_and_foreign_payload_is_403(
     )
     mismatch = central.client.post("/api/v1/sites/site-a/reports", content=forged, headers=headers)
     assert mismatch.status_code == 409
-    assert mismatch.json() == {"detail": "site key mismatch (rekey pending?)"}
+    assert mismatch.json() == {"detail": "signature does not match the registered site key"}
     # 서명 뒤 payload를 바꾼 heartbeat도 등록 키로 확인되지 않는다.
     tampered = site_a.heartbeat(1, gen=3).replace(b'"gen": 3', b'"gen": 4')
     assert (
