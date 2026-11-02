@@ -1,55 +1,22 @@
 """현장 Updater `poll.py`(r4, 변경 없음)가 control-api를 그대로 소비하는지: desired·304·Range.
 
-control-api를 실제 HTTP 서버(uvicorn, 스레드)로 띄우고 Updater의 `ControlApi`가 urllib로 붙는다.
+control-api를 실제 HTTP 서버(uvicorn, 스레드 — conftest `server`)로 띄우고 Updater의
+`ControlApi`가 urllib로 붙는다.
 """
 
 from __future__ import annotations
 
 import hashlib
-import socket
-import threading
-import time
-from collections.abc import Generator
 from pathlib import Path
 
 import pytest
-import uvicorn
 
-from pureiron_control.app import create_app
-from pureiron_control.runtime import ControlRuntime
 from pureiron_updater.poll import ControlApi, file_sha256
 
 from .conftest import Central
 from .site_kit import Site, build_pib
 
 pytestmark = pytest.mark.integration
-
-STARTUP_TIMEOUT_S = 15.0
-
-
-def _free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return int(probe.getsockname()[1])
-
-
-@pytest.fixture
-def server(central: Central) -> Generator[str]:
-    port = _free_port()
-    app = create_app(ControlRuntime.build(central.settings, clock=central.clock))
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None)
-    instance = uvicorn.Server(config)
-    thread = threading.Thread(target=instance.run, daemon=True)
-    thread.start()
-    deadline = time.monotonic() + STARTUP_TIMEOUT_S
-    while not instance.started:
-        assert time.monotonic() < deadline, "control-api server did not start"
-        time.sleep(0.05)
-    try:
-        yield f"http://127.0.0.1:{port}/api/v1"
-    finally:
-        instance.should_exit = True
-        thread.join(timeout=STARTUP_TIMEOUT_S)
 
 
 def test_updater_poll_client_reads_desired_and_resumes_download(
