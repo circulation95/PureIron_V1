@@ -117,7 +117,7 @@ def test_broken_site_key_does_not_stop_the_tick_from_applying(
 ) -> None:
     """리뷰 H1: control-api가 설정된 현장의 site.key 길이가 틀려도(`KeyFormatError`) 송신 단계는
     로그로 끝나고 tick은 `advance`까지 가서 번들을 적용한다."""
-    enroll(replace(site.settings, env_file=tmp_path / "updater.env"), "site-a", now=T0)
+    enroll(site.settings, "site-a", now=T0)
     site.settings.site_key_file.write_bytes(b"")  # 0바이트 — 운영자가 다른 파일을 복사함 등
     site.submit(site.kit.bundle(1, "r0"))
 

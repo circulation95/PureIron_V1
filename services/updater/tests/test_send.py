@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 
@@ -87,7 +87,7 @@ class Host:
 @pytest.fixture
 def host(tmp_path: Path) -> Host:
     site = Site(root=tmp_path / "pureiron", kit=Kit(tmp_path))
-    settings = replace(site.settings, env_file=tmp_path / "updater.env")
+    settings = site.settings
     enroll(settings, "site-a", now=T0)
     public = keys.public_key(settings.site_key_file.read_bytes())
     return Host(site, settings, FakeApi(public))

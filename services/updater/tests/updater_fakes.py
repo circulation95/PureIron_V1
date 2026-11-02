@@ -628,6 +628,7 @@ class Site:
             root_pubkey_file=self.kit.root_pub,
             core_url="http://core.invalid/api/v1",
             check_timeout_s=10.0,
+            env_file=self.root.parent / "etc" / "updater.env",  # 실제 /etc 아님(R2-L3)
         )
 
     def deps(self) -> Deps:
