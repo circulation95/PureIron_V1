@@ -5,13 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
-from updater_fakes import Kit, Site
+from updater_fakes import FakeRunner, Kit, Site
 
 from pureiron_updater.compose import ComposeCli
 from pureiron_updater.core import CoreHttp
@@ -23,22 +23,8 @@ from pureiron_updater.ports import (
     CoreUnavailableError,
     LockConflictError,
 )
-from pureiron_updater.proc import DEFAULT_TIMEOUT_S, Result
+from pureiron_updater.proc import Result
 from pureiron_updater.state import Phase
-
-
-@dataclass
-class FakeRunner:
-    results: list[Result] = field(default_factory=list[Result])
-    calls: list[list[str]] = field(default_factory=list[list[str]])
-
-    def __call__(
-        self, argv: Sequence[str], *, timeout: float = DEFAULT_TIMEOUT_S, stdout: Path | None = None
-    ) -> Result:
-        self.calls.append(list(argv))
-        if stdout is not None:
-            stdout.write_bytes(b"dump")
-        return self.results.pop(0) if self.results else Result(0, "", "")
 
 
 def test_compose_commands_pin_project_file_and_env(tmp_path: Path) -> None:

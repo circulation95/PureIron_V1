@@ -374,7 +374,20 @@ def tick(settings: Settings, api: ControlApi | None, *, first: bool) -> None:
         updater.advance()
 
 
+def warn_ignored_env(settings: Settings) -> None:
+    """서비스 시작 때 1회: 무시하는 변수(쓰기 스위치)가 설정돼 있으면 경고한다(R3 — 업그레이드 전
+    `updater.env`로 켜 두었던 현장은 이제 꺼진다)."""
+    for key in settings.ignored_env:
+        log.warning(
+            "%s is set in the environment or %s but ignored — the write switch comes only from "
+            "the signed bundle (fleet site file `writes.enabled`)",
+            key,
+            settings.env_file,
+        )
+
+
 def _run(settings: Settings) -> int:
+    warn_ignored_env(settings)
     api = _control_api(settings)
     first = True
     while True:

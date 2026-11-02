@@ -7,7 +7,13 @@
         --fleet-commit abc123 --out out/bundles
 
 입력:
-- fleet 현장 파일(fleet-site 계약 검증): site, generation, product(달력 버전), project 버전, window.
+- fleet 현장 파일(fleet-site 계약 검증): site, generation, product(달력 버전), project 버전, window,
+  선택 `writes.enabled`(쓰기 스위치, M4-1 C2). true일 때만 manifest에 `site_config:
+  {writes_enabled: true}`를 넣는다 — 없음·false 번들은 키 자체가 없어 manifest 바이트가 그 전과 같다
+  (r4 Updater가 그대로 받는다. r4의 manifest 스키마는 모르는 키를 `E_FORMAT`으로 거부한다).
+- `min_updater` 기본값(E1): 번들 형식이 요구하는 최소 Updater — 기본 `BASE_MIN_UPDATER`(0.1.0),
+  쓰기 스위치를 켠 번들은 `WRITES_MIN_UPDATER`(0.2.0). Updater 패키지 버전과 묶지 않는다(올리면 모든
+  새 번들이 구 Updater 현장에서 `E_UPDATER`가 된다). `--min-updater`를 주면 그 값이 우선한다.
 - release 기록 `deploy/releases/*.json` 중 `version == product`인 것: 이미지 config digest·태그,
   schema epoch. `compat_app_min` = envelope가 이 epoch를 포함하는 가장 오래된 정식 release.
 - image store(`images.image_store()`)의 `<release>/<svc>.tar`(release_record.py가 보관):
@@ -37,7 +43,6 @@ import sys
 import tarfile
 import tempfile
 import time
-import tomllib
 import zlib
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -70,7 +75,10 @@ ROOT = Path(__file__).resolve().parents[2]
 RELEASES = ROOT / "deploy" / "releases"
 SITE_COMPOSE = ROOT / "deploy" / "compose" / "site.compose.yml"
 COMPOSE_PAYLOAD = "compose/site.compose.yml"
-UPDATER_PYPROJECT = ROOT / "services" / "updater" / "pyproject.toml"
+BASE_MIN_UPDATER = "0.1.0"
+"""번들 형식이 요구하는 최소 Updater(형식이 바뀔 때만 올린다)."""
+WRITES_MIN_UPDATER = "0.2.0"
+"""manifest `site_config`(쓰기 스위치)를 아는 첫 Updater."""
 GIB = 1024**3
 SIZE_LIMIT = int(1.5 * GIB)
 SIZE_WARN = int(1.2 * GIB)
@@ -162,9 +170,13 @@ def compat_app_min(records: Sequence[ReleaseRecord], release: ReleaseRecord) -> 
     return min(compatible, key=lambda r: version_key(r.version)).version
 
 
-def default_min_updater() -> str:
-    data = tomllib.loads(UPDATER_PYPROJECT.read_text(encoding="utf-8"))
-    return str(cast(dict[str, object], data["project"])["version"])
+def writes_enabled(fleet: dict[str, Json]) -> bool:
+    writes = cast(dict[str, Json] | None, fleet.get("writes"))
+    return writes is not None and writes["enabled"] is True
+
+
+def default_min_updater(*, writes: bool) -> str:
+    return WRITES_MIN_UPDATER if writes else BASE_MIN_UPDATER
 
 
 def load_fleet_site(path: Path) -> dict[str, Json]:
@@ -260,9 +272,10 @@ def stage_images(
 def build(args: argparse.Namespace) -> int:
     started = time.monotonic()
     root_pubkey = keys.read_public_key(args.root_pub)
-    min_updater: str = args.min_updater or default_min_updater()
-    parse_semver(min_updater)
     fleet = load_fleet_site(args.fleet_file)
+    writes = writes_enabled(fleet)
+    min_updater: str = args.min_updater or default_min_updater(writes=writes)
+    parse_semver(min_updater)
     records = load_releases(args.releases)
     record = find_release(records, cast(str, fleet["product"]))
     project = load_project(args.project_dir)
@@ -313,6 +326,8 @@ def build(args: argparse.Namespace) -> int:
             "trust_update": None,
             "fleet_commit": args.fleet_commit,
         }
+        if writes:
+            document["site_config"] = {"writes_enabled": True}
         cert_dir: Path = args.cert_dir
         write_signed_bundle(
             pib,
@@ -366,7 +381,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--out", type=Path, required=True, help="출력 디렉터리")
     p.add_argument("--releases", type=Path, default=RELEASES, help="release 기록 디렉터리")
     p.add_argument("--store", type=Path, default=None, help="이미지 tar 보관소(기본 image_store())")
-    p.add_argument("--min-updater", default=None, help="기본: services/updater 버전")
+    p.add_argument("--min-updater", default=None, help="기본: 0.1.0, fleet writes.enabled면 0.2.0")
     p.add_argument("--created-at", default=None, help="RFC 3339(기본: 지금, 테스트용)")
     return p
 

@@ -133,6 +133,9 @@ def test_examples_validate() -> None:
     _validator("manifest").validate(MANIFEST)
     _validator("install-manifest").validate(INSTALL_MANIFEST)
     _validator("project").validate(PROJECT)
+    # 쓰기 스위치(M4-1 C2): 둘 다 선택 필드.
+    _validator("fleet-site").validate({**FLEET_SITE, "writes": {"enabled": True}})
+    _validator("manifest").validate({**MANIFEST, "site_config": {"writes_enabled": True}})
 
 
 def test_project_file_kinds_validate() -> None:
@@ -189,6 +192,11 @@ def test_project_file_kinds_validate() -> None:
             },
             None,
         ),
+        ("fleet-site", {**FLEET_SITE, "writes": {}}, None),
+        ("fleet-site", {**FLEET_SITE, "writes": {"enabled": "yes"}}, None),
+        ("fleet-site", {**FLEET_SITE, "writes": {"enabled": True, "tags": []}}, None),
+        ("manifest", {**MANIFEST, "site_config": {"writes_enabled": 1}}, None),
+        ("manifest", {**MANIFEST, "site_config": {"writes_enabled": True, "x": 1}}, None),
         ("manifest", {**MANIFEST, "format": 2}, None),
         ("manifest", {**MANIFEST, "files": {"../escape": SHA}}, None),
         ("install-manifest", {**INSTALL_MANIFEST, "kind": "site"}, None),
