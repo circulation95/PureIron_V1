@@ -457,11 +457,20 @@ def test_min_updater_is_compared_as_semver(kit: Kit) -> None:
 
 
 def test_unabsorbed_drafts_are_e_draft(kit: Kit) -> None:
-    assert reject(kit.build(), ctx(draft=DraftState(site_rev=4, base_site_rev=4))) is (
+    """번들 absorbs = {site-a: 3}. 드래프트가 남았으면 site_rev == 3일 때만 통과(M4-1 E2)."""
+    assert reject(kit.build(), ctx(draft=DraftState(site_rev=4, base_site_rev=1))) is (
+        RejectCode.E_DRAFT
+    )
+    restored = kit.build("restored.pib")  # 복원으로 site_rev가 absorbs 아래로 간 뒤의 드래프트
+    assert reject(restored, ctx(draft=DraftState(site_rev=2, base_site_rev=1))) is (
         RejectCode.E_DRAFT
     )
     ok = verify_bundle(kit.build("ok.pib"), ctx(draft=DraftState(site_rev=3, base_site_rev=1)))
     assert ok.generation is GenDecision.APPLY
+    clean = verify_bundle(
+        kit.build("clean.pib"), ctx(draft=DraftState(site_rev=4, base_site_rev=4))
+    )
+    assert clean.generation is GenDecision.APPLY  # 남은 드래프트 없음
 
 
 def _resigned(kit: Kit, manifest: bytes) -> Path:
@@ -547,7 +556,7 @@ def test_rejected_bundle_leaves_extract_dir_empty(kit: Kit) -> None:
     )
     assert list(target.iterdir()) == []
     path = kit.build("ok.pib")
-    assert reject(path, ctx(draft=DraftState(9, 9)), extract_to=target) is RejectCode.E_DRAFT
+    assert reject(path, ctx(draft=DraftState(9, 1)), extract_to=target) is RejectCode.E_DRAFT
     assert list(target.iterdir()) == []
 
 
