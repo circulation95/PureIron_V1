@@ -101,9 +101,11 @@ def host(tmp_path: Path) -> Host:
     [
         (200, "exported", True),
         (400, "rejected", True),
+        (413, "rejected", True),
         (401, "queue", False),
         (403, "queue", False),
         (404, "queue", False),
+        (409, "queue", False),
         (500, "queue", False),
         (CONNECTION_REFUSED, "queue", False),
     ],
@@ -111,7 +113,8 @@ def host(tmp_path: Path) -> Host:
 def test_report_response_table(
     host: Host, status: int | None, first_in: str, second_sent: bool
 ) -> None:
-    """200 → exported, 400 → rejected(큐를 막지 않음), 그 밖·연결 실패 → 남기고 이 tick 중단."""
+    """200 → exported, 400·413 → rejected(큐를 막지 않음), 409(키 불일치 — rekey 대기)·그 밖·연결
+    실패 → 남기고 이 tick 중단."""
     first = host.report("20261101T010000000000Z-g1-a.json", 1)
     second = host.report("20261101T020000000000Z-g2-b.json", 2)
     host.api.statuses = [status]
@@ -121,7 +124,7 @@ def test_report_response_table(
     assert (where[first_in] / first.name).exists()
     assert ((host.queue / "exported" / second.name).exists()) is second_sent
     assert result.stopped is not second_sent
-    assert result.rejected == (1 if status == 400 else 0)
+    assert result.rejected == (1 if first_in == "rejected" else 0)
     counters = metrics.load_counters(host.settings.state_dir)
     assert counters.rejected_total == result.rejected
     # 못 보낸 보고도 seq는 이미 파일에 있다 — 다음 tick·USB가 같은 값을 쓴다.
@@ -281,3 +284,99 @@ def test_send_all_keeps_going_after_a_heartbeat_error_and_writes_metrics(
     prom = (host.settings.state_dir / "metrics" / "updater.prom").read_text(encoding="utf-8")
     assert "updater_applied_generation 4" in prom
     assert prom.count("updater_reports_rejected_total 1") == 1
+
+
+# ── 리뷰 r1: H1·M2·L1·N4 ──────────────────────────────────────────────────
+
+
+def test_broken_site_key_is_logged_and_sends_nothing(
+    host: Host, caplog: pytest.LogCaptureFixture
+) -> None:
+    """H1: 길이가 틀린 site.key(`KeyFormatError`)도 송신 단계 안에서 로그로 끝난다."""
+    host.report("20261101T010000000000Z-g1-a.json", 1)
+    host.settings.site_key_file.write_bytes(b"")
+    send_all(host.settings, UpdaterState(), host.api, now=T0)
+    assert host.api.posts == []
+    assert "site.key must be 32 raw bytes" in caplog.text
+
+
+def test_metrics_failure_does_not_escape_the_send_step(
+    host: Host, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def broken(_state_dir: Path) -> None:
+        raise ValueError("metrics bug")
+
+    monkeypatch.setattr(send, "refresh_outbox_metrics", broken)
+    send_all(host.settings, UpdaterState(), host.api, now=T0)
+    assert host.api.seqs("/heartbeat") == [1]
+    assert "cannot write outbox metrics" in caplog.text
+
+
+def test_r4_journal_is_settled_before_the_heartbeat_reserves_a_seq(host: Host) -> None:
+    """M2: r4 `report export`가 저널을 쓰고 카운터를 예약하기 전에 죽었다(`first_seq` =
+    `next_report_seq`). 첫 tick의 heartbeat가 그 seq를 다시 쓰면 안 된다."""
+    report = host.report("20261101T010000000000Z-g1-a.json", 1)
+    first = host.next_seq()
+    journal = {"first_seq": first, "names": [report.name]}
+    (host.queue / ".export.journal").write_text(json.dumps(journal), encoding="utf-8")
+    send_all(host.settings, UpdaterState(), host.api, now=T0)
+    (heartbeat,) = host.api.seqs("/heartbeat")
+    assert host.api.seqs("/reports") == [first]
+    assert heartbeat != first
+    seqs = [payload["report_seq"] for _, payload in host.api.posts]
+    assert len(seqs) == len(set(seqs))  # 같은 seq가 두 메시지에 쓰이지 않는다
+    assert not (host.queue / ".export.journal").exists()
+
+
+def test_every_reservation_settles_the_journal_first(host: Host) -> None:
+    """M2: 예약 경로마다(heartbeat 단독 호출 포함) 저널 seq를 다시 내주지 않는다."""
+    report = host.report("20261101T010000000000Z-g1-a.json", 1)
+    first = host.next_seq()
+    journal = {"first_seq": first, "names": [report.name]}
+    (host.queue / ".export.journal").write_text(json.dumps(journal), encoding="utf-8")
+    send_heartbeat(host.settings, UpdaterState(), host.api, host.sign(), now=T0)
+    assert host.api.seqs("/heartbeat") == [first + 1]
+    assert json.loads(report.read_text(encoding="utf-8"))["report_seq"] == first
+
+
+@pytest.mark.parametrize("content", ["{not json", "[1, 2]"], ids=["json", "not-object"])
+def test_unreadable_queue_file_is_rejected_and_does_not_block(
+    host: Host, content: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """L1: 읽을 수 없는 큐 맨 앞 파일은 `rejected/`로 빠지고(오류 로그·카운터) 뒤 보고가 나간다."""
+    host.queue.mkdir(parents=True, exist_ok=True)
+    broken = host.queue / "20261101T000000000000Z-g1-broken.json"
+    broken.write_text(content, encoding="utf-8")
+    good = host.report("20261101T010000000000Z-g2-a.json", 2)
+    assert send_reports(host.settings, host.api, host.sign()) == ReportsSent(sent=1, rejected=1)
+    assert (host.queue / "rejected" / broken.name).read_text(encoding="utf-8") == content
+    assert (host.queue / "exported" / good.name).exists()
+    assert metrics.load_counters(host.settings.state_dir).rejected_total == 1
+    assert "unreadable report" in caplog.text or "not a JSON object" in caplog.text
+
+
+def test_unreadable_queue_file_does_not_block_usb_export(host: Host) -> None:
+    host.queue.mkdir(parents=True, exist_ok=True)
+    broken = host.queue / "20261101T000000000000Z-g1-broken.json"
+    broken.write_text("{not json", encoding="utf-8")
+    host.report("20261101T010000000000Z-g2-a.json", 2)
+    exported = export_reports(host.settings, host.settings.root / "usb", now=T0)
+    assert exported is not None
+    assert exported[1] == 1
+    assert (host.queue / "rejected" / broken.name).exists()
+    assert metrics.load_counters(host.settings.state_dir).rejected_total == 1
+
+
+def test_reports_with_a_stored_seq_go_first_in_seq_order(host: Host) -> None:
+    """N4: 시계가 뒤로 가 새 파일 이름이 앞서도 이미 seq를 받은 보고가 먼저(송신 순서 = seq
+    순서)."""
+    older = host.report("20261101T050000000000Z-g1-a.json", 1)
+    host.api.statuses = [503]
+    send_reports(host.settings, host.api, host.sign())  # older: seq 1, 큐에 남음
+    newer_name_first = host.report("20261101T010000000000Z-g2-b.json", 2)
+    send_reports(host.settings, host.api, host.sign())
+    assert host.api.seqs("/reports") == [1, 1, 2]
+    gens = [payload["generation"] for _, payload in host.api.posts]
+    assert gens == [1, 1, 2]
+    assert not older.exists()
+    assert not newer_name_first.exists()

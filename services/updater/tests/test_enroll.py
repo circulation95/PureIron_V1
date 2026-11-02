@@ -245,12 +245,15 @@ def test_interrupted_export_resumes_with_the_same_seq(
     assert not list(reports.glob("*.json"))
 
 
-def test_report_export_rejects_non_object_report(host: Host) -> None:
+def test_report_export_moves_a_non_object_report_aside(host: Host) -> None:
+    """리뷰 L1: 읽을 수 없는 큐 파일은 반출을 막지 않고 `rejected/`로 빠진다(파일 보존)."""
     assert cli.main(["enroll", "--site", "site-a"]) == cli.EXIT_OK
     reports = host.state / "reports"
     reports.mkdir(parents=True)
     (reports / "x.json").write_text("[1, 2]", encoding="utf-8")
-    assert cli.main(["report", "export", "--out", str(host.root / "usb")]) == cli.EXIT_CONFIG
+    assert cli.main(["report", "export", "--out", str(host.root / "usb")]) == cli.EXIT_OK
+    assert (reports / "rejected" / "x.json").read_text(encoding="utf-8") == "[1, 2]"
+    assert not (host.root / "usb").exists() or not any((host.root / "usb").iterdir())
 
 
 def test_install_bundle_verify_before_enroll(

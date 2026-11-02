@@ -9,14 +9,20 @@
     null, manifest를 못 읽으면 버전만 null.
   - `updater_phase` = 경보가 있으면 `failed_manual`, 진행 중 시도가 있으면 그 phase, 없으면 `idle`.
   - `disk_state` = `PUREIRON_ROOT` 사용률 ≥ 0.90 `critical`, ≥ 0.80 `warn`, 그 밖 `ok`.
-- **보고**: 대기 보고를 오래된 순으로 tick당 최대 20건 `POST /sites/{site}/reports`(`site-report`
-  봉투 = 큐 파일 + `site_id`·`report_seq`). seq는 `outbox.assign`(처음 매긴 값 하나, N-b).
+- **보고**: 대기 보고를 tick당 최대 20건 `POST /sites/{site}/reports`(`site-report` 봉투 = 큐 파일
+  + `site_id`·`report_seq`). 순서는 `outbox.send_order`(이미 매긴 seq 순 → 나머지 이름순). seq는
+  `outbox.assign`(처음 매긴 값 하나, N-b).
   - 200(applied·history) → `reports/exported/`.
-  - 400(형식 위반 — 중앙이 영원히 받지 않음) → `reports/rejected/` + 오류 로그 + 카운터(큐 맨 앞을
-    막지 않게, 파일은 보존).
+  - 400(형식 위반)·413(크기 초과) — 중앙이 영원히 받지 않음 → `reports/rejected/` + 오류 로그 +
+    카운터(`outbox.reject`, 큐 맨 앞을 막지 않게, 파일은 보존). JSON으로 읽을 수 없는 큐 파일도
+    같다.
+  - 409(등록 키로 서명 확인 안 됨 — 현장이 키를 바꾸고 벤더 rekey를 기다리는 중) → 그대로 두고 이
+    tick의 보고 전송을 멈춘다. rekey가 반영되면 같은 seq로 받아진다(리뷰 M1).
   - 401·403·404·5xx·연결 실패 → 그대로 두고 이 tick의 보고 전송을 멈춘다(다음 tick에 같은 seq로).
-- 미등록·`seq_pending`(재등록 뒤 rekey 응답 미반영)이면 둘 다 보내지 않는다(경고 로그).
-- 각 단계의 예외는 로그만 남긴다 — heartbeat가 실패해도 보고는 보내고, 둘 다 apply를 막지 않는다.
+- 미등록·`seq_pending`(재등록 뒤 rekey 응답 미반영)·site 키를 못 읽음(길이·지문 불일치 포함)이면 둘
+  다 보내지 않는다(경고 로그).
+- 각 단계의 예외는 무엇이든 로그만 남긴다 — heartbeat가 실패해도 보고는 보내고, 송신 단계 전체가
+  tick의 apply(`advance`)를 막지 않는다(리뷰 H1).
 """
 
 from __future__ import annotations
@@ -37,7 +43,6 @@ from pureiron_updater.compose import read_manifest, target_dir
 from pureiron_updater.enroll import EnrollError
 from pureiron_updater.metrics import (
     EXPORTED_DIR,
-    REJECTED_DIR,
     load_counters,
     refresh_outbox_metrics,
     save_counters,
@@ -46,10 +51,13 @@ from pureiron_updater.outbox import (
     SEQ_KEY,
     SeqPendingError,
     Signer,
+    UnreadableReportError,
     assign,
     move,
     pending,
+    reject,
     reserve_seq,
+    send_order,
     settle_journal,
     signer,
 )
@@ -65,6 +73,13 @@ DISK_CRITICAL_RATIO = 0.90
 ENVELOPE_TYPE = "application/json"
 IDLE = "idle"
 FAILED_MANUAL = "failed_manual"
+PERMANENT_REFUSALS = frozenset({400, 413})
+"""중앙이 같은 보고를 영원히 받지 않는 응답(형식 위반·크기 초과) — `rejected/`로 뺀다."""
+KEY_MISMATCH = 409
+KEY_MISMATCH_HINT = (
+    "control-api cannot verify the site key — after `enroll --re-enroll` the vendor must run "
+    "`POST /sites/{site}/rekey` with the new enrollment file"
+)
 
 
 class Poster(Protocol):
@@ -149,6 +164,9 @@ def send_heartbeat(
     except SendError as exc:
         log.warning("heartbeat %s not sent: %s", seq, exc)
         return False
+    if status == KEY_MISMATCH:
+        log.warning("heartbeat %s refused: HTTP 409 — %s", seq, KEY_MISMATCH_HINT)
+        return False
     if status != 200:
         log.warning("heartbeat %s refused: HTTP %s %s", seq, status, _detail(body))
         return False
@@ -162,18 +180,23 @@ class ReportsSent:
     sent: int = 0
     rejected: int = 0
     stopped: bool = False
-    """중앙이 받지 못해(401·403·404·5xx·연결) 이 tick의 전송을 멈췄다."""
+    """중앙이 받지 못해(401·403·404·409·5xx·연결) 이 tick의 전송을 멈췄다."""
 
 
 def send_reports(
     settings: Settings, api: Poster, sign: Signer, *, limit: int = REPORTS_PER_TICK
 ) -> ReportsSent:
-    """대기 보고를 오래된 순으로 최대 `limit`건 보낸다(응답별 처리는 모듈 docstring)."""
+    """대기 보고를 `send_order` 순으로 최대 `limit`건 보낸다(응답별 처리는 모듈 docstring)."""
     state_dir = settings.state_dir
     settle_journal(state_dir)
     sent = rejected = 0
-    for path in pending(state_dir)[:limit]:
-        item = assign(state_dir, path)
+    for path in send_order(pending(state_dir))[:limit]:
+        try:
+            item = assign(state_dir, path)
+        except UnreadableReportError as exc:
+            reject(state_dir, path, str(exc))
+            rejected += 1
+            continue
         payload: dict[str, Json] = {**item.body, "site_id": sign.site_id, SEQ_KEY: item.report_seq}
         envelope = _envelope(sign, SitePurpose.REPORT, payload)
         try:
@@ -184,17 +207,17 @@ def send_reports(
         if status == 200:
             move(path, EXPORTED_DIR)
             sent += 1
-        elif status == 400:
-            moved = move(path, REJECTED_DIR)
-            counters = load_counters(state_dir)
-            save_counters(state_dir, replace(counters, rejected_total=counters.rejected_total + 1))
-            log.error(
-                "report seq %s rejected by control-api (HTTP 400 %s) — moved to %s",
-                item.report_seq,
-                _detail(body),
-                moved,
-            )
+        elif status in PERMANENT_REFUSALS:
+            reason = f"seq {item.report_seq}, control-api HTTP {status} {_detail(body)}"
+            reject(state_dir, path, reason)
             rejected += 1
+        elif status == KEY_MISMATCH:
+            log.warning(
+                "report seq %s: HTTP 409 — %s; kept for the next tick",
+                item.report_seq,
+                KEY_MISMATCH_HINT,
+            )
+            return ReportsSent(sent, rejected, stopped=True)
         else:
             log.warning(
                 "report seq %s: HTTP %s %s — kept for the next tick",
@@ -207,14 +230,18 @@ def send_reports(
 
 
 def send_all(settings: Settings, state: UpdaterState, api: Poster, *, now: datetime) -> None:
-    """tick의 송신 단계: heartbeat → 보고. 단계마다 예외는 로그만(서로·apply를 막지 않는다)."""
+    """tick의 송신 단계: heartbeat → 보고 → 메트릭. 어떤 예외도 밖으로 내지 않는다 — 단계마다 로그만
+    남기고(서로 막지 않음), 호출자 tick은 이어서 `advance`한다(리뷰 H1)."""
     try:
         sign = signer(settings)
     except SeqPendingError as exc:
         log.warning("not sending heartbeat/reports: %s", exc)
         return
-    except (EnrollError, OSError) as exc:
+    except (EnrollError, OSError, ValueError) as exc:  # ValueError: 길이가 틀린 site.key 등
         log.warning("not sending heartbeat/reports (site key): %s", exc)
+        return
+    except Exception:
+        log.exception("not sending heartbeat/reports: cannot load the site key")
         return
     try:
         send_heartbeat(settings, state, api, sign, now=now)
@@ -226,5 +253,5 @@ def send_all(settings: Settings, state: UpdaterState, api: Poster, *, now: datet
         log.exception("sending reports failed")
     try:
         refresh_outbox_metrics(settings.state_dir)
-    except OSError as exc:
-        log.warning("cannot write outbox metrics: %s", exc)
+    except Exception:
+        log.exception("cannot write outbox metrics")

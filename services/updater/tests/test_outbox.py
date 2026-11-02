@@ -210,8 +210,8 @@ def test_r4_journal_after_partial_move_keeps_moved_reports_out(settings: Setting
     exported = settings.state_dir / "reports" / "exported"
     exported.mkdir()
     (settings.state_dir / "reports" / "a.json").replace(exported / "a.json")
+    reserve_seq(settings.state_dir, 5)  # r4가 이미 5까지 예약(next 6) — 저널보다 먼저 만들어 둔다
     _journal(settings, 4, ["a.json", "b.json"])
-    reserve_seq(settings.state_dir, 5)  # r4가 이미 5까지 예약(next 6)
     result = export_reports(settings, settings.root / "usb", now=NOW)
     assert result is not None
     assert bundle_reports(settings, result[0]) == [(5, 2)]
@@ -303,3 +303,13 @@ def test_finish_rerun_keeps_the_seq_and_does_not_requeue_sent_reports(settings: 
     assert export_reports(settings, settings.root / "usb", now=NOW) is not None
     write_report(settings.state_dir, attempt, NOW)
     assert pending(settings.state_dir) == []
+
+
+def test_move_fsyncs_both_directories(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    """리뷰 N3: rename 뒤 원본·대상 디렉터리를 모두 fsync한다(전원 차단 뒤 이동이 사라지지 않게)."""
+    path = queue(settings, "a.json", 1)
+    synced: list[Path] = []
+    monkeypatch.setattr(outbox, "fsync_dir", synced.append)
+    target = outbox.move(path, "exported")
+    assert target == path.parent / "exported" / "a.json"
+    assert synced == [path.parent, path.parent / "exported"]

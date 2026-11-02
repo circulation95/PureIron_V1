@@ -231,6 +231,15 @@ def test_cli_project_export_upload(
     assert "upload refused: HTTP 403" in capsys.readouterr().err
     assert out.exists()
 
+    # 리뷰 M1: 등록 키 불일치(409 — re-enroll 뒤 rekey 대기)도 실패(exit 1) + 파일 유지 + 안내.
+    sink.status = 409
+    out.unlink()
+    assert cli.main(["project", "export", "--out", str(out), "--upload"]) == cli.EXIT_FAILED
+    err = capsys.readouterr().err
+    assert "upload refused: HTTP 409" in err
+    assert "rekey" in err
+    assert out.exists()
+
 
 def test_cli_upload_without_control_api_is_refused_before_export(
     cli_site: Site,

@@ -4,8 +4,11 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import sys
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -15,7 +18,7 @@ from pureiron_updater import cli
 from pureiron_updater.compose import ComposeCli, compose_env
 from pureiron_updater.images import DockerCli
 from pureiron_updater.ports import ComposeTarget
-from pureiron_updater.proc import subprocess_runner
+from pureiron_updater.proc import DEFAULT_TIMEOUT_S, Result, subprocess_runner
 from pureiron_updater.settings import Settings
 
 
@@ -66,6 +69,57 @@ def test_compose_calls_drop_the_switch_from_the_process_environment(
     DockerCli(docker).available()
     assert docker.envs == [None]  # docker CLI 호출은 환경을 그대로 물려준다
     assert compose_env({"PUREIRON_WRITES_ENABLED": "true", "A": "b"}) == {"A": "b"}
+
+
+@dataclass
+class StrictRunner:
+    """compose 호출이 늘 정리한 환경(`env=`)을 넘기는지 본다 — `env=None`(프로세스 환경 상속)이면
+    바로 실패한다(리뷰 L3: 나중에 `_check`를 거치지 않는 메서드가 생겨도 잡힌다)."""
+
+    calls: int = 0
+
+    def __call__(
+        self,
+        argv: Sequence[str],
+        *,
+        timeout: float = DEFAULT_TIMEOUT_S,
+        stdout: Path | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> Result:
+        assert env is not None, f"compose call inherits the process environment: {argv}"
+        assert "PUREIRON_WRITES_ENABLED" not in env, argv
+        self.calls += 1
+        if stdout is not None:
+            stdout.write_bytes(b"dump")
+        return Result(0, "{}", "")
+
+
+COMPOSE_CALLS: dict[str, Callable[[ComposeCli, ComposeTarget, Path], object]] = {
+    "config_images": lambda cli, target, _tmp: cli.config_images(target),
+    "up": lambda cli, target, _tmp: cli.up(target, ["core"]),
+    "running_images": lambda cli, target, _tmp: cli.running_images(target),
+    "run_core": lambda cli, target, tmp: cli.run_core(
+        target, ["migrate"], mounts={tmp: "/in"}, writable={tmp: "/out"}
+    ),
+    "dump_db": lambda cli, target, tmp: cli.dump_db(target, tmp / "dump"),
+    "down": lambda cli, target, _tmp: cli.down(target),
+    "release_lock_db": lambda cli, target, _tmp: cli.release_lock_db(target),
+}
+
+
+def test_every_public_compose_method_is_covered() -> None:
+    public = {name for name, _ in inspect.getmembers(ComposeCli, inspect.isfunction)}
+    assert {name for name in public if not name.startswith("_")} == set(COMPOSE_CALLS)
+
+
+@pytest.mark.parametrize("method", sorted(COMPOSE_CALLS))
+def test_every_compose_call_drops_the_switch(
+    method: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PUREIRON_WRITES_ENABLED", "true")
+    runner = StrictRunner()
+    COMPOSE_CALLS[method](ComposeCli(runner), ComposeTarget(tmp_path / "g1"), tmp_path)
+    assert runner.calls >= 1
 
 
 def test_subprocess_runner_uses_the_given_environment() -> None:

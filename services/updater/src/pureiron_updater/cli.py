@@ -56,7 +56,7 @@ from pureiron_updater.phases import AttemptInProgressError, Deps, Updater
 from pureiron_updater.poll import TOKEN_FILE, ControlApi, PollError, SendError, poll_once
 from pureiron_updater.recover import recover
 from pureiron_updater.secret_store import generate_secret, set_secret, value_from_input
-from pureiron_updater.send import send_all
+from pureiron_updater.send import KEY_MISMATCH, KEY_MISMATCH_HINT, send_all
 from pureiron_updater.settings import Settings, SettingsError, merged_env
 from pureiron_updater.state import (
     TERMINAL,
@@ -313,6 +313,8 @@ def _upload_draft(api: ControlApi, path: Path) -> int:
     if status != 201:
         detail = body.decode("utf-8", "replace").strip()[:500]
         print(f"error: upload refused: HTTP {status} {detail} (file kept: {path})", file=sys.stderr)
+        if status == KEY_MISMATCH:
+            print(f"hint: {KEY_MISMATCH_HINT}", file=sys.stderr)
         return EXIT_FAILED
     print(f"uploaded:      HTTP {status}")
     return EXIT_OK

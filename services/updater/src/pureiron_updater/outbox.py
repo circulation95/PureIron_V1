@@ -7,13 +7,16 @@
 
 카운터(`site.json next_report_seq`)는 heartbeat(`send.py`)와 보고가 함께 쓴다(중앙 C7: 공용
 카운터, 종류별 수위). `seq_pending`(상태 분실 재등록 뒤 벤더 rekey 응답 미반영)이면 예약을 거부한다.
+`reserve_seq`는 예약 전에 r4 저널을 먼저 정리한다 — 어느 경로(heartbeat·보고·USB)의 예약도 저널이
+가진 seq를 다시 내주지 않는다(리뷰 M2).
 
 디렉터리:
 
 - `reports/*.json` — 대기(이름 = 시도 시작 시각 순).
 - `reports/exported/` — 중앙이 받았거나(온라인 200) 서명 묶음에 들어간(USB) 보고.
-- `reports/rejected/` — 중앙이 형식 위반(400)으로 영원히 받지 않을 보고. 큐 맨 앞을 막지 않게
-  빼 두고 오류 로그·메트릭으로 알린다(파일은 보존).
+- `reports/rejected/` — 중앙이 영원히 받지 않을 보고(형식 위반 400·크기 초과 413)와 JSON으로 읽을
+  수 없는 큐 파일. 큐 맨 앞을 막지 않게 빼 두고 오류 로그·메트릭으로 알린다(파일은 보존, `reject`).
+  등록 키 불일치(409 — rekey 대기)는 여기로 빼지 않는다(큐에 남겨 다시 보낸다).
 
 r4 호환: r4 `report export`가 끊기며 남긴 저널(`reports/.export.journal{first_seq, names}`)은
 어떤 송신보다 먼저 `settle_journal`이 그 seq를 큐 파일에 써 넣고 지운다 — r4가 그 저널로 다시 냈을
@@ -24,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -43,7 +47,10 @@ from pureiron_updater.enroll import (
 )
 from pureiron_updater.metrics import (
     EXPORTED_DIR,
+    REJECTED_DIR,
     REPORTS_DIR,
+    load_counters,
+    save_counters,
     storable,
     write_report_file,
 )
@@ -59,6 +66,10 @@ SEQ_KEY = "report_seq"
 
 class SeqPendingError(EnrollError):
     """재등록 뒤 다음 seq를 아직 모른다 — 벤더 rekey 응답을 `enroll --next-seq`로 반영해야 한다."""
+
+
+class UnreadableReportError(EnrollError):
+    """큐 파일이 JSON 객체로 읽히지 않는다(손 편집·디스크 오류) — `reject`로 뺀다(리뷰 L1)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,9 +115,11 @@ def signer(settings: Settings) -> Signer:
 
 
 def reserve_seq(state_dir: Path, count: int = 1) -> int:
-    """카운터에서 `count`개를 예약하고 첫 seq를 돌려준다(`site.json` 갱신 = fsync 뒤 반환)."""
+    """카운터에서 `count`개를 예약하고 첫 seq를 돌려준다(`site.json` 갱신 = fsync 뒤 반환). r4
+    저널이 있으면 먼저 정리한다 — 저널이 카운터 예약 전에 끊겼어도 그 seq를 다시 내주지 않는다."""
     if count < 1:
         raise ValueError("count must be >= 1")
+    settle_journal(state_dir)
     identity = _require_identity(state_dir)
     first = identity.next_report_seq
     save_identity(state_dir, replace(identity, next_report_seq=first + count))
@@ -126,13 +139,27 @@ def pending(state_dir: Path) -> list[Path]:
     return sorted(queue.glob("*.json")) if queue.is_dir() else []
 
 
+def send_order(paths: Sequence[Path]) -> list[Path]:
+    """온라인 전송 순서: 이미 seq가 있는 파일을 seq 순으로 먼저, 나머지는 이름순(리뷰 N4 — 시계가
+    뒤로 가 새 파일 이름이 앞서도 송신 순서 = seq 순서). 읽을 수 없는 파일은 seq 없음으로 친다."""
+
+    def key(path: Path) -> tuple[float, str]:
+        try:
+            seq = stored_seq(read_report(path))
+        except UnreadableReportError:
+            seq = None
+        return (math.inf if seq is None else seq, path.name)
+
+    return sorted(paths, key=key)
+
+
 def read_report(path: Path) -> dict[str, Json]:
     try:
         data: object = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        raise EnrollError(f"{path}: unreadable report ({exc})") from exc
+        raise UnreadableReportError(f"{path}: unreadable report ({exc})") from exc
     if not isinstance(data, dict):
-        raise EnrollError(f"{path}: report is not a JSON object")
+        raise UnreadableReportError(f"{path}: report is not a JSON object")
     # r4가 쓴 파일에는 서로게이트가 남아 있을 수 있다(`\\udcxx` 이스케이프) — 서명 전에 정리한다.
     return cast(dict[str, Json], storable(cast(dict[str, Json], data)))
 
@@ -143,7 +170,9 @@ def stored_seq(report: dict[str, Json]) -> int | None:
 
 
 def assign(state_dir: Path, path: Path) -> QueuedReport:
-    """보고의 seq: 파일에 있으면 그 값, 없으면 예약 → 파일에 써 넣기(원자적 교체)."""
+    """보고의 seq: 파일에 있으면 그 값, 없으면 예약 → 파일에 써 넣기(원자적 교체). 저널은 읽기 전에
+    정리한다(예약 안의 정리가 이 파일에 저널 seq를 쓴 뒤 덮어쓰지 않게)."""
+    settle_journal(state_dir)
     report = read_report(path)
     seq = stored_seq(report)
     if seq is None:
@@ -154,13 +183,25 @@ def assign(state_dir: Path, path: Path) -> QueuedReport:
 
 
 def move(path: Path, subdir: str) -> Path:
-    """대기 보고를 `reports/<subdir>/`로 옮긴다(같은 이름이 있으면 덮어쓴다)."""
+    """대기 보고를 `reports/<subdir>/`로 옮긴다(같은 이름이 있으면 덮어쓴다). 원본·대상 디렉터리
+    모두 fsync한다(N3)."""
     target_dir = path.parent / subdir
     target_dir.mkdir(exist_ok=True)
     target = target_dir / path.name
     path.replace(target)
     fsync_dir(path.parent)
+    fsync_dir(target_dir)
     return target
+
+
+def reject(state_dir: Path, path: Path, reason: str) -> Path:
+    """중앙이 영원히 받지 않을(또는 읽을 수 없는) 보고를 `rejected/`로 빼고 오류 로그·카운터를
+    남긴다 — 큐 맨 앞을 막지 않게(파일은 보존)."""
+    moved = move(path, REJECTED_DIR)
+    counters = load_counters(state_dir)
+    save_counters(state_dir, replace(counters, rejected_total=counters.rejected_total + 1))
+    log.error("report %s rejected (%s) — moved to %s", path.name, reason, moved)
+    return moved
 
 
 def _load_journal(path: Path) -> tuple[int, list[str]] | None:
@@ -190,7 +231,11 @@ def settle_journal(state_dir: Path) -> None:
         path = queue / name
         if not path.exists():
             continue  # 이미 exported/ — r4가 그 묶음을 썼다
-        report = read_report(path)
+        try:
+            report = read_report(path)
+        except UnreadableReportError as exc:
+            log.error("export journal: %s — left for the queue to reject", exc)
+            continue
         if stored_seq(report) != first + i:
             write_report_file(path, {**report, SEQ_KEY: first + i})
     journal_file.unlink()
@@ -219,7 +264,12 @@ def export_reports(settings: Settings, out_dir: Path, *, now: datetime) -> tuple
     sign = signer(settings)
     state_dir = settings.state_dir
     settle_journal(state_dir)
-    queued = [assign(state_dir, path) for path in pending(state_dir)]
+    queued: list[QueuedReport] = []
+    for path in pending(state_dir):
+        try:
+            queued.append(assign(state_dir, path))
+        except UnreadableReportError as exc:
+            reject(state_dir, path, str(exc))
     if not queued:
         return None
     run = contiguous_runs(queued)[0]
