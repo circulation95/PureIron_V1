@@ -1,0 +1,5 @@
+# control-db schema epoch → 그 epoch의 마지막 마이그레이션 파일(ADR-024, plan §6.6 — core와 같은 규칙).
+# control-api는 core와 별개의 DB(control-db)·별개 카탈로그다. 마이그레이션을 포함한 control-api
+# release만 epoch를 +1 하고, 이미 배포된 epoch 항목은 바꾸지 않는다(migrate lint --base-ref).
+epochs:
+  1: 0001_control_schema.sql

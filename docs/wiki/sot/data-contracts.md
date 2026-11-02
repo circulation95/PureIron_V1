@@ -11,10 +11,11 @@ sources:
   - https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/tags/models.py
   - https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/gateway.py
   - https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/project_package.py
+  - services/control-api/migrations/0001_control_schema.sql
 source_globs:
   - projects/demo-coffee/**/*.yaml
   - projects/demo-coffee/**/*.json
-last_verified: 2026-08-22
+last_verified: 2026-11-01
 ---
 
 # Data Contracts SOT
@@ -473,3 +474,27 @@ ADR-013(개정) 쓰기 경로의 계약과 collector 실행부다. core 쓰기 �
 - **private repo 접근 조건(foundation plan K6)**: PureIron_V1이 private이라 ① PureIron_V1 Actions access level `user`(같은 계정 소유 private repo만 호출 허용, REST `PUT /repos/{owner}/{repo}/actions/permissions/access`) ② 고객 repo도 `circulation95` 소유 ③ PureIron_V1 체크아웃은 App 토큰(App이 PureIron_V1에 설치돼 있어야 함). 고객 소유 repo가 필요해지면 `validate-project.yml`·project-tools를 공개 repo로 분리한다(K6 대안).
 - **App 키 신뢰 경계**: workflow가 토큰 범위를 PureIron_V1 contents read로 좁혀도, 키를 가진 사람은 App 권한 전체로 토큰을 직접 만들 수 있다. App(`pureiron-ci`)은 **PureIron_V1 한 repo에만**(Only select repositories) 설치돼 있고, 권한은 Contents read·Metadata read에 V1 CI용(M0) **Pull requests write·Commit statuses write**(`pull_requests`·`statuses`)가 더해져 있다. 고객 repo에 write 권한이 있는 사람은 workflow를 고쳐 이 키를 꺼낼 수 있으므로 키 = PureIron_V1에 대한 App 권한 전체(코드 읽기 + PR·commit status 쓰기)로 본다. 지금 이를 수용하는 근거: 모든 고객 repo가 `circulation95` 소유이고 write 권한자는 벤더뿐이라, 키를 꺼낼 수 있는 사람이 이미 PureIron_V1에 그 이상의 권한을 가진 사람이다. 전환 조건: 외부인(고객 엔지니어 등 벤더 밖)에게 고객 repo write 권한을 주기 **전에** 둘 중 하나를 고른다 — ① 고객 repo 전용 읽기 전용 App(Contents read만, PureIron_V1에만 설치)을 따로 만들고 모든 고객 repo의 secret을 그 App으로 교체 ② K6 대안(`validate-project.yml`·project-tools를 공개 repo로 분리). 키가 샌 것으로 의심되면 App에서 키를 새로 만들고 모든 고객 repo의 secret을 갱신한다.
 - **V1 안 검증**: foundation-ci `template-validate`(같은 workflow를 `./`로 호출, `project_dir: deploy/templates/pureiron-project`) → `template-outputs`(`content_hash` 형식·로컬 `pureiron-project hash`와 같음·`project_version` 빈 값). 외부 repo run(G1-8)은 [testing](testing.md) 11절.
+
+### V1 구현 현황 (M4-0 control-api 중앙 DB, 2026-11-01)
+
+벤더 쪽 중앙 저장소. 근거 plan `pureiron-m4.md` C5~C8, foundation plan §6.4·PD-3·PD-15. API 표면은 [api-events](api-events.md) control-api 절.
+
+- **control-db**: PostgreSQL 16(TimescaleDB 아님), asyncpg raw SQL(No ORM). 마이그레이션은 `services/control-api/migrations/0001_control_schema.sql`(epoch 1 = baseline) + `epochs.yaml` — core와 **같은 migrate 라이브러리**(`pureiron_core.platform.migrate`·`migrate_lint`)를 쓰는 별도 카탈로그다. CLI `pureiron-control migrate status [--json]|up [--to EPOCH] [--lock-timeout S]|verify|lint <dir> [--base-ref]`, 종료 코드는 core와 같다(0/2/3/4/5). 부팅 때 자동 실행하지 않는다 — `/readyz`가 envelope 밖이면 503. ADD-only lint는 G1 `migration-lint`가 control-api 디렉터리에도 돌린다(base에 아직 release 기록이 없어 epoch 불변 판정은 core release 기록 기준 — epoch 1은 바꿀 수 없다).
+- **표**(모든 시각 `timestamptz`, 원문 token 없음):
+
+| 표 | 내용 |
+|---|---|
+| `sites` | `site_id` PK, `registered_at`, `last_heartbeat_seq`·`last_report_seq`(종류별 마지막 반영 `report_seq` — 카운터는 공용, 둘 다 등록 때 `next_report_seq − 1`), `last_seen`(token·서명이 확인된 온라인 메시지 수신 시각, 반영 여부 무관), `current_seq`(current를 마지막으로 쓴 `report_seq` — current는 heartbeat·성공 보고 공용이라 종류별 수위가 아니라 공용 카운터 순서로 거른다, 등록 때 `next_report_seq − 1`), `current` jsonb `{product, project_version, gen}`·`current_reported_at`·`current_source`(online·offline), `updater_phase`, `disk_state`, `last_attempt_id` → `apply_attempts` |
+| `site_keys` | site Ed25519 공개키 hex·지문, `revoked_at`(rekey가 찍음). 현장당 유효 키 하나(부분 unique index) |
+| `site_tokens` | 현장 token SHA-256(hex), `revoked_at`(재발급이 찍음). 현장당 유효 token 하나 |
+| `api_tokens` | 사람·CI token SHA-256, `name`(유효 token 사이 유일), `role` ∈ admin·ci·viewer, `revoked_at` |
+| `bundles` | `(site_id, generation)` PK, `sha256`(`sha256:<hex>`)·`size_bytes`, manifest에서 읽은 `product_version`·`project_id`·`project_version`·`fleet_commit`(표시용 — 서명 확인은 현장 Updater), `published_at`, `published_by` → `api_tokens`. 파일은 디스크 `<PUREIRON_CONTROL_DATA_DIR>/bundles/<site>/g<gen>.pib` |
+| `apply_attempts` | 받은 ApplyAttempt 보고 전부: `report_seq`, `source`, `outcome`(applied·history), `generation`, `result`, 서명된 payload jsonb, `received_at`, `offline_import_id` |
+| `heartbeats` | 받은 heartbeat 전부(`report_seq`·`source`·`outcome`·payload) — 보존 정책은 아직 없다(현장 1개 ≈ 1행/분) |
+| `offline_imports` | 반입 1회: `first_seq`·`last_seq`·`exported_at`·`file_sha256`·`applied_total`·`history_total`·`imported_by` |
+| `drafts` | 현장 드래프트 메타(`site_rev`·`base_site_rev`·`content_hash`·`exported_at`·`sha256`·`size_bytes`), 파일 `<data>/drafts/<site>/<sha256 hex>.tar` |
+
+- **게시 규칙(PD-15)**: `PUT /bundles/{site}/{gen}`은 업로드를 같은 디렉터리 임시 파일(`.upload-*.part`)로 받아 sha256·크기를 재고 manifest `site_id`·`generation`이 경로와 같은지 본 뒤, 현장 행 `FOR UPDATE` 아래에서 `gen > max(generation)`을 다시 확인하고 행 INSERT + 파일 이름 바꾸기를 한 트랜잭션에 한다. 거부된 업로드는 파일을 남기지 않는다. 같은 gen 동시 업로드는 그 잠금이 줄을 세워 201 하나·409 하나, 디스크 파일 하나다. 파일 쓰기 `OSError`는 `BundleStorageError`(507)로 바꿔 연결 계층의 control-db 장애(503) 분류를 피한다. DesiredState = 최대 gen(revert도 gen+1 게시).
+- **seq·current 규칙(C7)**: [api-events](api-events.md) control-api 절. 같은 seq 재전송·같은 파일 재반입은 이력 행만 늘린다(중복 제거 없음, 감사용).
+- **현장 쪽 짝**: enrollment·`report export` 파일 형식은 Updater(`pureiron_updater.enroll`) 그대로, 서명 용도는 bundle-tools `sitesign` — 이번에 `site-heartbeat`·`site-report`(온라인 한 건)를 추가했고 기존 용도·봉투 형식은 바꾸지 않았다. Updater 송신(heartbeat 루프·보고 온라인 전송·`export --upload`)은 M4-1.
+- **검증**: 단위(인증 표·종류별 seq 규칙(보고 11이 heartbeat 12 뒤 → 반영)·current 공용 순서(늦은 heartbeat → 반영·current 불변)·열 범위·NUL·짝 없는 서로게이트 400·저장 오류 507·연결 판정 경계 180/181s·payload 형식·봉투 site 추출·업로드 상한·설정·OpenAPI 경로·import-linter 음성) + control-db 통합(`deploy/compose/control.dev.yml`, 테스트마다 새 DB → CLI `migrate up` → `token create`): gen 역행 409·타 site token 403(현장 경로 5개)·서명 불일치/변조/용도 위반 400·payload 타 site 403·seq ≤ 보고 수위 반입 이력만(current·last_attempt 그대로)·늦게 재전송된 보고는 더 큰 heartbeat 뒤에도 반영·늦게 온 heartbeat는 더 새 성공 보고의 current를 덮지 않음·한 USB 파일이 수위를 가로지르면 이력/반영 분할·같은 gen 동시 PUT 201+409·동시 등록 201+409·180s 초과 stale·반입 `source=offline`(connection `never` 유지)·desired ETag 304·Range 206·rekey 뒤 구 키 400·token 재발급/폐기 401·드래프트 업로드/회수, 그리고 r4 Updater `poll.ControlApi`가 실제 HTTP로 desired·304·Range 이어받기를 소비.

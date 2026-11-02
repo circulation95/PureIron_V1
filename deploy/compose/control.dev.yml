@@ -1,0 +1,29 @@
+# 중앙 control-db 개발·통합 테스트 전용(M4-0). 운영 중앙 compose(control-api + control-db + Caddy,
+# 이미지 config digest 고정)는 deploy/central(M4-3)이 맡는다.
+#   docker compose -p pureiron-control -f deploy/compose/control.dev.yml up -d --wait control-db
+# 이미지는 업스트림 PostgreSQL 16을 digest로 고정한다(벤더 측 중앙 — 현장 registry pull 금지 규칙과 무관).
+# 비밀값은 파일로만: ${PUREIRON_SECRETS_DIR}/control_db_password(PD-4).
+name: pureiron-control
+
+services:
+  control-db:
+    image: postgres:16@sha256:5d143123fdf80462d1778cd4f24b9f7ca13c87174bca19141fb194c5a1ebca59
+    pull_policy: missing
+    environment:
+      POSTGRES_USER: pureiron
+      POSTGRES_DB: pureiron_control
+      POSTGRES_PASSWORD_FILE: /run/secrets/control_db_password
+    secrets: [control_db_password]
+    ports:
+      # 기본 포트는 Windows 동적 범위(49152-65535) 밖(site.dev.yml과 같은 이유), site-db 25432 옆.
+      - 127.0.0.1:${PUREIRON_DEV_CONTROL_DB_PORT:-25433}:5432
+    healthcheck:
+      # TCP로 본다 — 첫 기동 initdb 임시 서버는 unix socket만 연다(site.compose.yml과 같은 이유).
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U pureiron -d pureiron_control"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+
+secrets:
+  control_db_password:
+    file: ${PUREIRON_SECRETS_DIR:?set PUREIRON_SECRETS_DIR}/control_db_password

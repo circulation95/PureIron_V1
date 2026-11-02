@@ -1,6 +1,444 @@
 {
   "components": {
     "schemas": {
+      "AttemptInfo": {
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "from": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From"
+          },
+          "generation": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "received_at": {
+            "format": "date-time",
+            "title": "Received At",
+            "type": "string"
+          },
+          "report_seq": {
+            "title": "Report Seq",
+            "type": "integer"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "source": {
+            "description": "online | offline(폐쇄망 반입)",
+            "title": "Source",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "to": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To"
+          }
+        },
+        "required": [
+          "report_seq",
+          "source",
+          "received_at",
+          "generation",
+          "from",
+          "to",
+          "phase",
+          "result",
+          "code",
+          "started_at",
+          "ended_at"
+        ],
+        "title": "AttemptInfo",
+        "type": "object"
+      },
+      "ConnectionState": {
+        "enum": [
+          "online",
+          "stale",
+          "never"
+        ],
+        "title": "ConnectionState",
+        "type": "string"
+      },
+      "CurrentInfo": {
+        "properties": {
+          "gen": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gen"
+          },
+          "product": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product"
+          },
+          "project_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Version"
+          },
+          "reported_at": {
+            "description": "현장이 이 값을 보고한 시각(서명된 at·ended_at)",
+            "format": "date-time",
+            "title": "Reported At",
+            "type": "string"
+          },
+          "source": {
+            "description": "online | offline(폐쇄망 반입)",
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "product",
+          "project_version",
+          "gen",
+          "reported_at",
+          "source"
+        ],
+        "title": "CurrentInfo",
+        "type": "object"
+      },
+      "DesiredInfo": {
+        "properties": {
+          "generation": {
+            "title": "Generation",
+            "type": "integer"
+          },
+          "product_version": {
+            "title": "Product Version",
+            "type": "string"
+          },
+          "project_version": {
+            "title": "Project Version",
+            "type": "string"
+          },
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "generation",
+          "sha256",
+          "size",
+          "product_version",
+          "project_version",
+          "published_at"
+        ],
+        "title": "DesiredInfo",
+        "type": "object"
+      },
+      "DesiredOut": {
+        "properties": {
+          "bundle_url": {
+            "description": "같은 출처의 절대 경로(`GET …/bundles/{generation}`)",
+            "title": "Bundle Url",
+            "type": "string"
+          },
+          "generation": {
+            "title": "Generation",
+            "type": "integer"
+          },
+          "sha256": {
+            "description": "`sha256:<hex>`",
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size": {
+            "description": "바이트",
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "generation",
+          "bundle_url",
+          "sha256",
+          "size"
+        ],
+        "title": "DesiredOut",
+        "type": "object"
+      },
+      "DraftOut": {
+        "properties": {
+          "base_site_rev": {
+            "title": "Base Site Rev",
+            "type": "integer"
+          },
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "exported_at": {
+            "title": "Exported At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "received_at": {
+            "format": "date-time",
+            "title": "Received At",
+            "type": "string"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "site_id": {
+            "title": "Site Id",
+            "type": "string"
+          },
+          "site_rev": {
+            "title": "Site Rev",
+            "type": "integer"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "site_id",
+          "site_rev",
+          "base_site_rev",
+          "content_hash",
+          "exported_at",
+          "sha256",
+          "size",
+          "received_at"
+        ],
+        "title": "DraftOut",
+        "type": "object"
+      },
+      "FleetSite": {
+        "properties": {
+          "connection": {
+            "$ref": "#/components/schemas/ConnectionState"
+          },
+          "current": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CurrentInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "마지막 반영 보고값 — connection이 stale이면 reported_at 시각의 값"
+          },
+          "desired": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DesiredInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "disk_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disk State"
+          },
+          "last_attempt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AttemptInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_heartbeat_seq": {
+            "description": "마지막 반영 heartbeat report_seq",
+            "title": "Last Heartbeat Seq",
+            "type": "integer"
+          },
+          "last_report_seq": {
+            "description": "마지막 반영 보고 report_seq(온라인·폐쇄망) — 카운터는 공용, 수위는 종류별",
+            "title": "Last Report Seq",
+            "type": "integer"
+          },
+          "last_seen": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "마지막 온라인 메시지 수신 시각(중앙)",
+            "title": "Last Seen"
+          },
+          "max_published_gen": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "게시된 가장 큰 gen(없으면 null)",
+            "title": "Max Published Gen"
+          },
+          "site": {
+            "title": "Site",
+            "type": "string"
+          },
+          "updater_phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updater Phase"
+          }
+        },
+        "required": [
+          "site",
+          "desired",
+          "max_published_gen",
+          "current",
+          "last_seen",
+          "connection",
+          "last_attempt",
+          "disk_state",
+          "updater_phase",
+          "last_heartbeat_seq",
+          "last_report_seq"
+        ],
+        "title": "FleetSite",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
       "Health": {
         "properties": {
           "status": {
@@ -19,6 +457,300 @@
         ],
         "title": "Health",
         "type": "object"
+      },
+      "OfflineImported": {
+        "properties": {
+          "applied_total": {
+            "title": "Applied Total",
+            "type": "integer"
+          },
+          "history_total": {
+            "title": "History Total",
+            "type": "integer"
+          },
+          "import_id": {
+            "title": "Import Id",
+            "type": "integer"
+          },
+          "last_seq": {
+            "description": "보고 종류의 마지막 반영 report_seq",
+            "title": "Last Seq",
+            "type": "integer"
+          },
+          "site_id": {
+            "title": "Site Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "import_id",
+          "site_id",
+          "applied_total",
+          "history_total",
+          "last_seq"
+        ],
+        "title": "OfflineImported",
+        "type": "object"
+      },
+      "PublishedOut": {
+        "properties": {
+          "generation": {
+            "title": "Generation",
+            "type": "integer"
+          },
+          "product_version": {
+            "title": "Product Version",
+            "type": "string"
+          },
+          "project_version": {
+            "title": "Project Version",
+            "type": "string"
+          },
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "site_id": {
+            "title": "Site Id",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "site_id",
+          "generation",
+          "sha256",
+          "size",
+          "product_version",
+          "project_version",
+          "published_at"
+        ],
+        "title": "PublishedOut",
+        "type": "object"
+      },
+      "Readiness": {
+        "properties": {
+          "db": {
+            "title": "Db",
+            "type": "boolean"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "schema_envelope": {
+            "$ref": "#/components/schemas/SchemaCheck"
+          }
+        },
+        "required": [
+          "ready",
+          "db",
+          "schema_envelope"
+        ],
+        "title": "Readiness",
+        "type": "object"
+      },
+      "Recorded": {
+        "properties": {
+          "last_seq": {
+            "description": "이 메시지 종류(heartbeat 또는 보고)의 마지막 반영 report_seq — 수위는 종류별",
+            "title": "Last Seq",
+            "type": "integer"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/SeqOutcome",
+            "description": "applied = 반영(current·last_attempt 갱신), history = seq ≤ last_seq라 이력만"
+          }
+        },
+        "required": [
+          "outcome",
+          "last_seq"
+        ],
+        "title": "Recorded",
+        "type": "object"
+      },
+      "SchemaCheck": {
+        "properties": {
+          "app_expected": {
+            "title": "App Expected",
+            "type": "integer"
+          },
+          "app_max_compatible": {
+            "title": "App Max Compatible",
+            "type": "integer"
+          },
+          "cur": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cur"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "cur",
+          "app_expected",
+          "app_max_compatible"
+        ],
+        "title": "SchemaCheck",
+        "type": "object"
+      },
+      "SeqOutcome": {
+        "enum": [
+          "applied",
+          "history"
+        ],
+        "title": "SeqOutcome",
+        "type": "string"
+      },
+      "SiteRegistered": {
+        "properties": {
+          "fingerprint": {
+            "description": "site 공개키 지문(sha256(raw 32B) hex)",
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "next_seq": {
+            "description": "현장이 다음에 쓸 report_seq",
+            "title": "Next Seq",
+            "type": "integer"
+          },
+          "site_id": {
+            "title": "Site Id",
+            "type": "string"
+          },
+          "token": {
+            "description": "현장 온라인 token(이 응답에만 나온다)",
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "site_id",
+          "fingerprint",
+          "next_seq",
+          "token"
+        ],
+        "title": "SiteRegistered",
+        "type": "object"
+      },
+      "SiteRekeyed": {
+        "properties": {
+          "fingerprint": {
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "next_seq": {
+            "description": "현장이 다음에 쓸 report_seq — `pureiron-site enroll --next-seq`로 반영",
+            "title": "Next Seq",
+            "type": "integer"
+          },
+          "site_id": {
+            "title": "Site Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "site_id",
+          "fingerprint",
+          "next_seq"
+        ],
+        "title": "SiteRekeyed",
+        "type": "object"
+      },
+      "SiteToken": {
+        "properties": {
+          "site_id": {
+            "title": "Site Id",
+            "type": "string"
+          },
+          "token": {
+            "description": "새 현장 token(구 token은 즉시 무효, 이 응답에만 나온다)",
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "site_id",
+          "token"
+        ],
+        "title": "SiteToken",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "ControlToken": {
+        "description": "control-api token — 현장 `pis_…`(자기 `{site}` 경로만), 사람·CI `pia_…`(역할)",
+        "scheme": "bearer",
+        "type": "http"
       }
     }
   },
@@ -28,6 +760,158 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/bundles/{site}/{generation}": {
+      "put": {
+        "operationId": "publish_bundle",
+        "parameters": [
+          {
+            "description": "현장 id",
+            "in": "path",
+            "name": "site",
+            "required": true,
+            "schema": {
+              "description": "현장 id",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+              "title": "Site",
+              "type": "string"
+            }
+          },
+          {
+            "description": "번들 generation(PD-15)",
+            "in": "path",
+            "name": "generation",
+            "required": true,
+            "schema": {
+              "description": "번들 generation(PD-15)",
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Generation",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "description": "서명된 현장 번들 `.pib`",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublishedOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "`.pib`가 아니거나 manifest site·gen이 경로와 다름"
+          },
+          "404": {
+            "description": "미등록 현장"
+          },
+          "409": {
+            "description": "gen ≤ 최신 게시"
+          },
+          "413": {
+            "description": "Request Entity Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "507": {
+            "description": "데이터 디렉터리 쓰기 실패"
+          }
+        },
+        "security": [
+          {
+            "ControlToken": []
+          }
+        ],
+        "summary": "Publish",
+        "tags": [
+          "bundles"
+        ]
+      }
+    },
+    "/api/v1/fleet": {
+      "get": {
+        "operationId": "get_fleet",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "site",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Site"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FleetSite"
+                  },
+                  "title": "Response Get Fleet",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "미등록 현장"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ControlToken": []
+          }
+        ],
+        "summary": "Get Fleet",
+        "tags": [
+          "fleet"
+        ]
+      }
+    },
     "/api/v1/healthz": {
       "get": {
         "operationId": "control_healthz",
@@ -43,7 +927,743 @@
             "description": "Successful Response"
           }
         },
-        "summary": "Healthz"
+        "summary": "Healthz",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/api/v1/offline-imports": {
+      "post": {
+        "operationId": "import_offline_reports",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "description": "purpose `site-reports` 봉투. 현장 site key 서명 봉투(`pureiron_bundle.sitesign`). 서명 대상은 JCS(`{format, payload, purpose}`), 서명은 Ed25519 raw 64B hex.",
+                "properties": {
+                  "format": {
+                    "const": 1
+                  },
+                  "payload": {
+                    "type": "object"
+                  },
+                  "purpose": {
+                    "type": "string"
+                  },
+                  "signature": {
+                    "pattern": "^[0-9a-f]{128}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "format",
+                  "purpose",
+                  "payload",
+                  "signature"
+                ],
+                "title": "SiteSignedEnvelope",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfflineImported"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "404": {
+            "description": "Not Found"
+          }
+        },
+        "security": [
+          {
+            "ControlToken": []
+          }
+        ],
+        "summary": "Offline Import",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/api/v1/readyz": {
+      "get": {
+        "operationId": "control_readyz",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Readiness"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Readiness"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Readyz",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/api/v1/sites": {
+      "post": {
+        "operationId": "register_site",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "description": "purpose `site-enrollment` 봉투. 현장 site key 서명 봉투(`pureiron_bundle.sitesign`). 서명 대상은 JCS(`{format, payload, purpose}`), 서명은 Ed25519 raw 64B hex.",
+                "properties": {
+                  "format": {
+                    "const": 1
+                  },
+                  "payload": {
+                    "type": "object"
+                  },
+                  "purpose": {
+                    "type": "string"
+                  },
+                  "signature": {
+                    "pattern": "^[0-9a-f]{128}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "format",
+                  "purpose",
+                  "payload",
+                  "signature"
+                ],
+                "title": "SiteSignedEnvelope",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteRegistered"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "409": {
+            "description": "이미 등록된 현장(rekey를 쓴다)"
+          }
+        },
+        "security": [
+          {
+            "ControlToken": []
+          }
+        ],
+        "summary": "Register",
+        "tags": [
+          "sites"
+        ]
+      }
+    },
+    "/api/v1/sites/{site}/bundles/{generation}": {
+      "get": {
+        "operationId": "get_bundle",
+        "parameters": [
+          {
+            "description": "번들 generation(PD-15)",
+            "in": "path",
+            "name": "generation",
+            "required": true,
+            "schema": {
+              "description": "번들 generation(PD-15)",
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Generation",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "현장 id",
+            "in": "path",
+            "name": "site",
+            "required": true,
+            "schema": {
+              "description": "현장 id",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+              "title": "Site",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {}
+            },
+            "description": "Successful Response"
+          },
+          "206": {
+            "content": {
+              "application/octet-stream": {}
+            },
+            "description": "Range 이어받기"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ControlToken": []
+          }
+        ],
+        "summary": "Download",
+        "tags": [
+          "bundles"
+        ]
+      }
+    },
+    "/api/v1/sites/{site}/desired": {
+      "get": {
+        "operationId": "get_desired",
+        "parameters": [
+          {
+            "description": "현장 id",
+            "in": "path",
+            "name": "site",
+            "required": true,
+            "schema": {
+              "description": "현장 id",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+              "title": "Site",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DesiredOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "304": {
+            "description": "If-None-Match = 현재 gen"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ControlToken": []
+          }
+        ],
+        "summary": "Desired",
+        "tags": [
+          "bundles"
+        ]
+      }
+    },
+    "/api/v1/sites/{site}/drafts": {
+      "post": {
+        "operationId": "upload_draft",
+        "parameters": [
+          {
+            "description": "현장 id",
+            "in": "path",
+            "name": "site",
+            "required": true,
+            "schema": {
+              "description": "현장 id",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+              "title": "Site",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/x-tar": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "description": "현장 드래프트 `draft.tar`(site-draft 봉투)",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "413": {
+            "description": "Request Entity Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ControlToken": []
+          }
+        ],
+        "summary": "Upload",
+        "tags": [
+          "drafts"
+        ]
+      }
+    },
+    "/api/v1/sites/{site}/drafts/latest": {
+      "get": {
+        "operationId": "get_latest_draft",
+        "parameters": [
+          {
+            "description": "현장 id",
+            "in": "path",
+            "name": "site",
+            "required": true,
+            "schema": {
+              "description": "현장 id",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+              "title": "Site",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/x-tar": {}
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ControlToken": []
+          }
+        ],
+        "summary": "Latest",
+        "tags": [
+          "drafts"
+        ]
+      }
+    },
+    "/api/v1/sites/{site}/heartbeat": {
+      "post": {
+        "operationId": "post_heartbeat",
+        "parameters": [
+          {
+            "description": "현장 id",
+            "in": "path",
+            "name": "site",
+            "required": true,
+            "schema": {
+              "description": "현장 id",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+              "title": "Site",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "description": "purpose `site-heartbeat` 봉투. 현장 site key 서명 봉투(`pureiron_bundle.sitesign`). 서명 대상은 JCS(`{format, payload, purpose}`), 서명은 Ed25519 raw 64B hex.",
+                "properties": {
+                  "format": {
+                    "const": 1
+                  },
+                  "payload": {
+                    "type": "object"
+                  },
+                  "purpose": {
+                    "type": "string"
+                  },
+                  "signature": {
+                    "pattern": "^[0-9a-f]{128}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "format",
+                  "purpose",
+                  "payload",
+                  "signature"
+                ],
+                "title": "SiteSignedEnvelope",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Recorded"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ControlToken": []
+          }
+        ],
+        "summary": "Heartbeat",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/api/v1/sites/{site}/rekey": {
+      "post": {
+        "operationId": "rekey_site",
+        "parameters": [
+          {
+            "description": "현장 id",
+            "in": "path",
+            "name": "site",
+            "required": true,
+            "schema": {
+              "description": "현장 id",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+              "title": "Site",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "description": "purpose `site-enrollment` 봉투. 현장 site key 서명 봉투(`pureiron_bundle.sitesign`). 서명 대상은 JCS(`{format, payload, purpose}`), 서명은 Ed25519 raw 64B hex.",
+                "properties": {
+                  "format": {
+                    "const": 1
+                  },
+                  "payload": {
+                    "type": "object"
+                  },
+                  "purpose": {
+                    "type": "string"
+                  },
+                  "signature": {
+                    "pattern": "^[0-9a-f]{128}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "format",
+                  "purpose",
+                  "payload",
+                  "signature"
+                ],
+                "title": "SiteSignedEnvelope",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteRekeyed"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ControlToken": []
+          }
+        ],
+        "summary": "Rekey",
+        "tags": [
+          "sites"
+        ]
+      }
+    },
+    "/api/v1/sites/{site}/reports": {
+      "post": {
+        "operationId": "post_report",
+        "parameters": [
+          {
+            "description": "현장 id",
+            "in": "path",
+            "name": "site",
+            "required": true,
+            "schema": {
+              "description": "현장 id",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+              "title": "Site",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "description": "purpose `site-report` 봉투. 현장 site key 서명 봉투(`pureiron_bundle.sitesign`). 서명 대상은 JCS(`{format, payload, purpose}`), 서명은 Ed25519 raw 64B hex.",
+                "properties": {
+                  "format": {
+                    "const": 1
+                  },
+                  "payload": {
+                    "type": "object"
+                  },
+                  "purpose": {
+                    "type": "string"
+                  },
+                  "signature": {
+                    "pattern": "^[0-9a-f]{128}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "format",
+                  "purpose",
+                  "payload",
+                  "signature"
+                ],
+                "title": "SiteSignedEnvelope",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Recorded"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ControlToken": []
+          }
+        ],
+        "summary": "Report",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/api/v1/sites/{site}/token": {
+      "post": {
+        "operationId": "reissue_site_token",
+        "parameters": [
+          {
+            "description": "현장 id",
+            "in": "path",
+            "name": "site",
+            "required": true,
+            "schema": {
+              "description": "현장 id",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+              "title": "Site",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteToken"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ControlToken": []
+          }
+        ],
+        "summary": "Reissue",
+        "tags": [
+          "sites"
+        ]
       }
     }
   }

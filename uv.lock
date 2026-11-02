@@ -564,11 +564,21 @@ name = "pureiron-control-api"
 version = "0.1.0"
 source = { editable = "services/control-api" }
 dependencies = [
+    { name = "asyncpg" },
     { name = "fastapi" },
+    { name = "pureiron-bundle-tools" },
+    { name = "pureiron-core" },
+    { name = "uvicorn" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "fastapi", specifier = ">=0.118" }]
+requires-dist = [
+    { name = "asyncpg", specifier = ">=0.30" },
+    { name = "fastapi", specifier = ">=0.118" },
+    { name = "pureiron-bundle-tools", editable = "packages/bundle-tools" },
+    { name = "pureiron-core", editable = "services/core" },
+    { name = "uvicorn", specifier = ">=0.37" },
+]
 
 [[package]]
 name = "pureiron-core"

@@ -7,7 +7,8 @@ owners: [pureiron-core]
 sources:
   - https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/config.py
   - https://github.com/circulation95/PureIron_ignition/blob/legacy-final/.env.example
-last_verified: 2026-06-26
+  - services/control-api/src/pureiron_control/settings.py
+last_verified: 2026-11-01
 ---
 
 # Runtime Config SOT
@@ -160,3 +161,21 @@ PureIron 런타임 설정의 정본은 `backend/src/pureiron/config.py`의 `Sett
 | `PUREIRON_SITE_DB_VERSION` | compose | `deploy/releases/site-db.lock`의 version | site-db 이미지 태그 |
 
 core의 초 단위 값(`…_S`)은 양의 유한 수만 받는다 — 0·음수·`nan`·`inf`는 기동 시 `SettingsError`로 실패한다(M3b-0). compose core는 `stop_grace_period: 25s`다(종료 예산은 [data-contracts](data-contracts.md) M3a-3 historian 현황).
+
+### V1 control-api 환경변수 (M4-0 구현)
+
+정본은 `services/control-api/src/pureiron_control/settings.py`. 벤더 쪽 중앙(M4 C3: 개발 PC WSL compose, 운영 compose는 M4-3 `deploy/central`)에서만 쓴다. 비밀값은 파일 경로로만 받는다.
+
+| 변수 | 기본값 | 의미 |
+|---|---|---|
+| `PUREIRON_CONTROL_DB_DSN` | `postgresql://pureiron@localhost:5432/pureiron_control` | control-db(PostgreSQL 16) 접속(비밀번호 제외) |
+| `PUREIRON_CONTROL_DB_PASSWORD_FILE` | 없음 | control-db 비밀번호 파일 |
+| `PUREIRON_CONTROL_HTTP_HOST` / `_HTTP_PORT` | `127.0.0.1` / `8100` | REST `/api/v1`(앞단 Caddy가 TLS) |
+| `PUREIRON_CONTROL_DATA_DIR` | `/var/lib/pureiron-control` | 게시 번들 `bundles/<site>/g<gen>.pib`·드래프트 `drafts/<site>/<sha256>.tar` |
+| `PUREIRON_CONTROL_POLL_S` | `60` | 현장 poll 주기 가정. `GET /fleet`의 `online` = `last_seen` ≤ 3 × 이 값(기본 180 s, C8) — 현장 Updater `PUREIRON_POLL_INTERVAL_S`와 맞춘다 |
+| `PUREIRON_CONTROL_MAX_BUNDLE_BYTES` | `17179869184`(16 GiB) | `PUT /bundles` 업로드 상한(넘으면 413) |
+| `PUREIRON_CONTROL_MIGRATIONS_DIR` | 소스 트리 `services/control-api/migrations` | 이미지(M4-3)에서는 설치 경로 |
+| `PUREIRON_RELEASE` | 패키지 버전 | `schema_migrations.release` 기록값 |
+| `PUREIRON_DEV_CONTROL_DB_PORT` | `25433` | 개발·통합 테스트 compose(`deploy/compose/control.dev.yml`) control-db 호스트 포트 |
+
+초·바이트 값은 양의 유한 수만 받고 잘못된 값은 기동 시 `SettingsError`(CLI 종료 코드 4)다. 사람·CI token은 env가 아니라 `pureiron-control token create --role admin|ci|viewer --name <이름>`으로만 만든다(원문은 그때 한 번만 출력, DB에는 SHA-256).
