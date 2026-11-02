@@ -209,7 +209,7 @@ def move(path: Path, subdir: str) -> Path:
 
 
 def reject(state_dir: Path, path: Path, reason: str) -> Path:
-    """중앙이 영원히 받지 않을(또는 읽을 수 없는) 보고를 `rejected/`로 빼고 오류 로그·카운터를
+    """중앙이 영원히 받지 않을(또는 내용이 깨진) 보고를 `rejected/`로 빼고 오류 로그·카운터를
     남긴다 — 큐 맨 앞을 막지 않게(파일은 보존)."""
     moved = move(path, REJECTED_DIR)
     counters = load_counters(state_dir)

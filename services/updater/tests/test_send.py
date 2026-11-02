@@ -15,7 +15,7 @@ from pureiron_bundle.manifest import Json
 from pureiron_bundle.sitesign import SitePurpose, open_document
 from pureiron_updater import metrics, send
 from pureiron_updater.enroll import enroll, load_identity
-from pureiron_updater.outbox import Signer, export_reports, signer
+from pureiron_updater.outbox import Signer, assign, export_reports, signer
 from pureiron_updater.poll import SendError
 from pureiron_updater.send import (
     DiskState,
@@ -337,6 +337,17 @@ def test_every_reservation_settles_the_journal_first(host: Host) -> None:
     send_heartbeat(host.settings, UpdaterState(), host.api, host.sign(), now=T0)
     assert host.api.seqs("/heartbeat") == [first + 1]
     assert json.loads(report.read_text(encoding="utf-8"))["report_seq"] == first
+
+
+def test_assign_alone_keeps_the_journal_seq(host: Host) -> None:
+    """R2-N2: `assign`을 직접 부르는 호출자도 저널 seq를 받는다 — 예약 안의 정리가 쓴 seq를
+    새 예약이 덮지 않게(`assign`이 읽기 전에 정리한다)."""
+    report = host.report("20261101T010000000000Z-g1-a.json", 1)
+    first = host.next_seq()
+    journal = {"first_seq": first, "names": [report.name]}
+    (host.queue / ".export.journal").write_text(json.dumps(journal), encoding="utf-8")
+    assert assign(host.settings.state_dir, report).report_seq == first
+    assert host.next_seq() == first + 1
 
 
 @pytest.mark.parametrize("content", ["{not json", "[1, 2]"], ids=["json", "not-object"])

@@ -35,7 +35,7 @@
 
 ## 결과 기록
 
-- `state/reports/<시작시각>-g<gen>-<번들 sha256 12자>.json` — control-api ApplyAttempt 필드. 처음 나갈 때(온라인이든 `report export`든) `outbox.assign`이 공용 카운터에서 `report_seq`를 예약해 **파일에 써 넣고**, 이후 어느 경로든 그 값만 쓴다(한 보고 = seq 하나). 중앙이 받거나 USB 묶음에 들어가면 `reports/exported/`, 중앙이 영원히 받지 않으면(400 형식 위반·413 크기 초과) 또는 JSON으로 읽을 수 없는 파일이면 `reports/rejected/`(보존, 오류 로그, 자동 재전송 없음). 409(등록 키 불일치 — rekey 대기)는 큐에 남는다. 문자열은 저장 가능한 UTF-8로 정리해 쓴다(서로게이트·NUL).
+- `state/reports/<시작시각>-g<gen>-<번들 sha256 12자>.json` — control-api ApplyAttempt 필드. 처음 나갈 때(온라인이든 `report export`든) `outbox.assign`이 공용 카운터에서 `report_seq`를 예약해 **파일에 써 넣고**, 이후 어느 경로든 그 값만 쓴다(한 보고 = seq 하나). 중앙이 받거나 USB 묶음에 들어가면 `reports/exported/`, 중앙이 영원히 받지 않으면(400 형식 위반·413 크기 초과) 또는 내용이 JSON 객체가 아니면 `reports/rejected/`(보존, 오류 로그, 자동 재전송 없음). 권한·I/O 오류로 지금 읽지 못한 파일은 큐에 남는다. 409(등록 키 불일치 — rekey 대기)는 큐에 남는다. 문자열은 저장 가능한 UTF-8로 정리해 쓴다(서로게이트·NUL).
 - `state/metrics/updater.prom` — `updater_last_result`, `updater_applied_generation`, `updater_failed_manual`(alarm 유무: `failed_manual` 또는 `E_DEFINITIONS_LEFT`), `updater_phase_duration_seconds{phase}` + 송신 `updater_reports_pending`, `updater_reports_rejected_total`, `updater_heartbeat_last_success_timestamp_seconds`(카운터는 `state/outbox.json`).
 
 ### 온라인 송신 (`send.py`·`outbox.py`, M4-1)
@@ -45,14 +45,16 @@
 | 송신 | 내용 | 실패 |
 |---|---|---|
 | heartbeat | tick마다 1건 `POST /sites/{site}/heartbeat`(seq 예약 후): `current` = 적용된 gen의 manifest 버전(시도 중에도), `updater_phase` = 경보 `failed_manual` > 진행 phase > `idle`, `disk_state` = `PUREIRON_ROOT` 사용률 ok·warn(≥ 0.80)·critical(≥ 0.90) | 버린다(재전송 없음, 409 포함) |
-| 보고 | 대기 보고 최대 20건(이미 seq가 있는 파일 seq 순 → 나머지 이름순) `POST /sites/{site}/reports` | 200 → `exported/`, 400·413·읽을 수 없는 파일 → `rejected/`, 409(키 불일치)·그 밖·연결 실패 → 남기고 이 tick 중단 |
+| 보고 | 대기 보고 최대 20건(이미 seq가 있는 파일 seq 순 → 나머지 이름순) `POST /sites/{site}/reports` | 200 → `exported/`, 400·413·내용이 깨진 파일 → `rejected/`, 지금 읽을 수 없는 파일(권한·I/O) → 그 파일만 건너뜀, 409(키 불일치)·그 밖·연결 실패 → 남기고 이 tick 중단 |
 
 요청 제한 10 s, token은 control-api와 같은 출처에만.
 
 운영 메모:
 
-- **키를 바꾼 뒤(`enroll --re-enroll`)**: 벤더가 새 `enrollment.json`으로 `POST /sites/{site}/rekey`를 실행할 때까지 중앙은 409 `site key mismatch (rekey pending?)`다. 보고는 큐에 남아 rekey 뒤 같은 seq로 나가고, heartbeat는 그동안 버려진다. `project export --upload`도 exit 1(파일 유지).
-- **`reports/rejected/`**: 자동으로 다시 보내지 않는다. 원인(로그의 HTTP 400·413 detail 또는 읽기 오류)을 확인한 뒤 고쳐 큐로 되돌리거나 USB 반입한다.
+- **키를 바꾼 뒤(`enroll --re-enroll`)**: 벤더가 새 `enrollment.json`으로 `POST /sites/{site}/rekey`를 실행할 때까지 중앙은 409 `signature does not match the registered site key`다(control-api 로그에 현장·용도·등록 키 지문 경고). 보고는 큐에 남아 rekey 뒤 같은 seq로 나가고, heartbeat는 그동안 버려진다. `project export --upload`도 exit 1(파일 유지).
+- **rekey 뒤에도 409**: 폐기된 옛 키 서명이다 — 백업에서 옛 `site.key`를 복원했다면 현재 키로 되돌리고, rekey 전에 옛 키로 `report export`한 USB 파일이면 반입하지 말고 그 보고를 `reports/exported/`에서 큐로 되돌려 새 키로 다시 내보낸다(R2-L2).
+- **`reports/rejected/`**: 자동으로 다시 보내지 않는다. 원인(로그의 HTTP 400·413 detail 또는 내용 깨짐)을 확인한 뒤 고쳐 큐로 되돌리거나 USB 반입한다. 권한·I/O 오류로 **지금 읽을 수 없는** 큐 파일은 `rejected/`로 가지 않고 그 회차만 건너뛴다(경고 `cannot read report now`) — 권한을 고치면 다음 tick에 나간다(R2-L1).
+- **r4 저널이 깨졌을 때**(`reports/.export.journal`을 읽을 수 없음 — 로그 `unreadable export journal`·`malformed export journal`): seq를 모르는 상태라 heartbeat·보고·`report export`가 모두 멈춘다(불변식 우선, R2-N3). 복구 ① 저널에서 `first_seq`·`names`를 확인한다. ② 큐에 남은 `names[i]` 파일마다 `"report_seq": first_seq + i`를 써 넣는다(r4가 그 묶음을 이미 USB로 냈을 수 있어 같은 seq를 유지한다). 저널 내용을 알 수 없으면 쓰지 않는다 — 새 seq를 받아 중앙에 같은 보고가 두 seq로 남을 수 있다. ③ `pureiron-site enroll --site <id> --next-seq <first_seq + len(names)>`로 카운터를 저널 끝 다음으로 올린다(이미 그 이상이면 거부되니 넘어간다). ④ 저널을 지운다 → 다음 tick부터 정상 송신.
 - **백업 복원 뒤 드래프트**: 현장 `site_rev`가 되돌아가면 복원 전에 올린 더 높은 리비전이 중앙 `drafts/latest`를 가린다 — 그 사이 드래프트는 `project export` 파일을 USB로 전달한다.
 
 ### Runbook: `E_DEFINITIONS_LEFT`(전환기 롤백)

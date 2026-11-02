@@ -78,8 +78,9 @@ PERMANENT_REFUSALS = frozenset({400, 413})
 """중앙이 같은 보고를 영원히 받지 않는 응답(형식 위반·크기 초과) — `rejected/`로 뺀다."""
 KEY_MISMATCH = 409
 KEY_MISMATCH_HINT = (
-    "control-api cannot verify the site key — after `enroll --re-enroll` the vendor must run "
-    "`POST /sites/{site}/rekey` with the new enrollment file"
+    "control-api cannot verify this signature with the registered site key — after "
+    "`enroll --re-enroll` the vendor must run `POST /sites/{site}/rekey` with the new enrollment "
+    "file; if an old `site.key` was restored from a backup, restore the current key instead"
 )
 
 
