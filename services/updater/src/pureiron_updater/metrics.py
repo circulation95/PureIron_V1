@@ -97,7 +97,7 @@ def write_report(state_dir: Path, attempt: Attempt, ended_at: datetime) -> Path:
         "bundle_sha256": attempt.bundle_sha256,
         "started_at": attempt.started_at.isoformat(),
         "ended_at": ended_at.isoformat(),
-        "phase_durations_s": {k: v for k, v in phase_durations(attempt, ended_at).items()},
+        "phase_durations_s": cast(Json, phase_durations(attempt, ended_at)),
         "timeline": {phase: ts.isoformat() for phase, ts in attempt.timeline.items()},
     }
     directory = state_dir / REPORTS_DIR

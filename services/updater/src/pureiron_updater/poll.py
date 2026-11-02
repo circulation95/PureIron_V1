@@ -7,7 +7,8 @@
 - 받기 전 여유 공간 ≥ 2배 번들 + 직전 백업 크기(PM-2 ⑥). 부족하면 받지 않고 기다린다.
 - 커밋된 시도가 진행 중이면 polling은 아무것도 하지 않는다.
 
-control-api는 M4에서 생긴다. 토큰은 `state/secrets/control_api_token`(PD-3, enroll 때 공급).
+토큰은 `state/secrets/control_api_token`(PD-3, enroll 때 공급). 같은 `ControlApi`가 송신(M4-1:
+heartbeat·보고·드래프트 `POST`, `send.py`·`project export --upload`)도 한다 — token 규칙은 같다.
 """
 
 from __future__ import annotations
@@ -33,10 +34,16 @@ CHUNK = 1024 * 1024
 PART_SUFFIX = ".part"
 TOKEN_FILE = "control_api_token"
 _TIMEOUT_S = 30.0
+SEND_TIMEOUT_S = 10.0
+"""송신 요청 제한 시간(R5 — 전송이 tick을 오래 잡아 apply를 늦추지 않게)."""
 
 
 class PollError(Exception):
     pass
+
+
+class SendError(PollError):
+    """송신 요청이 중앙에 닿지 않았다(연결·시간 초과·token 파일 없음). HTTP 응답은 오류가 아니다."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,9 +75,15 @@ class ControlApi:
         self._etag: str | None = None
         self._last: Desired | None = None
 
-    def _request(self, url: str, headers: dict[str, str]) -> urllib.request.Request:
+    def site_path(self, suffix: str) -> str:
+        """이 현장 경로(`sites/<site>/<suffix>`, 기준 URL 상대)."""
+        return f"sites/{self._site}/{suffix}"
+
+    def _request(
+        self, url: str, headers: dict[str, str], data: bytes | None = None
+    ) -> urllib.request.Request:
         full = urllib.parse.urljoin(self._base + "/", url)
-        request = urllib.request.Request(full)
+        request = urllib.request.Request(full, data=data, method=None if data is None else "POST")
         # 토큰은 control-api와 같은 출처에만 보낸다(다른 호스트의 번들 URL·redirect에는 없음).
         if _origin(full) == _origin(self._base):
             token = self._token_file.read_text(encoding="utf-8").strip()
@@ -104,6 +117,19 @@ class ControlApi:
             raise PollError(f"desired: bad size {size!r}")
         self._last = Desired(gen, url, normalize_sha256(sha), size)
         return self._last
+
+    def post(self, path: str, data: bytes, content_type: str) -> tuple[int, bytes]:
+        """같은 출처 `POST`(token 포함) → (HTTP 상태, 본문). 4xx·5xx도 응답이다 — 중앙에 닿지 못한
+        경우만 `SendError`."""
+        try:
+            request = self._request(path, {"Content-Type": content_type}, data)
+            with urllib.request.urlopen(request, timeout=SEND_TIMEOUT_S) as response:
+                return response.status, response.read()
+        except urllib.error.HTTPError as exc:
+            with exc:
+                return exc.code, exc.read()
+        except (urllib.error.URLError, OSError) as exc:
+            raise SendError(f"POST {path}: {exc}") from exc
 
     def download(self, url: str, part: Path, size: int) -> None:
         """`part`에 이어 받는다(Range). 서버가 Range를 무시(200)하면 처음부터 다시 쓴다."""

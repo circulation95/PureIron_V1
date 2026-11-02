@@ -16,7 +16,7 @@ from updater_fakes import Kit, Site
 from pureiron_updater.compose import ComposeCli
 from pureiron_updater.core import CoreHttp
 from pureiron_updater.images import DockerCli
-from pureiron_updater.poll import ControlApi, PollError, poll_once
+from pureiron_updater.poll import ControlApi, PollError, SendError, poll_once
 from pureiron_updater.ports import (
     CommandError,
     ComposeTarget,
@@ -307,3 +307,30 @@ def test_poll_sends_token_only_to_control_api_origin(tmp_path: Path, server: Ser
     by_path = {p: h for _, p, h, _ in server.requests}
     assert by_path["/sites/site-a/desired"]["authorization"] == "Bearer ctl"
     assert "authorization" not in by_path["/bundle.pib"]
+
+
+def test_control_api_post_returns_status_and_body(tmp_path: Path, server: Server) -> None:
+    """송신 `POST`: 같은 출처 token·Content-Type, 4xx는 응답, 닿지 못하면 `SendError`."""
+    token = tmp_path / "control_api_token"
+    token.write_text("ctl\n", encoding="utf-8")
+    api = ControlApi(server.url, "site-a", token)
+    server.routes[("POST", "/sites/site-a/heartbeat")] = (200, b'{"outcome": "applied"}')
+    server.routes[("POST", "/sites/site-a/reports")] = (400, b'{"detail": "bad"}')
+    assert api.post(api.site_path("heartbeat"), b"{}", "application/json") == (
+        200,
+        b'{"outcome": "applied"}',
+    )
+    assert api.post(api.site_path("reports"), b"[]", "application/json") == (
+        400,
+        b'{"detail": "bad"}',
+    )
+    method, path, headers, body = server.requests[0]
+    assert (method, path, body) == ("POST", "/sites/site-a/heartbeat", b"{}")
+    assert headers["authorization"] == "Bearer ctl"
+    assert headers["content-type"] == "application/json"
+    token.unlink()
+    with pytest.raises(SendError, match="control_api_token"):
+        api.post(api.site_path("heartbeat"), b"{}", "application/json")
+    closed = ControlApi("http://127.0.0.1:9", "site-a", tmp_path / "missing")
+    with pytest.raises(SendError):
+        closed.post("sites/site-a/heartbeat", b"{}", "application/json")
