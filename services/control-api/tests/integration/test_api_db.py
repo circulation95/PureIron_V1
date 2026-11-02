@@ -1,10 +1,11 @@
 """control-api 종료 기준(foundation M4, plan M4-0)을 실제 PostgreSQL 16 위에서 확인한다.
 
-gen 역행 PUT 409 · 다른 현장 token 403 · 서명 불일치 409(형식 위반 400) · seq ≤ 그 종류의
-수위 반입은 이력만(current 미갱신) · last_seen 180s 초과 stale · 폐쇄망 반입 source=offline · desired ETag 304 ·
-번들 Range 206. 리뷰 r1: 종류별 수위(늦은 보고가 heartbeat에 가리지 않음)·USB 파일 안
-수위 가로지르기·같은 gen 동시 PUT·동시 등록 409. 리뷰 r2: 늦은 heartbeat가 더 새 current를
-덮지 않음(current_seq).
+gen 역행 PUT 409 · 다른 현장 token 403 · 서명 불일치 409(형식 위반 400) ·
+seq ≤ 그 종류의 수위 반입은 이력만(current 미갱신) · last_seen 180s 초과 stale ·
+폐쇄망 반입 source=offline · desired ETag 304 · 번들 Range 206.
+리뷰 r1: 종류별 수위(늦은 보고가 heartbeat에 가리지 않음)·USB 파일 안 수위 가로지르기·
+같은 gen 동시 PUT·동시 등록 409. 리뷰 r2: 늦은 heartbeat가 더 새 current를 덮지 않음
+(current_seq).
 enrollment·폐쇄망 보고 파일은 실제 Updater 코드(`pureiron_updater.enroll`)가 만든다.
 """
 
