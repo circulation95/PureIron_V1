@@ -14,8 +14,8 @@
   `outbox.assign`(처음 매긴 값 하나, N-b).
   - 200(applied·history) → `reports/exported/`.
   - 400(형식 위반)·413(크기 초과) — 중앙이 영원히 받지 않음 → `reports/rejected/` + 오류 로그 +
-    카운터(`outbox.reject`, 큐 맨 앞을 막지 않게, 파일은 보존). JSON으로 읽을 수 없는 큐 파일도
-    같다.
+    카운터(`outbox.reject`, 큐 맨 앞을 막지 않게, 파일은 보존). 내용이 JSON 객체가 아닌 큐 파일도
+    같다. 파일을 지금 읽을 수 없으면(권한·I/O 오류) 그 파일만 이번 tick에 건너뛰고 큐에 둔다(R2-L1).
   - 409(등록 키로 서명 확인 안 됨 — 현장이 키를 바꾸고 벤더 rekey를 기다리는 중) → 그대로 두고 이
     tick의 보고 전송을 멈춘다. rekey가 반영되면 같은 seq로 받아진다(리뷰 M1).
   - 401·403·404·5xx·연결 실패 → 그대로 두고 이 tick의 보고 전송을 멈춘다(다음 tick에 같은 seq로).
@@ -49,6 +49,7 @@ from pureiron_updater.metrics import (
 )
 from pureiron_updater.outbox import (
     SEQ_KEY,
+    ReportIOError,
     SeqPendingError,
     Signer,
     UnreadableReportError,
@@ -196,6 +197,9 @@ def send_reports(
         except UnreadableReportError as exc:
             reject(state_dir, path, str(exc))
             rejected += 1
+            continue
+        except ReportIOError as exc:
+            log.warning("%s — skipped this tick, kept in the queue", exc)
             continue
         payload: dict[str, Json] = {**item.body, "site_id": sign.site_id, SEQ_KEY: item.report_seq}
         envelope = _envelope(sign, SitePurpose.REPORT, payload)

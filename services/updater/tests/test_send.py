@@ -367,6 +367,57 @@ def test_unreadable_queue_file_does_not_block_usb_export(host: Host) -> None:
     assert metrics.load_counters(host.settings.state_dir).rejected_total == 1
 
 
+def _unreadable(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+    """이 이름의 파일만 읽기 권한 오류(운영자가 root로 복사해 0600이 된 경우 등)."""
+    real_read_text = Path.read_text
+
+    def read_text(path: Path, encoding: str | None = None, errors: str | None = None) -> str:
+        if path.name == name:
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_read_text(path, encoding=encoding, errors=errors)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+
+
+def test_queue_file_that_cannot_be_read_now_stays_queued(
+    host: Host, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """R2-L1: 읽기 `OSError`는 reject가 아니다 — 그 파일만 건너뛰고(뒤 보고는 나감) 큐에 둔다.
+    고쳐지면 다음 tick에 나간다."""
+    locked = host.report("20261101T000000000000Z-g1-locked.json", 1)
+    good = host.report("20261101T010000000000Z-g2-a.json", 2)
+    with monkeypatch.context() as patch:
+        _unreadable(patch, locked.name)
+        sent = send_reports(host.settings, host.api, host.sign())
+        assert sent == ReportsSent(sent=1, rejected=0)
+        assert export_reports(host.settings, host.settings.root / "usb", now=T0) is None
+    assert (host.queue / "exported" / good.name).exists()
+    assert locked.exists()  # 송신도 USB export도 건너뛰기만 한다
+    assert not (host.queue / "rejected").exists()
+    assert metrics.load_counters(host.settings.state_dir).rejected_total == 0
+    assert "cannot read report now" in caplog.text
+    assert send_reports(host.settings, host.api, host.sign()) == ReportsSent(sent=1, rejected=0)
+    assert (host.queue / "exported" / locked.name).exists()
+
+
+def test_journal_is_kept_while_one_of_its_files_cannot_be_read(
+    host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R2-L1: 저널 정리 중 읽기 `OSError`면 저널을 지우지 않는다(그 파일의 저널 seq를 잃지 않게)."""
+    report = host.report("20261101T010000000000Z-g1-a.json", 1)
+    first = host.next_seq()
+    journal = {"first_seq": first, "names": [report.name]}
+    (host.queue / ".export.journal").write_text(json.dumps(journal), encoding="utf-8")
+    with monkeypatch.context() as patch:
+        _unreadable(patch, report.name)
+        send_all(host.settings, UpdaterState(), host.api, now=T0)
+    assert (host.queue / ".export.journal").exists()
+    assert host.api.seqs("/reports") == []
+    send_all(host.settings, UpdaterState(), host.api, now=T0)
+    assert host.api.seqs("/reports") == [first]
+    assert not (host.queue / ".export.journal").exists()
+
+
 def test_reports_with_a_stored_seq_go_first_in_seq_order(host: Host) -> None:
     """N4: 시계가 뒤로 가 새 파일 이름이 앞서도 이미 seq를 받은 보고가 먼저(송신 순서 = seq
     순서)."""

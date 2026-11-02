@@ -69,7 +69,13 @@ class SeqPendingError(EnrollError):
 
 
 class UnreadableReportError(EnrollError):
-    """큐 파일이 JSON 객체로 읽히지 않는다(손 편집·디스크 오류) — `reject`로 뺀다(리뷰 L1)."""
+    """큐 파일 내용이 JSON 객체가 아니다(손 편집·잘린 파일) — 영원히 보낼 수 없어 `reject`로 뺀다
+    (리뷰 L1)."""
+
+
+class ReportIOError(EnrollError):
+    """큐 파일을 지금 읽을 수 없다(권한·일시 I/O 오류) — 고치면 보낼 수 있으므로 `rejected/`로
+    옮기지 않고 큐에 둔다(R2-L1). 송신·USB export는 그 파일만 이번에 건너뛴다."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,7 +152,7 @@ def send_order(paths: Sequence[Path]) -> list[Path]:
     def key(path: Path) -> tuple[float, str]:
         try:
             seq = stored_seq(read_report(path))
-        except UnreadableReportError:
+        except (UnreadableReportError, ReportIOError):
             seq = None
         return (math.inf if seq is None else seq, path.name)
 
@@ -154,9 +160,17 @@ def send_order(paths: Sequence[Path]) -> list[Path]:
 
 
 def read_report(path: Path) -> dict[str, Json]:
+    """`ReportIOError`(읽기 실패 — 큐에 둔다)와 `UnreadableReportError`(내용이 깨짐 — reject)를
+    구분한다(R2-L1)."""
     try:
-        data: object = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:  # ValueError 하위 — 읽었지만 내용이 깨짐
+        raise UnreadableReportError(f"{path}: unreadable report ({exc})") from exc
+    except OSError as exc:
+        raise ReportIOError(f"{path}: cannot read report now ({exc})") from exc
+    try:
+        data: object = json.loads(text)
+    except ValueError as exc:
         raise UnreadableReportError(f"{path}: unreadable report ({exc})") from exc
     if not isinstance(data, dict):
         raise UnreadableReportError(f"{path}: report is not a JSON object")
@@ -219,7 +233,10 @@ def _load_journal(path: Path) -> tuple[int, list[str]] | None:
 
 
 def settle_journal(state_dir: Path) -> None:
-    """r4 저널의 seq를 아직 대기 중인 파일에 써 넣고 저널을 지운다(재실행 안전)."""
+    """r4 저널의 seq를 아직 대기 중인 파일에 써 넣고 저널을 지운다(재실행 안전).
+
+    저널에 든 파일을 지금 읽을 수 없으면(`ReportIOError`) 저널을 지우지 않고 그대로 올린다 —
+    그 파일의 seq를 잃지 않게(R2-L1). 다음 tick이 다시 정리한다."""
     queue = queue_dir(state_dir)
     journal_file = queue / JOURNAL_FILE
     journal = _load_journal(journal_file)
@@ -270,6 +287,8 @@ def export_reports(settings: Settings, out_dir: Path, *, now: datetime) -> tuple
             queued.append(assign(state_dir, path))
         except UnreadableReportError as exc:
             reject(state_dir, path, str(exc))
+        except ReportIOError as exc:
+            log.warning("report export: %s — skipped, kept in the queue", exc)
     if not queued:
         return None
     run = contiguous_runs(queued)[0]
