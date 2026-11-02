@@ -1,9 +1,9 @@
 """현장 드래프트 보관(plan M5-2 P6·P7, §6.4): 현장이 올린 `draft.tar` → 벤더가 받아 absorb.
 
 검증은 현장·absorb와 같은 `sitesign.open_draft`(등록된 site 키 서명 + payload `site_id` =
-경로 현장 + `project_tar_sha256` 일치). 프로젝트 내용 검증(content_hash·스키마)은 absorb가
-한다 — 중앙은 보관만. 파일은 `<data>/drafts/<site>/<sha256 hex>.tar`(같은 파일을 다시 올리면
-같은 이름), DB에 메타 한 줄.
+경로 현장 + `project_tar_sha256` 일치) — 서명 불일치는 409(rekey 대기일 수 있음), 나머지는 400.
+프로젝트 내용 검증(content_hash·스키마)은 absorb가 한다 — 중앙은 보관만. 파일은
+`<data>/drafts/<site>/<sha256 hex>.tar`(같은 파일을 다시 올리면 같은 이름), DB에 메타 한 줄.
 
 - 저장 전 검사(M4-0 리뷰 R-3): `site_rev`·`base_site_rev`는 0..2^63-1(bigint 열), `content_hash`·
   `exported_at`에 NUL·짝 없는 서로게이트가 없어야 한다 — 저장 단계 500 대신 400.
@@ -23,7 +23,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import cast
 
-from pureiron_bundle.sitesign import Json, SignedDocumentError, open_draft
+from pureiron_bundle.sitesign import Json, SignatureMismatchError, SignedDocumentError, open_draft
 from pureiron_control.platform.clock import Clock
 from pureiron_control.platform.files import write_new
 from pureiron_control.platform.seqmarks import SEQ_MAX
@@ -50,7 +50,11 @@ class DraftError(Exception):
 
 
 class DraftSignatureError(DraftError):
-    """서명·형식·현장·tree 해시 중 하나가 틀렸다(400)."""
+    """형식·현장·tree 해시 중 하나가 틀렸다(400)."""
+
+
+class DraftKeyMismatchError(DraftError):
+    """등록된 site 키로 서명이 확인되지 않는다(409 — 재등록 뒤 rekey 대기일 수 있음, 리뷰 M1)."""
 
 
 class DraftSiteNotFoundError(DraftError):
@@ -70,6 +74,28 @@ def check_payload(payload: dict[str, Json]) -> None:
     for key in ("content_hash", "exported_at"):
         if not storable(cast(str, payload[key])):
             raise DraftSignatureError(f"draft: payload.{key} {UNSTORABLE_HINT}")
+
+
+def open_site_draft(data: bytes, public_key: bytes, site_id: str) -> dict[str, Json]:
+    """`open_draft` 오류 분류: 서명 불일치 → `DraftKeyMismatchError`(409), 그 밖 →
+    `DraftSignatureError`(400)."""
+    try:
+        payload, _tree = open_draft(data, public_key, site_id=site_id)
+    except SignatureMismatchError as exc:
+        raise DraftKeyMismatchError(f"draft: {exc}") from exc
+    except SignedDocumentError as exc:
+        raise DraftSignatureError(f"draft: {exc}") from exc
+    check_payload(payload)  # open_draft가 아래 필드의 타입(정수 >= 0·문자열)을 확인했다
+    return payload
+
+
+def draft_exists(target: Path) -> bool:
+    """같은 내용 파일이 이미 있는가. 디렉터리 권한 오류도 저장 오류다(507, 리뷰 L5) — DB 연결 본문
+    안의 `OSError`는 503이 된다."""
+    try:
+        return target.exists()
+    except OSError as exc:
+        raise DraftStorageError(f"cannot check draft file {target}: {exc}") from exc
 
 
 def place_draft(target: Path, data: bytes) -> None:
@@ -102,11 +128,7 @@ class DraftStore:
         return self._root / record.site_id / f"{record.sha256.removeprefix('sha256:')}.tar"
 
     async def save(self, site_id: str, data: bytes, public_key: bytes) -> DraftRecord:
-        try:
-            payload, _tree = await asyncio.to_thread(open_draft, data, public_key, site_id=site_id)
-        except SignedDocumentError as exc:
-            raise DraftSignatureError(f"draft: {exc}") from exc
-        check_payload(payload)  # open_draft가 아래 필드의 타입(정수 >= 0·문자열)을 확인했다
+        payload = await asyncio.to_thread(open_site_draft, data, public_key, site_id)
         record = DraftRecord(
             id=0,
             site_id=site_id,
@@ -138,7 +160,7 @@ class DraftStore:
                 if not isinstance(draft_id, int):
                     raise DraftError("drafts insert returned no id")
                 # 같은 내용의 이전 업로드가 둔 파일이면 그대로 둔다(이름 = 내용 해시).
-                created = not await asyncio.to_thread(target.exists)
+                created = not await asyncio.to_thread(draft_exists, target)
                 await asyncio.to_thread(place_draft, target, data)
         except BaseException:
             if created:

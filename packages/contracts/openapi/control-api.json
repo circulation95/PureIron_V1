@@ -986,6 +986,9 @@
           },
           "404": {
             "description": "Not Found"
+          },
+          "409": {
+            "description": "등록된 site 키로 서명이 확인되지 않음(현장 재등록 뒤 rekey 대기일 수 있음)"
           }
         },
         "security": [
@@ -1269,6 +1272,9 @@
           "404": {
             "description": "Not Found"
           },
+          "409": {
+            "description": "등록된 site 키로 서명이 확인되지 않음(현장 재등록 뒤 rekey 대기일 수 있음)"
+          },
           "413": {
             "description": "Request Entity Too Large"
           },
@@ -1413,6 +1419,9 @@
           },
           "403": {
             "description": "Forbidden"
+          },
+          "409": {
+            "description": "등록된 site 키로 서명이 확인되지 않음(현장 재등록 뒤 rekey 대기일 수 있음)"
           },
           "422": {
             "content": {
@@ -1596,6 +1605,9 @@
           },
           "403": {
             "description": "Forbidden"
+          },
+          "409": {
+            "description": "등록된 site 키로 서명이 확인되지 않음(현장 재등록 뒤 rekey 대기일 수 있음)"
           },
           "422": {
             "content": {

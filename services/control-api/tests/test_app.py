@@ -103,3 +103,20 @@ def test_bad_site_id_in_path_is_422(client: TestClient, path: str) -> None:
 def test_if_none_match(header: str | None, expected: bool) -> None:
     assert etag_of(3) == '"3"'
     assert etag_matches(header, etag_of(3)) is expected
+
+
+@pytest.mark.parametrize(
+    ("path", "method"),
+    [
+        ("/api/v1/sites/{site}/heartbeat", "post"),
+        ("/api/v1/sites/{site}/reports", "post"),
+        ("/api/v1/sites/{site}/drafts", "post"),
+        ("/api/v1/offline-imports", "post"),
+    ],
+)
+def test_signed_site_documents_document_the_key_mismatch_409(
+    client: TestClient, path: str, method: str
+) -> None:
+    """리뷰 M1: 현장 서명 봉투는 400(형식 위반)과 409(등록 키 불일치)를 구분해 문서화한다."""
+    responses = client.get("/openapi.json").json()["paths"][path][method]["responses"]
+    assert {"400", "409"} <= set(responses)

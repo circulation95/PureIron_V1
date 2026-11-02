@@ -1,6 +1,7 @@
 """현장 송신(M4-1)을 실제 control-api(uvicorn + control-db)와 실제 Updater 코드로: 서비스 tick의
 heartbeat·보고 전송, 중앙 중단 중 보고의 USB 반출(같은 seq), 드래프트 업로드와 latest 순서,
-desired polling의 `last_seen`(E3), 드래프트 저장 실패.
+desired polling의 `last_seen`(E3, 인증 실패는 제외), 드래프트 저장 실패, 키를 바꾼 현장의 409(rekey
+대기 — 보고는 큐에 남음).
 
 tick은 `pureiron_updater.cli.tick` 그대로다(진행 중 시도가 없으면 docker를 부르지 않는다).
 """
@@ -172,6 +173,33 @@ def test_rejected_report_is_moved_aside_and_does_not_block_the_queue(
     assert "updater_reports_rejected_total 1" in prom
 
 
+def test_reports_signed_with_an_unconfirmed_new_key_wait_for_the_rekey(
+    central: Central, server: str, tmp_path: Path
+) -> None:
+    """리뷰 M1: 현장이 `enroll --re-enroll`로 키를 바꾼 뒤 벤더 rekey 전까지 중앙은 409다. 보고는
+    `rejected/`가 아니라 큐에 남고(같은 seq), rekey 뒤 다음 tick에 반영된다."""
+    site = OnlineSite(central, server, tmp_path)
+    site.tick()  # heartbeat 1(옛 키)
+    enrollment = site.kit.enroll(re_enroll=True)  # 새 키, site.json이 남아 seq는 이어 쓴다
+    site.kit.queue_report(to=1)
+    site.tick()  # heartbeat 2 → 409(버림), 보고 seq 3 → 409(큐에 남음)
+    (held,) = pending(site.settings.state_dir)
+    assert json.loads(held.read_text(encoding="utf-8"))["report_seq"] == 3
+    assert not (site.settings.state_dir / "reports" / "rejected").exists()
+    prom = (site.settings.state_dir / "metrics" / "updater.prom").read_text(encoding="utf-8")
+    assert "updater_reports_rejected_total 0" in prom
+    assert site.seqs("apply_attempts") == []
+
+    rekeyed = central.client.post(
+        "/api/v1/sites/site-a/rekey", content=enrollment, headers=central.as_role("admin")
+    )
+    assert rekeyed.status_code == 200, rekeyed.text
+    site.tick()  # heartbeat 4, 보고 3(같은 seq)
+    assert pending(site.settings.state_dir) == []
+    assert site.seqs("apply_attempts") == [(3, "online", "applied")]
+    assert site.seqs("heartbeats") == [(1, "online", "applied"), (4, "online", "applied")]
+
+
 def test_draft_upload_latest_is_the_highest_site_rev(
     central: Central, server: str, tmp_path: Path
 ) -> None:
@@ -215,7 +243,16 @@ def test_desired_polling_marks_an_r4_site_as_seen(
     """E3: heartbeat를 보내지 않는 r4 Updater도 desired polling(게시 없음 404 포함)으로 연결이
     보인다."""
     site = OnlineSite(central, server, tmp_path)
+    other = OnlineSite(central, server, tmp_path / "b", "site-b")
     assert site.fleet()["connection"] == "never"
+    # 리뷰 L4: 인증에 실패한 polling(잘못된 token 401, 다른 현장 token 403)은 `last_seen`을
+    # 바꾸지 않는다 — touch는 인증된 핸들러 안에서만.
+    desired = "/api/v1/sites/site-a/desired"
+    assert central.client.get(desired, headers=central.auth("not-a-token")).status_code == 401
+    other_token = (other.settings.secrets_dir / TOKEN_FILE).read_text(encoding="utf-8").strip()
+    assert central.client.get(desired, headers=central.auth(other_token)).status_code == 403
+    assert site.fleet()["connection"] == "never"
+    assert other.fleet()["connection"] == "never"
     assert site.api().desired() is None  # r4 poll.py 그대로, 404
     row = site.fleet()
     assert row["connection"] == "online"

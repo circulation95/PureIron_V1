@@ -17,9 +17,11 @@ from pydantic import BaseModel
 
 from pureiron_bundle.sitesign import DRAFT_LIMIT_BYTES
 from pureiron_control.api.body import binary_body, read_body
+from pureiron_control.api.errors import KEY_MISMATCH_RESPONSE, key_mismatch
 from pureiron_control.api.guard import Guard, SitePath
 from pureiron_control.credentials import Role
 from pureiron_control.drafts import (
+    DraftKeyMismatchError,
     DraftRecord,
     DraftSignatureError,
     DraftSiteNotFoundError,
@@ -76,6 +78,7 @@ def build_drafts_router(*, registry: PgSiteRegistry, store: DraftStore, guard: G
             403: {},
             404: {},
             413: {},
+            **KEY_MISMATCH_RESPONSE,
             507: {"description": "데이터 디렉터리 쓰기 실패"},
         },
     )
@@ -92,6 +95,8 @@ def build_drafts_router(*, registry: PgSiteRegistry, store: DraftStore, guard: G
             record = await store.save(site, data, public)
         except DraftSignatureError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except DraftKeyMismatchError as exc:
+            raise key_mismatch() from exc
         except DraftSiteNotFoundError as exc:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except DraftStorageError as exc:

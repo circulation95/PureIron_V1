@@ -14,6 +14,7 @@ from pureiron_bundle import keys
 from pureiron_bundle.sitesign import (
     ENVELOPE_FORMAT,
     Json,
+    SignatureMismatchError,
     SignedDocumentError,
     SitePurpose,
     dumps,
@@ -88,8 +89,23 @@ def test_online_documents_need_the_registered_key(purpose: SitePurpose) -> None:
     data = dumps(sign_document(SEED, purpose, payload))
     with pytest.raises(SignedDocumentError, match="registered site key"):
         open_document(data, purpose)
-    with pytest.raises(SignedDocumentError, match="signature does not match"):
+    with pytest.raises(SignatureMismatchError, match="signature does not match"):
         open_document(data, purpose, keys.public_key(bytes(32)))
+
+
+def test_only_a_signature_failure_is_a_key_mismatch() -> None:
+    """리뷰 M1: 중앙은 서명 불일치(409 — rekey 대기)와 형식 위반(400)을 구분한다."""
+    data = dumps(sign_document(SEED, SitePurpose.REPORT, PAYLOAD))
+    with pytest.raises(SignatureMismatchError):
+        open_document(data, SitePurpose.REPORT, keys.public_key(bytes(32)))
+    for broken, purpose in [
+        (b"{not json", SitePurpose.REPORT),
+        (data, SitePurpose.HEARTBEAT),  # 용도 다름
+        (data.replace(b'"signature"', b'"sig"'), SitePurpose.REPORT),
+    ]:
+        with pytest.raises(SignedDocumentError) as caught:
+            open_document(broken, purpose, PUBLIC)
+        assert not isinstance(caught.value, SignatureMismatchError)
 
 
 def test_unpaired_surrogate_in_payload_is_a_signed_document_error() -> None:
