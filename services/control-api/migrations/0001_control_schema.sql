@@ -21,14 +21,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS api_tokens_active_name ON api_tokens (name)
 -- 등록된 현장과 그 현재 상태. report_seq 카운터는 heartbeat·보고 공용이지만 반영 수위는 종류별이다:
 -- last_heartbeat_seq·last_report_seq = 그 종류에서 마지막으로 반영한 report_seq. 메시지는 자기 종류의
 -- 수위보다 클 때만 current·last_attempt를 바꾼다(C7) — 늦게 재전송된 보고가 그 뒤 heartbeat에 가려
--- 사라지지 않게. last_seen은 온라인 메시지(token·서명 확인)를 받은 중앙 시각 — 폐쇄망 반입은 바꾸지
--- 않는다(그 현장을 "본" 것이 아니다).
+-- 사라지지 않게. current는 두 종류가 함께 쓰므로 공용 카운터 순서로 거른다: current_seq = current를
+-- 마지막으로 쓴 메시지의 report_seq, 그보다 큰 seq만 current를 바꾼다(늦게 온 heartbeat가 더 새 성공
+-- 보고의 current를 덮지 않게). last_seen은 온라인 메시지(token·서명 확인)를 받은 중앙 시각 — 폐쇄망
+-- 반입은 바꾸지 않는다(그 현장을 "본" 것이 아니다).
 CREATE TABLE IF NOT EXISTS sites (
     site_id             text        PRIMARY KEY,
     registered_at       timestamptz NOT NULL,
     last_heartbeat_seq  bigint      NOT NULL DEFAULT 0 CHECK (last_heartbeat_seq >= 0),
     last_report_seq     bigint      NOT NULL DEFAULT 0 CHECK (last_report_seq >= 0),
     last_seen           timestamptz,
+    current_seq         bigint      NOT NULL DEFAULT 0 CHECK (current_seq >= 0),
     current             jsonb,
     current_reported_at timestamptz,
     current_source      text        CHECK (current_source IN ('online', 'offline')),

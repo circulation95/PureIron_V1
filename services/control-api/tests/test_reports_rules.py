@@ -1,5 +1,6 @@
 """seq 규칙과 보고 payload 형식(plan M4 C7): 종류별 수위보다 큰 seq만 반영, 나머지는 이력,
-형식 위반(열 범위 밖 정수·NUL 포함) 400."""
+current(두 종류 공용)는 current_seq보다 큰 seq만, 형식 위반(열 범위 밖 정수·NUL·짝 없는
+서로게이트) 400."""
 
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ from pureiron_control.reports import (
     Current,
     ReportFormatError,
     SeqOutcome,
+    SeqVerdict,
     judge_seq,
     parse_heartbeat,
     parse_report,
@@ -24,30 +26,37 @@ SEQ_MAX = 9_223_372_036_854_775_807  # PostgreSQL bigint 최댓값
 GEN_MAX = 2_147_483_647  # PostgreSQL integer 최댓값
 
 HB, REPORT = MessageKind.HEARTBEAT, MessageKind.REPORT
+APPLIED, HISTORY = SeqOutcome.APPLIED, SeqOutcome.HISTORY
 
 
 @pytest.mark.parametrize(
-    ("marks", "kind", "report_seq", "expected"),
+    ("marks", "current_seq", "kind", "report_seq", "expected"),
     [
-        (SeqMarks(heartbeat=0, report=0), REPORT, 1, SeqOutcome.APPLIED),
-        (SeqMarks(heartbeat=0, report=4), REPORT, 5, SeqOutcome.APPLIED),
+        (SeqMarks(heartbeat=0, report=0), 0, REPORT, 1, SeqVerdict(APPLIED, True)),
+        (SeqMarks(heartbeat=0, report=4), 4, REPORT, 5, SeqVerdict(APPLIED, True)),
         # 빈틈(전송 실패분)은 막지 않는다 — 늦게 오면 이력
-        (SeqMarks(heartbeat=0, report=4), REPORT, 9, SeqOutcome.APPLIED),
-        (SeqMarks(heartbeat=0, report=5), REPORT, 5, SeqOutcome.HISTORY),  # 재전송(응답 유실)
-        (SeqMarks(heartbeat=0, report=5), REPORT, 3, SeqOutcome.HISTORY),  # 늦은 폐쇄망 반입
-        (SeqMarks(heartbeat=5, report=0), HB, 5, SeqOutcome.HISTORY),
-        (SeqMarks(heartbeat=5, report=0), HB, 6, SeqOutcome.APPLIED),
+        (SeqMarks(heartbeat=0, report=4), 4, REPORT, 9, SeqVerdict(APPLIED, True)),
+        # 재전송(응답 유실)
+        (SeqMarks(heartbeat=0, report=5), 5, REPORT, 5, SeqVerdict(HISTORY, False)),
+        # 늦은 폐쇄망 반입
+        (SeqMarks(heartbeat=0, report=5), 5, REPORT, 3, SeqVerdict(HISTORY, False)),
+        (SeqMarks(heartbeat=5, report=0), 5, HB, 5, SeqVerdict(HISTORY, False)),
+        (SeqMarks(heartbeat=5, report=0), 5, HB, 6, SeqVerdict(APPLIED, True)),
         # 보고 11이 끊겼다가 heartbeat 12 뒤에 도착 → 반영(heartbeat 수위에 가리지 않는다).
-        (SeqMarks(heartbeat=12, report=10), REPORT, 11, SeqOutcome.APPLIED),
+        # 다만 current는 heartbeat 12가 이미 썼으므로 바꾸지 않는다(성공 보고였어도).
+        (SeqMarks(heartbeat=12, report=10), 12, REPORT, 11, SeqVerdict(APPLIED, False)),
         # 반대로 늦게 온 heartbeat는 보고 수위와 상관없이 자기 수위로만 판정한다.
-        (SeqMarks(heartbeat=12, report=10), HB, 11, SeqOutcome.HISTORY),
-        (SeqMarks(heartbeat=3, report=12), HB, 4, SeqOutcome.APPLIED),
+        (SeqMarks(heartbeat=12, report=10), 12, HB, 11, SeqVerdict(HISTORY, False)),
+        # 늦게 온 heartbeat 4는 자기 수위(3)로 반영되지만 성공 보고 12가 쓴 current는 그대로.
+        (SeqMarks(heartbeat=3, report=12), 12, HB, 4, SeqVerdict(APPLIED, False)),
+        # 보고 12가 실패라 current를 안 썼으면(current_seq 3) heartbeat 4가 current를 쓴다.
+        (SeqMarks(heartbeat=3, report=12), 3, HB, 4, SeqVerdict(APPLIED, True)),
     ],
 )
 def test_seq_rule(
-    marks: SeqMarks, kind: MessageKind, report_seq: int, expected: SeqOutcome
+    marks: SeqMarks, current_seq: int, kind: MessageKind, report_seq: int, expected: SeqVerdict
 ) -> None:
-    assert judge_seq(marks, kind, report_seq) is expected
+    assert judge_seq(marks, current_seq, kind, report_seq) == expected
 
 
 def test_seq_marks_advance_per_kind_and_next_seq_is_shared() -> None:
@@ -124,6 +133,8 @@ def test_heartbeat_without_applied_bundle_has_no_current() -> None:
         ({"report_seq": 1, "at": AT, "current": {"gen": -1}}, "gen"),
         ({"report_seq": 1, "at": AT, "updater_phase": "idle\u0000"}, "NUL"),  # jsonb 거부
         ({"report_seq": 1, "at": AT, "extra\u0000": 1}, "NUL"),
+        # 짝 없는 서로게이트(JSON "\ud800")는 UTF-8로 저장할 수 없다 — 키도 같다.
+        ({"report_seq": 1, "at": AT, "extra\udfff": 1}, "surrogate"),
     ],
 )
 def test_malformed_heartbeat_is_rejected(payload: dict[str, Json], match: str) -> None:
@@ -154,6 +165,8 @@ def test_report_payload_is_parsed() -> None:
         ({"from": GEN_MAX + 1}, "from"),
         ({"logs": "step 1\u0000step 2"}, "NUL"),  # 외부 명령 출력을 그대로 담은 로그
         ({"timeline": {"verifying": ["\u0000"]}}, "NUL"),
+        # surrogateescape로 읽은 명령 출력(파일 이름 등)을 담은 로그
+        ({"logs": "a\ud800b"}, "surrogate"),
     ],
 )
 def test_malformed_report_is_rejected(overrides: dict[str, Json], match: str) -> None:

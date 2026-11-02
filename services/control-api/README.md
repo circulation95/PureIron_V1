@@ -16,4 +16,6 @@ uv run pureiron-control site register state/enrollment.json   # = POST /sites
 uv run pureiron-control serve
 ```
 
+0001은 아직 배포 전이라 리뷰 수정 때 직접 고쳤다. M4-0 리뷰 수정(r1·r2) 이전에 `migrate up`한 개발 control-db는 checksum이 달라 `migrate`가 멈추므로 새로 만든다(`docker compose -p pureiron-control -f deploy/compose/control.dev.yml down -v` 뒤 다시 `up`).
+
 구조는 core와 같다: `runtime.py`(`ControlRuntime.build`) → `app.py`(`create_app(rt)`) → `api/`(라우터) → 도메인 모듈(`sites`·`credentials`·`reports`·`bundles`·`drafts`·`fleet`) → `platform/`. 경계는 `.importlinter`. 배포 compose(Caddy·이미지)는 M4-3 `deploy/central`, 현장 Updater 송신은 M4-1.

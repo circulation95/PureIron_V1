@@ -1,9 +1,10 @@
 """현장 등록·재등록·토큰 재발급(PD-3, foundation §6.4): enrollment 봉투 → site 키 + 온라인 token.
 
 - enrollment 파일은 Updater `enroll`이 쓴 `site-enrollment` 봉투(자기 키 서명 = 개인키 보유 증명).
-- 등록은 종류별 수위 둘 다 `next_report_seq - 1`로 시작한다. rekey는 구 키를 폐기하고(구 키로
-  서명된 보고는 이후 400) 다음 seq `max(두 수위 중 큰 값 + 1, 봉투 next_report_seq)`를 돌려준다
-  (`seq_pending`이면 봉투 값은 무시, 카운터는 공용) — 현장은 이 값을 `enroll --next-seq`로 반영한다.
+- 등록은 종류별 수위 둘과 `current_seq`를 `next_report_seq - 1`로 시작한다. rekey는 구 키를
+  폐기하고(구 키로 서명된 보고는 이후 400) 다음 seq `max(두 수위 중 큰 값 + 1, 봉투
+  next_report_seq)`를 돌려준다(`seq_pending`이면 봉투 값은 무시, 카운터는 공용 — `current_seq`는
+  두 수위 중 큰 값을 넘지 않는다) — 현장은 이 값을 `enroll --next-seq`로 반영한다.
 - 동시 등록은 `INSERT … ON CONFLICT DO NOTHING`으로 판정한다: 늦은 쪽은 409(`SiteExistsError`).
 - token 원문은 발급 응답에만 나간다(DB에는 SHA-256).
 """
@@ -24,8 +25,8 @@ from pureiron_control.platform.tokens import TokenKind, new_token, token_sha256
 from pureiron_core.platform.db import Connection, Database
 
 INSERT_SITE_SQL = """
-INSERT INTO sites (site_id, registered_at, last_heartbeat_seq, last_report_seq)
-VALUES ($1, $2, $3, $3)
+INSERT INTO sites (site_id, registered_at, last_heartbeat_seq, last_report_seq, current_seq)
+VALUES ($1, $2, $3, $3, $3)
 ON CONFLICT (site_id) DO NOTHING
 RETURNING site_id
 """

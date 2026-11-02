@@ -3,7 +3,8 @@
 gen 역행 PUT 409 · 다른 현장 token 403 · 서명 불일치 400 · seq ≤ 그 종류의 수위 반입은 이력만
 (current 미갱신) · last_seen 180s 초과 stale · 폐쇄망 반입 source=offline · desired ETag 304 ·
 번들 Range 206. 리뷰 r1: 종류별 수위(늦은 보고가 heartbeat에 가리지 않음)·USB 파일 안
-수위 가로지르기·같은 gen 동시 PUT·동시 등록 409.
+수위 가로지르기·같은 gen 동시 PUT·동시 등록 409. 리뷰 r2: 늦은 heartbeat가 더 새 current를
+덮지 않음(current_seq).
 enrollment·폐쇄망 보고 파일은 실제 Updater 코드(`pureiron_updater.enroll`)가 만든다.
 """
 
@@ -480,6 +481,43 @@ def test_late_report_after_newer_heartbeat_is_still_applied(
         headers=headers,
     )
     assert again.json() == {"outcome": "history", "last_seq": 11}
+
+
+def test_late_heartbeat_does_not_overwrite_current_of_a_newer_successful_report(
+    central: Central, site_a: Site, tmp_path: Path
+) -> None:
+    """리뷰 r2 R-1 재현 A: 수위 hb 10·보고 10에서 hb 11(gen 1)이 늦는 사이 성공 보고 12(to 2)가
+    반영된다. 뒤늦게 온 hb 11은 heartbeat 수위로는 반영(phase·disk)되지만, current는 공용 카운터
+    순서(current_seq 12)로 걸러져 gen 2·보고 시각 그대로다."""
+    headers = central.auth(register(central, site_a))
+    publish(central, tmp_path, "site-a", 1)
+    publish(central, tmp_path, "site-a", 2, project_version="v4")
+    for path, body in (
+        ("heartbeat", site_a.heartbeat(10, gen=1)),
+        ("reports", site_a.report(10, to=1)),
+        ("reports", site_a.report(12, to=2)),
+    ):
+        sent = central.client.post(f"/api/v1/sites/site-a/{path}", content=body, headers=headers)
+        assert sent.json()["outcome"] == "applied", sent.text
+    before = cast(JsonObject, fleet_row(central, "site-a")["current"])
+    assert (before["gen"], before["project_version"]) == (2, "v4")
+    late = central.client.post(
+        "/api/v1/sites/site-a/heartbeat",
+        content=site_a.heartbeat(11, gen=1, disk_state="low"),
+        headers=headers,
+    )
+    assert late.json() == {"outcome": "applied", "last_seq": 11}
+    row = fleet_row(central, "site-a")
+    assert cast(JsonObject, row["current"]) == before  # gen·reported_at·source 모두 그대로
+    assert row["disk_state"] == "low"  # heartbeat 전용 필드는 heartbeat 수위로 반영
+    assert (row["last_heartbeat_seq"], row["last_report_seq"]) == (11, 12)
+    # 다음 heartbeat(13)는 공용 카운터로도 더 새로우므로 current를 쓴다.
+    next_beat = central.client.post(
+        "/api/v1/sites/site-a/heartbeat", content=site_a.heartbeat(13, gen=2), headers=headers
+    )
+    assert next_beat.json() == {"outcome": "applied", "last_seq": 13}
+    after = cast(JsonObject, fleet_row(central, "site-a")["current"])
+    assert (after["gen"], after["product"]) == (2, "2026.11.0")
 
 
 def test_offline_file_crossing_the_report_mark_splits_history_and_applied(
