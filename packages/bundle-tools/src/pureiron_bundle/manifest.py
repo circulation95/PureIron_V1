@@ -167,6 +167,14 @@ class ProjectRef:
 
 
 @dataclass(frozen=True, slots=True)
+class SiteConfig:
+    """manifest `site_config`(M4-1 C2, 선택 — 없으면 기본값). 서명 대상(현장 파일로 못 바꾼다)."""
+
+    writes_enabled: bool = False
+    """core 쓰기 스위치(`PUREIRON_WRITES_ENABLED`). Updater가 generation `.env`에 늘 쓴다."""
+
+
+@dataclass(frozen=True, slots=True)
 class Manifest:
     site_id: str
     generation: int
@@ -179,6 +187,7 @@ class Manifest:
     fleet_commit: str
     document: Mapping[str, Json]
     """계약 검증을 통과한 원본 문서(보고·저장용)."""
+    site_config: SiteConfig = SiteConfig()
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,4 +313,14 @@ def parse_manifest(data: bytes) -> Manifest:
         trust_update=_trust_update(doc),
         fleet_commit=cast(str, doc["fleet_commit"]),
         document=doc,
+        site_config=_site_config(doc),
+    )
+
+
+def _site_config(doc: Mapping[str, Json]) -> SiteConfig:
+    config = cast(dict[str, Json] | None, doc.get("site_config"))
+    return (
+        SiteConfig()
+        if config is None
+        else SiteConfig(writes_enabled=config["writes_enabled"] is True)
     )

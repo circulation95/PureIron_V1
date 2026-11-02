@@ -1,10 +1,11 @@
 """control-api 종료 기준(foundation M4, plan M4-0)을 실제 PostgreSQL 16 위에서 확인한다.
 
-gen 역행 PUT 409 · 다른 현장 token 403 · 서명 불일치 400 · seq ≤ 그 종류의 수위 반입은 이력만
-(current 미갱신) · last_seen 180s 초과 stale · 폐쇄망 반입 source=offline · desired ETag 304 ·
-번들 Range 206. 리뷰 r1: 종류별 수위(늦은 보고가 heartbeat에 가리지 않음)·USB 파일 안
-수위 가로지르기·같은 gen 동시 PUT·동시 등록 409. 리뷰 r2: 늦은 heartbeat가 더 새 current를
-덮지 않음(current_seq).
+gen 역행 PUT 409 · 다른 현장 token 403 · 서명 불일치 409(형식 위반 400) ·
+seq ≤ 그 종류의 수위 반입은 이력만(current 미갱신) · last_seen 180s 초과 stale ·
+폐쇄망 반입 source=offline · desired ETag 304 · 번들 Range 206.
+리뷰 r1: 종류별 수위(늦은 보고가 heartbeat에 가리지 않음)·USB 파일 안 수위 가로지르기·
+같은 gen 동시 PUT·동시 등록 409. 리뷰 r2: 늦은 heartbeat가 더 새 current를 덮지 않음
+(current_seq).
 enrollment·폐쇄망 보고 파일은 실제 Updater 코드(`pureiron_updater.enroll`)가 만든다.
 """
 
@@ -134,31 +135,35 @@ def test_other_site_token_is_403_on_every_site_path(
     )
 
 
-def test_signature_mismatch_report_is_400_and_foreign_payload_is_403(
+def test_signature_mismatch_report_is_409_and_foreign_payload_is_403(
     central: Central, site_a: Site, site_b: Site
 ) -> None:
     token_a = register(central, site_a)
     register(central, site_b)
     headers = central.auth(token_a)
-    # site-b 키로 서명했지만 payload는 site-a라고 적은 보고 → 등록 키와 서명이 다르다.
+    # site-b 키로 서명했지만 payload는 site-a라고 적은 보고 → 등록 키와 서명이 다르다(409 — 현장은
+    # rekey 대기로 보고 버리지 않는다, 리뷰 M1).
     forged = site_b.signed(
         SitePurpose.REPORT, {"site_id": "site-a", "report_seq": 1, "result": "x"}
     )
-    assert (
-        central.client.post(
-            "/api/v1/sites/site-a/reports", content=forged, headers=headers
-        ).status_code
-        == 400
-    )
-    # 서명 뒤 payload를 바꾼 heartbeat.
+    mismatch = central.client.post("/api/v1/sites/site-a/reports", content=forged, headers=headers)
+    assert mismatch.status_code == 409
+    assert mismatch.json() == {"detail": "signature does not match the registered site key"}
+    # 서명 뒤 payload를 바꾼 heartbeat도 등록 키로 확인되지 않는다.
     tampered = site_a.heartbeat(1, gen=3).replace(b'"gen": 3', b'"gen": 4')
     assert (
         central.client.post(
             "/api/v1/sites/site-a/heartbeat", content=tampered, headers=headers
         ).status_code
+        == 409
+    )
+    # 형식 위반은 400: 봉투 JSON이 아님, 용도가 다른 서명(heartbeat 서명을 보고로).
+    assert (
+        central.client.post(
+            "/api/v1/sites/site-a/heartbeat", content=b"{not json", headers=headers
+        ).status_code
         == 400
     )
-    # 용도가 다른 서명(heartbeat 서명을 보고로).
     assert (
         central.client.post(
             "/api/v1/sites/site-a/reports", content=site_a.heartbeat(1, gen=3), headers=headers
@@ -325,6 +330,11 @@ def test_offline_import_rejects_bad_files(
     tampered = exported.replace(b'"to": 1', b'"to": 9')
     assert (
         central.client.post("/api/v1/offline-imports", content=tampered, headers=admin).status_code
+        == 409
+    )
+    truncated = exported[: len(exported) // 2]  # 봉투 JSON이 아님 — 형식 위반
+    assert (
+        central.client.post("/api/v1/offline-imports", content=truncated, headers=admin).status_code
         == 400
     )
     # 미등록 현장의 파일은 404, viewer는 반입 못 함.
@@ -430,12 +440,12 @@ def test_rekey_revokes_the_old_key_and_returns_next_seq(central: Central, site_a
     )
     assert rekeyed.status_code == 200, rekeyed.text
     assert rekeyed.json()["next_seq"] == 7
-    # 구 키 서명은 이제 400, 새 키 서명은 반영.
+    # 구 키 서명은 이제 409(키 불일치), 새 키 서명은 반영.
     assert (
         central.client.post(
             "/api/v1/sites/site-a/reports", content=old_report, headers=headers
         ).status_code
-        == 400
+        == 409
     )
     assert central.client.post(
         "/api/v1/sites/site-a/reports", content=site_a.report(7, to=1), headers=headers
@@ -636,11 +646,18 @@ def test_drafts_upload_and_vendor_download(central: Central, site_a: Site, site_
     assert latest.status_code == 200
     assert latest.content == draft
     assert latest.headers["x-pureiron-draft-site-rev"] == "7"
-    # site-b 키로 서명한 site-a 드래프트(서명 불일치) 400, viewer 내려받기 403, 없으면 404.
+    # site-b 키로 서명한 site-a 드래프트(서명 불일치) 409, tar가 아닌 본문 400, viewer 내려받기
+    # 403, 없으면 404.
     forged = site_b.draft(site_rev=8, base_site_rev=5).replace(b"site-b", b"site-a")
     assert (
         central.client.post(
             "/api/v1/sites/site-a/drafts", content=forged, headers=headers
+        ).status_code
+        == 409
+    )
+    assert (
+        central.client.post(
+            "/api/v1/sites/site-a/drafts", content=b"not a tar", headers=headers
         ).status_code
         == 400
     )

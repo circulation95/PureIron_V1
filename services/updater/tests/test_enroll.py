@@ -14,7 +14,7 @@ from updater_fakes import Kit
 from pureiron_bundle import keys
 from pureiron_bundle.manifest import Json
 from pureiron_bundle.sitesign import SitePurpose, open_document
-from pureiron_updater import cli, enroll
+from pureiron_updater import cli, outbox
 from pureiron_updater.enroll import SiteIdentity, load_identity
 from pureiron_updater.settings import Settings, merged_env, parse_env_file
 
@@ -212,8 +212,8 @@ def test_report_export_assigns_monotonic_seq_and_signs(host: Host) -> None:
 def test_interrupted_export_resumes_with_the_same_seq(
     host: Host, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """리뷰 M-1: 묶음을 쓰기 전에 죽어도 다음 실행이 같은 보고·같은 seq로 끝내고, 그 사이 새
-    보고는 다음 seq를 받는다(seq 재사용·같은 보고의 다른 seq 없음)."""
+    """리뷰 M-1·N-b: 묶음을 쓰기 전에 죽어도 다음 실행이 같은 보고를 같은 seq로 내고, 그 사이 새
+    보고는 다음 seq를 받는다(seq 재사용·같은 보고의 다른 seq 없음). seq는 큐 파일에 남는다."""
     out = host.root / "usb"
     assert cli.main(["enroll", "--site", "site-a"]) == cli.EXIT_OK
     reports = host.state / "reports"
@@ -223,31 +223,37 @@ def test_interrupted_export_resumes_with_the_same_seq(
         raise OSError("USB pulled")
 
     with monkeypatch.context() as patch:
-        patch.setattr(enroll, "sign_document", crash)
+        patch.setattr(outbox, "sign_document", crash)
         assert cli.main(["report", "export", "--out", str(out)]) == cli.EXIT_CONFIG
     assert _identity(host).next_report_seq == 2  # 예약됨
+    stamped = json.loads((reports / "20261005T010000000000Z-g1-aaaa.json").read_text("utf-8"))
+    assert stamped["report_seq"] == 1
     _report(reports, "20261004T010000000000Z-g9-zzzz.json", 9)  # 정렬상 앞에 끼는 늦은 보고
     assert cli.main(["report", "export", "--out", str(out)]) == cli.EXIT_OK
     public = keys.public_key((host.state / "site.key").read_bytes())
-    first = open_document(
-        (out / "pureiron-reports-site-a-000001-000001.json").read_bytes(),
+    bundle = open_document(
+        (out / "pureiron-reports-site-a-000001-000002.json").read_bytes(),
         SitePurpose.REPORTS,
         public,
     )
-    found = first["reports"]
+    found = bundle["reports"]
     assert isinstance(found, list)
-    assert [r["generation"] for r in found if isinstance(r, dict)] == [1]
-    assert cli.main(["report", "export", "--out", str(out)]) == cli.EXIT_OK
-    assert (out / "pureiron-reports-site-a-000002-000002.json").exists()
-    assert not (reports / ".export.journal").exists()
+    assert [(r["report_seq"], r["generation"]) for r in found if isinstance(r, dict)] == [
+        (1, 1),
+        (2, 9),
+    ]
+    assert not list(reports.glob("*.json"))
 
 
-def test_report_export_rejects_non_object_report(host: Host) -> None:
+def test_report_export_moves_a_non_object_report_aside(host: Host) -> None:
+    """리뷰 L1: 읽을 수 없는 큐 파일은 반출을 막지 않고 `rejected/`로 빠진다(파일 보존)."""
     assert cli.main(["enroll", "--site", "site-a"]) == cli.EXIT_OK
     reports = host.state / "reports"
     reports.mkdir(parents=True)
     (reports / "x.json").write_text("[1, 2]", encoding="utf-8")
-    assert cli.main(["report", "export", "--out", str(host.root / "usb")]) == cli.EXIT_CONFIG
+    assert cli.main(["report", "export", "--out", str(host.root / "usb")]) == cli.EXIT_OK
+    assert (reports / "rejected" / "x.json").read_text(encoding="utf-8") == "[1, 2]"
+    assert not (host.root / "usb").exists() or not any((host.root / "usb").iterdir())
 
 
 def test_install_bundle_verify_before_enroll(

@@ -4,17 +4,18 @@
     pureiron-site bundle verify <pib> [--kind install]   # 현재 상태 기준 검증만(부작용 없음)
     pureiron-site status [--json]
     pureiron-site recover                # 끊긴 시도 수렴(서비스 첫 tick과 같은 동작)
-    pureiron-site run                    # 서비스 loop: recover → (poll →) advance, 주기 반복
+    pureiron-site run                    # 서비스 loop: recover → (poll → 송신 →) advance
     pureiron-site enroll --site <id> [--re-enroll] [--next-seq N] [--out FILE]
     pureiron-site secret set <name> [--generate] [--if-missing]   # 값은 stdin(한 줄)
     pureiron-site report export --out DIR                          # 폐쇄망 보고 묶음(USB)
-    pureiron-site project export --out draft.tar                   # 서명된 현장 드래프트(USB)
+    pureiron-site project export --out draft.tar [--upload]        # 서명된 현장 드래프트(USB·중앙)
 
 종료 코드: 0 성공·대기·변경 없음, 1 거부·실패, 2 다른 Updater 실행 중·진행 중 시도, 3 설정 오류.
 `enroll`·`secret set`·`report export`·`project export`·`bundle verify --kind install`은
 `PUREIRON_SITE_ID` 없이 쓴다(등록 전이거나, 현장 id를 `state/site.json`에서 읽는다).
 설정은 프로세스 환경 + `/etc/pureiron/updater.env`(`settings.py`). `project export`는 등록 뒤에만
-동작하고 드래프트 형식은 `draft.py`(M5-2).
+동작하고 드래프트 형식은 `draft.py`(M5-2). `--upload`는 만든 파일을 control-api
+`POST /sites/{site}/drafts`로도 올린다(M4-1 E8) — 실패하면 exit 1, 파일은 남는다(USB로 쓸 수 있게).
 """
 
 from __future__ import annotations
@@ -47,13 +48,15 @@ from pureiron_updater import __version__
 from pureiron_updater.compose import ComposeCli
 from pureiron_updater.core import CoreHttp
 from pureiron_updater.draft import DraftError, export_draft
-from pureiron_updater.enroll import EnrollError, enroll, export_reports, load_identity
+from pureiron_updater.enroll import EnrollError, enroll, load_identity
 from pureiron_updater.images import DockerCli
 from pureiron_updater.metrics import result_of
+from pureiron_updater.outbox import export_reports, pending
 from pureiron_updater.phases import AttemptInProgressError, Deps, Updater
-from pureiron_updater.poll import TOKEN_FILE, ControlApi, PollError, poll_once
+from pureiron_updater.poll import TOKEN_FILE, ControlApi, PollError, SendError, poll_once
 from pureiron_updater.recover import recover
 from pureiron_updater.secret_store import generate_secret, set_secret, value_from_input
+from pureiron_updater.send import KEY_MISMATCH, KEY_MISMATCH_HINT, send_all
 from pureiron_updater.settings import Settings, SettingsError, merged_env
 from pureiron_updater.state import (
     TERMINAL,
@@ -70,6 +73,7 @@ log = logging.getLogger("pureiron_updater")
 
 EXIT_OK, EXIT_FAILED, EXIT_BUSY, EXIT_CONFIG = 0, 1, 2, 3
 CHUNK = 1024 * 1024
+DRAFT_MEDIA_TYPE = "application/x-tar"
 
 
 class SystemClock:
@@ -130,6 +134,9 @@ def _parser() -> argparse.ArgumentParser:
         "export", help="현장 드래프트(운영 값 PATCH가 실린 유효 트리)를 site key 서명 파일로"
     )
     draft.add_argument("--out", type=Path, required=True, help="draft.tar 경로(USB 반출)")
+    draft.add_argument(
+        "--upload", action="store_true", help="control-api로도 올린다(PUREIRON_CONTROL_API 필요)"
+    )
     return parser
 
 
@@ -287,7 +294,34 @@ def _report_export(settings: Settings, out: Path) -> int:
     return EXIT_OK
 
 
-def _project_export(settings: Settings, out: Path) -> int:
+def _draft_uploader(settings: Settings) -> ControlApi:
+    """`--upload` 대상. control-api 미설정·미등록이면 export 전에 거부한다(`SettingsError`)."""
+    if settings.control_api is None:
+        raise SettingsError("--upload needs PUREIRON_CONTROL_API (or copy the file by USB)")
+    identity = load_identity(settings.state_dir)
+    if identity is None:
+        raise SettingsError("not enrolled (run: pureiron-site enroll --site <id>)")
+    return ControlApi(settings.control_api, identity.site_id, settings.secrets_dir / TOKEN_FILE)
+
+
+def _upload_draft(api: ControlApi, path: Path) -> int:
+    try:
+        status, body = api.post(api.site_path("drafts"), path.read_bytes(), DRAFT_MEDIA_TYPE)
+    except SendError as exc:
+        print(f"error: upload failed: {exc} (file kept: {path})", file=sys.stderr)
+        return EXIT_FAILED
+    if status != 201:
+        detail = body.decode("utf-8", "replace").strip()[:500]
+        print(f"error: upload refused: HTTP {status} {detail} (file kept: {path})", file=sys.stderr)
+        if status == KEY_MISMATCH:
+            print(f"hint: {KEY_MISMATCH_HINT}", file=sys.stderr)
+        return EXIT_FAILED
+    print(f"uploaded:      HTTP {status}")
+    return EXIT_OK
+
+
+def _project_export(settings: Settings, out: Path, *, upload: bool) -> int:
+    api = _draft_uploader(settings) if upload else None
     with process_lock(settings.state_dir):
         try:
             result = export_draft(settings, real_deps(settings).compose, out, now=datetime.now(UTC))
@@ -301,13 +335,16 @@ def _project_export(settings: Settings, out: Path) -> int:
     print(f"content_hash:  {payload['content_hash']}")
     if not result.has_drafts:
         print("note: no site drafts since the last applied bundle (site_rev == base_site_rev)")
-    return EXIT_OK
+    return EXIT_OK if api is None else _upload_draft(api, result.path)
 
 
 def _status(settings: Settings, *, as_json: bool) -> int:
     state = StateStore(settings.state_dir).load()
-    text = json.dumps(to_json(state), indent=2, sort_keys=True, ensure_ascii=False)
-    print(text if as_json else _summary(state))
+    if as_json:
+        print(json.dumps(to_json(state), indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_OK
+    print(_summary(state))
+    print(f"reports pending:    {len(pending(settings.state_dir))}")
     return EXIT_OK
 
 
@@ -325,7 +362,8 @@ def _control_api(settings: Settings) -> ControlApi | None:
 
 
 def tick(settings: Settings, api: ControlApi | None, *, first: bool) -> None:
-    """서비스 loop 한 번: 복구 규칙(창) 적용 → poll → advance. 재검증은 첫 tick에만."""
+    """서비스 loop 한 번: 복구 규칙(창) 적용 → poll → heartbeat → 보고 → advance. 재검증은 첫
+    tick에만. 송신 단계의 실패는 로그만 남긴다(`send.send_all` — apply를 막지 않는다)."""
     with process_lock(settings.state_dir):
         updater = Updater(settings, real_deps(settings))
         recover(updater, reverify=first)
@@ -334,10 +372,24 @@ def tick(settings: Settings, api: ControlApi | None, *, first: bool) -> None:
                 poll_once(updater, api)
             except (PollError, OSError) as exc:
                 log.warning("poll failed: %s", exc)
+            send_all(settings, updater.state, api, now=datetime.now(UTC))
         updater.advance()
 
 
+def warn_ignored_env(settings: Settings) -> None:
+    """서비스 시작 때 1회: 무시하는 변수(쓰기 스위치)가 설정돼 있으면 경고한다(R3 — 업그레이드 전
+    `updater.env`로 켜 두었던 현장은 이제 꺼진다)."""
+    for key in settings.ignored_env:
+        log.warning(
+            "%s is set in the environment or %s but ignored — the write switch comes only from "
+            "the signed bundle (fleet site file `writes.enabled`)",
+            key,
+            settings.env_file,
+        )
+
+
 def _run(settings: Settings) -> int:
+    warn_ignored_env(settings)
     api = _control_api(settings)
     first = True
     while True:
@@ -381,7 +433,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "enroll": lambda: _enroll(settings, args),
             "secret": lambda: _secret_set(settings, args),
             "report": lambda: _report_export(settings, args.out),
-            "project": lambda: _project_export(settings, args.out),
+            "project": lambda: _project_export(settings, args.out, upload=args.upload),
         }
         return commands[command]()
     except (BusyError, AttemptInProgressError) as exc:

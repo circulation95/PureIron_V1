@@ -11,7 +11,9 @@ import pytest
 from updater_fakes import T0, Crash, Kit, Site, open_window, release_ids
 
 from pureiron_updater import cli
+from pureiron_updater.enroll import enroll
 from pureiron_updater.phases import Deps, Updater
+from pureiron_updater.poll import ControlApi
 from pureiron_updater.settings import Settings
 from pureiron_updater.state import Phase, UpdaterState
 
@@ -108,3 +110,22 @@ def test_superseding_apply_exits_0(site: Site) -> None:
     site.world.core_http_down = False
     assert cli.main(["apply", str(site.kit.bundle(3, "r1", version="v3"))]) == cli.EXIT_OK
     assert site.world.project["version"] == "v3"
+
+
+def test_broken_site_key_does_not_stop_the_tick_from_applying(
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """리뷰 H1: control-api가 설정된 현장의 site.key 길이가 틀려도(`KeyFormatError`) 송신 단계는
+    로그로 끝나고 tick은 `advance`까지 가서 번들을 적용한다."""
+    enroll(site.settings, "site-a", now=T0)
+    site.settings.site_key_file.write_bytes(b"")  # 0바이트 — 운영자가 다른 파일을 복사함 등
+    site.submit(site.kit.bundle(1, "r0"))
+
+    def no_poll(_updater: Updater, _api: ControlApi) -> None:
+        return None
+
+    monkeypatch.setattr(cli, "poll_once", no_poll)
+    api = ControlApi("http://127.0.0.1:9/api/v1", "site-a", tmp_path / "token")
+    cli.tick(site.settings, api, first=False)
+    assert site.updater().state.applied_gen == 1
+    assert site.world.running == release_ids("r0")

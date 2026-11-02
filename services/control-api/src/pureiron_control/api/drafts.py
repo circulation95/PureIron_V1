@@ -2,25 +2,39 @@
 
 본문은 `pureiron-site project export`가 만든 `draft.tar` 그대로다(M5-2). 벤더는 내려받은 파일을
 `pureiron-project absorb`에 넣는다 — 서명 검증은 여기서 한 번, absorb에서 다시 한 번 한다.
+`latest`는 가장 높은 `site_rev`(같으면 나중에 받은 것)다 — `project export --upload` 재시도가 늦게
+도착해도 새 드래프트를 가리지 않는다.
 """
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from pureiron_bundle.sitesign import DRAFT_LIMIT_BYTES
+from pureiron_bundle.sitesign import DRAFT_LIMIT_BYTES, SitePurpose
 from pureiron_control.api.body import binary_body, read_body
+from pureiron_control.api.errors import KEY_MISMATCH_RESPONSE, key_mismatch
 from pureiron_control.api.guard import Guard, SitePath
 from pureiron_control.credentials import Role
-from pureiron_control.drafts import DraftRecord, DraftSignatureError, DraftStore
+from pureiron_control.drafts import (
+    DraftKeyMismatchError,
+    DraftRecord,
+    DraftSignatureError,
+    DraftSiteNotFoundError,
+    DraftStorageError,
+    DraftStore,
+)
 from pureiron_control.platform.envelopes import claimed_draft_site
 from pureiron_control.sites import PgSiteRegistry
 
+log = logging.getLogger(__name__)
+
 DRAFT_MEDIA_TYPE = "application/x-tar"
+DRAFT_STORAGE_UNAVAILABLE = "draft storage unavailable"
 
 
 class DraftOut(BaseModel):
@@ -59,7 +73,14 @@ def build_drafts_router(*, registry: PgSiteRegistry, store: DraftStore, guard: G
         operation_id="upload_draft",
         status_code=status.HTTP_201_CREATED,
         openapi_extra=binary_body(DRAFT_MEDIA_TYPE, "현장 드래프트 `draft.tar`(site-draft 봉투)"),
-        responses={400: {}, 403: {}, 413: {}},
+        responses={
+            400: {},
+            403: {},
+            404: {},
+            413: {},
+            **KEY_MISMATCH_RESPONSE,
+            507: {"description": "데이터 디렉터리 쓰기 실패"},
+        },
     )
     async def upload(request: Request, site: str = own_site) -> DraftOut:
         data = await read_body(request, limit_bytes=DRAFT_LIMIT_BYTES)
@@ -74,6 +95,15 @@ def build_drafts_router(*, registry: PgSiteRegistry, store: DraftStore, guard: G
             record = await store.save(site, data, public)
         except DraftSignatureError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except DraftKeyMismatchError as exc:
+            raise key_mismatch(site, SitePurpose.DRAFT, public) from exc
+        except DraftSiteNotFoundError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except DraftStorageError as exc:
+            log.error("draft upload failed, data directory not writable: %s", exc)
+            raise HTTPException(
+                status.HTTP_507_INSUFFICIENT_STORAGE, detail=DRAFT_STORAGE_UNAVAILABLE
+            ) from exc
         return _draft_out(record)
 
     @router.get(

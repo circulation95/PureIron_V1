@@ -1,6 +1,6 @@
 [project]
 name = "pureiron-updater"
-version = "0.1.0"
+version = "0.2.0"
 description = "현장 Updater(호스트 systemd) — 서명 번들 적용 상태기계·recover·pureiron-site CLI"
 requires-python = ">=3.12,<3.13"
 dependencies = [

@@ -65,6 +65,12 @@ class SignedDocumentError(ValueError):
     pass
 
 
+class SignatureMismatchError(SignedDocumentError):
+    """봉투 형식·용도는 맞지만 주어진 공개키로 서명이 확인되지 않는다. 중앙은 이것을 형식
+    위반(400)과 구분해 409(등록 키 불일치 — 현장 재등록 뒤 rekey 대기일 수 있음)로 답한다(M4-1
+    리뷰 M1)."""
+
+
 def _signed_bytes(purpose: SitePurpose, payload: Mapping[str, Json]) -> bytes:
     return rfc8785.dumps({"format": ENVELOPE_FORMAT, "payload": dict(payload), "purpose": purpose})
 
@@ -91,7 +97,8 @@ def open_document(
 ) -> dict[str, Json]:
     """봉투를 검증하고 payload를 돌려준다. `public`이 None이면 payload의 `public_key`(hex)로
     검증한다 — enrollment(자기 서명)에서만 허용, 다른 용도는 등록된 키가 필요하다.
-    형식·용도·서명이 틀리면 `SignedDocumentError`."""
+    형식·용도·서명이 틀리면 `SignedDocumentError`(서명만 틀리면 그 하위
+    `SignatureMismatchError`)."""
     try:
         envelope: object = json.loads(data)
     except (UnicodeDecodeError, ValueError) as exc:
@@ -116,13 +123,16 @@ def open_document(
         raw_signature = bytes.fromhex(signature)
     except ValueError as exc:
         raise SignedDocumentError(f"signature is not hex ({exc})") from exc
+    if len(raw_signature) != keys.SIGNATURE_LEN:
+        # 길이가 틀린 서명은 형식 위반(400)이다 — 키 불일치(409)로 보이지 않게(R2-N1).
+        raise SignedDocumentError(f"signature must be {keys.SIGNATURE_LEN} bytes")
     try:
         signed = _signed_bytes(purpose, payload)
     except rfc8785.CanonicalizationError as exc:
         # json.loads는 짝 없는 서로게이트(`\ud800`)를 받지만 JCS는 거부한다 — 서명할 수 없는 본문.
         raise SignedDocumentError("payload contains non-UTF-8 code points") from exc
     if not keys.verify(public, raw_signature, signed):
-        raise SignedDocumentError("signature does not match")
+        raise SignatureMismatchError("signature does not match")
     return payload
 
 

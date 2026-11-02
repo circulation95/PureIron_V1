@@ -7,6 +7,8 @@
   만든다.
 - 경합 시험(`Central.concurrently`)은 같은 DB에 런타임을 하나 더 만들어 `httpx2.AsyncClient` +
   `ASGITransport`로 요청을 한 이벤트 루프에서 `asyncio.gather`한다(TestClient는 하나씩 보낸다).
+- `server`: 같은 DB의 앱을 실제 HTTP(uvicorn, 스레드)로 띄운다 — 현장 Updater 코드(urllib)가 붙는
+  시험용(`test_updater_*_db.py`).
 - `PUREIRON_IT_KEEP=1`: 끝나도 compose를 내리지 않는다(디버깅).
 """
 
@@ -19,7 +21,10 @@ import json
 import os
 import secrets
 import shutil
+import socket
 import subprocess
+import threading
+import time
 import uuid
 from collections.abc import Generator, Mapping
 from dataclasses import dataclass, field
@@ -30,6 +35,7 @@ from typing import cast
 import asyncpg
 import httpx2 as httpx
 import pytest
+import uvicorn
 from fastapi.testclient import TestClient
 
 from pureiron_control.app import create_app
@@ -230,3 +236,31 @@ def central(control_db: ControlDb, tmp_path: Path) -> Generator[Central]:
             yield central
     finally:
         control_db.psql(f'DROP DATABASE IF EXISTS "{database}" WITH (FORCE)')
+
+
+STARTUP_TIMEOUT_S = 15.0
+
+
+def _free_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+@pytest.fixture
+def server(central: Central) -> Generator[str]:
+    port = _free_port()
+    app = create_app(ControlRuntime.build(central.settings, clock=central.clock))
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None)
+    instance = uvicorn.Server(config)
+    thread = threading.Thread(target=instance.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + STARTUP_TIMEOUT_S
+    while not instance.started:
+        assert time.monotonic() < deadline, "control-api server did not start"
+        time.sleep(0.05)
+    try:
+        yield f"http://127.0.0.1:{port}/api/v1"
+    finally:
+        instance.should_exit = True
+        thread.join(timeout=STARTUP_TIMEOUT_S)

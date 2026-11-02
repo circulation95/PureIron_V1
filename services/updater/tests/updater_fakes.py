@@ -40,6 +40,7 @@ from pureiron_updater.ports import (
     LockConflictError,
     Readiness,
 )
+from pureiron_updater.proc import DEFAULT_TIMEOUT_S, Result
 from pureiron_updater.settings import Settings
 from pureiron_updater.state import UpdaterState
 
@@ -115,6 +116,7 @@ class Kit:
         epoch: int | None = None,
         compose: bytes | None = None,
         site_db_release: str = "r0",
+        writes: bool | None = None,
     ) -> Path:
         self.count += 1
         src = self.tmp / f"src{self.count}"
@@ -164,6 +166,8 @@ class Kit:
             "trust_update": None,
             "fleet_commit": f"abc{self.count:04x}",
         }
+        if writes is not None:
+            document["site_config"] = {"writes_enabled": writes}
         out = self.tmp / "out" / f"{site}-g{generation}-{self.count}.pib"
         out.parent.mkdir(parents=True, exist_ok=True)
         write_signed_bundle(
@@ -224,6 +228,27 @@ def open_window(start: datetime = T0 - timedelta(hours=1), hours: float = 48) ->
 
 def closed_window() -> Json:
     return open_window(T0 + timedelta(days=30), 1)
+
+
+@dataclass
+class FakeRunner:
+    results: list[Result] = field(default_factory=list[Result])
+    calls: list[list[str]] = field(default_factory=list[list[str]])
+    envs: list[Mapping[str, str] | None] = field(default_factory=list[Mapping[str, str] | None])
+
+    def __call__(
+        self,
+        argv: Sequence[str],
+        *,
+        timeout: float = DEFAULT_TIMEOUT_S,
+        stdout: Path | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> Result:
+        self.calls.append(list(argv))
+        self.envs.append(env)
+        if stdout is not None:
+            stdout.write_bytes(b"dump")
+        return self.results.pop(0) if self.results else Result(0, "", "")
 
 
 class FakeClock:
@@ -603,6 +628,7 @@ class Site:
             root_pubkey_file=self.kit.root_pub,
             core_url="http://core.invalid/api/v1",
             check_timeout_s=10.0,
+            env_file=self.root.parent / "etc" / "updater.env",  # 실제 /etc 아님(R2-L3)
         )
 
     def deps(self) -> Deps:

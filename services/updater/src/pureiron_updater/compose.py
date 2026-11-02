@@ -3,15 +3,22 @@
 `state/compose/g<gen>/`에 둔다:
 - `compose.yml` = 번들의 서명된 `compose/site.compose.yml` 사본
 - `.env` = manifest 이미지 태그에서 만든 `PUREIRON_RELEASE`·`PUREIRON_SITE_DB_VERSION` + 현장 경로
+  + 쓰기 스위치 `PUREIRON_WRITES_ENABLED`(manifest `site_config.writes_enabled`, 없으면 `false` —
+  늘 쓴다, M4-1 C2)
 - `manifest.json` = 검증된 manifest(JCS) — 롤백·상태 보고가 이 파일에서 이미지 digest를 읽는다
 
 적용 전에 `docker compose config`가 해석한 활성 서비스·이미지가 manifest 태그와 **정확히** 같아야
 한다(`check_config`). compose 파일과 manifest가 어긋난 번들은 서비스를 건드리기 전에 거부한다.
+
+쓰기 스위치는 서명된 manifest에서만 온다: docker compose 보간은 셸 환경이 `--env-file`보다
+우선하므로 compose 호출 환경에서 `PUREIRON_WRITES_ENABLED`를 지운다(`compose_env`) —
+`updater.env`(systemd `EnvironmentFile`)나 운영자 셸에 남은 값이 `.env`를 덮지 못하게.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -24,6 +31,8 @@ from pureiron_updater.proc import Runner, check, subprocess_runner
 from pureiron_updater.state import atomic_write
 
 COMPOSE_PAYLOAD = "compose/site.compose.yml"
+WRITES_VAR = "PUREIRON_WRITES_ENABLED"
+"""core 쓰기 스위치 — generation `.env`에만 있고 compose 호출 환경에서는 지운다."""
 PG_DUMP_EXCLUDE = ("tag_history", "_timescaledb_internal.*")
 WAIT_TIMEOUT_S = 180
 UNLOCK_SQL = (
@@ -46,8 +55,14 @@ def env_lines(manifest: Manifest, site_env: Mapping[str, str]) -> list[str]:
         "PUREIRON_RELEASE": _tag_version(images["core"].tag),
         "PUREIRON_SITE_DB_VERSION": _tag_version(images["site-db"].tag),
         **site_env,
+        WRITES_VAR: "true" if manifest.site_config.writes_enabled else "false",
     }
     return [f"{key}={value}" for key, value in sorted(values.items())]
+
+
+def compose_env(environ: Mapping[str, str]) -> dict[str, str]:
+    """docker compose에 물려줄 환경 = 프로세스 환경에서 쓰기 스위치를 뺀 것."""
+    return {key: value for key, value in environ.items() if key != WRITES_VAR}
 
 
 def write_target(
@@ -99,7 +114,8 @@ class ComposeCli:
         ]
 
     def _check(self, argv: list[str], timeout: float, stdout: Path | None = None) -> str:
-        return check(self._run(argv, timeout=timeout, stdout=stdout), argv)
+        env = compose_env(os.environ)
+        return check(self._run(argv, timeout=timeout, stdout=stdout, env=env), argv)
 
     def config_images(self, target: ComposeTarget) -> Mapping[str, str]:
         out = self._check([*self._base(target), "config", "--format", "json"], 120)

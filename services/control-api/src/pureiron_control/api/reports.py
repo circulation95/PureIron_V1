@@ -1,7 +1,9 @@
 """heartbeat·보고·폐쇄망 반입(plan M4 C7): 서명 확인 → `PgReportStore.record`(공용 함수).
 
 - `POST /sites/{site}/heartbeat`·`/reports`: 현장 token(자기 `{site}`) + 본문 서명(`site-heartbeat`·
-  `site-report`, 등록된 site 키). payload `site_id`가 경로와 다르면 403, 서명 불일치 400.
+  `site-report`, 등록된 site 키). payload `site_id`가 경로와 다르면 403, 봉투·payload 형식 위반
+  400, 등록 키로 서명이 확인되지 않으면 409(`KEY_MISMATCH` — 현장이 키를 바꾸고 벤더 rekey를
+  기다리는 중일 수 있다. 현장은 400과 달리 버리지 않고 다시 보낸다, M4-1 리뷰 M1).
 - `POST /offline-imports`(admin): Updater `report export` 파일(`site-reports` 봉투) 그대로.
 - seq가 그 종류(heartbeat·보고)의 마지막 반영 seq 이하인 메시지는 이력으로만 남고 응답은
   200(`outcome: history`)이다. 폐쇄망 반입 묶음은 보고 종류다.
@@ -14,8 +16,15 @@ import hashlib
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
-from pureiron_bundle.sitesign import Json, SignedDocumentError, SitePurpose, open_document
+from pureiron_bundle.sitesign import (
+    Json,
+    SignatureMismatchError,
+    SignedDocumentError,
+    SitePurpose,
+    open_document,
+)
 from pureiron_control.api.body import envelope_body, read_body
+from pureiron_control.api.errors import KEY_MISMATCH_RESPONSE, key_mismatch
 from pureiron_control.api.guard import Guard
 from pureiron_control.credentials import ApiPrincipal, Role
 from pureiron_control.platform.envelopes import claimed_site
@@ -57,22 +66,37 @@ def _bad_request(exc: Exception) -> HTTPException:
     return HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
-async def _open_signed(
-    data: bytes, site: str, purpose: SitePurpose, registry: PgSiteRegistry
+def open_registered(
+    data: bytes, site: str, purpose: SitePurpose, public: bytes, *, token: str | None = None
 ) -> dict[str, Json]:
-    """경로 현장의 등록 키로 봉투를 연다: 다른 현장 payload 403, 미등록 404, 서명·형식 400."""
-    if claimed_site(data) not in (None, site):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="payload.site_id is another site")
-    public = await registry.public_key(site)
-    if public is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"site {site!r} is not registered")
+    """등록 키로 봉투를 연다: 서명 불일치 409(경고 로그), 봉투·payload 형식 위반 400."""
     try:
         payload = open_document(data, purpose, public)
+    except SignatureMismatchError as exc:
+        raise key_mismatch(site, purpose, public, token=token) from exc
     except SignedDocumentError as exc:
         raise _bad_request(exc) from exc
     if payload.get("site_id") != site:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="payload.site_id missing")
     return payload
+
+
+async def _open_signed(
+    data: bytes,
+    site: str,
+    purpose: SitePurpose,
+    registry: PgSiteRegistry,
+    *,
+    token: str | None = None,
+) -> dict[str, Json]:
+    """경로 현장의 등록 키로 봉투를 연다: 다른 현장 payload 403, 미등록 404, 그 밖은
+    `open_registered`."""
+    if claimed_site(data) not in (None, site):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="payload.site_id is another site")
+    public = await registry.public_key(site)
+    if public is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"site {site!r} is not registered")
+    return open_registered(data, site, purpose, public, token=token)
 
 
 def build_reports_router(
@@ -86,7 +110,7 @@ def build_reports_router(
         "/sites/{site}/heartbeat",
         operation_id="post_heartbeat",
         openapi_extra=envelope_body(SitePurpose.HEARTBEAT.value),
-        responses={400: {}, 403: {}},
+        responses={400: {}, 403: {}, **KEY_MISMATCH_RESPONSE},
     )
     async def heartbeat(request: Request, site: str = own_site) -> Recorded:
         data = await read_body(request, limit_bytes=MESSAGE_LIMIT_BYTES)
@@ -101,7 +125,7 @@ def build_reports_router(
         "/sites/{site}/reports",
         operation_id="post_report",
         openapi_extra=envelope_body(SitePurpose.REPORT.value),
-        responses={400: {}, 403: {}},
+        responses={400: {}, 403: {}, **KEY_MISMATCH_RESPONSE},
     )
     async def report(request: Request, site: str = own_site) -> Recorded:
         data = await read_body(request, limit_bytes=MESSAGE_LIMIT_BYTES)
@@ -117,14 +141,16 @@ def build_reports_router(
         operation_id="import_offline_reports",
         status_code=status.HTTP_201_CREATED,
         openapi_extra=envelope_body(SitePurpose.REPORTS.value),
-        responses={400: {}, 404: {}},
+        responses={400: {}, 404: {}, **KEY_MISMATCH_RESPONSE},
     )
     async def offline_import(request: Request, principal: ApiPrincipal = admin) -> OfflineImported:
         data = await read_body(request, limit_bytes=OFFLINE_IMPORT_LIMIT_BYTES)
         site = claimed_site(data)
         if site is None:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="payload.site_id missing")
-        payload = await _open_signed(data, site, SitePurpose.REPORTS, registry)
+        payload = await _open_signed(
+            data, site, SitePurpose.REPORTS, registry, token=principal.name
+        )
         try:
             bundle = parse_report_bundle(payload)
             imported = OfflineImport(

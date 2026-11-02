@@ -9,9 +9,11 @@ import platform
 import shutil
 import tarfile
 import zlib
+from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, Protocol, cast
 
 import build_bundle
 import pytest
@@ -27,6 +29,8 @@ from build_bundle import (
     size_gate,
     version_key,
 )
+from jsonschema import Draft202012Validator
+from referencing import Registry, Resource
 
 from pureiron_bundle import keys
 from pureiron_bundle.errors import BundleRejectedError, RejectCode
@@ -149,7 +153,8 @@ def test_build_then_verify_end_to_end(setup: Setup, capsys: pytest.CaptureFixtur
     assert (result.schema.action, result.schema.target) == (SchemaAction.MIGRATE, 2)
     assert manifest.generation == 7
     assert manifest.product_release.version == "2026.11.0"
-    assert manifest.product_release.min_updater == default_min_updater()
+    assert manifest.product_release.min_updater == "0.1.0"  # 쓰기 끈 번들(E1)
+    assert "site_config" not in manifest.document
     # r0(epoch 1)의 envelope [1, 2]가 epoch 2 스키마를 포함한다.
     assert manifest.product_release.schema.compat_app_min == "2026.10.0"
     assert manifest.project.content_hash == load_project(ACME).content_hash()
@@ -333,3 +338,99 @@ def test_size_gate(capsys: pytest.CaptureFixture[str]) -> None:
 def test_r0_record_has_contract_version() -> None:
     record = json.loads((REPO / "deploy" / "releases" / "r0.json").read_text(encoding="utf-8"))
     assert record["version"] == "2026.10.0"
+
+
+# ── 쓰기 스위치(M4-1 C2·E1·E10) ───────────────────────────────────────────
+
+R4_SCHEMA = Path(__file__).resolve().parent / "fixtures" / "r4-schema"
+"""r4(Updater 0.1.0)가 품은 manifest·fleet-site 계약 사본(고정 — 정본이 바뀌어도 그대로 둔다)."""
+
+
+class _Error(Protocol):
+    @property
+    def message(self) -> str: ...
+
+
+class _Validator(Protocol):
+    def iter_errors(self, instance: object) -> Iterator[_Error]: ...
+
+
+def r4_problems(document: object) -> list[str]:
+    """r4 Updater `parse_manifest`의 계약 검증(위반이 있으면 r4는 `E_FORMAT`으로 거부한다)."""
+    registry = Registry[Any]()
+    schemas = {
+        name: json.loads((R4_SCHEMA / name).read_text(encoding="utf-8"))
+        for name in ("manifest.schema.json", "fleet-site.schema.json")
+    }
+    for schema in schemas.values():
+        registry = registry.with_resource(schema["$id"], Resource.from_contents(schema))
+    validator = cast(
+        _Validator, Draft202012Validator(schemas["manifest.schema.json"], registry=registry)
+    )
+    return sorted(error.message for error in validator.iter_errors(document))
+
+
+def _built(setup: Setup, writes: str | None, *, name: str) -> tuple[bytes, dict[str, object]]:
+    fleet = FLEET if writes is None else FLEET + f"writes: {{ enabled: {writes} }}\n"
+    setup.fleet.write_text(fleet, encoding="utf-8")
+    out = setup.tmp / name
+    assert main(setup.args(out=str(out))) == 0
+    pib = out / "pureiron-site-a-g7.pib"
+    manifest = verify_bundle(pib, context(updater_version="9.9.9")).manifest
+    return pib.read_bytes(), dict(manifest.document)
+
+
+def test_writes_absent_or_false_builds_the_r4_compatible_bundle(setup: Setup) -> None:
+    """꺼진 번들: `site_config` 키 없음 + `min_updater` 0.1.0 — r4 계약을 통과하고 바이트가 같다."""
+    absent, doc = _built(setup, None, name="absent")
+    off, off_doc = _built(setup, "false", name="off")
+    assert off == absent
+    assert off_doc == doc
+    assert "site_config" not in doc
+    release = doc["product_release"]
+    assert isinstance(release, dict)
+    assert release["min_updater"] == "0.1.0"
+    assert r4_problems(doc) == []
+
+
+def test_writes_true_signs_the_switch_and_needs_updater_0_2(setup: Setup) -> None:
+    pib_bytes, doc = _built(setup, "true", name="on")
+    assert doc["site_config"] == {"writes_enabled": True}
+    release = doc["product_release"]
+    assert isinstance(release, dict)
+    assert release["min_updater"] == "0.2.0"
+    pib = setup.tmp / "on" / "pureiron-site-a-g7.pib"
+    assert pib.read_bytes() == pib_bytes
+    assert verify_bundle(pib, context(updater_version="0.2.0")).manifest.site_config.writes_enabled
+    with pytest.raises(BundleRejectedError) as old:
+        verify_bundle(pib, context(updater_version="0.1.0"))
+    assert old.value.code is RejectCode.E_UPDATER
+    # r4 Updater는 min_updater를 보기 전에 계약 검증에서 모르는 키로 거부한다(E_FORMAT).
+    assert any("site_config" in problem for problem in r4_problems(doc))
+
+
+def test_explicit_min_updater_wins(setup: Setup) -> None:
+    setup.fleet.write_text(FLEET + "writes: { enabled: true }\n", encoding="utf-8")
+    assert main(setup.args(min_updater="0.3.1")) == 0
+    manifest = verify_bundle(setup.pib, context(updater_version="0.3.1")).manifest
+    assert manifest.product_release.min_updater == "0.3.1"
+    assert default_min_updater(writes=False) == "0.1.0"
+    assert default_min_updater(writes=True) == "0.2.0"
+
+
+def test_writes_true_refuses_an_explicit_min_updater_below_0_2(
+    setup: Setup, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """리뷰 N2: 쓰기 켠 번들에 0.2.0 미만 `--min-updater`를 주면 조용히 받지 않고 빌드를
+    거부한다."""
+    setup.fleet.write_text(FLEET + "writes: { enabled: true }\n", encoding="utf-8")
+    assert main(setup.args(min_updater="0.1.9")) == 1
+    assert "writes.enabled needs --min-updater >= 0.2.0" in capsys.readouterr().err
+    assert not setup.pib.exists()
+    assert main(setup.args(min_updater="0.2.0")) == 0
+
+
+def test_invalid_writes_in_fleet_file_fails(setup: Setup) -> None:
+    setup.fleet.write_text(FLEET + "writes: { enabled: yes-please }\n", encoding="utf-8")
+    assert main(setup.args()) == 1
+    assert not setup.pib.exists()

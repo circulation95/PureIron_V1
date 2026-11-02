@@ -19,7 +19,14 @@
         "version": {"type": "string", "pattern": "^v[1-9][0-9]*$"}
       }
     },
-    "window": {"$ref": "#/$defs/window"}
+    "window": {"$ref": "#/$defs/window"},
+    "writes": {
+      "description": "현장 쓰기 스위치(M4-1 C2, 선택 — 없으면 끔). true면 번들 manifest `site_config.writes_enabled`(서명 대상)로 실려 Updater가 core `PUREIRON_WRITES_ENABLED`를 켠다. 켠 번들은 Updater 0.2.0 이상만 적용한다.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": {"enabled": {"type": "boolean"}}
+    }
   },
   "$defs": {
     "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"},

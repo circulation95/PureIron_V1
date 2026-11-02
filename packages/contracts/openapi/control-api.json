@@ -986,6 +986,9 @@
           },
           "404": {
             "description": "Not Found"
+          },
+          "409": {
+            "description": "등록된 site 키로 서명이 확인되지 않음(현장 재등록 뒤 rekey 대기, 또는 폐기된 구 키로 서명)"
           }
         },
         "security": [
@@ -1266,6 +1269,12 @@
           "403": {
             "description": "Forbidden"
           },
+          "404": {
+            "description": "Not Found"
+          },
+          "409": {
+            "description": "등록된 site 키로 서명이 확인되지 않음(현장 재등록 뒤 rekey 대기, 또는 폐기된 구 키로 서명)"
+          },
           "413": {
             "description": "Request Entity Too Large"
           },
@@ -1278,6 +1287,9 @@
               }
             },
             "description": "Validation Error"
+          },
+          "507": {
+            "description": "데이터 디렉터리 쓰기 실패"
           }
         },
         "security": [
@@ -1407,6 +1419,9 @@
           },
           "403": {
             "description": "Forbidden"
+          },
+          "409": {
+            "description": "등록된 site 키로 서명이 확인되지 않음(현장 재등록 뒤 rekey 대기, 또는 폐기된 구 키로 서명)"
           },
           "422": {
             "content": {
@@ -1590,6 +1605,9 @@
           },
           "403": {
             "description": "Forbidden"
+          },
+          "409": {
+            "description": "등록된 site 키로 서명이 확인되지 않음(현장 재등록 뒤 rekey 대기, 또는 폐기된 구 키로 서명)"
           },
           "422": {
             "content": {

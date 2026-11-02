@@ -23,8 +23,9 @@ from pureiron_bundle.sitesign import (
     sign_document,
     tree_digest,
 )
-from pureiron_updater.enroll import enroll, export_reports
+from pureiron_updater.enroll import enroll
 from pureiron_updater.metrics import REPORTS_DIR
+from pureiron_updater.outbox import export_reports
 from pureiron_updater.settings import Settings as UpdaterSettings
 
 T0 = datetime(2026, 11, 1, 9, 0, tzinfo=UTC)

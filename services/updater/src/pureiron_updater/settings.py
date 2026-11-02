@@ -11,11 +11,15 @@
 | `PUREIRON_ROOT` | `/var/lib/pureiron` | `{db,state,backups,bundles}` 상위 |
 | `PUREIRON_ROOT_PUB` | `/etc/pureiron/root.pub` | root 공개키(raw 32B) |
 | `PUREIRON_CORE_URL` | `http://127.0.0.1:<web port>/api/v1` | core API(web 프록시) |
-| `PUREIRON_CONTROL_API` | (없음) | control-api 기준 URL. 없으면 polling 안 함(폐쇄망: `apply`만) |
+| `PUREIRON_CONTROL_API` | (없음) | control-api 기준 URL. 없으면 polling·송신 안 함(폐쇄망) |
 | `PUREIRON_CHECK_TIMEOUT_S` | `90` | `checking` 제한 시간 |
 | `PUREIRON_POLL_INTERVAL_S` | `60` | 서비스 loop 주기 |
 | `PUREIRON_WEB_BIND`·`PUREIRON_WEB_PORT` | compose 기본값 | 주면 generation `.env`에도 넣는다 |
 | `PUREIRON_SECRET_UID` | `10001` | secret 파일 소유자(컨테이너 서비스 사용자, root면 chown) |
+
+`PUREIRON_WRITES_ENABLED`는 **무시한다**(M4-1 C2): core 쓰기 스위치는 서명된 번들 manifest
+(`site_config.writes_enabled` ← fleet 현장 파일 `writes.enabled`)에서만 온다. 이 파일·프로세스
+환경에 있으면 서비스 시작 때 경고 1회(`ignored_env`).
 """
 
 from __future__ import annotations
@@ -32,6 +36,8 @@ class SettingsError(ValueError):
 
 
 _PASSTHROUGH = ("PUREIRON_WEB_BIND", "PUREIRON_WEB_PORT")
+IGNORED_VARS = ("PUREIRON_WRITES_ENABLED",)
+"""설정해도 쓰지 않는 변수(서명된 manifest에서만 오는 값)."""
 ENV_FILE = Path("/etc/pureiron/updater.env")
 SITE_ID_VAR = "PUREIRON_SITE_ID"
 DEFAULT_SECRET_UID = 10001
@@ -78,6 +84,8 @@ class Settings:
     updater_version: str = __version__
     env_file: Path = ENV_FILE
     secret_uid: int = DEFAULT_SECRET_UID
+    ignored_env: tuple[str, ...] = ()
+    """설정됐지만 무시하는 변수(`IGNORED_VARS` 중 env 파일·프로세스 환경에 있던 것)."""
 
     @property
     def state_dir(self) -> Path:
@@ -138,4 +146,5 @@ class Settings:
             compose_env=tuple((k, env[k]) for k in _PASSTHROUGH if env.get(k)),
             env_file=env_file_path(env),
             secret_uid=secret_uid,
+            ignored_env=tuple(k for k in IGNORED_VARS if k in env),
         )

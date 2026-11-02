@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -25,25 +25,46 @@ class Result:
 
 class Runner(Protocol):
     def __call__(
-        self, argv: Sequence[str], *, timeout: float = DEFAULT_TIMEOUT_S, stdout: Path | None = None
+        self,
+        argv: Sequence[str],
+        *,
+        timeout: float = DEFAULT_TIMEOUT_S,
+        stdout: Path | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> Result:
-        """`stdout`을 주면 표준 출력을 그 파일로(대용량 pg_dump). 실패도 Result로 돌려준다."""
+        """`stdout`을 주면 표준 출력을 그 파일로(대용량 pg_dump). `env`를 주면 그 환경만(없으면
+        프로세스 환경을 물려준다). 실패도 Result로 돌려준다."""
         ...
 
 
 def subprocess_runner(
-    argv: Sequence[str], *, timeout: float = DEFAULT_TIMEOUT_S, stdout: Path | None = None
+    argv: Sequence[str],
+    *,
+    timeout: float = DEFAULT_TIMEOUT_S,
+    stdout: Path | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> Result:
     log.info("run: %s", " ".join(argv))
+    child_env = None if env is None else dict(env)
     try:
         if stdout is None:
             done = subprocess.run(
-                list(argv), capture_output=True, text=True, timeout=timeout, check=False
+                list(argv),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+                env=child_env,
             )
             return Result(done.returncode, done.stdout, done.stderr)
         with stdout.open("wb") as sink:
             done_bytes = subprocess.run(
-                list(argv), stdout=sink, stderr=subprocess.PIPE, timeout=timeout, check=False
+                list(argv),
+                stdout=sink,
+                stderr=subprocess.PIPE,
+                timeout=timeout,
+                check=False,
+                env=child_env,
             )
         return Result(done_bytes.returncode, "", done_bytes.stderr.decode("utf-8", "replace"))
     except subprocess.TimeoutExpired as exc:
