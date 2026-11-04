@@ -81,7 +81,9 @@ jobs:
             echo "::error::호출된 workflow 커밋을 알 수 없다: '$WORKFLOW_SHA'"
             exit 1
           fi
-          echo "PureIron_V1 도구 커밋: $WORKFLOW_SHA"
+          # annotated tag ref로 부르면 이 값은 태그 객체 sha다(checkout은 커밋으로 풀린다) — 도구 커밋
+          # 기록은 checkout 뒤 `git rev-parse HEAD`로 남긴다(M4 C11).
+          echo "호출된 workflow sha: $WORKFLOW_SHA"
           echo "sha=$WORKFLOW_SHA" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -90,6 +92,10 @@ jobs:
           token: ${{ steps.app-token.outputs.token || github.token }}
           path: pureiron-v1
           persist-credentials: false
+      - run: |
+          tool_commit="$(git -C pureiron-v1 rev-parse HEAD)"
+          echo "PureIron_V1 도구 커밋: $tool_commit"
+          echo "PureIron_V1 도구 커밋: \`$tool_commit\`" >> "$GITHUB_STEP_SUMMARY"
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: ${{ env.UV_VERSION }}
