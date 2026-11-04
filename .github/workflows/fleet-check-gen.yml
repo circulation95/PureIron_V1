@@ -40,8 +40,10 @@ jobs:
       UV_VERSION: "0.10.12"
     steps:
       - if: github.event_name != 'pull_request'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          echo "::error::check-gen은 pull_request 이벤트 전용이다(받은 이벤트: ${{ github.event_name }})"
+          echo "::error::check-gen은 pull_request 이벤트 전용이다(받은 이벤트: $EVENT_NAME)"
           exit 1
       # 기본 ref = refs/pull/<n>/merge(PR을 지금 base에 합친 결과). 첫 부모가 base다.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
