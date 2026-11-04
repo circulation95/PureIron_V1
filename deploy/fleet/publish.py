@@ -657,7 +657,7 @@ def run(config: Config, sha: str, deps: Deps) -> int:
             git = Git(work / "fleet", deps.tokens.fleet(), config.git_base)
             fetch_fleet(config, git, sha)
             evidence = gather(config, git, deps.github, sha, last)
-        except (PublishError, GitError, GitHubError) as exc:
+        except (PublishError, GitError, GitHubError, OSError) as exc:
             emit(error(ErrorCode.APPROVAL, "", f"판정 입력을 받지 못했다: {exc}"))
             return 1
         decision = decide(evidence)
@@ -667,9 +667,13 @@ def run(config: Config, sha: str, deps: Deps) -> int:
             print(f"publish: {sha} 승인 거부 — 서명하지 않는다", flush=True)
             return 1
         assert decision.base is not None
-        chain.record(
-            sha, f"pr=#{decision.pull} base={decision.base} by={','.join(decision.approvers)}"
-        )
+        try:
+            chain.record(
+                sha, f"pr=#{decision.pull} base={decision.base} by={','.join(decision.approvers)}"
+            )
+        except OSError as exc:  # 사슬을 못 남기면 다음 판정이 깨지므로 게시하지 않는다
+            emit(error(ErrorCode.PUBLISH, "", f"승인 사슬을 기록하지 못했다({chain.file}): {exc}"))
+            return 1
         notice(f"승인: PR #{decision.pull}, 승인자 {', '.join(decision.approvers)}")
         try:
             base_tree, head_tree = git.tree(decision.base), git.tree(sha)

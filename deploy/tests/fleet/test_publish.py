@@ -309,6 +309,17 @@ def test_bad_sha_and_missing_chain(world: World, capsys: pytest.CaptureFixture[s
     assert "trust-base 먼저" in capsys.readouterr().out
 
 
+def test_unwritable_chain_blocks_publishing(
+    world: World, capsys: pytest.CaptureFixture[str]
+) -> None:
+    merged = world.merge_pr(7, TWO_SITES)
+    world.chain.file.unlink()
+    world.chain.file.mkdir()  # 읽기·교체가 실패하는 자리
+    assert world.run(merged) == 1
+    assert world.builder.requests == []
+    assert "E_APPROVAL 판정 입력을 받지 못했다" in capsys.readouterr().out
+
+
 def test_defaults_are_f7_paths() -> None:
     config = Config(fleet_repo=FLEET)
     assert config.keys_dir.as_posix().endswith("/etc/pureiron/keys")
