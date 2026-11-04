@@ -157,12 +157,12 @@
     },
     {
       "audience": "both",
-      "bytes": 24898,
+      "bytes": 26252,
       "id": "sot-architecture",
       "last_verified": "2026-11-02",
       "path": "docs/wiki/sot/architecture.md",
       "section_count": 18,
-      "sha256": "c75627aefb34170acaec2e54a5651c3cb1c2d5392a17bce5c675a842668fb26d",
+      "sha256": "262a5bfa3579bf7ab1602c1a15e0d6ac773bc3365427113375e5b78e75c9db62",
       "source_globs": [],
       "sources": [
         "services/core/src/pureiron_core/runtime.py",
@@ -171,6 +171,7 @@
         "services/core/.importlinter",
         "services/control-api/src/pureiron_control/runtime.py",
         "services/control-api/.importlinter",
+        "deploy/fleet/publish.py",
         "services/core/src/pureiron_core/acquisition/server.py",
         "services/core/src/pureiron_core/acquisition/ingest.py",
         "services/core/src/pureiron_core/platform/bus.py",
@@ -223,12 +224,12 @@
     },
     {
       "audience": "both",
-      "bytes": 111981,
+      "bytes": 118367,
       "id": "sot-data-contracts",
-      "last_verified": "2026-11-02",
+      "last_verified": "2026-11-04",
       "path": "docs/wiki/sot/data-contracts.md",
-      "section_count": 32,
-      "sha256": "fd9bf3d364b92b8e98af4d7e4b32a3193fbdd77ab48a8258e808ddd0ff882812",
+      "section_count": 33,
+      "sha256": "ff030912476ea4b2b0b3b147ff4b1a76f25f6ea2ea0f8ee9b823740fa793529f",
       "source_globs": [
         "projects/demo-coffee/**/*.yaml",
         "projects/demo-coffee/**/*.json"
@@ -241,7 +242,10 @@
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/gateway.py",
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/project_package.py",
         "services/control-api/migrations/0001_control_schema.sql",
-        "services/updater/src/pureiron_updater/outbox.py"
+        "services/updater/src/pureiron_updater/outbox.py",
+        "deploy/fleet/approval.py",
+        "deploy/fleet/fleetfiles.py",
+        "deploy/templates/pureiron-fleet/README.md"
       ],
       "status": "canonical",
       "title": "Data Contracts SOT — DB·설정 스키마"
@@ -309,29 +313,30 @@
     },
     {
       "audience": "both",
-      "bytes": 17920,
+      "bytes": 20547,
       "id": "sot-runtime-config",
-      "last_verified": "2026-11-02",
+      "last_verified": "2026-11-04",
       "path": "docs/wiki/sot/runtime-config.md",
-      "section_count": 13,
-      "sha256": "11ed7649b2a58e3818c0d41ed764bf84b33bedce5b1f0260c65505d49ca84c69",
+      "section_count": 14,
+      "sha256": "4dd5aba6ca6bb121a98c65a6737755aaa7b1a5202cb2742936b43a07ae38aa27",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/config.py",
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/.env.example",
-        "services/control-api/src/pureiron_control/settings.py"
+        "services/control-api/src/pureiron_control/settings.py",
+        "deploy/fleet/publish.py"
       ],
       "status": "canonical",
       "title": "Runtime Config SOT — 환경변수·설정"
     },
     {
       "audience": "both",
-      "bytes": 38938,
+      "bytes": 40003,
       "id": "sot-testing",
       "last_verified": "2026-08-22",
       "path": "docs/wiki/sot/testing.md",
       "section_count": 18,
-      "sha256": "39d2c93742dd7f5f3a42d0a3578e6e9d7a08a6f52e59d0c1339eeff4d6114791",
+      "sha256": "15406a6b593faebb69923e9806cd965f86469da07e0e882a412d4b9a144ac742",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/pyproject.toml",

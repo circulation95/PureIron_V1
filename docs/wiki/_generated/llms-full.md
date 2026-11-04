@@ -1914,6 +1914,16 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
   메타데이터는 bundle-tools를 현장과 같은 코드로 쓴다(P3). 현장은 polling(`GET …/desired` → Range로 번들 → 자체
   검증)만 하고 중앙이 현장에 접속하지 않는다. 폐쇄망 현장은 `report export` 파일을 USB로 반출해 `POST
   /offline-imports`로 같은 seq 규칙에 넣는다. API·저장 세부는 [api-events](api-events.md)·[data-contracts](data-contracts.md).
+- **fleet → 게시 경로(M4-2)**: fleet PR → check-gen(`publish` runner, viewer 토큰으로 `GET /fleet` — gen 규칙) →
+  `allowed_approvers.txt` 승인 → merge → fleet `main` push → publish workflow가 publish 호스트에서
+  `deploy/fleet/publish.py run --fleet-repo … --sha …` **한 진입점**만 부른다. 그 명령이 sha를 GitHub·git으로 다시
+  받아 승인 판정(`E_APPROVAL` — PR merge commit·최종 head 승인·merge 직전 목록·호스트 승인 사슬) → 현장마다 등록·
+  게시 gen 확인 → 프로젝트 태그 → `build_bundle`(서명) → `PUT /bundles`(ci 토큰)까지 한다. 현장 Updater는 기존
+  polling으로 받는다. publish 호스트(PoC = 개발 PC WSL, M4 C3)는 전용 사용자 `pureiron-publish`의 self-hosted
+  runner(라벨 `publish`), 키 `/etc/pureiron/keys`, 토큰 `/etc/pureiron/publish/{ci_token, viewer_token, app.pem}`,
+  출력 `/srv/pureiron/{bundles,metrics,publish}`([runtime-config](runtime-config.md)). GitHub Free에서 runner를
+  workflow에 묶지 못하므로 fleet write 권한자는 그 runner 권한을 갖는다(K14 수용) — 서명 명령을 sudo 뒤 전용 사용자로
+  옮기면 경계가 된다(전환 조건 = 외부인 write 권한·서명 호스트 이전, `deploy/templates/pureiron-fleet/README.md`).
 
 ## V1 구현 현황 (2026-10-17)
 
@@ -2703,6 +2713,20 @@ ADR-013(개정) 쓰기 경로의 계약과 collector 실행부다. core 쓰기 �
 - **검증**: Updater 단위(seq 예약·할당 crash 지점 — 예약 뒤·파일 쓰기 뒤·묶음 뒤 이동 전·전송 뒤 이동 전, 온라인 실패분의 USB 반출 같은 seq, 연속 구간 분할, r4 저널 2종, 응답 표 200·400·401·403·404·500·연결 실패, tick당 20건, `seq_pending`·미등록 미송신, heartbeat 실패 버림·카운터 공유, 시도 중 `current` = 적용된 값, `disk_state` 경계, 서로게이트 보고 서명, `.env` 스위치 true·false·없음, compose 환경 키 제거, 무시+경고, `--upload` 성공·거부·미설정·연결 실패), bundle(쓰기 없음·false → `site_config` 없음 + 0.1.0 + 바이트 동일, true → `site_config` + 0.2.0, r4 계약 사본 fixture `deploy/tests/fixtures/r4-schema/`로 false 통과·true 위반, 게이트 표), control-api 단위(드래프트·enrollment 범위·NUL·서로게이트, 저장 오류 507 분류, latest 정렬) + control-db 통합 `test_updater_send_db.py`(실제 control-api(uvicorn) + 실제 Updater `cli.tick`: fleet online·current·disk_state, 보고 2건과 heartbeat seq 교차, 중앙 중단 중 보고 → `report export` → 반입 applied → 같은 파일 온라인 재전송 history, 400 보고 `rejected/`, 드래프트 5·7·늦은 5 → latest 7, 드래프트 저장 실패 507 + 행·파일 없음, r4 desired polling만으로 `last_seen`).
 - **리뷰 r2 고정(2026-11-02)**: Updater 단위 — 지금 읽을 수 없는 큐 파일(권한 오류)은 건너뛰고 큐에 남았다가 다음 tick에 나감(온라인·USB), 저널 정리 중 읽기 오류면 저널 유지(R2-L1), `assign` 단독 호출도 저널 seq(R2-N2), 모든 테스트의 env 파일을 tmp로(R2-L3 — 실제 `/etc/pureiron/updater.env`를 읽지 않음). control-api 단위 — 409 경고 로그(현장·용도·등록 키 지문·반입 token 이름, R2-L2), 길이가 64B가 아닌 서명 400(R2-N1).
 - **리뷰 r1 고정(2026-11-02)**: Updater 단위 — 길이가 틀린 `site.key`로도 tick이 advance까지 가서 적용(H1), 메트릭 쓰기 예외 흡수, 예약 전 r4 저널 + `send_all` → heartbeat seq ≠ 저널 seq·같은 seq 두 번 없음(M2), 응답 표에 409(큐에 남김)·413(`rejected/`) 행, 읽을 수 없는 큐 파일 → `rejected/`(온라인·USB), 저장 seq 우선 송신 순서(N4), `ComposeCli` 공개 메서드 전부가 `env=`(스위치 키 없음)로 호출(L3), `--upload` 409 exit 1 + 파일 유지. bundle-tools — 서명 불일치만 `SignatureMismatchError`. control-api 단위 — 다른 키 서명·변조 409, JSON·purpose·봉투 키·payload `site_id` 위반 400, 드래프트 다른 키 409·tar 아님 400, `exists()` 권한 오류 507(L5), OpenAPI 4경로 409. control-db 통합 — `--re-enroll` 뒤 rekey 전 보고 큐 유지(rejected 0) → rekey 뒤 같은 seq 반영, 401·403 desired polling 뒤 `connection = never`(L4), 기존 400 단언을 409로. build — 쓰기 켠 번들 + `--min-updater 0.1.9` 거부(N2).
+
+### V1 구현 현황 (M4-2 fleet·publish, 2026-11-04)
+
+fleet repo 규칙·PR 검사·승인 판정·게시 도구. 근거 plan `pureiron-m4-2.md` ★F1~F3·F4~F12, `pureiron-m4.md` C9·C10·C11. 코드 `deploy/fleet/`(판정은 순수 함수, GitHub·git은 `github.py`, control-api HTTP·서명·게시는 `publish.py`), 템플릿 `deploy/templates/pureiron-fleet/`(README가 운영 절차 정본).
+
+- **fleet repo 배치**: `sites/<site>.yaml`(활성, fleet-site 계약, 파일명 == `site`), `sites/.retired/<site>.yaml`(퇴역 — 활성 파일을 **같은 내용 그대로 옮긴 것**만, 이후 수정·삭제·이름 재사용 금지), `sites/.retired/.gitkeep`, `allowed_approvers.txt`(한 줄 한 login, `#` 주석, 대소문자 무시). `sites/` 아래 그 밖의 파일(`.yml`·하위 디렉터리·id 규칙 위반 이름) 추가·수정은 `E_FLEET`, 활성 파일 삭제(이동 아님)도 `E_FLEET`.
+- **check-gen(PR, F4)**: 변경된 활성 파일마다 위 구조 규칙 + `E_GEN` — `new == old + 1`(새 파일 old = 0), `new > max_published_gen`(control-api `GET /fleet?site=`, 404 = 미등록 → gen 1만). 경고(실패 아님): product release 기록 없음, `writes.enabled: true`(Updater ≥ 0.2.0), 현장 current product → 새 product schema epoch가 2 이상 뜀(현장 `E_SCHEMA`), 미등록 현장(merge 전 등록 필요). 비교 대상은 PR merge 결과(`refs/pull/<n>/merge`)와 그 첫 부모. 토큰은 viewer(게시 권한 없음).
+- **승인 판정(★F2, `approval.decide`)**: ① 대상 sha == merge된 PR의 `merge_commit_sha`(직접 push·PR head 직접 push 거부), PR base = main, sha가 원격 main 이력 안 ② 그 PR **최종 head sha** 승인 ≥ 1 — 리뷰어별 마지막 상태(APPROVED·CHANGES_REQUESTED·DISMISSED만 상태를 바꿈, COMMENTED 무시)가 APPROVED, `commit_id == head sha`(오래된 승인 무효), 리뷰어 ∈ 목록, 리뷰어 ≠ 작성자 ③ 목록은 **merge 직전 main(merge base)**의 `allowed_approvers.txt` ④ 승인 사슬: merge base == 호스트 기록 `last_approved`(같은 sha 재실행은 ①②③만). merge base = merge commit의 첫 부모(둘째 부모 == PR head 확인) / squash의 첫 부모 / rebase(PR 커밋 N개)면 `sha~1…sha~(N-1)`이 모두 같은 PR에 연결된 커밋일 때 `sha~N`(일부만 연결되면 거부). 어기면 `E_APPROVAL`(사유마다 한 줄), 빌드·서명·PUT 0회. 복구는 main을 마지막 승인으로 force push 후 재 PR, 또는 사람이 검토한 sha로 `publish.py trust-base`(처음 한 번은 템플릿 첫 커밋).
+- **publish(F5, `publish.py run --fleet-repo <owner/name> --sha <sha>`)**: runner 작업 디렉터리를 믿지 않고 그 sha·원격 main을 git으로, PR·리뷰를 GitHub REST로 다시 받는다(App 설치 토큰, fleet = contents·pull_requests 읽기) → 승인 판정 → 사슬 기록(`last_approved` 원자적 교체 + `approved.log` 추가) → merge base 대비 변경 현장 파일(구조 규칙 위반은 `E_FLEET`로 알리고 그 파일만 제외) → 현장마다 `GET /fleet?site=`(viewer 토큰 — ci는 fleet 읽기 불가): 미등록이면 "등록 먼저 → workflow_dispatch 재실행" 안내 후 실패, `max_published_gen == gen`이면 이미 게시로 건너뜀, `>`면 gen 역행 실패 → 프로젝트 repo(`<fleet owner>/<project.repo>`, 태그 `version`, 얕은 fetch) → `build_bundle.build` 함수 호출(프로젝트 검증·자체 `verify_bundle` 포함, `fleet_commit` = sha) → 스트리밍 `PUT /bundles/{site}/{gen}`(ci 토큰, 1 MiB 단위, 본문 전에 서버 응답이 오면(404·409) 보내기를 멈추고 그 응답을 읽음). 현장 하나가 실패해도 나머지를 진행하고 끝에 exit 1(`E_PUBLISH`). 드래프트 게이트는 하지 않는다(F12 — 현장 `E_DRAFT`가 최종, 벤더는 `pureiron-project gate --draft`). 게시 기록 `metrics/publish-<site>-g<gen>.json`(fleet 커밋·PR·승인자·크기·sha256·빌드/업로드 시간·번들 메트릭).
+- **revert(F8, `revert.py <site> --to-gen N`)**: 이력에서 gen N 파일의 `product`·`project`·`window`·`writes`를 가져와 `generation = 현재 + 1`로 쓰고 브랜치 `revert/<site>-g<new>`·커밋·push·`gh pr create`(일반 승인 경로). 현재 product epoch가 되돌릴 product envelope 밖이면·쓰기 스위치가 바뀌면 경고.
+- **오류 코드(F11)**: `E_FLEET`(스키마·파일명·`.retired`), `E_GEN`(check-gen gen 규칙·control-api 조회 실패), `E_APPROVAL`(승인), `E_PUBLISH`(현장별 빌드·게시). GitHub annotation `::error file=<path>::<CODE> …` + exit 1, 경고는 `::warning`.
+- **도구 버전(F6·C11)**: fleet 템플릿 workflow는 V1 reusable `fleet-check-gen.yml`·`fleet-publish.yml`(`workflow_call`, `runs_on` 입력, 같은 App secret)을 같은 `@<ref>`로 부른다. 세 reusable workflow(validate-project 포함) 모두 도구 커밋을 checkout 뒤 `git rev-parse HEAD`로 기록한다(annotated tag ref면 `job.workflow_sha`는 태그 객체 sha). fleet-publish는 concurrency를 두지 않는다(대기 run 취소가 승인 사슬을 끊지 않게).
+- **한계(K14, ★F1)**: Free private repo는 runner를 workflow에 묶지 못해 fleet write 권한자는 runner 사용자 권한으로 코드를 돌릴 수 있다 — 승인 판정은 실수·절차 우회만 막는다. 서명은 `publish.py` 한 진입점이라 외부인 write 권한 부여·서명 호스트 이전 전에 sudo 뒤 전용 사용자로 옮기면 경계가 된다(코드 변경 없음, 템플릿 README 전환 조건).
+- **검증**: 단위 `deploy/tests/fleet/`(구조 규칙 표, check-gen 표·git repo 흐름, 승인 표 — 정상·승인 0·자기 승인·오래된 승인·CHANGES_REQUESTED·DISMISSED·목록 밖·PR이 목록 변경·직접 push·PR head 직접 push·사슬 끊김·merge/squash/rebase, GitHub REST 페이지·JWT·설치 토큰(가짜 HTTP), publish 흐름(가짜 GitHub·control-api·빌더 + 로컬 git 원격: 승인 실패 시 빌드·PUT 0, 건너뜀·404·409·현장 하나 실패, trust-base 복구), 본문 전 409 응답 처리, revert 표·CLI), 템플릿 `deploy/tests/test_fleet_template.py`, 통합 `deploy/tests/fleet/test_publish_integration.py`(control-db + 실제 control-api + 실제 `build_bundle`).
 
 ---
 
@@ -3541,6 +3565,29 @@ core의 초 단위 값(`…_S`)은 양의 유한 수만 받는다 — 0·음수�
 
 초·바이트 값은 양의 유한 수만 받고 잘못된 값은 기동 시 `SettingsError`(CLI 종료 코드 4)다. 사람·CI token은 env가 아니라 `pureiron-control token create --role admin|ci|viewer --name <이름>`으로만 만든다(원문은 그때 한 번만 출력, DB에는 SHA-256).
 
+### V1 fleet publish 호스트 경로·환경변수 (M4-2 구현)
+
+정본은 `deploy/fleet/publish.py`(`Config`·`parser`)와 `deploy/fleet/check_gen.py`. publish 호스트(PoC = 개발 PC WSL, 전용 사용자 `pureiron-publish`, runner 라벨 `publish`)에서만 쓴다. 우선순위는 인자 > 환경변수 > 기본값이고, 테스트는 모두 tmp 경로를 넘긴다.
+
+| 인자 / 환경변수 | 기본값 | 의미 |
+|---|---|---|
+| `--keys-dir` / `PUREIRON_PUBLISH_KEYS_DIR` | `/etc/pureiron/keys` | `release.key`(0600)·`release-cert.json`·`release-cert.sig`·`root.pub`(`--root-pub`로 따로 지정 가능) |
+| `--ci-token-file` / `PUREIRON_PUBLISH_CI_TOKEN_FILE` | `/etc/pureiron/publish/ci_token` | control-api ci 토큰(0600) — `PUT /bundles` |
+| `--viewer-token-file` / `PUREIRON_PUBLISH_VIEWER_TOKEN_FILE` | `/etc/pureiron/publish/viewer_token` | control-api viewer 토큰(0600) — `GET /fleet`(ci 역할은 fleet을 못 읽는다) |
+| `--app-key-file` / `PUREIRON_PUBLISH_APP_KEY_FILE` | `/etc/pureiron/publish/app.pem` | GitHub App private key(0600) — fleet(contents·pull_requests 읽기)·프로젝트(contents 읽기) 설치 토큰 |
+| `--app-id` / `PUREIRON_PUBLISH_APP_ID` | 없으면 `/etc/pureiron/publish/app_id` 파일 | GitHub App ID(fleet-publish workflow가 secret `PUREIRON_CI_APP_ID`로 env를 준다) |
+| `--bundles-dir` / `PUREIRON_PUBLISH_BUNDLES_DIR` | `/srv/pureiron/bundles` | `<site>/pureiron-<site>-g<gen>.pib`(+ `.bundle-metrics.json`) |
+| `--metrics-dir` / `PUREIRON_PUBLISH_METRICS_DIR` | `/srv/pureiron/metrics` | `publish-<site>-g<gen>.json` 게시 기록 |
+| `--state-dir` / `PUREIRON_PUBLISH_STATE_DIR` | `/srv/pureiron/publish` | 승인 사슬 `<owner>/<repo>/{last_approved, approved.log}`(주 1회 백업 대상) |
+| `--store` / `PUREIRON_IMAGE_STORE` | `~/pureiron/images`(build_bundle 기본) | 이미지 store `<release>/<svc>.tar` — publish 호스트는 `/srv/pureiron/images`로 설정 |
+| `--control-api` / `PUREIRON_CONTROL_API` | `http://127.0.0.1:8100/api/v1` | control-api 기준 URL(publish·check-gen 공통) |
+| `--github-api` / `PUREIRON_GITHUB_API` | `https://api.github.com` | GitHub REST |
+| `--git-base` / `PUREIRON_GIT_BASE` | `https://github.com` | git 원격 앞부분(`<base>/<owner>/<repo>.git`, 테스트는 로컬 경로) |
+| `--project-owner` | fleet repo owner | 고객 프로젝트 repo owner |
+| `PUREIRON_FLEET_VIEWER_TOKEN` | 없음(필수) | check-gen viewer 토큰 — fleet repo secret 같은 이름에서 |
+
+토큰은 git argv가 아니라 환경(`GIT_CONFIG_*` → `http.extraHeader`)으로만 넘긴다.
+
 ---
 
 <!-- source: docs/wiki/sot/testing.md -->
@@ -3882,13 +3929,14 @@ E2E/NF:
 | `no-customer-branching` | `(project_id\|site_id) == "…"` 리터럴, `deploy/lint/customer-names.txt` 이름 0건(제품 `src/`만) | 항상 |
 | `web` | `npm ci`, `tsc --noEmit`, `eslint --max-warnings 0`, `vite build` | 항상 |
 | `template-validate` → `template-outputs` | G1-8 V1 안 대리: 고객 repo와 같은 reusable workflow `validate-project.yml`을 `./`로 불러 `deploy/templates/pureiron-project`를 validate·`fmt --check`·hash → 출력 `content_hash`가 `sha256:` 형식이고 로컬 `pureiron-project hash`와 같으며 `project_version`이 빈 값(태그 실행 아님)인지 확인. 자기 호출은 `project/`·`pureiron-v1/`가 같은 트리라 hash 비교로는 경로 분리를 못 잡으므로 reusable 안에서 도구·프로젝트 경로를 직접 확인한다. 경로 분리·`project_version` 태그 분기는 외부 run(G1-8)에서 검증. 로컬 대응은 `unit`의 `deploy/tests/test_project_template.py` | CI만(`g1.sh`에 없는 job), 항상 |
-| `integration-compose` | 이미지 빌드 → compose(`pureiron-it`, `PUREIRON_IT_PROJECT`로 변경 가능) site-db → `migrate up` → 전체 기동 → `pytest -m "integration and not perf"`(readyz 200, migrate 종료코드, Timescale 객체, edit-lock 경쟁, historian DB, 시뮬레이터 100태그·collector kill, collector 30 s 네트워크 분리 replay, 현장 PATCH·드래프트 게이트·서명 export(M5-2)) 이어서 control-api 통합(`deploy/compose/control.dev.yml` control-db PostgreSQL 16만, 프로젝트 `<PUREIRON_IT_PROJECT>-control`·포트 `PUREIRON_DEV_CONTROL_DB_PORT`(25433), 테스트마다 새 DB → `pureiron-control migrate up`: gen 역행 409·타 site 403·서명 400·seq 규칙·stale·offline·ETag 304·Range 206·r4 Updater poll 클라이언트 호환, M4-0). | 항상 |
+| `integration-compose` | 이미지 빌드 → compose(`pureiron-it`, `PUREIRON_IT_PROJECT`로 변경 가능) site-db → `migrate up` → 전체 기동 → `pytest -m "integration and not perf"`(readyz 200, migrate 종료코드, Timescale 객체, edit-lock 경쟁, historian DB, 시뮬레이터 100태그·collector kill, collector 30 s 네트워크 분리 replay, 현장 PATCH·드래프트 게이트·서명 export(M5-2)) 이어서 control-api 통합(`deploy/compose/control.dev.yml` control-db PostgreSQL 16만, 프로젝트 `<PUREIRON_IT_PROJECT>-control`·포트 `PUREIRON_DEV_CONTROL_DB_PORT`(25433), 테스트마다 새 DB → `pureiron-control migrate up`: gen 역행 409·타 site 403·서명 400·seq 규칙·stale·offline·ETag 304·Range 206·r4 Updater poll 클라이언트 호환, M4-0), 이어서 fleet publish 종단(`deploy/tests/fleet -m integration`, 같은 compose 파일·프로젝트 `<PUREIRON_IT_PROJECT>-fleet`: 로컬 git 원격 fleet 이력 → 가짜 GitHub 승인 → 실제 `build_bundle` → 실제 control-api `PUT` → `max_published_gen` 증가·재실행 건너뜀·본문 전 409·404, M4-2). | 항상 |
 | `web-e2e` | 이미지 빌드 → `uv sync` → compose(`pureiron-it`) site-db → `migrate up` → 전체 기동 → core 쓰기 스위치 켬(`PUREIRON_WRITES_ENABLED=true`) → 시뮬레이터 100태그 + 쓰기 선언 2개(설정값 `sim/sp_float`·명령 `sim/start`) + 허가 조건 coil `sim/remote_ok` + 알람 1개 정의 apply·CLI 계정(engineer·operator·viewer) → 쓰기 검사 통과 대기 → Playwright chromium 스모크(로그인 → Overview GOOD → Alarms ACK 1회 → Trend canvas → Devices 연결됨 → Audit `alarm.ack` → 로그아웃 뒤 보호 경로 리다이렉트, 조회자 권한, 로그인 실패 고정 문구) + 쓰기(M3c-3: 설정값 CONFIRMED·표 값 갱신, 조회자 쓰기 버튼 없음, 허가 조건 거짓 → 검사 거부, 명령 확인 2단계 → 장비 수신, confirm 응답을 바꿔(core에 보내지 않음) "장비 수신, 값 미확인"·"결과 모름" 문구, 명령 더블클릭·Enter 연타가 2단계 확인을 건너뛰지 않음, 전송 중 Esc 반복에도 대화상자 유지, confirm 409·410·404·503 문구). 결과·trace·스크린샷 `artifacts/web-e2e/`, CI는 성공·실패 모두 `artifacts/web-e2e/` 전체(스크린샷 포함)를 artifact로 올린다. 명세는 `services/web/e2e/`, 정본은 [frontend](frontend.md) 16절 | 항상(CI: integration-compose 다음 job) |
 | `perf-ingest` | 이미지 빌드 → `PUREIRON_SIM_REGISTERS=2000` compose → 2,000태그·poll 1 s 60 s 측정(r3부터 알람 정의 50개 + 전 태그 구독 WS 1개를 붙여서) → `artifacts/perf/<PUREIRON_PERF_RELEASE:-r3>/ingest.json`(batch/s·샘플/s·write_lag p50/p95/max·buffer max·drop·CPU/RSS·분당 행, r3부터 `alarms`·`ws` 수신 통계). 기록만, 합격선 없음 | 수동 |
 | `n-minus-1` | 현재 커밋 core를 `pureiron/core:ci-<sha>`로 빌드해 migrate한 DB에서, 직전 epoch release 기록(`deploy/releases/r<N>.json`, 번호 순)의 core-test 이미지를 실행. 이미지가 없으면 image store(`PUREIRON_IMAGE_STORE`, 기본 `~/pureiron/images/<release>/`)의 tar를 load하고 config digest를 기록과 대조. 테스트와 별개로 N-1 앱의 `migrate status --json`이 N 스키마에서 envelope 안인지 확인. `deploy/build/n_minus_1_waivers.json`의 테스트만 deselect(waiver 테스트는 따로 돌려 여전히 실패해야 하고, 본 실행은 통과 ≥ 1·deselect 수 == waiver 수). 현재 epoch 5(r4) × r3 core-test. epoch 1이면 notice 후 통과 | 마이그레이션·`db` 경로 변경 PR, master push, nightly, `full-gate` 라벨 |
 | `repro-build` | 캐시 없이 2회 빌드해 core·collector·web·simulator·core-test config digest 동일 확인(site-db 제외) | Dockerfile·`uv.lock`·`package-lock.json`·`deploy/build/` 변경 PR, master push, nightly, `full-gate` 라벨 |
 
 - **G1-8 고객 repo workflow**(M5-3b): V1 안 대리는 위 `template-*` job. 외부 run = private 테스트 repo `circulation95/pureiron-project-acme-test`(PureIron_V1 Actions access `user`, secret `PUREIRON_CI_APP_ID`·`PUREIRON_CI_APP_KEY`)에 템플릿을 복사하고 workflow ref를 검증할 브랜치로 바꿔 PR → run 로그 `content_hash` = 로컬 `pureiron-project hash deploy/templates/pureiron-project`, 이어서 태그 `v1` push → `project_version: v1`. 계약·접근 조건은 [data-contracts](data-contracts.md) M5-3b 절. 외부 run은 M5-3b 브랜치 push 뒤 실행한다(2026-10-30 기준 미실행).
+- **fleet·publish(M4-2)**: `unit`에 `deploy/tests/fleet/`(fleet 파일 규칙·check-gen·승인 판정 표·GitHub REST 가짜 HTTP·publish 흐름 가짜 의존성 + 로컬 git 원격·본문 전 409·revert)와 `deploy/tests/test_fleet_template.py`(템플릿 스키마·workflow 고정값·C11 `rev-parse HEAD`)가 들어 있다. 실제 GitHub·`/etc`·`/srv`는 건드리지 않는다(경로는 모두 tmp 인자, git 원격은 로컬 경로, 전역 git 설정 무시). 외부 리허설(테스트 fleet repo `circulation95/pureiron-fleet-test`, runner `publish`, PR → 사람 승인 → merge → 게시 1회 + `E_APPROVAL` 거부 5종 + 사슬 복구)은 plan `pureiron-m4-2.md` §4, 결과 `.omc/artifacts/m4/m4-2-rehearsal.md`.
 - release 기록: `PUREIRON_RELEASE=r<N> bash deploy/build/build_images.sh` → `uv run python deploy/build/release_record.py r<N>`(커밋된 깨끗한 트리에서만, 이미지 tar를 image store에 보관).
 - 도구 버전 고정: buf·oasdiff는 `scripts/tools.sh`(버전·sha256), uv 0.10.12, Node 22, 베이스 이미지·BuildKit은 digest 고정.
 - 이미지 빌드(`deploy/build/build_images.sh`)는 전용 docker-container builder + `SOURCE_DATE_EPOCH`·`rewrite-timestamp`로 tar를 만든 뒤 `docker load` 한다(현장 번들과 같은 save/load 경로). uv가 남기는 설치 시각 메타데이터(`uv_cache.json`)는 `deploy/build/normalize_venv.py`가 지운다.
