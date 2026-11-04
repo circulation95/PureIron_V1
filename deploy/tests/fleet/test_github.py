@@ -17,6 +17,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 from fleet.approval import Review
 from fleet.github import (
     Git,
+    GitError,
     GitHubError,
     RestGitHub,
     app_installation_token,
@@ -207,3 +208,24 @@ def test_git_reads_trees_chains_and_fetches_by_sha(tmp_path: Path) -> None:
     assert local.is_ancestor(first, "refs/remotes/origin/main")
     assert not local.is_ancestor(second, first)
     assert git(remote.path, "rev-parse", "HEAD") == local.rev_parse(second)
+
+
+def test_git_merge_tree_clean_conflict_and_failure(tmp_path: Path) -> None:
+    """트리 동치(★F2 ⑤) 재료: merge-tree --write-tree(git ≥ 2.38)."""
+    repo = Repo.create(tmp_path / "fleet")
+    base = repo.commit({"a.txt": "1\n", "b.txt": "1\n"}, "base")
+    repo.branch("pr", "main")
+    head = repo.commit({"a.txt": "2\n"}, "pr")
+    repo.switch("main")
+    main = repo.commit({"b.txt": "2\n"}, "main")
+    merged = repo.merge("pr")
+    local = Git(repo.path)
+    assert local.has_commit(head)
+    assert not local.has_commit("f" * 40)
+    assert local.merge_tree(main, head) == local.tree_id(merged)  # GitHub merge 결과와 같은 트리
+    assert local.merge_tree(base, head) != local.tree_id(merged)
+    repo.branch("other", base)
+    other = repo.commit({"a.txt": "3\n"}, "conflict")
+    assert local.merge_tree(head, other) is None  # 충돌
+    with pytest.raises(GitError, match=r"git ≥ 2\.38 필요"):
+        local.merge_tree(head, "f" * 40)

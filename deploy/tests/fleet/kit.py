@@ -8,6 +8,7 @@ fetch한다.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -15,6 +16,7 @@ from pathlib import Path
 
 from fleet.approval import APPROVED, PullRequest, Review
 from fleet.fleetfiles import SiteStatus
+from fleet.publish import BuildRequest, Chain, Config, Deps, run
 
 GIT_ENV = {
     "GIT_AUTHOR_NAME": "fleet-test",
@@ -24,11 +26,16 @@ GIT_ENV = {
     "GIT_CONFIG_NOSYSTEM": "1",
     "GIT_CONFIG_GLOBAL": os.devnull,
 }
+REPO_ROOT = Path(__file__).resolve().parents[3]
+ACME = REPO_ROOT / "packages" / "project-tools" / "fixtures" / "acme"
+OWNER = "acme"
+FLEET = f"{OWNER}/fleet"
 WINDOW = '{ recurring: { tz: Asia/Seoul, days: [sat], start: "02:00", end: "05:00" } }'
 APPROVERS = "# 승인자\ncirculation95\n"
 
 
-def git(repo: Path, *args: str, env: Mapping[str, str] | None = None) -> str:
+def git(repo: Path, *args: str, env: Mapping[str, str] | None = None, check: bool = True) -> str:
+    """git 명령 → stdout. `check=False`면 실패해도 stdout을 돌려준다(충돌 merge 등)."""
     result = subprocess.run(
         ["git", "-C", str(repo), *args],
         env={**os.environ, **GIT_ENV, **(env or {})},
@@ -37,7 +44,7 @@ def git(repo: Path, *args: str, env: Mapping[str, str] | None = None) -> str:
         encoding="utf-8",
         check=False,
     )
-    if result.returncode != 0:
+    if check and result.returncode != 0:
         raise AssertionError(f"git {' '.join(args)}: {result.stderr}")
     return result.stdout.strip()
 
@@ -201,3 +208,96 @@ class FakeControl:
             raise self.fail_put[site]
         self.puts.append((site, generation, pib.name))
         return {"sha256": "sha256:" + "0" * 64}
+
+
+@dataclass(slots=True)
+class FakeBuilder:
+    requests: list[BuildRequest] = field(default_factory=list[BuildRequest])
+    fail: dict[str, Exception] = field(default_factory=dict[str, Exception])
+
+    def __call__(self, request: BuildRequest) -> Path:
+        assert (request.project_dir / "project.yaml").is_file()  # 태그 checkout이 됐다
+        self.requests.append(request)
+        if request.site in self.fail:
+            raise self.fail[request.site]
+        request.out.mkdir(parents=True, exist_ok=True)
+        pib = request.out / f"pureiron-{request.site}-g{request.generation}.pib"
+        pib.write_bytes(b"pib:" + request.fleet_file.read_bytes())
+        return pib
+
+
+@dataclass(slots=True)
+class World:
+    tmp: Path
+    fleet: Repo
+    project: Repo
+    config: Config
+    github: FakeGitHub
+    control: FakeControl
+    builder: FakeBuilder
+    base: str
+
+    @property
+    def chain(self) -> Chain:
+        return Chain.of(self.config)
+
+    def deps(self) -> Deps:
+        return Deps(self.github, self.control, NoTokens(), self.builder)
+
+    def run(self, sha: str) -> int:
+        return run(self.config, sha, self.deps())
+
+    def open_pr(self, number: int, files: Mapping[str, str | None], *, commits: int = 1) -> str:
+        """main에서 브랜치 pr-<n>을 만들어 커밋(들) → head sha. main으로 돌아온다."""
+        self.fleet.branch(f"pr-{number}", "main")
+        head = ""
+        for i in range(commits):
+            last = i == commits - 1
+            head = self.fleet.commit(files if last else {f"notes/{number}-{i}.txt": "x"}, f"pr {i}")
+        self.fleet.switch("main")
+        return head
+
+    def merge_pr(
+        self, number: int, files: Mapping[str, str | None], *, reviewer: str = "circulation95"
+    ) -> str:
+        head = self.open_pr(number, files)
+        merged = self.fleet.merge(f"pr-{number}")
+        self.github.add(
+            pull(number, merge_commit_sha=merged, head_sha=head), [approve(reviewer, head)], merged
+        )
+        return merged
+
+
+def make_world(tmp_path: Path) -> World:
+    """로컬 git 원격(fleet·프로젝트) + 가짜 GitHub·control-api·빌더. 첫 커밋 = trust-base."""
+    remotes = tmp_path / "remotes"
+    fleet = Repo.create(remotes / OWNER / "fleet")
+    base = fleet.commit(
+        {
+            "allowed_approvers.txt": APPROVERS,
+            "sites/.retired/.gitkeep": "",
+            "sites/site-a.yaml": site_yaml("site-a", 1),
+        },
+        "template",
+    )
+    project = Repo.create(remotes / OWNER / "pureiron-project-acme")
+    shutil.copytree(ACME, project.path, dirs_exist_ok=True)
+    git(project.path, "add", "-A")
+    project.commit({}, "project")
+    project.tag("v3")
+    config = Config(
+        fleet_repo=FLEET,
+        git_base=str(remotes),
+        state_dir=tmp_path / "state",
+        bundles_dir=tmp_path / "bundles",
+        metrics_dir=tmp_path / "metrics",
+        keys_dir=tmp_path / "keys",
+        ci_token_file=tmp_path / "ci_token",
+        viewer_token_file=tmp_path / "viewer_token",
+        app_key_file=tmp_path / "app.pem",
+        app_id_file=tmp_path / "app_id",
+    )
+    Chain.of(config).record(base, "test trust-base")
+    registered = SiteStatus(max_published_gen=1, current_product="2026.11.0")
+    control = FakeControl(status={"site-a": registered, "site-b": SiteStatus(None, None)})
+    return World(tmp_path, fleet, project, config, FakeGitHub(), control, FakeBuilder(), base)

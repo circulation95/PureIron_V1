@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bundle"))
 
 from build_bundle import RELEASES, BuildError, ReleaseRecord, load_releases
 
-from fleet.fleetfiles import SiteFile, parse_site, site_path
+from fleet.fleetfiles import SiteFile, parse_site, site_path, workflow_command
 from fleet.github import Git, GitError
 from pureiron_project.canonical import Json, dump
 
@@ -102,7 +102,8 @@ def site_history(git: Git, ref: str, site: str) -> tuple[SiteFile, list[SiteFile
     if current is None:
         raise RevertError(f"{path}: " + "; ".join(problems))
     history: list[SiteFile] = []
-    for sha in git.text("log", "--format=%H", ref, "--", path).splitlines():
+    # --first-parent: main에 실제로 있던 판만 본다(merge commit 방식 PR의 중간 커밋 제외, r1 L3).
+    for sha in git.text("log", "--first-parent", "--format=%H", ref, "--", path).splitlines():
         data = git.file(sha, path)
         if data is None:
             continue
@@ -142,10 +143,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         git.text("add", "--", site_path(args.site))
         git.text("commit", "-q", "-m", title)
     except (RevertError, BuildError, GitError, OSError) as exc:
-        print(f"::error::revert: {exc}", file=sys.stderr)
+        print(workflow_command("error", f"revert: {exc}"), file=sys.stderr)
         return 1
     for warning in result.warnings:
-        print(f"::warning::{warning}")
+        print(workflow_command("warning", warning))
     print(f"{branch}: {title}")
     if args.no_push:
         return 0
@@ -176,9 +177,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             check=True,
         )
     except (GitError, OSError, subprocess.CalledProcessError) as exc:
-        print(
-            f"::error::revert: push/PR 실패({exc}) — 브랜치 {branch}는 로컬에 있다", file=sys.stderr
-        )
+        message = f"revert: push/PR 실패({exc}) — 브랜치 {branch}는 로컬에 있다"
+        print(workflow_command("error", message), file=sys.stderr)
         return 1
     return 0
 

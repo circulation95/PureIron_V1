@@ -36,6 +36,7 @@ from fleet.fleetfiles import (
     annotation,
     diff_trees,
     error,
+    gen_step,
     structure,
     warning,
 )
@@ -64,26 +65,11 @@ def check(
     findings: list[Finding] = []
     for update in updates:
         site, path = update.site, update.path
+        step = gen_step(update)
+        if step is not None:
+            findings.append(step)
         if update.old_problems:
-            findings.append(
-                error(
-                    ErrorCode.GEN,
-                    path,
-                    "base 쪽 파일을 해석할 수 없어 gen 규칙을 확인할 수 없다: "
-                    + "; ".join(update.old_problems),
-                )
-            )
             continue
-        old_gen = 0 if update.old is None else update.old.generation
-        if site.generation != old_gen + 1:
-            findings.append(
-                error(
-                    ErrorCode.GEN,
-                    path,
-                    f"generation은 정확히 +1: {old_gen} → {old_gen + 1}이어야 하는데 "
-                    f"{site.generation}",
-                )
-            )
         current = status[site.site]
         if current is None:
             if site.generation != 1:
@@ -195,7 +181,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser().parse_args(argv)
     token = os.environ.get(VIEWER_TOKEN_ENV, "").strip()
     if not token:
-        print(f"::error::{ErrorCode.GEN} env {VIEWER_TOKEN_ENV}(control-api viewer 토큰)가 없다")
+        print(
+            annotation(
+                error(ErrorCode.GEN, "", f"env {VIEWER_TOKEN_ENV}(control-api viewer 토큰)가 없다")
+            )
+        )
         return 1
     api = ControlApi(args.control_api, viewer_token=token, ci_token=None)
 
@@ -209,7 +199,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         epochs = release_epochs(args.releases)
         findings = run(Git(args.repo), args.base, args.head, lookup, epochs)
     except (BuildError, GitError) as exc:
-        print(f"::error::{ErrorCode.GEN} {exc}")
+        print(annotation(error(ErrorCode.GEN, "", str(exc))))
         return 1
     return report(findings)
 

@@ -8,6 +8,7 @@ import pytest
 from build_bundle import ReleaseRecord
 from fleet import revert
 from fleet.fleetfiles import SiteFile, parse_site
+from fleet.github import Git
 from fleet.revert import RevertError, revert_content
 
 from .kit import GIT_ENV, Repo, git, site_yaml
@@ -111,3 +112,22 @@ def test_cli_missing_site_fails(tmp_path: Path, capsys: pytest.CaptureFixture[st
     repo.commit({"README.md": "x"}, "init")
     assert revert.main(["site-a", "--to-gen", "1", "--repo", str(repo.path), "--no-push"]) == 1
     assert "sites/site-a.yaml가 없다" in capsys.readouterr().err
+
+
+def test_history_follows_first_parent_only(tmp_path: Path) -> None:
+    """r1 L3: merge commit 방식 PR의 중간 커밋(gen 3 초안)은 이력 후보가 아니다."""
+    repo = Repo.create(tmp_path / "fleet")
+    repo.commit({"sites/site-a.yaml": site_yaml("site-a", 1, version="v1")}, "g1")
+    repo.commit({"sites/site-a.yaml": site_yaml("site-a", 2, version="v2")}, "g2")
+    repo.branch("pr", "main")
+    repo.commit({"sites/site-a.yaml": site_yaml("site-a", 3, product="2026.10.0")}, "draft")
+    repo.commit({"sites/site-a.yaml": site_yaml("site-a", 3, version="v3")}, "final")
+    repo.switch("main")
+    repo.merge("pr")
+    current, history = revert.site_history(Git(repo.path), "HEAD", "site-a")
+    assert [(h.generation, h.product, h.project_version) for h in history] == [
+        (3, "2026.11.0", "v3"),
+        (2, "2026.11.0", "v2"),
+        (1, "2026.11.0", "v1"),
+    ]
+    assert revert_content(history, current, 1, RELEASES).document["generation"] == 4

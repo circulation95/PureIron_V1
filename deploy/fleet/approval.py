@@ -13,7 +13,12 @@ main에 들어온 커밋 `sha`를 서명해도 되는지. 하나라도 어기면
    넣을 수 없다. 호출자가 `merge_base()`로 base를 구해 그 커밋의 파일을 `approvers_text`로 넘긴다.
 ④ **승인 사슬**: merge base == 호스트에 기록된 마지막 승인 sha(`last_approved`). 직접 push가 한 번
    끼면 이후 merge도 그 내용을 싣고 있으므로 거부한다. 같은 sha 재실행(`sha == last_approved`)은
-   ①②③만 다시 본다.
+   ①②③⑤만 다시 본다.
+⑤ **트리 동치**: `sha`의 트리 == merge base와 승인된 head를 3-way merge한 트리
+   (`git merge-tree --write-tree <base> <head>`, 충돌 없음). 손으로 만든 merge commit(부모 = base·
+   승인된 head)에 리뷰받지 않은 내용을 덧붙이거나, 로컬에서 충돌을 풀어 push한 경우를 막는다
+   (squash·merge·rebase 모두).
+   계산은 가장자리(`publish.gather`)가 하고 여기에는 결과 bool만 들어온다.
 
 merge base(merge 직전 main):
 - merge commit(부모 2개): 첫 부모. 둘째 부모는 PR head sha여야 한다.
@@ -80,6 +85,10 @@ class Evidence:
     """merge base 커밋의 `allowed_approvers.txt`(없으면 None)."""
     last_approved: str | None
     """호스트 승인 사슬 기록(없으면 None — `publish.py trust-base` 먼저)."""
+    result_tree_matches: bool
+    """⑤ `sha^{tree}` == `merge-tree --write-tree <merge base> <PR head>`(충돌이면 False).
+
+    merge base를 구하지 못했거나 계산하지 않았으면 False(그때는 다른 사유로 이미 거부된다)."""
     main_branch: str = "main"
 
 
@@ -213,11 +222,18 @@ def decide(evidence: Evidence) -> Decision:
     base, problem = merge_base(evidence, pull)
     if problem is not None:
         reasons.append(problem)
-    elif evidence.last_approved not in (None, sha, base):
-        reasons.append(
-            f"승인 사슬 끊김: merge 직전 main {base} != 마지막 승인 {evidence.last_approved} "
-            "— 그 사이 승인 없이 들어온 커밋이 있다(README E_APPROVAL 복구)"
-        )
+    else:
+        if evidence.last_approved not in (None, sha, base):
+            reasons.append(
+                f"승인 사슬 끊김: merge 직전 main {base} != 마지막 승인 {evidence.last_approved} "
+                "— 그 사이 승인 없이 들어온 커밋이 있다(README E_APPROVAL 복구)"
+            )
+        if not evidence.result_tree_matches:
+            reasons.append(
+                f"merge 결과 트리가 merge 직전 main {base} + PR #{pull.number} 승인 head "
+                f"{pull.head_sha}의 merge 결과와 다르다 — 리뷰받지 않은 내용(손 merge commit·"
+                "충돌 해결 push 등)"
+            )
     if evidence.approvers_text is None:
         reasons.append("merge 직전 main에 allowed_approvers.txt가 없다")
         valid: list[str] = []

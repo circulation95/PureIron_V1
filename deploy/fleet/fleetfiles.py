@@ -69,6 +69,12 @@ def _escape_property(text: str) -> str:
     return _escape_data(text).replace(":", "%3A").replace(",", "%2C")
 
 
+def workflow_command(command: str, message: str) -> str:
+    """`::<command>::<message>`(error·warning·notice). 메시지의 `%`·CR·LF를 이스케이프해 다음 줄이
+    workflow 명령(`::add-mask::` 등)으로 해석되지 않게 한다(F11)."""
+    return f"::{command}::{_escape_data(message)}"
+
+
 def annotation(finding: Finding) -> str:
     """GitHub Actions workflow command(`::error file=…::E_X …` / `::warning …`)."""
     location = f" file={_escape_property(finding.path)}" if finding.path else ""
@@ -302,3 +308,56 @@ def _active_update(
     if findings:
         return None, findings
     return SiteUpdate(change.path, site, old, tuple(old_problems)), findings
+
+
+def gen_step(update: SiteUpdate) -> Finding | None:
+    """`E_GEN` +1 규칙: 활성 파일 추가·수정은 `new == old + 1`(새 파일은 old = 0).
+
+    check-gen(PR)과 publish(merge 뒤 — Free는 빨간 check-gen이어도 merge할 수 있다)가 같이 쓴다.
+    """
+    if update.old_problems:
+        return error(
+            ErrorCode.GEN,
+            update.path,
+            "base 쪽 파일을 해석할 수 없어 gen 규칙을 확인할 수 없다: "
+            + "; ".join(update.old_problems),
+        )
+    old_gen = 0 if update.old is None else update.old.generation
+    if update.site.generation != old_gen + 1:
+        return error(
+            ErrorCode.GEN,
+            update.path,
+            f"generation은 정확히 +1: {old_gen} → {old_gen + 1}이어야 하는데 "
+            f"{update.site.generation}",
+        )
+    return None
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveSite:
+    path: str
+    site: SiteFile
+
+
+def active_sites(head: Mapping[str, bytes]) -> tuple[list[ActiveSite], list[Finding]]:
+    """트리의 모든 활성 현장 파일(`sites/<site>.yaml`) → (해석값, `E_FLEET` 위반)."""
+    sites: list[ActiveSite] = []
+    findings: list[Finding] = []
+    for path in sorted(head):
+        kind, name = classify(path)
+        if kind is not PathKind.ACTIVE:
+            continue
+        site, problems = parse_site(head[path], path)
+        if site is None:
+            findings.extend(error(ErrorCode.FLEET, path, p) for p in problems)
+        elif site.site != name:
+            findings.append(
+                error(
+                    ErrorCode.FLEET,
+                    path,
+                    f"파일명 {name!r} != site {site.site!r}(sites/<site>.yaml)",
+                )
+            )
+        else:
+            sites.append(ActiveSite(path, site))
+    return sites, findings

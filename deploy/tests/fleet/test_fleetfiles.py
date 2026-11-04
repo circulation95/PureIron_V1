@@ -7,13 +7,17 @@ from fleet.fleetfiles import (
     ChangeKind,
     ErrorCode,
     PathKind,
+    SiteUpdate,
+    active_sites,
     annotation,
     classify,
     diff_trees,
     error,
+    gen_step,
     parse_site,
     structure,
     warning,
+    workflow_command,
 )
 
 from .kit import site_yaml
@@ -157,3 +161,53 @@ def test_annotation_format_and_escaping() -> None:
         "::error file=sites/a%2Cb%3Ac.yaml::E_GEN 50%25%0Anext"
     )
     assert annotation(warning("", "주의")) == "::warning::주의"
+
+
+def test_workflow_command_escapes_message() -> None:
+    message = "a%b\n::add-mask::x\r"
+    assert workflow_command("notice", message) == "::notice::a%25b%0A::add-mask::x%0D"
+
+
+def _update(new: str, old: str | None) -> SiteUpdate:
+    site, _ = parse_site(b(new), "sites/site-a.yaml")
+    previous = None if old is None else parse_site(b(old), "sites/site-a.yaml")[0]
+    assert site is not None
+    return SiteUpdate("sites/site-a.yaml", site, previous, ())
+
+
+def test_gen_step_is_exactly_plus_one() -> None:
+    assert gen_step(_update(site_yaml("site-a", 2), site_yaml("site-a", 1))) is None
+    assert gen_step(_update(site_yaml("site-a", 1), None)) is None
+    same = gen_step(_update(site_yaml("site-a", 1, product="2026.11.1"), site_yaml("site-a", 1)))
+    assert same is not None
+    assert (same.code, same.message) == (
+        ErrorCode.GEN,
+        "generation은 정확히 +1: 1 → 2이어야 하는데 1",
+    )
+    broken = SiteUpdate(
+        "sites/site-a.yaml", _update(site_yaml("site-a", 2), None).site, None, ("x",)
+    )
+    finding = gen_step(broken)
+    assert finding is not None
+    assert "해석할 수 없어" in finding.message
+
+
+def test_active_sites_lists_every_active_file() -> None:
+    head = {
+        "sites/site-a.yaml": A1,
+        "sites/site-b.yaml": b(site_yaml("site-b", 3)),
+        "sites/site-c.yaml": b(site_yaml("site-x", 1)),
+        "sites/site-d.yaml": b"not: [valid",
+        "sites/.retired/site-r.yaml": b(site_yaml("site-r", 1)),
+        "sites/.retired/.gitkeep": b"",
+        "README.md": b"x",
+    }
+    sites, findings = active_sites(head)
+    assert [(s.path, s.site.generation) for s in sites] == [
+        ("sites/site-a.yaml", 1),
+        ("sites/site-b.yaml", 3),
+    ]
+    assert {(f.code, f.path) for f in findings} == {
+        (ErrorCode.FLEET, "sites/site-c.yaml"),
+        (ErrorCode.FLEET, "sites/site-d.yaml"),
+    }

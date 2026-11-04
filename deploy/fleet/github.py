@@ -289,6 +289,30 @@ class Git:
             raise GitError(f"git merge-base --is-ancestor failed: {result.stderr!r}")
         return result.returncode == 0
 
+    def has_commit(self, sha: str) -> bool:
+        return self._run("cat-file", "-e", f"{sha}^{{commit}}", check=False).returncode == 0
+
+    def tree_id(self, sha: str) -> str:
+        return self.text("rev-parse", "--verify", "--end-of-options", f"{sha}^{{tree}}")
+
+    def merge_tree(self, base: str, head: str) -> str | None:
+        """`git merge-tree --write-tree base head`의 결과 트리(충돌이면 None). git ≥ 2.38 필요."""
+        result = self._run("merge-tree", "--write-tree", "--no-messages", base, head, check=False)
+        conflicted = result.returncode == 1 and bool(result.stdout.strip())
+        if conflicted:  # 충돌이면 exit 1 + 트리 id. 객체를 못 찾아도 exit 1(stdout 없음) → 오류
+            return None
+        if result.returncode != 0:
+            stderr = result.stderr.decode("utf-8", errors="replace").strip()
+            version = self._run("version", check=False).stdout.decode("utf-8", "replace").strip()
+            raise GitError(
+                f"git merge-tree --write-tree 실패(exit {result.returncode}, git ≥ 2.38 필요, "
+                f"현재 {version or '알 수 없음'}): {stderr}"
+            )
+        lines = result.stdout.decode("ascii", errors="replace").splitlines()
+        if not lines or not is_sha(lines[0].strip()):
+            raise GitError(f"git merge-tree --write-tree: 트리 id를 읽지 못했다 {lines[:1]!r}")
+        return lines[0].strip()
+
     def first_parent_chain(self, sha: str, count: int) -> tuple[Commit, ...]:
         out = self.text("rev-list", "--first-parent", "--parents", f"--max-count={count}", sha)
         commits: list[Commit] = []

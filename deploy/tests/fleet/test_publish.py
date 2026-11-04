@@ -8,11 +8,9 @@ exit 1, 승인 사슬(직접 push → 사슬 끊김 → trust-base 복구), merg
 from __future__ import annotations
 
 import json
-import shutil
 import socket
 import threading
-from collections.abc import Generator, Mapping
-from dataclasses import dataclass, field
+from collections.abc import Generator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -21,124 +19,28 @@ from fleet import publish
 from fleet.approval import CHANGES_REQUESTED
 from fleet.fleetfiles import SiteStatus
 from fleet.publish import (
-    BuildRequest,
     Chain,
     Config,
     ControlApi,
     ControlApiError,
-    Deps,
-    run,
     trust_base,
 )
 
 from .kit import (
     APPROVERS,
-    FakeControl,
-    FakeGitHub,
+    FLEET,
     NoTokens,
-    Repo,
+    World,
     approve,
-    git,
+    make_world,
     pull,
     site_yaml,
 )
 
-REPO = Path(__file__).resolve().parents[3]
-ACME = REPO / "packages" / "project-tools" / "fixtures" / "acme"
-OWNER = "acme"
-FLEET = f"{OWNER}/fleet"
-
-
-@dataclass(slots=True)
-class FakeBuilder:
-    requests: list[BuildRequest] = field(default_factory=list[BuildRequest])
-    fail: dict[str, Exception] = field(default_factory=dict[str, Exception])
-
-    def __call__(self, request: BuildRequest) -> Path:
-        assert (request.project_dir / "project.yaml").is_file()  # 태그 checkout이 됐다
-        self.requests.append(request)
-        if request.site in self.fail:
-            raise self.fail[request.site]
-        request.out.mkdir(parents=True, exist_ok=True)
-        pib = request.out / f"pureiron-{request.site}-g{request.generation}.pib"
-        pib.write_bytes(b"pib:" + request.fleet_file.read_bytes())
-        return pib
-
-
-@dataclass(slots=True)
-class World:
-    tmp: Path
-    fleet: Repo
-    config: Config
-    github: FakeGitHub
-    control: FakeControl
-    builder: FakeBuilder
-    base: str
-
-    @property
-    def chain(self) -> Chain:
-        return Chain.of(self.config)
-
-    def deps(self) -> Deps:
-        return Deps(self.github, self.control, NoTokens(), self.builder)
-
-    def run(self, sha: str) -> int:
-        return run(self.config, sha, self.deps())
-
-    def open_pr(self, number: int, files: Mapping[str, str | None], *, commits: int = 1) -> str:
-        """main에서 브랜치 pr-<n>을 만들어 커밋(들) → head sha. main으로 돌아온다."""
-        self.fleet.branch(f"pr-{number}", "main")
-        head = ""
-        for i in range(commits):
-            last = i == commits - 1
-            head = self.fleet.commit(files if last else {f"notes/{number}-{i}.txt": "x"}, f"pr {i}")
-        self.fleet.switch("main")
-        return head
-
-    def merge_pr(
-        self, number: int, files: Mapping[str, str | None], *, reviewer: str = "circulation95"
-    ) -> str:
-        head = self.open_pr(number, files)
-        merged = self.fleet.merge(f"pr-{number}")
-        self.github.add(
-            pull(number, merge_commit_sha=merged, head_sha=head), [approve(reviewer, head)], merged
-        )
-        return merged
-
 
 @pytest.fixture
 def world(tmp_path: Path) -> World:
-    remotes = tmp_path / "remotes"
-    fleet = Repo.create(remotes / OWNER / "fleet")
-    base = fleet.commit(
-        {
-            "allowed_approvers.txt": APPROVERS,
-            "sites/.retired/.gitkeep": "",
-            "sites/site-a.yaml": site_yaml("site-a", 1),
-        },
-        "template",
-    )
-    project = Repo.create(remotes / OWNER / "pureiron-project-acme")
-    shutil.copytree(ACME, project.path, dirs_exist_ok=True)
-    git(project.path, "add", "-A")
-    project.commit({}, "project")
-    project.tag("v3")
-    config = Config(
-        fleet_repo=FLEET,
-        git_base=str(remotes),
-        state_dir=tmp_path / "state",
-        bundles_dir=tmp_path / "bundles",
-        metrics_dir=tmp_path / "metrics",
-        keys_dir=tmp_path / "keys",
-        ci_token_file=tmp_path / "ci_token",
-        viewer_token_file=tmp_path / "viewer_token",
-        app_key_file=tmp_path / "app.pem",
-        app_id_file=tmp_path / "app_id",
-    )
-    Chain.of(config).record(base, "test trust-base")
-    registered = SiteStatus(max_published_gen=1, current_product="2026.11.0")
-    control = FakeControl(status={"site-a": registered, "site-b": SiteStatus(None, None)})
-    return World(tmp_path, fleet, config, FakeGitHub(), control, FakeBuilder(), base)
+    return make_world(tmp_path)
 
 
 TWO_SITES = {
@@ -168,9 +70,11 @@ def test_approved_merge_builds_and_publishes_each_site(
         7,
         ["circulation95"],
     )
+    assert metrics["project_ref"] == "acme/pureiron-project-acme@v3"
+    assert metrics["project_commit"] == world.project.head("v3")
     out = capsys.readouterr().out
     assert "::notice::승인: PR #7, 승인자 circulation95" in out
-    assert "게시 2, 건너뜀 0, 실패 0" in out
+    assert "게시 2, 건너뜀 0, 최신 0, 실패 0, 규칙 위반 0" in out
 
 
 def test_approval_failure_builds_and_puts_nothing(
@@ -191,15 +95,33 @@ def test_approval_failure_builds_and_puts_nothing(
     assert "서명하지 않는다" in out
 
 
-def test_already_published_is_skipped_and_rerun_is_safe(world: World) -> None:
+def test_already_published_is_skipped_and_rerun_is_safe(
+    world: World, capsys: pytest.CaptureFixture[str]
+) -> None:
     merged = world.merge_pr(7, TWO_SITES)
     assert world.run(merged) == 0
     world.control.status["site-a"] = SiteStatus(2, "2026.11.0")
     world.control.status["site-b"] = SiteStatus(1, None)
     world.builder.requests.clear()
     world.control.puts.clear()
+    capsys.readouterr()
     assert world.run(merged) == 0  # 재실행: 사슬은 sha == last_approved로 통과, 둘 다 건너뜀
     assert (world.builder.requests, world.control.puts) == ([], [])
+    out = capsys.readouterr().out  # 바뀐 현장을 건너뛸 때는 사유를 경고로 남긴다(r1 M3)
+    assert "::warning file=sites/site-a.yaml::site-a gen 2은 이미 게시됨 — 건너뜀" in out
+    assert "게시 0, 건너뜀 2, 최신 0" in out
+
+
+def test_unchanged_up_to_date_sites_are_current_not_warned(
+    world: World, capsys: pytest.CaptureFixture[str]
+) -> None:
+    merged = world.merge_pr(7, {"sites/site-b.yaml": site_yaml("site-b", 1)})
+    assert world.run(merged) == 0
+    assert world.control.puts == [("site-b", 1, "pureiron-site-b-g1.pib")]
+    assert world.control.lookups == ["site-a", "site-b"]  # 정합화: 트리의 활성 현장 전부 조회
+    out = capsys.readouterr().out
+    assert "::warning" not in out
+    assert "게시본이 최신인 현장(변경 없음): site-a" in out
 
 
 def test_unregistered_site_fails_with_guidance_others_continue(
@@ -247,11 +169,15 @@ def test_direct_push_breaks_chain_until_trust_base(
     assert world.run(merged) == 1
     assert "승인 사슬 끊김" in capsys.readouterr().out
     assert world.builder.requests == []
-    # 사람이 직접 push 내용을 검토한 뒤 그 커밋을 기준으로 기록 → 이후 merge 통과
+    # 사람이 직접 push 내용을 검토한 뒤 그 커밋을 기준으로 기록 → 이후 merge 통과.
+    # 정합화(r1 M4): 검토로 승인된 직접 push의 site-a gen 2도 함께 게시된다(gen 재증가 불필요).
     assert trust_base(world.config, pushed, NoTokens(), "reviewed") == 0
     assert world.chain.last_approved() == pushed
     assert world.run(merged) == 0
-    assert world.control.puts == [("site-b", 1, "pureiron-site-b-g1.pib")]
+    assert world.control.puts == [
+        ("site-a", 2, "pureiron-site-a-g2.pib"),
+        ("site-b", 1, "pureiron-site-b-g1.pib"),
+    ]
     log = (world.chain.directory / "approved.log").read_text(encoding="utf-8")
     assert "trust-base previous=" in log
 
@@ -397,7 +323,7 @@ def control_http() -> Generator[tuple[str, dict[str, tuple[int, object]], list[s
         def do_GET(self) -> None:
             seen.append(f"GET {self.path} {self.headers.get('Authorization')}")
             status, payload = responses.get(self.path, (500, {"detail": "unexpected"}))
-            data = json.dumps(payload).encode()
+            data = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
             self.send_response(status)
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
@@ -408,7 +334,7 @@ def control_http() -> Generator[tuple[str, dict[str, tuple[int, object]], list[s
             body = self.rfile.read(length)
             seen.append(f"PUT {self.path} {self.headers.get('Authorization')} {len(body)}")
             status, payload = responses.get(self.path, (500, {}))
-            data = json.dumps(payload).encode()
+            data = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
             self.send_response(status)
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
@@ -449,6 +375,25 @@ def test_control_api_status_and_put(
     assert api.put_bundle("site-a", 4, pib) == {"sha256": "sha256:abc"}
     assert seen[0] == "GET /api/v1/fleet?site=site-a Bearer view"
     assert seen[-1] == "PUT /api/v1/bundles/site-a/4 Bearer ci 3000000"
+
+
+def test_control_api_rejects_rows_of_another_site_and_non_json_201(
+    control_http: tuple[str, dict[str, tuple[int, object]], list[str]], tmp_path: Path
+) -> None:
+    base, responses, _ = control_http
+    other = {"site": "site-z", "max_published_gen": 9, "current": None}
+    responses["/api/v1/fleet?site=site-a"] = (200, [other])
+    responses["/api/v1/fleet?site=site-b"] = (200, {"site": "site-b"})
+    responses["/api/v1/bundles/site-a/4"] = (201, b"<html>proxy</html>")
+    api = ControlApi(base, viewer_token="view", ci_token="ci")
+    with pytest.raises(ControlApiError, match="site-a 행이 정확히 하나"):  # r1 N2
+        api.site_status("site-a")
+    with pytest.raises(ControlApiError, match="site-b 행이 정확히 하나"):
+        api.site_status("site-b")
+    pib = tmp_path / "g4.pib"
+    pib.write_bytes(b"x")
+    with pytest.raises(ControlApiError, match="201 but the body is not JSON"):  # r1 L4
+        api.put_bundle("site-a", 4, pib)
 
 
 def test_put_reads_early_response_before_body_is_sent(tmp_path: Path) -> None:

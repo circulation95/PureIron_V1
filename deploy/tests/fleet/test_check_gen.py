@@ -49,6 +49,13 @@ def test_generation_must_exceed_published() -> None:
     assert errors == ["E_GEN generation 3 ≤ 게시된 최대 gen 5(control-api max_published_gen)"]
 
 
+def test_generation_equal_to_published_is_rejected() -> None:
+    """r1 T4(변이 M26): new == max_published_gen 경계도 E_GEN(`>`이어야 한다)."""
+    status = SiteStatus(max_published_gen=2, current_product=None)
+    errors, _ = lines(update(site_yaml("site-a", 2), site_yaml("site-a", 1)), status)
+    assert errors == ["E_GEN generation 2 ≤ 게시된 최대 gen 2(control-api max_published_gen)"]
+
+
 def test_unregistered_site_only_gen_one_and_warns() -> None:
     errors, warnings = lines(update(site_yaml("site-a", 1)), None)
     assert errors == []

@@ -46,6 +46,7 @@ def evidence(**overrides: object) -> Evidence:
         reviews=(approve("circulation95", H),),
         approvers_text="# 승인자\ncirculation95\n",
         last_approved=M0,
+        result_tree_matches=True,
     )
     return dataclasses.replace(base, **overrides)
 
@@ -200,6 +201,33 @@ def test_squash_on_top_of_direct_push_breaks_chain() -> None:
         associated={},
     )
     assert "승인 사슬 끊김" in reasons(ev)
+
+
+TREE_MISMATCH = "merge 결과 트리가 merge 직전 main"
+
+
+def test_evil_merge_commit_with_unreviewed_content_is_rejected() -> None:
+    # 부모 = (마지막 승인 M0, 승인된 head H)인 손 merge commit에 리뷰 안 된 파일을 덧붙였다:
+    # ①~④는 모두 통과하지만 결과 트리 != merge-tree(M0, H)(⑤).
+    decision = decide(evidence(result_tree_matches=False))
+    assert not decision.approved
+    assert decision.reasons == (
+        f"{TREE_MISMATCH} {M0} + PR #7 승인 head {H}의 merge 결과와 다르다 — 리뷰받지 않은 "
+        "내용(손 merge commit·충돌 해결 push 등)",
+    )
+
+
+def test_squash_with_forged_tree_is_rejected() -> None:
+    ev = evidence(
+        ancestry=(Commit(S, (M0,)), Commit(M0, (sha(0x9F),))),
+        pulls=(merged_pr(commits=3),),
+        result_tree_matches=False,
+    )
+    assert TREE_MISMATCH in reasons(ev)
+
+
+def test_rerun_of_recorded_sha_still_checks_tree() -> None:
+    assert TREE_MISMATCH in reasons(evidence(last_approved=S, result_tree_matches=False))
 
 
 def test_parse_approvers_comments_and_case() -> None:

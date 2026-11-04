@@ -4,17 +4,20 @@
     uv run python deploy/fleet/publish.py trust-base --fleet-repo <owner>/<fleet> --sha <sha>
 
 `run`은 runner 작업 디렉터리를 믿지 않는다 — 그 sha를 GitHub API·git으로 **직접 다시 받아**
-승인 판정(`approval.decide`, 실패 = `E_APPROVAL`, 빌드·서명·PUT 0회) → 승인 사슬 기록 →
-변경 현장 파일(merge 직전 main 대비) → 현장마다 `GET /fleet?site=`(viewer 토큰, 미등록이면 등록 먼저
-안내 후 실패, `max_published_gen == gen`이면 이미 게시됨으로 건너뜀) → 프로젝트 repo
+승인 판정(`approval.decide` ①~⑤, 실패 = `E_APPROVAL`, 빌드·서명·PUT 0회) → 승인 사슬 기록 →
+merge 직전 main 대비 변경 파일의 구조 규칙(`E_FLEET`)·`new == old + 1`(`E_GEN`) →
+**sha 트리의 모든 활성 현장**마다 `GET /fleet?site=`(viewer 토큰, 미등록이면 등록 먼저 안내 후
+실패, 파일 gen == `max_published_gen`이면 최신·건너뜀, 작으면 역행 실패) → 프로젝트 repo
 (`<project-owner>/<project.repo>`, 기본 owner = fleet repo owner) 태그 `version` checkout
-(App 토큰) →
-`build_bundle.build`(같은 venv 함수 호출, 프로젝트 검증·자체 verify 포함) → 스트리밍
-`PUT /bundles/{site}/{gen}`(ci 토큰, 본문 전에 온 404·409 응답도 읽는다). 현장 하나가 실패해도
-나머지는 진행하고 끝에 exit 1. 드래프트 게이트는 여기서 하지 않는다(F12 — 현장 `E_DRAFT`가 최종).
+(App 토큰) → `build_bundle.build`(같은 venv 함수 호출, 프로젝트 검증·자체 verify 포함) →
+스트리밍 `PUT /bundles/{site}/{gen}`(ci 토큰, 본문 전에 온 404·409 응답도 읽는다). 현장 하나가
+실패해도 나머지는 진행하고 끝에 exit 1. 드래프트 게이트는 여기서 하지 않는다(F12 — 현장
+`E_DRAFT`가 최종).
 
-workflow는 이것을 부르기만 한다. 서명 호스트를 분리할 때(★F1 전환 조건, fleet README)는 이 명령을
-sudo 뒤 전용 사용자로 옮기면 되고 코드는 바뀌지 않는다.
+workflow는 이것을 부르기만 한다. 서명 호스트를 분리할 때(★F1 전환, fleet README)는 이 명령을
+sudo 뒤 전용 사용자로 옮기는 것만으로는 경계가 되지 않는다 — root 소유 설치본, 보안 설정을
+root 소유 설정 파일에서만 읽는 signer 모드(argv는 `--fleet-repo`·`--sha`만), `trust-base`의
+sudoers 제외가 필요하다.
 
 경로 기본값(F7)은 모두 인자·환경변수로 덮어쓴다(테스트는 tmp만 쓴다):
 
@@ -22,7 +25,8 @@ sudo 뒤 전용 사용자로 옮기면 되고 코드는 바뀌지 않는다.
     토큰         /etc/pureiron/publish/{ci_token, viewer_token, app.pem}(0600)
     App ID       env PUREIRON_PUBLISH_APP_ID 또는 /etc/pureiron/publish/app_id
     번들·메트릭  /srv/pureiron/bundles/<site>/, /srv/pureiron/metrics/
-    승인 사슬    /srv/pureiron/publish/<owner>/<repo>/{last_approved, approved.log}
+    승인 사슬    /srv/pureiron/publish/<owner>/<repo>/{last_approved, approved.log, lock,
+                 project_commits.json}
 """
 
 from __future__ import annotations
@@ -33,12 +37,14 @@ import dataclasses
 import http.client
 import json
 import os
+import secrets
 import select
 import shutil
 import socket
 import sys
 import tempfile
 import time
+import traceback
 import urllib.parse
 from collections.abc import Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -46,6 +52,9 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Protocol, cast
+
+if sys.platform != "win32":
+    import fcntl
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bundle"))
@@ -55,14 +64,19 @@ import build_bundle
 from fleet.approval import Decision, Evidence, PullRequest, Review, decide, merge_base, select_pull
 from fleet.fleetfiles import (
     APPROVERS_FILE,
+    ActiveSite,
     ErrorCode,
     Finding,
     SiteStatus,
     SiteUpdate,
+    active_sites,
     annotation,
     diff_trees,
     error,
+    gen_step,
     structure,
+    warning,
+    workflow_command,
 )
 from fleet.github import (
     DEFAULT_API,
@@ -219,12 +233,22 @@ class ControlApi:
                 response.status,
             )
         try:
-            rows = cast(list[dict[str, object]], json.loads(body))
-            row = rows[0]
-            max_gen = row["max_published_gen"]
-            current = row.get("current")
-        except (ValueError, LookupError, TypeError) as exc:
-            raise ControlApiError(f"GET /fleet?site={site}: unexpected response") from exc
+            parsed: object = json.loads(body)
+        except ValueError as exc:
+            raise ControlApiError(f"GET /fleet?site={site}: response is not JSON") from exc
+        rows = cast(list[object], parsed) if isinstance(parsed, list) else []
+        matching = [
+            cast(dict[str, object], r)
+            for r in rows
+            if isinstance(r, dict) and cast(dict[str, object], r).get("site") == site
+        ]
+        if len(matching) != 1 or "max_published_gen" not in matching[0]:
+            raise ControlApiError(
+                f"GET /fleet?site={site}: 응답에 {site} 행이 정확히 하나 있어야 한다"
+                f"({len(matching)}개)"
+            )
+        max_gen = matching[0]["max_published_gen"]
+        current = matching[0].get("current")
         product = None
         if isinstance(current, dict):
             value = cast(dict[str, object], current).get("product")
@@ -263,7 +287,13 @@ class ControlApi:
         finally:
             conn.close()
         if response.status == http.client.CREATED:
-            parsed: object = json.loads(body)
+            try:
+                parsed: object = json.loads(body)
+            except ValueError as exc:
+                raise ControlApiError(
+                    f"PUT /bundles/{site}/{generation} → 201 but the body is not JSON",
+                    response.status,
+                ) from exc
             return cast(dict[str, object], parsed) if isinstance(parsed, dict) else {}
         raise ControlApiError(
             f"PUT /bundles/{site}/{generation} → HTTP {response.status}: {self._detail(body)}",
@@ -384,9 +414,39 @@ class Deps:
 # ---------------------------------------------------------------------------- 승인 사슬
 
 
+class ChainLockError(PublishError):
+    pass
+
+
+def _fsync_directory(directory: Path) -> None:
+    """디렉터리 항목(교체한 파일 이름)을 디스크에 남긴다. Windows는 디렉터리를 열 수 없어 생략."""
+    if sys.platform == "win32":
+        return
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _write_atomic(target: Path, data: str) -> None:
+    """tmp 쓰기 + fsync → 교체 → 디렉터리 fsync(전원 차단 뒤 빈 파일이 남지 않게, L5)."""
+    tmp = target.with_name(target.name + ".tmp")
+    with tmp.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
+    tmp.replace(target)
+    _fsync_directory(target.parent)
+
+
 @dataclass(frozen=True, slots=True)
 class Chain:
-    """호스트에 기록한 마지막 승인 sha(★F2 ④). 디렉터리 = `<state>/<owner>/<repo>`."""
+    """호스트에 기록한 마지막 승인 sha(★F2 ④). 디렉터리 = `<state>/<owner>/<repo>`.
+
+    `run`·`trust-base`는 이 디렉터리의 `lock` 파일을 `flock`으로 잡고 돈다(publish runner는 하나지만
+    잘못 둘을 등록해도 사슬 읽기·기록이 섞이지 않게, L5). 잠금은 Linux(publish 호스트)에서만 한다.
+    """
 
     directory: Path
 
@@ -408,16 +468,70 @@ class Chain:
             raise PublishError(f"{self.file}: not a commit sha — trust-base로 다시 기록")
         return value
 
+    @contextlib.contextmanager
+    def locked(self) -> Generator[None]:
+        lock = self.directory / "lock"
+        try:
+            self.directory.mkdir(parents=True, exist_ok=True)
+            handle = lock.open("a", encoding="utf-8")
+        except OSError as exc:
+            raise ChainLockError(f"승인 사슬 잠금 파일을 열지 못했다({lock}): {exc}") from exc
+        try:
+            if sys.platform != "win32":
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            yield
+        finally:
+            handle.close()  # 잠금도 함께 풀린다
+
     def record(self, sha: str, note: str) -> None:
+        """`approved.log`에 한 줄 추가(fsync) → `last_approved` 원자적 교체.
+
+        지금 값이 깨져 있어도(형식 오류) 덮어쓴다 — trust-base가 유일한 복구 도구다(L1).
+        """
         self.directory.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         with (self.directory / "approved.log").open("a", encoding="utf-8", newline="\n") as log:
             log.write(f"{stamp} {sha} {note}\n")
-        if self.last_approved() == sha:
+            log.flush()
+            os.fsync(log.fileno())
+        current = None
+        with contextlib.suppress(FileNotFoundError, UnicodeDecodeError):
+            current = self.file.read_text(encoding="utf-8").strip()
+        if current == sha:
             return
-        tmp = self.file.with_name(self.file.name + ".tmp")
-        tmp.write_text(sha + "\n", encoding="utf-8", newline="\n")
-        tmp.replace(self.file)
+        _write_atomic(self.file, sha + "\n")
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectCommits:
+    """`(프로젝트 repo, 태그)`마다 직전에 게시한 커밋(L2 태그 이동 감지). 파일 = 사슬 디렉터리."""
+
+    file: Path
+
+    @classmethod
+    def of(cls, config: Config) -> ProjectCommits:
+        return cls(Chain.of(config).directory / "project_commits.json")
+
+    def _load(self) -> dict[str, str]:
+        try:
+            parsed: object = json.loads(self.file.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError) as exc:
+            raise PublishError(f"{self.file} unreadable: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise PublishError(f"{self.file}: not a JSON object")
+        items = cast(dict[str, object], parsed).items()
+        return {k: v for k, v in items if isinstance(v, str)}
+
+    def previous(self, ref: str) -> str | None:
+        return self._load().get(ref)
+
+    def record(self, ref: str, commit: str) -> None:
+        commits = self._load()
+        commits[ref] = commit
+        self.file.parent.mkdir(parents=True, exist_ok=True)
+        _write_atomic(self.file, json.dumps(commits, indent=2, sort_keys=True) + "\n")
 
 
 # ---------------------------------------------------------------------------- run
@@ -428,7 +542,15 @@ def emit(finding: Finding) -> None:
 
 
 def notice(message: str) -> None:
-    print(f"::notice::{message}", flush=True)
+    print(workflow_command("notice", message), flush=True)
+
+
+def log_traceback() -> None:
+    """예상 밖 예외의 traceback을 로그로. 본문이 workflow 명령으로 해석되지 않게 막는다(N1)."""
+    token = secrets.token_hex(16)
+    print(f"::stop-commands::{token}", flush=True)
+    print(traceback.format_exc(), end="", flush=True)
+    print(f"::{token}::", flush=True)
 
 
 def fetch_fleet(config: Config, git: Git, sha: str) -> None:
@@ -438,6 +560,29 @@ def fetch_fleet(config: Config, git: Git, sha: str) -> None:
         sha,
         f"+refs/heads/{config.main_branch}:refs/remotes/origin/{config.main_branch}",
     )
+
+
+def fetch_pull_head(config: Config, git: Git, pull: PullRequest) -> None:
+    """PR head 커밋을 받는다(squash·rebase면 main 이력에 없다).
+
+    sha로 받고, 안 되면 `refs/pull/<n>/head`. 끝내 없으면 `GitError`(→ `E_APPROVAL`, fail closed).
+    """
+    if git.has_commit(pull.head_sha):
+        return
+    try:
+        git.fetch(config.fleet_repo, pull.head_sha)
+    except GitError:
+        ref = f"refs/pull/{pull.number}/head"
+        git.fetch(config.fleet_repo, f"+{ref}:refs/remotes/pull/{pull.number}")
+    if not git.has_commit(pull.head_sha):
+        raise GitError(f"PR #{pull.number} head {pull.head_sha}를 받지 못했다")
+
+
+def result_tree_matches(config: Config, git: Git, sha: str, base: str, pull: PullRequest) -> bool:
+    """⑤ `sha` 트리 == `merge-tree --write-tree base head`(충돌이면 False)."""
+    fetch_pull_head(config, git, pull)
+    merged = git.merge_tree(base, pull.head_sha)
+    return merged is not None and merged == git.tree_id(sha)
 
 
 def gather(config: Config, git: Git, github: GitHubReader, sha: str, last: str | None) -> Evidence:
@@ -464,6 +609,7 @@ def gather(config: Config, git: Git, github: GitHubReader, sha: str, last: str |
         reviews=reviews,
         approvers_text=None,
         last_approved=last,
+        result_tree_matches=False,
         main_branch=config.main_branch,
     )
     if selected is None:
@@ -473,13 +619,18 @@ def gather(config: Config, git: Git, github: GitHubReader, sha: str, last: str |
         return evidence
     text = git.file(base, APPROVERS_FILE)
     return dataclasses.replace(
-        evidence, approvers_text=None if text is None else text.decode("utf-8", errors="replace")
+        evidence,
+        approvers_text=None if text is None else text.decode("utf-8", errors="replace"),
+        result_tree_matches=result_tree_matches(config, git, sha, base, selected),
     )
 
 
 class Outcome(StrEnum):
     PUBLISHED = "published"
     SKIPPED = "skipped"
+    """이 커밋에서 바뀐 현장인데 그 gen이 이미 게시됨(재실행) — 경고와 함께 건너뜀."""
+    CURRENT = "current"
+    """이 커밋에서 안 바뀌었고 게시본이 최신."""
     FAILED = "failed"
 
 
@@ -493,29 +644,70 @@ class SiteResult:
 
 @dataclass(frozen=True, slots=True)
 class SiteJob:
-    """한 현장 게시 입력: 승인된 커밋의 현장 파일 갱신."""
+    """한 현장 게시 입력: 승인된 커밋 트리의 활성 현장 파일."""
 
-    update: SiteUpdate
+    target: ActiveSite
+    changed: bool
+    """이 커밋(merge base 대비)에서 바뀐 파일인가."""
     content: bytes
     sha: str
     decision: Decision
 
     @property
+    def path(self) -> str:
+        return self.target.path
+
+    @property
     def site(self) -> str:
-        return self.update.site.site
+        return self.target.site.site
 
     @property
     def generation(self) -> int:
-        return self.update.site.generation
+        return self.target.site.generation
+
+
+@dataclass(frozen=True, slots=True)
+class Plan:
+    """게시 대상(정합화) + 대상에서 뺀 이유."""
+
+    targets: tuple[tuple[ActiveSite, bool], ...]
+    """(활성 현장, 이 커밋에서 바뀌었나)."""
+    findings: tuple[Finding, ...]
+
+
+def plan_targets(
+    head: Mapping[str, bytes], updates: Sequence[SiteUpdate], structural: Sequence[Finding]
+) -> Plan:
+    """게시 대상 = `head` 트리의 **모든** 활성 현장(승인 사슬이 트리 전체가 승인된 내용임을 보장).
+
+    실제 게시 여부는 현장마다 `파일 gen > max_published_gen`으로 정한다(`_preflight`). 그래서 앞
+    커밋에서 실패한 현장(미등록·일시 장애)도 뒤 커밋이나 main 머리 재실행에서 다시 게시된다.
+    빼는 것: 이 커밋의 구조 위반(`E_FLEET`) 파일, `new == old + 1`을 어긴 바뀐 파일(`E_GEN` —
+    check-gen이 빨강이어도 Free는 merge할 수 있다), 해석할 수 없는 활성 파일.
+    """
+    excluded = {f.path for f in structural if f.is_error}
+    findings: list[Finding] = []
+    for update in updates:
+        step = gen_step(update)
+        if step is not None and update.path not in excluded:
+            findings.append(step)
+            excluded.add(update.path)
+    sites, broken = active_sites(head)
+    for finding in broken:
+        if finding.path not in excluded:
+            findings.append(finding)
+    changed = {u.path for u in updates}
+    targets = tuple((s, s.path in changed) for s in sites if s.path not in excluded)
+    return Plan(targets, tuple(findings))
 
 
 def _failed(job: SiteJob, message: str) -> SiteResult:
-    emit(error(ErrorCode.PUBLISH, job.update.path, message))
+    emit(error(ErrorCode.PUBLISH, job.path, message))
     return SiteResult(job.site, job.generation, Outcome.FAILED, message)
 
 
 def _preflight(deps: Deps, job: SiteJob) -> SiteResult | None:
-    """`GET /fleet?site=` 확인. None = 게시 진행, 아니면 건너뜀·실패 결과."""
+    """`GET /fleet?site=` 확인. None = 게시 진행, 아니면 건너뜀·최신·실패 결과."""
     site, gen = job.site, job.generation
     try:
         status = deps.control.site_status(site)
@@ -525,21 +717,34 @@ def _preflight(deps: Deps, job: SiteJob) -> SiteResult | None:
         return _failed(
             job,
             f"현장 {site!r}이 control-api에 미등록 — 등록 먼저(pureiron-control site register) → "
-            "이 publish workflow를 workflow_dispatch로 재실행",
+            "publish workflow를 workflow_dispatch로 재실행(main 머리 기준으로 다시 맞춘다)",
         )
     published = status.max_published_gen or 0
     if published == gen:
-        message = f"{site} gen {gen}은 이미 게시됨 — 건너뜀"
-        notice(message)
+        if not job.changed:
+            return SiteResult(site, gen, Outcome.CURRENT, f"{site} gen {gen} 최신")
+        message = (
+            f"{site} gen {gen}은 이미 게시됨 — 건너뜀(같은 커밋 재실행이면 정상, 아니면 게시본과 "
+            "내용이 다를 수 있다 — gen을 +1 한 PR로 다시 게시)"
+        )
+        emit(warning(job.path, message))
         return SiteResult(site, gen, Outcome.SKIPPED, message)
     if published > gen:
         return _failed(job, f"gen 역행: {site} max_published_gen {published} > 파일 gen {gen}")
     return None
 
 
-def _build(config: Config, deps: Deps, job: SiteJob, work: Path) -> Path:
+@dataclass(frozen=True, slots=True)
+class Built:
+    pib: Path
+    project_ref: str
+    """`<owner>/<repo>@<tag>`."""
+    project_commit: str
+
+
+def _build(config: Config, deps: Deps, job: SiteJob, work: Path) -> Built:
     """프로젝트 repo 태그 checkout(App 토큰) → `build_bundle`."""
-    site = job.update.site
+    site = job.target.site
     project_repo = config.project_repo(site.project_repo)
     project_dir = work / f"project-{site.site}"
     project_git = Git(project_dir, deps.tokens.project(project_repo), config.git_base)
@@ -547,12 +752,11 @@ def _build(config: Config, deps: Deps, job: SiteJob, work: Path) -> Path:
     tag = site.project_version
     project_git.fetch(project_repo, f"+refs/tags/{tag}:refs/tags/{tag}", depth=1)
     project_git.checkout(f"refs/tags/{tag}")
-    print(
-        f"{site.site}: 프로젝트 {project_repo}@{tag} = {project_git.rev_parse('HEAD')}", flush=True
-    )
+    commit = project_git.rev_parse("HEAD")
+    print(f"{site.site}: 프로젝트 {project_repo}@{tag} = {commit}", flush=True)
     fleet_file = work / f"fleet-{site.site}.yaml"
     fleet_file.write_bytes(job.content)
-    return deps.build(
+    pib = deps.build(
         BuildRequest(
             fleet_file=fleet_file,
             project_dir=project_dir,
@@ -562,6 +766,25 @@ def _build(config: Config, deps: Deps, job: SiteJob, work: Path) -> Path:
             generation=site.generation,
         )
     )
+    return Built(pib, f"{project_repo}@{tag}", commit)
+
+
+def _check_tag_moved(commits: ProjectCommits, job: SiteJob, built: Built) -> None:
+    """같은 `(repo, tag)`의 직전 게시 커밋과 다르면 경고(태그를 force로 옮겼다, L2)."""
+    try:
+        previous = commits.previous(built.project_ref)
+    except PublishError as exc:
+        emit(warning(job.path, f"직전 프로젝트 커밋 기록을 읽지 못했다: {exc}"))
+        return
+    if previous is not None and previous != built.project_commit:
+        emit(
+            warning(
+                job.path,
+                f"프로젝트 태그 이동: {built.project_ref} 직전 게시 {previous} → 지금 "
+                f"{built.project_commit}. fleet 파일은 같아도 서명되는 프로젝트 내용이 다르다 — "
+                "의도한 태그 이동인지 확인",
+            )
+        )
 
 
 BUILD_ERRORS = (
@@ -582,12 +805,14 @@ def publish_site(config: Config, deps: Deps, job: SiteJob, work: Path) -> SiteRe
         return skipped_or_failed
     started = deps.clock()
     try:
-        pib = _build(config, deps, job, work)
+        built = _build(config, deps, job, work)
     except BUILD_ERRORS as exc:
         return _failed(job, f"빌드 실패: {exc}")
-    built = deps.clock()
+    commits = ProjectCommits.of(config)
+    _check_tag_moved(commits, job, built)
+    finished = deps.clock()
     try:
-        published = deps.control.put_bundle(job.site, job.generation, pib)
+        published = deps.control.put_bundle(job.site, job.generation, built.pib)
     except ControlApiError as exc:
         hint = ""
         if exc.status == http.client.NOT_FOUND:
@@ -595,20 +820,35 @@ def publish_site(config: Config, deps: Deps, job: SiteJob, work: Path) -> SiteRe
         elif exc.status == http.client.CONFLICT:
             hint = " — 같은 gen이 이미 게시됐거나 gen 역행(fleet 파일 gen을 올린 PR 필요)"
         return _failed(job, f"게시 실패: {exc}{hint}")
-    timings = {"build_s": built - started, "upload_s": deps.clock() - built}
-    _write_metrics(config, job, pib, published, timings)
-    message = f"{job.site} gen {job.generation} 게시({pib.name}, {pib.stat().st_size} bytes)"
+    timings = {"build_s": finished - started, "upload_s": deps.clock() - finished}
+    _write_metrics(config, job, built, published, timings)
+    try:
+        commits.record(built.project_ref, built.project_commit)
+    except (PublishError, OSError) as exc:
+        emit(warning(job.path, f"프로젝트 커밋 기록을 남기지 못했다: {exc}"))
+    size = built.pib.stat().st_size
+    message = f"{job.site} gen {job.generation} 게시({built.pib.name}, {size} bytes)"
     notice(message)
     return SiteResult(job.site, job.generation, Outcome.PUBLISHED, message)
+
+
+def publish_guarded(config: Config, deps: Deps, job: SiteJob, work: Path) -> SiteResult:
+    """예상 밖 예외도 그 현장 `E_PUBLISH`로 기록하고 다음 현장으로 간다(F5, L4)."""
+    try:
+        return publish_site(config, deps, job, work)
+    except Exception as exc:
+        log_traceback()
+        return _failed(job, f"예상 밖 오류({type(exc).__name__}): {exc}")
 
 
 def _write_metrics(
     config: Config,
     job: SiteJob,
-    pib: Path,
+    built: Built,
     published: Mapping[str, object],
     timings: Mapping[str, float],
 ) -> None:
+    pib = built.pib
     bundle_metrics: object = None
     with contextlib.suppress(OSError, ValueError):
         source = pib.with_name(pib.stem + build_bundle.METRICS_SUFFIX)
@@ -620,6 +860,8 @@ def _write_metrics(
         "fleet_commit": job.sha,
         "pull": job.decision.pull,
         "approvers": list(job.decision.approvers),
+        "project_ref": built.project_ref,
+        "project_commit": built.project_commit,
         "size_bytes": pib.stat().st_size,
         "sha256": published.get("sha256"),
         **{name: round(value, 3) for name, value in timings.items()},
@@ -633,7 +875,7 @@ def _write_metrics(
             json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
         )
     except OSError as exc:
-        print(f"::warning::publish metrics not written: {exc}", flush=True)
+        emit(warning("", f"publish metrics not written: {exc}"))
 
 
 @contextlib.contextmanager
@@ -645,80 +887,126 @@ def _workdir() -> Generator[Path]:
         shutil.rmtree(path, ignore_errors=True)
 
 
-def run(config: Config, sha: str, deps: Deps) -> int:
-    """승인 판정 → 사슬 기록 → 현장마다 게시. 0 = 모두 게시·건너뜀, 1 = 하나라도 실패."""
-    if not is_sha(sha):
-        emit(error(ErrorCode.APPROVAL, "", f"--sha는 40자리 커밋 sha: {sha!r}"))
-        return 1
-    chain = Chain.of(config)
+def _approve(config: Config, deps: Deps, chain: Chain, sha: str, git: Git) -> Decision | None:
+    """승인 판정 → 사슬 기록. None = 거부(이미 알렸다)."""
+    try:
+        last = chain.last_approved()
+        fetch_fleet(config, git, sha)
+        evidence = gather(config, git, deps.github, sha, last)
+    except (PublishError, GitError, GitHubError, OSError) as exc:
+        emit(error(ErrorCode.APPROVAL, "", f"판정 입력을 받지 못했다: {exc}"))
+        return None
+    decision = decide(evidence)
+    if not decision.approved:
+        for reason in decision.reasons:
+            emit(error(ErrorCode.APPROVAL, "", reason))
+        print(f"publish: {sha} 승인 거부 — 서명하지 않는다", flush=True)
+        return None
+    try:
+        chain.record(
+            sha, f"pr=#{decision.pull} base={decision.base} by={','.join(decision.approvers)}"
+        )
+    except OSError as exc:  # 사슬을 못 남기면 다음 판정이 깨지므로 게시하지 않는다
+        emit(error(ErrorCode.PUBLISH, "", f"승인 사슬을 기록하지 못했다({chain.file}): {exc}"))
+        return None
+    notice(f"승인: PR #{decision.pull}, 승인자 {', '.join(decision.approvers)}")
+    return decision
+
+
+def _summary(results: Sequence[SiteResult], findings: Sequence[Finding]) -> int:
+    current = [r.site for r in results if r.outcome is Outcome.CURRENT]
+    if current:
+        notice(f"게시본이 최신인 현장(변경 없음): {', '.join(current)}")
+    if all(r.outcome is Outcome.CURRENT for r in results) and not findings:
+        notice("새로 게시할 현장 없음")
+    counts = {o: sum(r.outcome is o for r in results) for o in Outcome}
+    print(
+        f"publish: 게시 {counts[Outcome.PUBLISHED]}, 건너뜀 {counts[Outcome.SKIPPED]}, "
+        f"최신 {counts[Outcome.CURRENT]}, 실패 {counts[Outcome.FAILED]}, "
+        f"규칙 위반 {sum(f.is_error for f in findings)}",
+        flush=True,
+    )
+    failed = any(r.outcome is Outcome.FAILED for r in results)
+    return 1 if failed or any(f.is_error for f in findings) else 0
+
+
+def _run_locked(config: Config, sha: str, deps: Deps, chain: Chain) -> int:
     with _workdir() as work:
-        try:
-            last = chain.last_approved()
-            git = Git(work / "fleet", deps.tokens.fleet(), config.git_base)
-            fetch_fleet(config, git, sha)
-            evidence = gather(config, git, deps.github, sha, last)
-        except (PublishError, GitError, GitHubError, OSError) as exc:
-            emit(error(ErrorCode.APPROVAL, "", f"판정 입력을 받지 못했다: {exc}"))
-            return 1
-        decision = decide(evidence)
-        if not decision.approved:
-            for reason in decision.reasons:
-                emit(error(ErrorCode.APPROVAL, "", reason))
-            print(f"publish: {sha} 승인 거부 — 서명하지 않는다", flush=True)
+        git = Git(work / "fleet", deps.tokens.fleet(), config.git_base)
+        decision = _approve(config, deps, chain, sha, git)
+        if decision is None:
             return 1
         assert decision.base is not None
-        try:
-            chain.record(
-                sha, f"pr=#{decision.pull} base={decision.base} by={','.join(decision.approvers)}"
-            )
-        except OSError as exc:  # 사슬을 못 남기면 다음 판정이 깨지므로 게시하지 않는다
-            emit(error(ErrorCode.PUBLISH, "", f"승인 사슬을 기록하지 못했다({chain.file}): {exc}"))
-            return 1
-        notice(f"승인: PR #{decision.pull}, 승인자 {', '.join(decision.approvers)}")
         try:
             base_tree, head_tree = git.tree(decision.base), git.tree(sha)
         except GitError as exc:
             emit(error(ErrorCode.PUBLISH, "", f"fleet 트리를 읽지 못했다: {exc}"))
             return 1
-        updates, findings = structure(diff_trees(base_tree, head_tree), head_tree)
+        updates, structural = structure(diff_trees(base_tree, head_tree), head_tree)
+        plan = plan_targets(head_tree, updates, structural)
+        findings = [*structural, *plan.findings]
         for finding in findings:
             emit(finding)
         results = [
-            publish_site(config, deps, SiteJob(u, head_tree[u.path], sha, decision), work)
-            for u in updates
+            publish_guarded(
+                config, deps, SiteJob(target, changed, head_tree[target.path], sha, decision), work
+            )
+            for target, changed in plan.targets
         ]
-    if not updates and not findings:
-        notice("변경된 현장 파일 없음 — 게시할 것이 없다")
-    failed = [r for r in results if r.outcome is Outcome.FAILED]
-    counts = {o: sum(r.outcome is o for r in results) for o in Outcome}
-    print(
-        f"publish: 게시 {counts[Outcome.PUBLISHED]}, 건너뜀 {counts[Outcome.SKIPPED]}, "
-        f"실패 {counts[Outcome.FAILED]}, 구조 위반 {sum(f.is_error for f in findings)}",
-        flush=True,
-    )
-    return 1 if failed or any(f.is_error for f in findings) else 0
+    return _summary(results, findings)
+
+
+def run(config: Config, sha: str, deps: Deps) -> int:
+    """승인 판정 → 사슬 기록 → 활성 현장마다 정합화 게시. 0 = 모두 게시·최신, 1 = 실패·위반."""
+    if not is_sha(sha):
+        emit(error(ErrorCode.APPROVAL, "", f"--sha는 40자리 커밋 sha: {sha!r}"))
+        return 1
+    chain = Chain.of(config)
+    try:
+        with chain.locked():
+            return _run_locked(config, sha, deps, chain)
+    except ChainLockError as exc:
+        emit(error(ErrorCode.APPROVAL, "", str(exc)))
+        return 1
+
+
+def _trust_base_locked(config: Config, chain: Chain, sha: str, tokens: Tokens, reason: str) -> int:
+    with _workdir() as work:
+        try:
+            git = Git(work / "fleet", tokens.fleet(), config.git_base)
+            fetch_fleet(config, git, sha)
+            on_main = git.is_ancestor(sha, f"refs/remotes/origin/{config.main_branch}")
+        except (PublishError, GitError, GitHubError) as exc:
+            emit(error(ErrorCode.APPROVAL, "", str(exc)))
+            return 1
+    if not on_main:
+        emit(error(ErrorCode.APPROVAL, "", f"{sha}가 {config.main_branch} 이력에 없다"))
+        return 1
+    try:
+        previous = chain.last_approved() or "-"
+    except (PublishError, OSError):
+        previous = "<unreadable>"  # 깨진 기록도 덮어쓴다(L1)
+    try:
+        chain.record(sha, f"trust-base previous={previous} reason={reason}")
+    except OSError as exc:
+        emit(error(ErrorCode.APPROVAL, "", f"승인 사슬을 기록하지 못했다({chain.file}): {exc}"))
+        return 1
+    print(f"승인 사슬 기준 = {sha}(이전 {previous}) — {chain.file}", flush=True)
+    return 0
 
 
 def trust_base(config: Config, sha: str, tokens: Tokens, reason: str) -> int:
     """사람이 검토한 main 커밋을 승인 사슬 기준으로 기록한다(처음 한 번·사슬 복구)."""
     if not is_sha(sha):
-        print(f"::error::{ErrorCode.APPROVAL} --sha는 40자리 커밋 sha: {sha!r}")
+        emit(error(ErrorCode.APPROVAL, "", f"--sha는 40자리 커밋 sha: {sha!r}"))
         return 1
-    with _workdir() as work:
-        try:
-            git = Git(work / "fleet", tokens.fleet(), config.git_base)
-            fetch_fleet(config, git, sha)
-            if not git.is_ancestor(sha, f"refs/remotes/origin/{config.main_branch}"):
-                print(f"::error::{ErrorCode.APPROVAL} {sha}가 {config.main_branch} 이력에 없다")
-                return 1
-        except (PublishError, GitError, GitHubError) as exc:
-            print(f"::error::{ErrorCode.APPROVAL} {exc}")
-            return 1
     chain = Chain.of(config)
-    previous = chain.last_approved()
-    chain.record(sha, f"trust-base previous={previous or '-'} reason={reason}")
-    print(f"승인 사슬 기준 = {sha}(이전 {previous or '없음'}) — {chain.file}")
-    return 0
+    try:
+        with chain.locked():
+            return _trust_base_locked(config, chain, sha, tokens, reason)
+    except ChainLockError as exc:
+        emit(error(ErrorCode.APPROVAL, "", str(exc)))
+        return 1
 
 
 # ---------------------------------------------------------------------------- CLI
@@ -818,7 +1106,7 @@ def config_from(args: argparse.Namespace) -> Config:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parser().parse_args(argv)
     if args.fleet_repo.count("/") != 1:
-        print(f"::error::--fleet-repo는 <owner>/<name>: {args.fleet_repo!r}")
+        emit(error(ErrorCode.PUBLISH, "", f"--fleet-repo는 <owner>/<name>: {args.fleet_repo!r}"))
         return 1
     config = config_from(args)
     tokens = AppTokens(config)
@@ -832,7 +1120,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             ci_token=read_token(config.ci_token_file),
         )
     except (PublishError, GitHubError) as exc:
-        print(f"::error::{ErrorCode.PUBLISH} {exc}")
+        emit(error(ErrorCode.PUBLISH, "", str(exc)))
         return 1
     github = RestGitHub(token=fleet_token or "", api=config.github_api)
     return run(config, args.sha, Deps(github, control, tokens, bundle_builder(config)))
