@@ -194,7 +194,7 @@ core의 초 단위 값(`…_S`)은 양의 유한 수만 받는다 — 0·음수�
 | `--app-id` / `PUREIRON_PUBLISH_APP_ID` | 없으면 `/etc/pureiron/publish/app_id` 파일 | GitHub App ID(fleet-publish workflow가 secret `PUREIRON_CI_APP_ID`로 env를 준다) |
 | `--bundles-dir` / `PUREIRON_PUBLISH_BUNDLES_DIR` | `/srv/pureiron/bundles` | `<site>/pureiron-<site>-g<gen>.pib`(+ `.bundle-metrics.json`) |
 | `--metrics-dir` / `PUREIRON_PUBLISH_METRICS_DIR` | `/srv/pureiron/metrics` | `publish-<site>-g<gen>.json` 게시 기록 |
-| `--state-dir` / `PUREIRON_PUBLISH_STATE_DIR` | `/srv/pureiron/publish` | 승인 사슬 `<owner>/<repo>/{last_approved, approved.log}`(주 1회 백업 대상) |
+| `--state-dir` / `PUREIRON_PUBLISH_STATE_DIR` | `/srv/pureiron/publish` | 승인 사슬 `<owner>/<repo>/{last_approved, approved.log}`(주 1회 백업 대상), 잠금 `lock`(run·trust-base `flock`), 프로젝트 태그별 직전 게시 커밋 `project_commits.json` |
 | `--store` / `PUREIRON_IMAGE_STORE` | `~/pureiron/images`(build_bundle 기본) | 이미지 store `<release>/<svc>.tar` — publish 호스트는 `/srv/pureiron/images`로 설정 |
 | `--control-api` / `PUREIRON_CONTROL_API` | `http://127.0.0.1:8100/api/v1` | control-api 기준 URL(publish·check-gen 공통) |
 | `--github-api` / `PUREIRON_GITHUB_API` | `https://api.github.com` | GitHub REST |
@@ -202,4 +202,4 @@ core의 초 단위 값(`…_S`)은 양의 유한 수만 받는다 — 0·음수�
 | `--project-owner` | fleet repo owner | 고객 프로젝트 repo owner |
 | `PUREIRON_FLEET_VIEWER_TOKEN` | 없음(필수) | check-gen viewer 토큰 — fleet repo secret 같은 이름에서 |
 
-토큰은 git argv가 아니라 환경(`GIT_CONFIG_*` → `http.extraHeader`)으로만 넘긴다.
+토큰은 git argv가 아니라 환경(`GIT_CONFIG_*` → `http.extraHeader`)으로만 넘긴다. publish 호스트 git은 2.38 이상이어야 한다(승인 판정 트리 동치 `git merge-tree --write-tree`, WSL Ubuntu 24.04 = 2.43).
