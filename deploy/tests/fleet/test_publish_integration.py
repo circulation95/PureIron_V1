@@ -108,18 +108,22 @@ class Central:
     url: str
     env: Mapping[str, str]
 
-    def cli(self, *args: str) -> dict[str, object]:
+    def run(self, *args: str) -> str:
+        """`pureiron-control <args>`를 이 중앙 환경으로 실행(성공해야 함) → stdout."""
         out = io.StringIO()
         saved = dict(os.environ)
         os.environ.update(self.env)
         try:
             with contextlib.redirect_stdout(out):
-                code = control_cli([*args, "--json"])
+                code = control_cli(list(args))
         finally:
             os.environ.clear()
             os.environ.update(saved)
         assert code == 0, out.getvalue()
-        return cast(dict[str, object], json.loads(out.getvalue()))
+        return out.getvalue()
+
+    def cli(self, *args: str) -> dict[str, object]:
+        return cast(dict[str, object], json.loads(self.run(*args, "--json")))
 
     def token(self, role: str) -> str:
         return str(self.cli("token", "create", "--role", role, "--name", f"it-{role}")["token"])
@@ -149,7 +153,7 @@ def central(control_db: ControlDb, tmp_path: Path) -> Generator[Central]:
         "PUREIRON_RELEASE": "0.1.0-it",
     }
     central = Central(url="", env=env)
-    central.cli("migrate", "up")
+    central.run("migrate", "up")
     port = _free_port()
     app = create_app(ControlRuntime.build(Settings.from_env(env)))
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None))
@@ -203,6 +207,7 @@ def merge_pr(fleet: Repo, github: FakeGitHub, number: int, files: dict[str, str 
 def test_publish_end_to_end_against_real_control_api(
     central: Central, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    (tmp_path / "build").mkdir()
     kit = Setup(tmp_path / "build")  # release 기록 2개·가짜 이미지 store·release key·cert·root.pub
     admin, ci, viewer = central.token("admin"), central.token("ci"), central.token("viewer")
     register_site(central, tmp_path, "site-a", admin)
