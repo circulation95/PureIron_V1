@@ -5,6 +5,7 @@ PureIron 현장 배포 상태(DesiredState)의 정본 repo(ADR-022). 현장마�
 ```
 sites/<site>.yaml            활성 현장 파일(파일명 == site)
 sites/.retired/<site>.yaml   퇴역 현장(활성 파일을 그대로 옮긴 것, 이후 수정·삭제·이름 재사용 금지)
+examples/site.yaml           현장 파일 견본(sites/ 밖 — check-gen·publish가 보지 않는다)
 allowed_approvers.txt        publish 승인자 login 목록
 .github/workflows/           check-gen.yml(PR 검사), publish.yml(main → 게시) — PureIron_V1 reusable workflow 호출만
 ```
@@ -12,16 +13,16 @@ allowed_approvers.txt        publish 승인자 login 목록
 ## 새 현장 순서 (등록 먼저)
 
 1. **control-api에 현장 등록**(벤더 admin): 현장 Updater가 만든 enrollment로 `pureiron-control site register`. 등록 전에 게시하면 control-api가 404를 돌려주고 publish가 실패한다.
-2. `sites/example.yaml`을 `sites/<site>.yaml`로 복사, `site`를 파일명과 같게, `generation: 1`.
+2. `examples/site.yaml`을 `sites/<site>.yaml`로 복사, `site`를 파일명과 같게, `generation: 1`. 견본을 `sites/` 아래에 두지 않는다 — `sites/`의 활성 파일은 모두 게시 대상이라 미등록 견본이 매 publish를 빨강으로 만든다.
 3. PR → check-gen 통과 → 승인 → merge → publish가 gen 1을 게시.
 
 미등록 상태로 merge했다면: 등록한 뒤 Actions → publish → **Run workflow**(workflow_dispatch, 입력 없음)로 재실행한다. publish는 매번 **main 머리 트리의 모든 활성 현장**을 control-api 게시 상태에 맞춘다(정합화) — 파일 gen > 게시된 최대 gen이면 게시, 같으면 최신(건너뜀), 작으면 역행 실패. 그래서 그 사이 다른 merge가 있었어도 main 머리로 재실행하면 되고, 이미 게시된 현장은 건너뛰므로 재실행은 안전하다. 옛 run의 **Re-run은 쓰지 않는다**(main 머리가 아니면 승인 사슬 끊김). 미등록 현장 파일이 main에 있는 동안은 뒤 merge의 publish도 계속 빨강이다(조용히 넘어가지 않는다). 일시 장애(네트워크·control-api)로 실패한 현장도 같은 방법으로 회복한다.
 
 ## 바꾸기·되돌리기·퇴역
 
-- 바꾸기: 그 현장 파일을 고치고 `generation`을 정확히 +1. check-gen이 `new == old + 1`, `new > 게시된 최대 gen`을 본다(`E_GEN`). Free에서는 check-gen이 빨강이어도 merge할 수 있으므로 publish도 merge 뒤 `new == old + 1`을 다시 보고, 어긴 현장은 게시하지 않고 `E_GEN`으로 실패한다(gen을 올린 PR로 고친다).
+- 바꾸기: 그 현장 파일을 고치고 `generation`을 정확히 +1. check-gen이 `new == old + 1`, `new > 게시된 최대 gen`을 본다(`E_GEN`). Free에서는 check-gen이 빨강이어도 merge할 수 있으므로 publish도 merge 뒤 `new == old + 1`을 다시 보고, 어긴 현장은 게시하지 않고 `E_GEN`으로 실패한다. **이 제외는 그 run만이다** — +1은 그 커밋의 변경에만 볼 수 있어서, 다음 merge는 정합화로 그 파일을 다시 본다: gen을 건너뛴 파일(1 → 3)은 다음 merge가 그대로 게시하고, gen을 안 올리고 내용만 바꾼 파일은 "게시본이 최신"으로 보고한다(main 내용 ≠ 게시본). 그래서 **빨강 `E_GEN` run을 보면 바로 gen을 올바르게 올린 PR로 고친다**(다음 merge까지 미루지 않는다).
 - 되돌리기: PureIron_V1에서 `uv run python deploy/fleet/revert.py <site> --to-gen N --repo <이 repo>` — 이력의 gen N 내용으로 gen 현재+1 파일·브랜치·PR을 만든다(일반 승인 경로). schema envelope 밖으로 되돌리면 경고가 나오고 현장이 `E_SCHEMA`로 거부한다(DB는 내려가지 않는다).
-- 퇴역: `git mv sites/<site>.yaml sites/.retired/<site>.yaml`(내용 그대로). 파일 삭제는 `E_FLEET`. 퇴역한 이름은 다시 쓸 수 없다.
+- 퇴역: `git mv sites/<site>.yaml sites/.retired/<site>.yaml`(내용 그대로). 파일 삭제는 `E_FLEET`. 퇴역한 이름은 다시 쓸 수 없다 — 같은 이름의 활성 파일이 main에 있는 동안 publish는 매 run 그 파일을 `E_FLEET`로 빼고 빨강이다(파일을 지우는 PR로 고친다).
 - 쓰기 스위치: `writes: { enabled: true }`(없으면 읽기 전용). Updater 0.2.0 이상만 적용한다. 0.1.0 시절 `updater.env`로 쓰기를 켠 현장은 Updater를 0.2.0으로 바꾸면 그 값이 무시되므로 **Updater 교체 전에** fleet 파일에 `writes.enabled: true`를 먼저 게시한다.
 - 현장 드래프트 흡수 확인: publish는 현장 드래프트 상태를 모른다(현장 `E_DRAFT`가 최종 판정). 흡수한 프로젝트 태그를 올리기 전 벤더가 `pureiron-project gate --draft <draft.tar> …`로 확인한다.
 
@@ -29,18 +30,18 @@ allowed_approvers.txt        publish 승인자 login 목록
 
 publish는 main 커밋 sha를 GitHub API·git으로 다시 받아 아래를 **모두** 만족할 때만 서명한다. 하나라도 어기면 `E_APPROVAL`(사유 한 줄씩)로 실패하고 아무것도 게시하지 않는다.
 
-1. 그 커밋이 **merge된 PR의 merge commit**이다(squash·merge·rebase 모두 가능, **squash 권장**). main 직접 push, PR 머리 커밋을 main에 직접 push한 경우는 거부.
+1. 그 커밋이 **merge된 PR의 merge commit**이다(squash·merge commit 가능, **squash 권장**. rebase merge는 판정은 하지만 드물게 ⑤로 거부되므로 쓰지 않는다 — 아래 ⑤). main 직접 push, PR 머리 커밋을 main에 직접 push한 경우는 거부.
 2. 그 PR의 **최종 head 커밋**에 대한 승인이 1명 이상: 리뷰어의 마지막 상태가 APPROVED(뒤에 Request changes·dismiss가 있으면 무효), 승인한 커밋이 최종 head(승인 뒤 커밋을 더 올리면 다시 승인 필요), 리뷰어가 `allowed_approvers.txt`에 있고 PR 작성자가 아님.
 3. `allowed_approvers.txt`는 **merge 직전 main**의 것을 읽는다 — PR이 목록에 사람을 넣어도 그 PR에는 효력이 없다(목록 변경 PR을 먼저 따로 승인·merge).
 4. **승인 사슬**: merge 직전 main == publish 호스트가 기록한 마지막 승인 커밋. 승인 없이 들어온 커밋이 한 번 끼면 그 뒤 merge도 거부한다.
-5. **트리 동치**: merge 결과 트리 == merge 직전 main과 승인된 head를 충돌 없이 합친 트리(`git merge-tree --write-tree`, publish 호스트 git ≥ 2.38). GitHub 버튼으로 merge하면 항상 같다. 로컬에서 PR을 merge해 내용을 덧붙이거나 충돌을 풀어 push한 커밋은 거부한다 — 충돌은 PR 브랜치에서 풀고 다시 승인받는다.
+5. **트리 동치**: merge 결과 트리 == merge 직전 main과 승인된 head를 충돌 없이 합친 트리(`git merge-tree --write-tree`, publish 호스트 git ≥ 2.38). GitHub 버튼의 squash·merge commit은 같은 3-way merge라 같다. **rebase merge는 드물게 ⑤로 거부된다** — PR 커밋을 하나씩 다시 쌓는 결과가 3-way merge와 다를 수 있다(예: PR 커밋1이 main에 이미 들어간 것과 같은 변경을 하고 커밋2가 그것을 되돌리면, rebase 결과는 main의 승인된 변경을 지운다). 거부되면 사슬이 끊겨 아래 복구가 필요하므로 **repo 설정에서 rebase merge를 끄고 squash만 허용한다**(Settings → General → Pull Requests: "Allow rebase merging" 끔, "Allow squash merging"만 켬). 로컬에서 PR을 merge해 내용을 덧붙이거나 충돌을 풀어 push한 커밋은 거부한다 — 충돌은 PR 브랜치에서 풀고 다시 승인받는다.
 
 ### `E_APPROVAL` 복구
 
 거부된 커밋은 사슬을 전진시키지 않는다. 그래서 그 뒤에 새 PR을 그냥 올리면 "승인 사슬 끊김"이 된다. 사유("승인 0건·오래된 승인·목록 밖·트리 불일치·직접 push·승인 사슬 끊김")와 상관없이 복구는 둘 중 하나다.
 
 - (a) **되돌리고 다시 승인**: main을 마지막 승인 커밋(`approved.log` 마지막 줄 또는 오류의 "마지막 승인 …")으로 되돌린다(`git push --force-with-lease origin <마지막 승인 sha>:main`, Free에서 가능). 그다음 원래 PR 브랜치로 **새 PR**을 열어(merge된 PR은 다시 열 수 없다) 정상 승인 → merge. 직접 push된 내용은 PR 브랜치로 옮겨 같은 방법으로 올린다.
-- (b) **사람이 검토하고 기준으로 기록**: 거부된 main 커밋의 내용을 사람이 검토한 뒤 publish 호스트에서 `publish.py trust-base --fleet-repo <owner>/<repo> --sha <검토한 main 커밋> --reason <사유>`. 그 커밋 자체의 publish는 다시 돌려도 ①·②로 거부되므로, **다음 승인 merge**(내용 없는 PR이어도 된다)가 정합화로 그 커밋의 현장 변경까지 게시한다 — gen을 다시 올릴 필요는 없다.
+- (b) **사람이 검토하고 기준으로 기록**: 거부된 main 커밋의 내용을 사람이 검토한 뒤 publish 호스트에서 `publish.py trust-base --fleet-repo <owner>/<repo> --sha <검토한 main 커밋> --reason <사유>`. 그 커밋 자체의 publish는 다시 돌려도 ①·②·⑤로 거부되므로, **다음 승인 merge**(내용 없는 PR이어도 된다)가 정합화로 그 커밋의 현장 변경까지 게시한다 — gen을 다시 올릴 필요는 없다.
 - 연속 merge로 앞 publish가 아직 안 돈 상태에서 뒤 커밋이 먼저 돌아 "사슬 끊김"이 나면: 앞 run이 끝난 뒤 publish를 workflow_dispatch로 재실행.
 - 처음 한 번: 이 템플릿으로 repo를 만든 첫 커밋을 `trust-base`로 등록한다(없으면 "승인 사슬 기준이 없다").
 - 승인 사슬 기록(`/srv/pureiron/publish/<owner>/<repo>/`)이 사라지거나 깨지면(전원 차단·수기 오타 — "not a commit sha") 사람이 main 이력을 검토한 뒤 `trust-base`로 다시 만든다(깨진 값은 `previous=<unreadable>`로 남기고 덮어쓴다). 주 1회 백업 대상에 넣는다.

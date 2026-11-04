@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import cast
 
 from fleet.approval import parse_approvers
-from fleet.fleetfiles import diff_trees, parse_site, structure
+from fleet.fleetfiles import active_sites, diff_trees, parse_site, structure
 
 from pureiron_project.canonical import Json, load
 
@@ -37,20 +37,26 @@ def test_template_layout() -> None:
         "CODEOWNERS",
         "README.md",
         "allowed_approvers.txt",
+        "examples/site.yaml",
         "sites/.retired/.gitkeep",
-        "sites/example.yaml",
     ]
+    # 견본은 sites/ 밖이어야 한다 — sites/의 활성 파일은 모두 게시 대상(정합화, 리뷰 r2 R2-1).
+    sites, broken = active_sites(tree())
+    assert (sites, broken) == ([], [])
 
 
 def test_example_site_passes_fleet_rules() -> None:
     files = tree()
-    site, problems = parse_site(files["sites/example.yaml"], "sites/example.yaml")
+    example = files["examples/site.yaml"]
+    site, problems = parse_site(example, "examples/site.yaml")
     assert site is not None, problems
     assert (site.site, site.generation, site.writes_enabled) == ("example", 1, False)
-    updates, findings = structure(diff_trees({}, files), files)
+    # README 순서대로 sites/<site>.yaml로 복사하면 check-gen 구조 규칙을 통과한다.
+    copied = {**files, "sites/example.yaml": example}
+    updates, findings = structure(diff_trees(files, copied), copied)
     assert findings == []
     assert [u.site.site for u in updates] == ["example"]
-    text = files["sites/example.yaml"].decode()
+    text = example.decode()
     assert "# writes: { enabled: true }" in text  # 쓰기 스위치 예시(주석)
     assert "Updater 교체 전에" in text  # M4-1 이관: updater.env → 서명 스위치 업그레이드 안내
 
@@ -113,5 +119,10 @@ def test_readme_documents_order_recovery_and_k14() -> None:
         "/etc/pureiron/publish/viewer_token",
         "pureiron-project gate --draft",
         "E_APPROVAL",
+        "examples/site.yaml",
+        "rebase merge를 끄고 squash만 허용",
+        "①·②·⑤",
+        "이 제외는 그 run만이다",
     ):
         assert needle in readme
+    assert "sites/example.yaml`을" not in readme

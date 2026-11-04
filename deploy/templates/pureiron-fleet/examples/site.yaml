@@ -1,7 +1,7 @@
 # 현장 파일 견본(fleet-site 계약 packages/contracts/fleet-site.schema.json, ADR-022).
 # 새 현장은 이 파일을 sites/<site>.yaml로 복사해 site를 파일명과 같게 바꾸고 generation 1로 시작한다.
-# 그 전에 control-api에 현장을 등록한다(README "새 현장 순서"). 이 견본은 바꾸지 않으면 publish가 건드리지
-# 않는다. 지우려면 sites/.retired/example.yaml로 그대로 옮긴다(삭제는 check-gen E_FLEET).
+# 그 전에 control-api에 현장을 등록한다(README "새 현장 순서"). 이 견본은 sites/ 밖(examples/)에 있어
+# check-gen·publish가 보지 않는다 — sites/ 아래 활성 파일은 모두 게시 대상이므로 견본을 거기 두지 않는다.
 #
 # generation은 PR마다 정확히 +1, 그리고 control-api에 게시된 최대 gen보다 커야 한다(check-gen E_GEN).
 site: example

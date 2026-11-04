@@ -151,6 +151,13 @@ def _optional_str(data: JsonObject, key: str) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _commit_sha(value: str, field_name: str) -> str:
+    """API가 준 커밋 sha는 40자리 hex만 받는다 — git 인자로 넘어가므로 옵션 주입을 막는다(R2-5)."""
+    if not is_sha(value):
+        raise GitHubError(f"GitHub response field {field_name} is not a commit sha: {value[:80]!r}")
+    return value
+
+
 def parse_pull(data: JsonObject) -> PullRequest:
     commits = data.get("commits")
     merged = data.get("merged")
@@ -159,12 +166,15 @@ def parse_pull(data: JsonObject) -> PullRequest:
     number = data.get("number")
     if type(number) is not int:
         raise GitHubError("pull request has no number")
+    merge_commit_sha = _optional_str(data, "merge_commit_sha")
     return PullRequest(
         number=number,
         author=_str(data, "user", "login"),
         merged=merged,
-        merge_commit_sha=_optional_str(data, "merge_commit_sha"),
-        head_sha=_str(data, "head", "sha"),
+        merge_commit_sha=(
+            None if merge_commit_sha is None else _commit_sha(merge_commit_sha, "merge_commit_sha")
+        ),
+        head_sha=_commit_sha(_str(data, "head", "sha"), "head.sha"),
         base_ref=_str(data, "base", "ref"),
         commits=commits,
     )
@@ -275,29 +285,48 @@ class Git:
 
     def fetch(self, repo: str, *refspecs: str, depth: int | None = None) -> None:
         extra = [f"--depth={depth}"] if depth is not None else []
-        self._run("fetch", "-q", "--no-tags", *extra, self.remote_url(repo), *refspecs)
+        self._run(
+            "fetch", "-q", "--no-tags", *extra, "--end-of-options", self.remote_url(repo), *refspecs
+        )
 
     def checkout(self, ref: str) -> None:
-        self._run("-c", "advice.detachedHead=false", "checkout", "-q", "--detach", ref)
+        # git 2.43 checkout은 --end-of-options를 받지 않는다 → rev-parse(받음)로 sha를 구해 넘긴다.
+        commit = self.rev_parse(ref)
+        self._run("-c", "advice.detachedHead=false", "checkout", "-q", "--detach", commit)
 
     def rev_parse(self, ref: str) -> str:
         return self.text("rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}")
 
     def is_ancestor(self, ancestor: str, descendant: str) -> bool:
-        result = self._run("merge-base", "--is-ancestor", ancestor, descendant, check=False)
+        result = self._run(
+            "merge-base", "--is-ancestor", "--end-of-options", ancestor, descendant, check=False
+        )
         if result.returncode not in (0, 1):
             raise GitError(f"git merge-base --is-ancestor failed: {result.stderr!r}")
         return result.returncode == 0
 
     def has_commit(self, sha: str) -> bool:
-        return self._run("cat-file", "-e", f"{sha}^{{commit}}", check=False).returncode == 0
+        return (
+            self._run(
+                "cat-file", "-e", "--end-of-options", f"{sha}^{{commit}}", check=False
+            ).returncode
+            == 0
+        )
 
     def tree_id(self, sha: str) -> str:
         return self.text("rev-parse", "--verify", "--end-of-options", f"{sha}^{{tree}}")
 
     def merge_tree(self, base: str, head: str) -> str | None:
         """`git merge-tree --write-tree base head`의 결과 트리(충돌이면 None). git ≥ 2.38 필요."""
-        result = self._run("merge-tree", "--write-tree", "--no-messages", base, head, check=False)
+        result = self._run(
+            "merge-tree",
+            "--write-tree",
+            "--no-messages",
+            "--end-of-options",
+            base,
+            head,
+            check=False,
+        )
         conflicted = result.returncode == 1 and bool(result.stdout.strip())
         if conflicted:  # 충돌이면 exit 1 + 트리 id. 객체를 못 찾아도 exit 1(stdout 없음) → 오류
             return None
@@ -314,7 +343,14 @@ class Git:
         return lines[0].strip()
 
     def first_parent_chain(self, sha: str, count: int) -> tuple[Commit, ...]:
-        out = self.text("rev-list", "--first-parent", "--parents", f"--max-count={count}", sha)
+        out = self.text(
+            "rev-list",
+            "--first-parent",
+            "--parents",
+            f"--max-count={count}",
+            "--end-of-options",
+            sha,
+        )
         commits: list[Commit] = []
         for line in out.splitlines():
             shas = line.split()
@@ -322,12 +358,14 @@ class Git:
         return tuple(commits)
 
     def file(self, sha: str, path: str) -> bytes | None:
-        result = self._run("cat-file", "blob", f"{sha}:{path}", check=False)
+        result = self._run("cat-file", "blob", "--end-of-options", f"{sha}:{path}", check=False)
         return result.stdout if result.returncode == 0 else None
 
     def tree(self, sha: str, prefix: str = "sites") -> dict[str, bytes]:
         """`sha`의 `prefix/` 아래 일반 파일 {경로: 바이트}."""
-        listing = self._run("ls-tree", "-r", "-z", "--full-tree", sha, "--", prefix).stdout
+        listing = self._run(
+            "ls-tree", "-r", "-z", "--full-tree", "--end-of-options", sha, "--", prefix
+        ).stdout
         tree: dict[str, bytes] = {}
         for entry in listing.split(b"\0"):
             if not entry:

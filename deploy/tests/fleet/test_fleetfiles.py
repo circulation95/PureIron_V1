@@ -211,3 +211,16 @@ def test_active_sites_lists_every_active_file() -> None:
         (ErrorCode.FLEET, "sites/site-c.yaml"),
         (ErrorCode.FLEET, "sites/site-d.yaml"),
     }
+
+
+def test_active_sites_excludes_reused_retired_name() -> None:
+    """리뷰 r2 R2-2 ③: 퇴역 이름 재사용은 추가한 커밋뿐 아니라 트리에 있는 동안 매번 위반."""
+    head = {
+        "sites/site-a.yaml": b(site_yaml("site-a", 2)),
+        "sites/.retired/site-a.yaml": A1,
+        "sites/site-b.yaml": b(site_yaml("site-b", 1)),
+    }
+    sites, findings = active_sites(head)
+    assert [s.path for s in sites] == ["sites/site-b.yaml"]
+    assert [(f.code, f.path) for f in findings] == [(ErrorCode.FLEET, "sites/site-a.yaml")]
+    assert "퇴역한 현장 이름 'site-a'" in findings[0].message

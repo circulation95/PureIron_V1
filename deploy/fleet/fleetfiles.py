@@ -340,12 +340,27 @@ class ActiveSite:
 
 
 def active_sites(head: Mapping[str, bytes]) -> tuple[list[ActiveSite], list[Finding]]:
-    """트리의 모든 활성 현장 파일(`sites/<site>.yaml`) → (해석값, `E_FLEET` 위반)."""
+    """트리의 모든 활성 현장 파일(`sites/<site>.yaml`) → (해석값, `E_FLEET` 위반).
+
+    퇴역 이름을 다시 쓴 활성 파일은 그 커밋에서만이 아니라 트리에 있는 동안 매번 위반이다
+    (diff 규칙은 추가한 커밋에서만 보이므로, 트리 전체로 다시 본다).
+    """
     sites: list[ActiveSite] = []
     findings: list[Finding] = []
     for path in sorted(head):
         kind, name = classify(path)
         if kind is not PathKind.ACTIVE:
+            continue
+        assert name is not None
+        if retired_path(name) in head:
+            findings.append(
+                error(
+                    ErrorCode.FLEET,
+                    path,
+                    f"퇴역한 현장 이름 {name!r}은 다시 쓸 수 없다({retired_path(name)}) — "
+                    "이 활성 파일을 지우는 PR로 고친다",
+                )
+            )
             continue
         site, problems = parse_site(head[path], path)
         if site is None:

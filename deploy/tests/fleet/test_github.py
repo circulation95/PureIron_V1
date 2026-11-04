@@ -192,6 +192,44 @@ def test_simple_pull_object_is_rejected() -> None:
         parse_pull(simple)
 
 
+@pytest.mark.parametrize(
+    ("field_name", "patch"),
+    [
+        ("head.sha", {"head": {"sha": "--upload-pack=touch PWNED"}}),
+        ("head.sha", {"head": {"sha": "b" * 39}}),
+        ("merge_commit_sha", {"merge_commit_sha": "-c core.sshCommand=x"}),
+    ],
+)
+def test_pull_shas_must_be_commit_shas(field_name: str, patch: dict[str, object]) -> None:
+    """리뷰 r2 R2-5: API가 준 sha는 git 인자가 되므로 40자리 hex만 받는다."""
+    pull_json: dict[str, object] = {
+        "number": 7,
+        "user": {"login": "ws-blip"},
+        "merged": True,
+        "merge_commit_sha": "a" * 40,
+        "head": {"sha": "b" * 40},
+        "base": {"ref": "main"},
+        "commits": 1,
+        **patch,
+    }
+    with pytest.raises(GitHubError, match=f"{field_name} is not a commit sha"):
+        parse_pull(pull_json)
+    unmerged = {**pull_json, "merge_commit_sha": None, "head": {"sha": "b" * 40}}
+    assert parse_pull(unmerged).merge_commit_sha is None
+
+
+def test_git_fetch_does_not_take_options_from_refspecs(tmp_path: Path) -> None:
+    """리뷰 r2 R2-5: refspec 자리의 `--upload-pack=…`는 옵션이 아니라 (잘못된) refspec이다."""
+    remote = Repo.create(tmp_path / "remotes" / "acme" / "fleet")
+    remote.commit({"README.md": "r"}, "one")
+    local = Git(tmp_path / "work", remote_base=str(tmp_path / "remotes"))
+    local.init()
+    with pytest.raises(GitError):
+        local.fetch("acme/fleet", "--upload-pack=touch PWNED")
+    assert not (tmp_path / "work" / "PWNED").exists()
+    assert not (tmp_path / "remotes" / "acme" / "fleet" / "PWNED").exists()
+
+
 def test_git_reads_trees_chains_and_fetches_by_sha(tmp_path: Path) -> None:
     remote = Repo.create(tmp_path / "remotes" / "acme" / "fleet")
     first = remote.commit({"sites/site-a.yaml": "a1\n", "README.md": "r"}, "one")

@@ -527,11 +527,20 @@ class ProjectCommits:
     def previous(self, ref: str) -> str | None:
         return self._load().get(ref)
 
-    def record(self, ref: str, commit: str) -> None:
-        commits = self._load()
+    def record(self, ref: str, commit: str) -> str | None:
+        """기록한다. 지금 파일이 깨졌으면 빈 기록으로 새로 시작해 덮어쓰고 그 사유를 돌려준다(R2-4).
+
+        깨진 파일을 그대로 두면 매 게시마다 읽기·기록이 실패해 태그 이동 감지가 영원히 꺼진다.
+        """
+        reset: str | None = None
+        try:
+            commits = self._load()
+        except PublishError as exc:
+            commits, reset = {}, str(exc)
         commits[ref] = commit
         self.file.parent.mkdir(parents=True, exist_ok=True)
         _write_atomic(self.file, json.dumps(commits, indent=2, sort_keys=True) + "\n")
+        return reset
 
 
 # ---------------------------------------------------------------------------- run
@@ -683,7 +692,9 @@ def plan_targets(
     실제 게시 여부는 현장마다 `파일 gen > max_published_gen`으로 정한다(`_preflight`). 그래서 앞
     커밋에서 실패한 현장(미등록·일시 장애)도 뒤 커밋이나 main 머리 재실행에서 다시 게시된다.
     빼는 것: 이 커밋의 구조 위반(`E_FLEET`) 파일, `new == old + 1`을 어긴 바뀐 파일(`E_GEN` —
-    check-gen이 빨강이어도 Free는 merge할 수 있다), 해석할 수 없는 활성 파일.
+    check-gen이 빨강이어도 Free는 merge할 수 있다), 해석할 수 없는 활성 파일, 퇴역 이름을 다시 쓴
+    활성 파일(뒤 둘은 트리 전체로 보므로 main에 있는 동안 매 run). `E_GEN` 제외는 그 커밋의 변경에만
+    볼 수 있어 그 run만이다 — 다음 run은 정합화로 다시 본다(README "바꾸기").
     """
     excluded = {f.path for f in structural if f.is_error}
     findings: list[Finding] = []
@@ -823,9 +834,17 @@ def publish_site(config: Config, deps: Deps, job: SiteJob, work: Path) -> SiteRe
     timings = {"build_s": finished - started, "upload_s": deps.clock() - finished}
     _write_metrics(config, job, built, published, timings)
     try:
-        commits.record(built.project_ref, built.project_commit)
+        reset = commits.record(built.project_ref, built.project_commit)
     except (PublishError, OSError) as exc:
         emit(warning(job.path, f"프로젝트 커밋 기록을 남기지 못했다: {exc}"))
+    else:
+        if reset is not None:
+            emit(
+                warning(
+                    job.path,
+                    f"깨진 프로젝트 커밋 기록을 새로 시작했다(이전 태그별 기록은 버림): {reset}",
+                )
+            )
     size = built.pib.stat().st_size
     message = f"{job.site} gen {job.generation} 게시({built.pib.name}, {size} bytes)"
     notice(message)
