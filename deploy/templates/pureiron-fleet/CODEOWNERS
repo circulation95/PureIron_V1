@@ -1,0 +1,5 @@
+# 리뷰 요청 대상(GitHub Free private repo에서는 강제되지 않는다 — 실제 승인 판정은 publish의
+# allowed_approvers.txt 규칙이다, README "승인 규칙").
+*                       @circulation95
+/allowed_approvers.txt  @circulation95
+/.github/               @circulation95

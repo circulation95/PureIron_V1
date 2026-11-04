@@ -1,0 +1,22 @@
+# fleet publish: main에 merge되면 PureIron_V1의 reusable workflow가 publish 호스트에서
+# `deploy/fleet/publish.py run`을 부른다 — 승인 판정(E_APPROVAL) → 빌드·서명 → control-api 게시.
+# workflow_dispatch는 재실행 전용(입력 없음): 미등록 현장을 등록한 뒤 등 main 머리 기준으로 다시 돈다.
+name: publish
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    # check-gen.yml과 같은 ref로 고정한다(도구 버전).
+    uses: circulation95/PureIron_V1/.github/workflows/fleet-publish.yml@master
+    with:
+      runs_on: '["self-hosted", "publish"]'
+    secrets:
+      PUREIRON_CI_APP_ID: ${{ secrets.PUREIRON_CI_APP_ID }}
+      PUREIRON_CI_APP_KEY: ${{ secrets.PUREIRON_CI_APP_KEY }}
