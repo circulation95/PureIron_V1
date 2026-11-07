@@ -206,6 +206,8 @@ job_integration_compose() {
   uv run pytest services/control-api/tests/integration -m integration -q
   # fleet publish 종단(M4-2): control-db + 실제 control-api + 실제 build_bundle + 로컬 git 원격.
   uv run pytest deploy/tests/fleet -m integration -q
+  # 중앙 Caddyfile·compose를 실제 도구로(M4-3): control-web 이미지의 caddy validate + docker compose config.
+  uv run pytest deploy/tests/test_central_compose.py -m integration -q
 }
 
 job_web_e2e() {
@@ -214,6 +216,14 @@ job_web_e2e() {
   uv sync --all-packages --locked  # 스택 준비가 호스트 `uv run pureiron-core apply-definitions`를 쓴다
   # 브라우저만 받는다(캐시되면 건너뜀). OS 의존 패키지는 runner 준비 때 `sudo npx playwright install-deps chromium`을 한 번 실행해 둔다(testing 11절).
   (cd services/web && npm ci --no-audit --no-fund && npx playwright install chromium && npx playwright test)
+}
+
+job_control_web_e2e() {
+  log "control-web-e2e"
+  # 중앙 이미지만 빌드한다(현장 이미지는 이 시험에 쓰지 않는다). 스택 준비는 deploy/tests/central_stack.py.
+  bash deploy/build/build_images.sh control-api control-web
+  uv sync --all-packages --locked  # 준비 스크립트가 호스트 `uv run`(Updater enroll·현장 서명)을 쓴다
+  (cd services/control-web && npm ci --no-audit --no-fund && npx playwright install chromium && npx playwright test)
 }
 
 job_perf_ingest() {
@@ -248,6 +258,7 @@ run_job() {
     images) job_images ;;
     integration-compose) job_integration_compose ;;
     web-e2e) job_web_e2e ;;
+    control-web-e2e) job_control_web_e2e ;;
     perf-ingest) job_perf_ingest ;;
     n-minus-1) job_n_minus_1 ;;
     repro-build) job_repro_build ;;

@@ -26,7 +26,7 @@ export const LABELS = {
   noCurrent: "보고 없음",
 } as const;
 
-export const SOURCE_LABELS: Record<string, string> = { online: "온라인", offline: "폐쇄망 반입" };
+export const SOURCE_LABELS: Record<string, string> = { online: "온라인 수신", offline: "폐쇄망 반입" };
 
 /** 표 한 줄의 current 칸. `last-reported` = 연결이 끊긴 현장의 마지막 보고값. */
 export type CurrentCell =
