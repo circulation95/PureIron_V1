@@ -1,0 +1,33 @@
+/* 색·표 규칙은 site web(services/web/src/styles.css)과 같은 값을 쓴다. */
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+  font-size: 15px;
+  --ok: #1a7f37;
+  --bad: #c62828;
+  --warn: #b26a00;
+  --line: #8884;
+  --muted: GrayText;
+}
+body { margin: 0; background: Canvas; color: CanvasText; }
+main { max-width: 90rem; margin: 1rem auto; padding: 0 1rem; }
+h1 { font-size: 1.3rem; margin: 0.5rem 0 0.75rem; }
+button { font: inherit; padding: 0.3rem 0.8rem; cursor: pointer; }
+button:disabled { cursor: default; }
+.summary { color: var(--muted); }
+.page-status { color: var(--muted); }
+.page-status.error { color: var(--bad); }
+.toolbar { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
+
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+th { font-weight: 600; color: var(--muted); white-space: nowrap; }
+
+.conn { font-weight: 600; }
+.conn-online { color: var(--ok); }
+.conn-stale { color: var(--warn); }
+.conn-never { color: var(--muted); }
+.current { display: flex; flex-direction: column; gap: 0.1rem; }
+.current.stale > span:nth-child(2) { color: var(--muted); }
+.last-reported { color: var(--warn); font-weight: 600; font-size: 0.85rem; }
+.badge-latest { display: inline-block; margin-top: 0.2rem; padding: 0 0.4rem; border-radius: 3px; font-size: 0.85rem; font-weight: 600; color: var(--ok); background: #1a7f371a; }
