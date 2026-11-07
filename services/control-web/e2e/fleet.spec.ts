@@ -1,5 +1,6 @@
 // control-web e2e(M4-3 G8): 실제 deploy/central 스택(Caddy·control-api·control-db, poll_s = 2 → stale 6s).
-// 순서가 의미 있다(serial): 경로 규칙 → heartbeat 1건 → online·최신 → 약 7초 뒤 stale·마지막 보고값 → 오류 표시.
+// 순서가 의미 있다(serial): 경로 규칙 → 화면 로드(수신 없음) → heartbeat 1건 → 새로고침 → online·최신
+// → 약 7초 뒤 stale·마지막 보고값 → 오류 표시.
 import { readFileSync } from "node:fs";
 
 import { expect, request, test, type APIRequestContext, type Page } from "@playwright/test";
@@ -96,19 +97,27 @@ test("viewer 토큰 주입은 GET /ui/fleet 하나뿐 — 다른 /ui/* 경로·�
 
 test("heartbeat 1건 → online·최신, 약 7초 뒤 stale·마지막 보고값·최신 없음", async ({ page, context }) => {
   await context.setHTTPCredentials({ username: stack.user, password: stack.password });
+  const staleAfterMs = 3 * stack.poll_s * 1000; // C8: online = last_seen <= 3 x poll
+  const refresh = page.getByRole("button", { name: "새로고침" });
+
+  // 화면을 먼저 띄운다(heartbeat 전이라 "수신 없음"). 첫 화면 로드 시간이 6초 online 창을 깎지 않게(리뷰 L7).
+  await page.goto("/");
+  const row = siteRow(page);
+  const current = row.locator('td[data-col="current"]');
+  await expect(row).toHaveAttribute("data-connection", "never");
+  await expect(refresh).toBeEnabled();
+
   const sent = await anonymous.post(`/api/v1/sites/${stack.site}/heartbeat`, {
     headers: { Authorization: `Bearer ${stack.site_token}`, "Content-Type": "application/json" },
     data: readFileSync(stack.heartbeat_file),
   });
   expect(sent.status(), await sent.text()).toBe(200);
   const sentAt = Date.now();
-  const staleAfterMs = 3 * stack.poll_s * 1000; // C8: online = last_seen <= 3 x poll
-
-  await page.goto("/");
-  const row = siteRow(page);
-  const current = row.locator('td[data-col="current"]');
-  // online 판정은 6초 창 안에서만 참이다 — 기다림을 짧게 둔다.
-  await expect(row).toHaveAttribute("data-connection", "online", { timeout: staleAfterMs - (Date.now() - sentAt) });
+  await refresh.click();
+  // online 판정은 6초 창 안에서만 참이다 — 남은 창 안에서만 기다린다(새로고침 조회 한 번이면 된다).
+  const onlineWindowMs = staleAfterMs - (Date.now() - sentAt);
+  expect(onlineWindowMs).toBeGreaterThan(0);
+  await expect(row).toHaveAttribute("data-connection", "online", { timeout: onlineWindowMs });
   await expect(row).toContainText("연결됨");
   await expect(current.locator(".badge-latest")).toHaveText("최신");
   await expect(current).not.toContainText("마지막 보고값");
@@ -122,7 +131,7 @@ test("heartbeat 1건 → online·최신, 약 7초 뒤 stale·마지막 보고값
 
   const waitMs = staleAfterMs + 1000 - (Date.now() - sentAt);
   if (waitMs > 0) await page.waitForTimeout(waitMs);
-  await page.getByRole("button", { name: "새로고침" }).click();
+  await refresh.click();
   await expect(row).toHaveAttribute("data-connection", "stale");
   await expect(row).toContainText("응답 없음");
   await expect(current).toContainText("마지막 보고값");

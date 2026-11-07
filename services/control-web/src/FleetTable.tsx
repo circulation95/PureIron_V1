@@ -1,5 +1,5 @@
 // fleet 표(읽기 전용). 판정은 fleetView.ts — 여기서는 그리기만 한다.
-import { formatTime, LABELS, sourceLabel, type CurrentCell, type SiteView } from "./fleetView";
+import { formatTime, LABELS, sourceLabel, timeZoneLabel, type CurrentCell, type SiteView } from "./fleetView";
 
 function Current({ cell }: { cell: CurrentCell }) {
   if (cell.kind === "none") return <span className="summary">{LABELS.noCurrent}</span>;
@@ -25,7 +25,9 @@ export function FleetTable({ rows }: { rows: SiteView[] }) {
           <th>연결</th>
           <th>목표(desired)</th>
           <th>현재(current)</th>
-          <th>{LABELS.lastSeen}</th>
+          <th>
+            {LABELS.lastSeen} <span className="summary">({timeZoneLabel()})</span>
+          </th>
           <th>마지막 적용 시도</th>
           <th>디스크</th>
         </tr>

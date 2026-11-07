@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 import { fetchFleet } from "./api/client";
 import { FleetTable } from "./FleetTable";
-import { failureMessage, formatTime, siteView, type SiteView } from "./fleetView";
+import { failureMessage, formatTime, siteView, timeZoneLabel, type SiteView } from "./fleetView";
 
 export const REFRESH_MS = 30_000;
 
@@ -62,7 +62,7 @@ export function App() {
         <span className="summary">30초마다 자동으로 새로고침합니다. 읽기 전용 화면입니다.</span>
         {state.kind === "ok" && (
           <span className="summary" data-testid="fetched-at">
-            조회 시각 {formatTime(state.fetchedAt)}
+            조회 시각 {formatTime(state.fetchedAt)} ({timeZoneLabel()}, 화면의 모든 시각은 이 시간대)
           </span>
         )}
       </div>

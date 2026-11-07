@@ -8,6 +8,7 @@ import {
   formatTime,
   isLatest,
   siteView,
+  timeZoneLabel,
   type Connection,
   type FleetSite,
   type LoadFailure,
@@ -54,6 +55,12 @@ const LATEST_TABLE: { name: string; row: FleetSite; latest: boolean }[] = [
   {
     name: "online · current gen 없음(null) → 최신 아님",
     row: site({ current: { product: null, project_version: null, gen: null, reported_at: REPORTED_AT, source: "online" } }),
+    latest: false,
+  },
+  {
+    // 폐쇄망 반입으로 더 높은 gen이 적용됐거나 desired를 되돌린 경우 — "같을 때만" 최신(리뷰 L2).
+    name: "online · current gen > desired → 최신 아님",
+    row: site({ current: { product: "2026.11.0", project_version: "v4", gen: 4, reported_at: REPORTED_AT, source: "offline" } }),
     latest: false,
   },
   { name: "online · current 보고 없음 → 최신 아님", row: site({ current: null }), latest: false },
@@ -126,18 +133,26 @@ test("formatTime: 시간대를 넘기면 그 시간대의 24시간제", () => {
   expect(formatTime("not-a-time")).toBe("not-a-time");
 });
 
-const FAILURE_TABLE: { failure: LoadFailure; contains: string }[] = [
-  { failure: { kind: "http", status: 401 }, contains: "HTTP 401" },
-  { failure: { kind: "http", status: 403 }, contains: "HTTP 403" },
-  { failure: { kind: "http", status: 503 }, contains: "중앙 DB" },
-  { failure: { kind: "http", status: 502 }, contains: "응답하지 않습니다(HTTP 502)" },
-  { failure: { kind: "http", status: 418 }, contains: "HTTP 418" },
-  { failure: { kind: "network", detail: "Failed to fetch" }, contains: "연결할 수 없습니다(Failed to fetch)" },
-  { failure: { kind: "format" }, contains: "형식" },
+test("timeZoneLabel: 화면 시각 옆에 붙이는 시간대 표기", () => {
+  expect(timeZoneLabel(new Date(REPORTED_AT), "Asia/Seoul")).toBe("GMT+9");
+  expect(timeZoneLabel(new Date(REPORTED_AT), "Asia/Kolkata")).toBe("GMT+5:30");
+});
+
+// 상태마다 그 상태에만 있는 문구까지 본다 — 분기를 지우면 기본 문구("현장 현황을 불러오지 못했습니다(HTTP n)")로
+// 떨어지고 "HTTP n"만 보는 단언은 그것을 놓친다(리뷰 N1).
+const FAILURE_TABLE: { failure: LoadFailure; contains: string[] }[] = [
+  { failure: { kind: "http", status: 401 }, contains: ["HTTP 401", "인증에 실패", "화면 로그인", "viewer 토큰"] },
+  { failure: { kind: "http", status: 403 }, contains: ["HTTP 403", "fleet 조회 권한"] },
+  { failure: { kind: "http", status: 503 }, contains: ["HTTP 503", "중앙 DB"] },
+  { failure: { kind: "http", status: 502 }, contains: ["응답하지 않습니다(HTTP 502)"] },
+  { failure: { kind: "http", status: 418 }, contains: ["현장 현황을 불러오지 못했습니다(HTTP 418)"] },
+  { failure: { kind: "network", detail: "Failed to fetch" }, contains: ["연결할 수 없습니다(Failed to fetch)"] },
+  { failure: { kind: "format" }, contains: ["형식"] },
 ];
 
 for (const { failure, contains } of FAILURE_TABLE) {
   test(`failureMessage: ${JSON.stringify(failure)}`, () => {
-    expect(failureMessage(failure)).toContain(contains);
+    const message = failureMessage(failure);
+    for (const text of contains) expect(message).toContain(text);
   });
 }

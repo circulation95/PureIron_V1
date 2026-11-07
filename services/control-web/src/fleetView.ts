@@ -129,6 +129,15 @@ export function formatTime(iso: string, timeZone?: string): string {
   return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}:${part("second")}`;
 }
 
+/** 시간대 표기("GMT+9"). 화면의 모든 시각은 브라우저 시간대라 표 머리·조회 시각 옆에 붙인다(시험은 timeZone을 넘긴다). */
+export function timeZoneLabel(at: Date = new Date(), timeZone?: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZoneName: "shortOffset",
+    ...(timeZone === undefined ? {} : { timeZone }),
+  }).formatToParts(at);
+  return parts.find((p) => p.type === "timeZoneName")?.value ?? "";
+}
+
 /** `/ui/fleet` 조회 실패. http = 응답은 왔지만 2xx가 아님, network = fetch 자체 실패. */
 export type LoadFailure =
   | { kind: "http"; status: number }
@@ -143,8 +152,9 @@ export function failureMessage(failure: LoadFailure): string {
       return "중앙 서버 응답 형식이 올바르지 않습니다.";
     case "http":
       switch (failure.status) {
+        // 401은 Caddy basic auth(화면을 연 뒤 비밀번호 교체·만료)와 control-api(viewer 토큰 거부) 둘 다에서 온다.
         case 401:
-          return "control-api가 조회 토큰을 거부했습니다(HTTP 401). 중앙 서버의 viewer 토큰 설정을 확인하세요.";
+          return "인증에 실패했습니다(HTTP 401) — 화면 로그인 또는 중앙 서버의 viewer 토큰. 다시 로그인하고, 계속되면 viewer 토큰 설정을 확인하세요.";
         case 403:
           return "조회 토큰에 fleet 조회 권한이 없습니다(HTTP 403). viewer 토큰인지 확인하세요.";
         case 503:
