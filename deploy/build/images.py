@@ -15,7 +15,9 @@ from pathlib import Path
 
 from pureiron_bundle.images import config_digest_from_tar
 
-SERVICES = ("core", "collector", "web", "simulator", "core-test")
+# 현장(core·collector·web·simulator·core-test) + 중앙(control-api·control-web, M4-3 G5). 중앙 이미지는
+# release_record.py --central 기록에만 들어가고 현장 번들·manifest(SITE_IMAGES)에는 들어가지 않는다.
+SERVICES = ("core", "collector", "web", "simulator", "core-test", "control-api", "control-web")
 
 
 class ImageError(RuntimeError):
