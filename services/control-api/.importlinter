@@ -3,8 +3,13 @@
 # Keep this file ASCII: import-linter reads it with the locale encoding (cp949 on Korean Windows).
 # A new domain module must be added to (a), (b) and (c); tests/test_importlinter.py fails when a
 # pureiron_control module is not classified.
+# pureiron_core is a second root package only so that contract (d) can see its submodules
+# (external packages are graphed at top-level granularity). A new pureiron_core top-level module
+# must be added to (d); tests/test_importlinter.py fails when one is missing.
 [importlinter]
-root_package = pureiron_control
+root_packages =
+    pureiron_control
+    pureiron_core
 include_external_packages = False
 
 [importlinter:contract:entrypoints]
@@ -43,3 +48,26 @@ modules =
     pureiron_control.fleet
     pureiron_control.reports
     pureiron_control.sites
+
+[importlinter:contract:core-platform-only]
+name = (d) control-api uses only pureiron_core.platform
+type = forbidden
+source_modules =
+    pureiron_control
+forbidden_modules =
+    pureiron_core._gen
+    pureiron_core.acquisition
+    pureiron_core.alarms
+    pureiron_core.api
+    pureiron_core.app
+    pureiron_core.audit
+    pureiron_core.auth
+    pureiron_core.cli
+    pureiron_core.cli_users
+    pureiron_core.historian
+    pureiron_core.project
+    pureiron_core.realtime
+    pureiron_core.runtime
+    pureiron_core.settings
+    pureiron_core.tags
+    pureiron_core.writes
