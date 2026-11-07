@@ -31,6 +31,11 @@ from pureiron_core.platform import migrate
 from pureiron_core.platform.db import DatabaseUnavailableError, connect_once
 from pureiron_core.platform.migrate_lint import lint_directory
 
+# control-api 카탈로그의 release 기록(중앙 release, `release_record.py --central`이 쓴다).
+# migrate lint의 "release된 epoch" 판정은 이 기록만 본다 — 현장 release 기록
+# (deploy/releases/*.json)과 섞지 않는다(G10).
+CENTRAL_RELEASES_DIR = "deploy/releases/central"
+
 # SIGTERM 뒤 열린 HTTP 요청을 기다리는 시간(초). 번들 내려받기는 Range로 이어지므로 짧게 둔다.
 HTTP_GRACEFUL_SHUTDOWN_S = 5
 
@@ -72,7 +77,9 @@ def _serve(settings: Settings) -> int:
 
 
 def _lint(args: argparse.Namespace) -> int:
-    report = lint_directory(args.directory, base_ref=args.base_ref)
+    report = lint_directory(
+        args.directory, base_ref=args.base_ref, releases_dir=CENTRAL_RELEASES_DIR
+    )
     for notice in report.notices:
         print(f"notice: {notice}")
     for issue in report.issues:
