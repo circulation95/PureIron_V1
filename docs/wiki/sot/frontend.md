@@ -347,7 +347,7 @@ e2e 결과·trace·화면 스크린샷은 `artifacts/web-e2e/`(`test-results/`·
 
 **스택**: site web과 같은 도구체인(Vite + React 19 + TypeScript strict + eslint `strictTypeChecked` + `@playwright/test`). 라우터·`openapi-fetch`·상태 라이브러리는 없다(화면 1장, 호출 1개). 타입 정본은 `packages/contracts/openapi/control-api.json` → `src/api/schema.d.ts`(contracts-drift가 검사).
 
-**브라우저는 토큰을 갖지 않는다(★G1)**: 사람 관문은 Caddy basic auth이고 화면은 `GET /ui/fleet` 하나만 부른다. Caddy가 그 경로에만 viewer 토큰(비밀 파일)을 붙여 control-api `GET /api/v1/fleet`로 넘긴다 — sessionStorage·쿠키·CORS 없음, control-api 무변경. 개발 서버(`npm run dev`, :3100)도 같은 모양으로 `/ui/fleet`만 프록시하고 토큰은 `PUREIRON_CONTROL_VIEWER_TOKEN_FILE`에서 읽는다.
+**브라우저는 토큰을 갖지 않는다(★G1)**: 사람 관문은 Caddy basic auth이고 화면은 `GET /ui/fleet` 하나만 부른다. Caddy가 그 경로에만 viewer 토큰(비밀 파일)을 붙여 control-api `GET /api/v1/fleet`로 넘긴다 — sessionStorage·쿠키·CORS 없음, control-api 무변경. 개발 서버(`npm run dev`, :3100, 개발 전용 — basic auth 없음, 기본 대상은 M4-2 리허설 control-api `127.0.0.1:8100`)도 같은 모양으로 `/ui/fleet`만 프록시하고 토큰은 `PUREIRON_CONTROL_VIEWER_TOKEN_FILE`에서 읽어 GET에만 붙인다.
 
 | 경로 | 책임 |
 |---|---|
@@ -362,9 +362,9 @@ e2e 결과·trace·화면 스크린샷은 `artifacts/web-e2e/`(`test-results/`·
 - 연결은 control-api가 응답 때 중앙 시각으로 계산한 `connection`을 그대로 쓴다(online "연결됨"·stale "응답 없음"·never "수신 없음"). 브라우저 시계로 다시 판정하지 않는다.
 - **"최신" 배지는 `connection == online`이고 `current.gen == desired.generation`일 때만**. 게시 없음·보고 없음·gen null이면 없다.
 - **stale·never면 current 칸에 "마지막 보고값" 레이블**을 붙이고 배지를 달지 않는다.
-- 두 시각은 이름과 칸을 나눈다: current 칸의 "현장 보고 시각"(`current.reported_at`, 현장 시계) ≠ "중앙 수신 시각" 열(`last_seen`, 중앙 시계). 시각은 브라우저 시간대 `YYYY-MM-DD HH:mm:ss`.
+- 두 시각은 이름과 칸을 나눈다: current 칸의 "현장 보고 시각"(`current.reported_at`, 현장 시계) ≠ "중앙 수신 시각" 열(`last_seen`, 중앙 시계). 시각은 브라우저 시간대 `YYYY-MM-DD HH:mm:ss`이고, 시간대 표기(`GMT+9` 꼴, `timeZoneLabel`)를 "중앙 수신 시각" 열 머리와 조회 시각 옆에 붙인다(원격 지원자 등 다른 시간대 브라우저에서 장애 시각을 대조할 수 있게).
 - 30초마다 자동 새로고침 + "새로고침" 버튼(조회 중 비활성). 앞 조회는 취소한다.
-- **조회가 실패하면 표를 지우고 오류 문구만**(`role="alert"`): 401 "control-api가 조회 토큰을 거부했습니다"(viewer 토큰 설정 확인), 403 권한, 503 "중앙 DB에 연결할 수 없습니다", 502·504 "control-api가 응답하지 않습니다", 네트워크 "중앙 서버에 연결할 수 없습니다", 모양이 다른 본문 "응답 형식이 올바르지 않습니다". 이전 표를 남기면 끊긴 현장이 "연결됨"으로 남아 보이기 때문이다.
+- **조회가 실패하면 표를 지우고 오류 문구만**(`role="alert"`): 401 "인증에 실패했습니다 — 화면 로그인 또는 중앙 서버의 viewer 토큰"(Caddy basic auth와 control-api 둘 다 401을 낼 수 있어 둘을 함께 안내), 403 권한, 503 "중앙 DB에 연결할 수 없습니다", 502·504 "control-api가 응답하지 않습니다", 네트워크 "중앙 서버에 연결할 수 없습니다", 모양이 다른 본문 "응답 형식이 올바르지 않습니다". 이전 표를 남기면 끊긴 현장이 "연결됨"으로 남아 보이기 때문이다.
 
 **명령**
 

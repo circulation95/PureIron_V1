@@ -83,7 +83,7 @@ def test_central_catalog_uses_only_central_records(tmp_path: Path) -> None:
 
 
 def test_site_records_do_not_release_central_epochs(tmp_path: Path) -> None:
-    """중앙 기록이 없으면 현장 기록(epoch 5)은 보지 않고 모든 epoch를 release된 것으로 본다."""
+    """중앙 기록이 없으면 현장 기록(epoch 1)은 보지 않고 모든 epoch를 release된 것으로 본다."""
     directory = _repo(tmp_path, site=1, central=None)
     messages = _messages(directory, CENTRAL_RELEASES_DIR)
     assert any("released epoch 2" in m for m in messages), messages

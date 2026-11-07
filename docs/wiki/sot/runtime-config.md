@@ -187,13 +187,16 @@ core의 초 단위 값(`…_S`)은 양의 유한 수만 받는다 — 0·음수�
 
 | 변수 | 기본값 | 의미 |
 |---|---|---|
-| `PUREIRON_CENTRAL_RELEASE` | `0.1.0-dev` | `pureiron/control-api`·`control-web` 이미지 태그 = release 이름(기록 `deploy/releases/central/<이름>.json`). control-api `PUREIRON_RELEASE`로도 넘어간다 |
+| `PUREIRON_CENTRAL_RELEASE` | compose `0.1.0-dev`, `.env.example` `c0` | `pureiron/control-api`·`control-web` 이미지 태그 = release 이름(기록 `deploy/releases/central/<이름>.json`). control-api `PUREIRON_RELEASE`로도 넘어간다. 운영은 기록이 있는 이름(`c0`, `c1`, …)만 — `0.1.0-dev`는 CI·개발용 태그(같은 docker 데몬의 CI가 PR 코드로 다시 빌드해 덮어씀)라 운영 금지 |
 | `PUREIRON_CENTRAL_SECRETS_DIR` | 없음(필수 — 없으면 compose가 거부) | 비밀 파일 디렉터리(저장소 밖, 0700) |
-| `PUREIRON_CENTRAL_HOST` | `localhost` | Caddy 사이트 주소 = `tls internal` 인증서 이름(쉼표로 여러 개) |
+| `PUREIRON_CENTRAL_HOST` | `localhost` | Caddy 사이트 주소 = `tls internal` 인증서 이름(쉼표로 여러 개). 여기 없는 `Host`로 온 요청은 421 |
+| `PUREIRON_CENTRAL_DEFAULT_SNI` | `localhost` | Caddy 전역 `default_sni` — SNI 없는 클라이언트에 줄 인증서 이름. **IP로 운영하면 그 IP**(같은 IP를 `PUREIRON_CENTRAL_HOST`에도): IP로 접속하는 클라이언트는 SNI를 보내지 않아 기본값이면 TLS 핸드셰이크가 끊긴다(alert 80, M4-3 리뷰 실측). IP는 하나만 — 나머지는 DNS 이름으로 접속 |
 | `PUREIRON_CENTRAL_BIND` / `PUREIRON_CENTRAL_HTTPS_PORT` | `127.0.0.1` / `28443` | 바깥에 여는 유일한 포트(Caddy 컨테이너 8443). control-db·control-api는 호스트 포트 없음 |
 | `PUREIRON_CONTROL_POLL_S` | `60` | control-api 설정 그대로 전달(위 표) |
 
-비밀 파일(`$PUREIRON_CENTRAL_SECRETS_DIR/…`, 컨테이너 `/run/secrets/…`): `control_db_password`(control-db·control-api), `viewer_token`(Caddy만 — `GET /ui/fleet`에 Bearer로 붙임, `{file.*}` placeholder가 요청마다 읽고 끝 줄바꿈은 버린다), `ui_basic_auth`(Caddy만 — 한 줄 `<사용자> <bcrypt 해시>`, Caddyfile `import`, 없으면 Caddy가 뜨지 않는다). 컨테이너 사용자가 읽도록 파일은 0644, 보호는 디렉터리 권한. 볼륨: `control-db`·`control-data`(`/var/lib/pureiron-control` 번들·드래프트, 이미지가 UID 10001 소유로 만든다)·`caddy-data`(로컬 CA — 지우면 루트 CA가 바뀐다)·`caddy-config`.
+비밀 파일(`$PUREIRON_CENTRAL_SECRETS_DIR/…`, 컨테이너 `/run/secrets/…`): `control_db_password`(control-db·control-api), `viewer_token`(Caddy만 — `GET /ui/fleet`에 Bearer로 붙임, `{file.*}` placeholder가 요청마다 읽고 끝 줄바꿈은 버린다), `ui_basic_auth`(Caddy만 — 한 줄 `<사용자> <bcrypt 해시>`, 기동 때 Caddyfile `import`, 없으면 Caddy가 뜨지 않는다. **빈 파일이면 경고만 남기고 떠서 화면 요청이 모두 401**). 컨테이너 사용자가 읽도록 파일은 0644, 보호는 디렉터리 권한. 볼륨: `control-db`·`control-data`(`/var/lib/pureiron-control` 번들·드래프트, 이미지가 UID 10001 소유로 만든다)·`caddy-data`(로컬 CA — 지우면 루트 CA가 바뀐다)·`caddy-config`.
+
+**비밀 파일 교체 규칙(모든 비밀 파일 공통)**: 같은 파일에 덮어쓴다(`cat 새파일 > 비밀파일`), `mv`로 바꾸지 않는다. compose `secrets:`는 파일 하나의 bind mount라 컨테이너가 처음 inode를 계속 본다. Docker Desktop(WSL) 실측(M4-3 수정 r1): 덮어쓰기는 재시작 없이 보이고, `mv` 뒤에는 옛 내용을 보다가 `restart`·`up -d` 때 `error mounting … no such file or directory`로 컨테이너가 뜨지 않는다. 복구는 `up -d --force-recreate <서비스>`. viewer 토큰 교체 순서 = 새 이름으로 `token create` → 다른 파일에 받기 → 확인 → 같은 파일에 덮어쓰기 → 화면 확인 → 옛 토큰 `token revoke --name`(`deploy/central/README.md`).
 
 e2e(`deploy/tests/central_stack.py`)는 `PUREIRON_IT_PROJECT`(프로젝트 `<값>-central`)·`PUREIRON_IT_CENTRAL_PORT`(기본 28543)·`PUREIRON_RELEASE`로 격리하고 `PUREIRON_CONTROL_POLL_S=2`로 띄운다. 쓰지 않는 포트: 25432·25433(CI DB), 25443·8100(M4-2 리허설 central).
 
