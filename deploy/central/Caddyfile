@@ -4,21 +4,28 @@
 # Path rules (G1, G3):
 #   /api/v1/*   -> control-api as-is, NO basic auth. The API's own auth is the gate (site token +
 #                  signature, admin/ci/viewer tokens). Site Updaters poll here over HTTPS.
-#   /ui/fleet   -> basic auth, GET/HEAD only, rewritten to control-api GET /api/v1/fleet with the
+#   /ui/fleet   -> basic auth, GET only, rewritten to control-api GET /api/v1/fleet with the
 #                  viewer token from a secret file. This is the ONLY place a token is added.
 #   /ui/*       -> basic auth, then 404 (never proxied, no token).
 #   /, other    -> basic auth, static control-web (SPA fallback to index.html).
+#   other Host  -> 421 (no site matched), same security headers.
 #
 # Secrets (compose secrets, files only):
 #   /run/secrets/ui_basic_auth  one line "<user> <bcrypt hash>" (caddy hash-password), imported below.
 #   /run/secrets/viewer_token   control-api viewer token (pureiron-control token create --role viewer).
 #                               Read per request by the {file.*} placeholder (trailing newline trimmed).
+#   Rotate secrets by overwriting the same file (cat new > file), never mv: compose secrets are
+#   single-file bind mounts that keep the old inode (README.md).
 {
 	admin off
 	# Local CA (tls internal) lives in /data; do not try to install it into the container trust store.
 	skip_install_trust
 	https_port 8443
 	auto_https disable_redirects
+	# Clients connecting by IP address send no SNI. Without this Caddy looks up a certificate for its
+	# own container IP and aborts the handshake (TLS alert 80). Set it to the IP clients use
+	# (PUREIRON_CENTRAL_DEFAULT_SNI, which must also be listed in PUREIRON_CENTRAL_HOST).
+	default_sni {$PUREIRON_CENTRAL_DEFAULT_SNI:localhost}
 }
 
 {$PUREIRON_CENTRAL_HOST:localhost} {
@@ -46,7 +53,7 @@
 
 		@fleet {
 			path /ui/fleet
-			method GET HEAD
+			method GET
 		}
 		handle @fleet {
 			rewrite * /api/v1/fleet
@@ -65,4 +72,17 @@
 			file_server
 		}
 	}
+}
+
+# Any other Host (no site above matched): 421 with the same security headers instead of Caddy's
+# empty 200. No certificate is issued for this block; TLS still uses the names above.
+https:// {
+	tls internal
+	header {
+		Content-Security-Policy "frame-ancestors 'none'"
+		X-Frame-Options "DENY"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+	}
+	respond 421
 }

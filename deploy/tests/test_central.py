@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -59,6 +60,46 @@ def _block(lines: list[str], opener: str) -> list[str]:
             return body[1:]
         body.append(line)
     raise AssertionError(f"unterminated block {opener}")
+
+
+@dataclass
+class _Node:
+    """Caddyfile 지시 한 줄. `head {`로 열린 블록이면 children에 안쪽 지시(순서 유지)."""
+
+    head: str
+    children: list[_Node] = field(default_factory=list)
+
+    def heads(self) -> list[str]:
+        return [child.head for child in self.children]
+
+    def child(self, head: str) -> _Node:
+        found = [c for c in self.children if c.head == head]
+        assert len(found) == 1, (head, self.heads())
+        return found[0]
+
+    def walk(self) -> list[_Node]:
+        return [self, *(node for child in self.children for node in child.walk())]
+
+
+def _caddy_tree() -> _Node:
+    """주석 뺀 Caddyfile을 블록 트리로(한 줄에 `{`/`}` 하나 — 이 파일의 형식)."""
+    root = _Node("<root>")
+    stack = [root]
+    for line in _caddy_lines():
+        if line == "}":
+            stack.pop()
+        elif line.endswith(" {") or line == "{":
+            node = _Node(line.removesuffix("{").strip() or "{")
+            stack[-1].children.append(node)
+            stack.append(node)
+        else:
+            stack[-1].children.append(_Node(line))
+    assert stack == [root], "unbalanced Caddyfile"
+    return root
+
+
+def _site() -> _Node:
+    return _caddy_tree().child("{$PUREIRON_CENTRAL_HOST:localhost}")
 
 
 def _arg(dockerfile: Path, name: str) -> str:
@@ -153,11 +194,11 @@ def test_caddyfile_is_mounted_read_only() -> None:
 
 
 def test_token_is_added_only_inside_the_fleet_handler() -> None:
-    """★G1·R1: Authorization을 만드는 줄은 하나뿐이고 GET/HEAD `/ui/fleet` 핸들러 안에 있다."""
+    """★G1·R1: Authorization을 만드는 줄은 하나뿐이고 GET `/ui/fleet` 핸들러 안에 있다."""
     lines = _caddy_lines()
     injections = [line for line in lines if "Authorization" in line]
     assert injections == ['header_up Authorization "Bearer {file./run/secrets/viewer_token}"']
-    assert _block(lines, "@fleet") == ["path /ui/fleet", "method GET HEAD"]
+    assert _block(lines, "@fleet") == ["path /ui/fleet", "method GET"]
     fleet = _block(lines, "handle @fleet")
     assert fleet[0] == "rewrite * /api/v1/fleet"
     assert injections[0] in fleet
@@ -172,6 +213,29 @@ def test_api_is_proxied_without_basic_auth() -> None:
     assert _block(lines, "basic_auth") == ["import /run/secrets/ui_basic_auth"]
 
 
+def test_basic_auth_comes_before_every_ui_handler() -> None:
+    """★G1(리뷰 M2): 바깥 `handle`의 첫 지시가 basic_auth이고 fleet·`/ui/*`·정적 핸들러는
+    모두 그 뒤 같은 깊이에 있다. basic_auth를 `handle /ui/*` 안으로 옮기면 익명
+    `GET /ui/fleet`에 viewer 토큰이 붙는다(리뷰 실측 V1)."""
+    site = _site()
+    assert site.heads() == ["tls internal", "header", "handle /api/v1/*", "handle"]
+    outer = site.child("handle")
+    assert outer.heads() == ["basic_auth", "@fleet", "handle @fleet", "handle /ui/*", "handle"]
+    assert outer.children[0].heads() == ["import /run/secrets/ui_basic_auth"]
+    every = _caddy_tree().walk()
+    assert [n for n in every if n.head == "basic_auth"] == [outer.children[0]]
+
+
+def test_api_is_the_only_handler_outside_basic_auth() -> None:
+    """basic auth 없는 핸들러는 `handle /api/v1/*` 하나이고, 그 안에는 토큰 주입이 없다."""
+    site = _site()
+    handlers = [c for c in site.children if c.head.startswith("handle")]
+    unauthenticated = [c for c in handlers if c.head != "handle"]
+    assert [c.head for c in unauthenticated] == ["handle /api/v1/*"]
+    api = unauthenticated[0]
+    assert not [n for n in api.walk() if "header_up" in n.head or "Authorization" in n.head]
+
+
 def test_tls_internal_and_host_from_env() -> None:
     lines = _caddy_lines()
     assert "{$PUREIRON_CENTRAL_HOST:localhost} {" in lines
@@ -179,13 +243,34 @@ def test_tls_internal_and_host_from_env() -> None:
     assert "https_port 8443" in lines
 
 
+def test_default_sni_for_ip_clients() -> None:
+    """리뷰 M1: IP로 붙는 클라이언트는 SNI를 보내지 않는다 — 전역 default_sni(env)로 고른다."""
+    options = _caddy_tree().child("{")
+    assert "default_sni {$PUREIRON_CENTRAL_DEFAULT_SNI:localhost}" in options.heads()
+    env = cast(dict[str, str], _services()["control-web"]["environment"])
+    assert env["PUREIRON_CENTRAL_DEFAULT_SNI"] == "${PUREIRON_CENTRAL_DEFAULT_SNI:-localhost}"
+    assert "PUREIRON_CENTRAL_DEFAULT_SNI=" in ENV_EXAMPLE.read_text(encoding="utf-8")
+
+
+def test_other_hosts_get_421_with_headers() -> None:
+    """리뷰 N4: 어떤 사이트에도 맞지 않는 Host는 빈 200 대신 421 + 보안 헤더."""
+    tree = _caddy_tree()
+    assert tree.heads() == ["{", "{$PUREIRON_CENTRAL_HOST:localhost}", "https://"]
+    fallback = tree.child("https://")
+    assert fallback.heads() == ["tls internal", "header", "respond 421"]
+    assert fallback.child("header").heads() == _site().child("header").heads()
+
+
 def test_security_headers_match_site_web() -> None:
     pattern = re.compile(r'^\s*add_header (\S+) "([^"]+)" always;', re.MULTILINE)
     nginx = dict(pattern.findall(NGINX.read_text(encoding="utf-8")))
     assert len(nginx) == 4
-    caddy = _block(_caddy_lines(), "header")
-    for name, value in nginx.items():
-        assert f'{name} "{value}"' in caddy, name
+    caddy = _site().child("header").heads()
+    # 리뷰 L1: 정확히 이 4줄뿐(접두 없는 설정). 삭제(-)·defer(>)가 하나라도 있으면 Caddy가
+    # 블록 전체를 미루고 오류 응답(basic auth 401 등)에서는 헤더 4개가 모두 빠진다(2.11.7 실측).
+    assert len(caddy) == 4, caddy
+    assert not [line for line in caddy if line.startswith(("-", ">"))], caddy
+    assert sorted(caddy) == sorted(f'{name} "{value}"' for name, value in nginx.items())
 
 
 # --- 이미지 ---------------------------------------------------------------------------------

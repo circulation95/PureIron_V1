@@ -66,6 +66,8 @@ services:
     environment:
       # Caddyfile의 사이트 주소(인증서 이름). 여러 개면 쉼표로: "localhost, 192.168.0.10".
       PUREIRON_CENTRAL_HOST: ${PUREIRON_CENTRAL_HOST:-localhost}
+      # SNI 없는 클라이언트(IP로 접속하는 현장 VM·브라우저)에 줄 인증서 이름. IP로 접속하면 그 IP로.
+      PUREIRON_CENTRAL_DEFAULT_SNI: ${PUREIRON_CENTRAL_DEFAULT_SNI:-localhost}
     ports:
       - ${PUREIRON_CENTRAL_BIND:-127.0.0.1}:${PUREIRON_CENTRAL_HTTPS_PORT:-28443}:8443
     secrets: [viewer_token, ui_basic_auth]
