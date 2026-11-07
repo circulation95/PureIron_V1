@@ -1,0 +1,68 @@
+# Central Caddy (pureiron/control-web image, M4-3 G1 G3 G4). compose mounts this at /etc/caddy/Caddyfile.
+# Keep this file ASCII (Caddyfile is read as bytes; comments in Korean live in README.md).
+#
+# Path rules (G1, G3):
+#   /api/v1/*   -> control-api as-is, NO basic auth. The API's own auth is the gate (site token +
+#                  signature, admin/ci/viewer tokens). Site Updaters poll here over HTTPS.
+#   /ui/fleet   -> basic auth, GET/HEAD only, rewritten to control-api GET /api/v1/fleet with the
+#                  viewer token from a secret file. This is the ONLY place a token is added.
+#   /ui/*       -> basic auth, then 404 (never proxied, no token).
+#   /, other    -> basic auth, static control-web (SPA fallback to index.html).
+#
+# Secrets (compose secrets, files only):
+#   /run/secrets/ui_basic_auth  one line "<user> <bcrypt hash>" (caddy hash-password), imported below.
+#   /run/secrets/viewer_token   control-api viewer token (pureiron-control token create --role viewer).
+#                               Read per request by the {file.*} placeholder (trailing newline trimmed).
+{
+	admin off
+	# Local CA (tls internal) lives in /data; do not try to install it into the container trust store.
+	skip_install_trust
+	https_port 8443
+	auto_https disable_redirects
+}
+
+{$PUREIRON_CENTRAL_HOST:localhost} {
+	tls internal
+
+	# Same four security headers as the site web (services/web/nginx.conf, plan M3c D15), also on
+	# error responses (basic auth 401, 404). Do not add a header deletion (e.g. -Server) here: any
+	# deletion makes Caddy defer the whole block, and deferred headers are dropped on error
+	# responses (checked on Caddy 2.11.7, M4-3).
+	header {
+		Content-Security-Policy "frame-ancestors 'none'"
+		X-Frame-Options "DENY"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+	}
+
+	handle /api/v1/* {
+		reverse_proxy control-api:8100
+	}
+
+	handle {
+		basic_auth {
+			import /run/secrets/ui_basic_auth
+		}
+
+		@fleet {
+			path /ui/fleet
+			method GET HEAD
+		}
+		handle @fleet {
+			rewrite * /api/v1/fleet
+			reverse_proxy control-api:8100 {
+				header_up Authorization "Bearer {file./run/secrets/viewer_token}"
+			}
+		}
+
+		handle /ui/* {
+			respond 404
+		}
+
+		handle {
+			root * /srv/control-web
+			try_files {path} /index.html
+			file_server
+		}
+	}
+}
