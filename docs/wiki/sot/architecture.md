@@ -266,6 +266,16 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
   write 권한·서명 호스트 이전)는 sudo 뒤로 옮기는 것만으로는 안 되고 root 소유 설치본·venv, 보안 설정을 root 소유 설정
   파일에서만 읽는 signer 모드(argv는 `--fleet-repo`·`--sha`만 — 미구현 백로그), `trust-base`의 sudoers 제외가 필요하다
   (`deploy/templates/pureiron-fleet/README.md`).
+- **중앙 배포(M4-3)**: `deploy/central/compose.yml` = control-db(업스트림 PostgreSQL 16 digest 고정) + control-api
+  (`pureiron/control-api`, core와 같은 재현 빌드, migrations 포함·기동 때 migrate 안 함) + control-web(`pureiron/control-web`
+  = Caddy 2.11.7 + 정적 dist, Caddyfile은 `deploy/central`에서 마운트). 바깥에 여는 포트는 Caddy HTTPS 하나(`tls internal`,
+  호스트 이름·포트는 env, PoC = 개발 PC WSL). `/api/v1/*`는 basic auth 없이 control-api로(API 인증이 관문 — 현장 Updater
+  polling 경로), 사람 화면(`/`·`/ui/*`)은 basic auth 뒤, viewer 토큰은 `GET /ui/fleet` 한 경로에만 Caddy가 붙인다(브라우저는
+  토큰을 갖지 않는다, ★G1). 중앙 이미지는 현장 번들·manifest에 들어가지 않고 신원은 중앙 release 기록
+  `deploy/releases/central/<이름>.json`(config digest + control-api 스키마 epoch, `release_record.py --central`)이다 —
+  control-api `migrate lint`의 release 기준도 이 디렉터리(G10). import-linter (d): `pureiron_control`은 `pureiron_core.platform`
+  밖을 import하지 않는다(이미지는 아직 core 의존을 통째로 싣는다 — platform 분리는 백로그). 현장 Updater가 사설 CA HTTPS를
+  신뢰하는 설정·admin·ci 경로 출처 제한·공인 인증서(M6)는 범위 밖(`deploy/central/README.md` 강화 항목).
 
 ## V1 구현 현황 (2026-10-17)
 
@@ -276,7 +286,7 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
 | M3a | collector(Modbus·링버퍼·replay), core tags·historian·정의, r2(epoch 3), VM 실측 r1→r2 30/30 | 완료 |
 | M3b | alarms·auth·audit·realtime·devices·history API, web 로그인 + 5화면, r3(epoch 4), VM 실측 r2→r3 30/30 | 완료 |
 | M3c | PLC 쓰기 경로(ADR-013 가드레일): M3c-0 REST Origin/CSRF·로그인 제한, M3c-1 계약·collector 쓰기·simulator, M3c-2 core 쓰기(writes·REST·감사) | 진행 중 — M3c-3 web 쓰기 화면 예정 |
-| M4 | control-api·control-web·fleet·release 파이프라인 | 진행 중 — M4-0 control-api 본체(API·control-db·인증·seq 규칙), M4-1 현장 송신(heartbeat·보고 온라인 전송·드래프트 업로드·쓰기 스위치 서명화, Updater 0.2.0). fleet/publish M4-2·control-web M4-3 예정 |
+| M4 | control-api·control-web·fleet·release 파이프라인 | 진행 중 — M4-0 control-api 본체(API·control-db·인증·seq 규칙), M4-1 현장 송신(heartbeat·보고 온라인 전송·드래프트 업로드·쓰기 스위치 서명화, Updater 0.2.0), M4-2 fleet/publish, M4-3 control-web·`deploy/central`(Caddy·중앙 이미지·중앙 release 기록 경로). 마감(r5·15분 실측·VM) 예정 |
 | M5 | 프로젝트 수명주기(project-tools 완성, apply·드래프트 회수), r4(epoch 5), VM 실측 r3→r4 35/35 | 진행 중 — VM 실측 35/35 완료, `@r4` 태그·고객 테스트 repo ref 확정 남음 |
 
 진행 기록의 정본은 각 PR과 [data-contracts](data-contracts.md)의 release·실측 절이다.

@@ -165,7 +165,7 @@ core의 초 단위 값(`…_S`)은 양의 유한 수만 받는다 — 0·음수�
 
 ### V1 control-api 환경변수 (M4-0 구현)
 
-정본은 `services/control-api/src/pureiron_control/settings.py`. 벤더 쪽 중앙(M4 C3: 개발 PC WSL compose, 운영 compose는 M4-3 `deploy/central`)에서만 쓴다. 비밀값은 파일 경로로만 받는다.
+정본은 `services/control-api/src/pureiron_control/settings.py`. 벤더 쪽 중앙(M4 C3: 개발 PC WSL compose, 운영 compose는 `deploy/central` — 아래 M4-3 절)에서만 쓴다. 비밀값은 파일 경로로만 받는다.
 
 | 변수 | 기본값 | 의미 |
 |---|---|---|
@@ -175,11 +175,27 @@ core의 초 단위 값(`…_S`)은 양의 유한 수만 받는다 — 0·음수�
 | `PUREIRON_CONTROL_DATA_DIR` | `/var/lib/pureiron-control` | 게시 번들 `bundles/<site>/g<gen>.pib`·드래프트 `drafts/<site>/<sha256>.tar` |
 | `PUREIRON_CONTROL_POLL_S` | `60` | 현장 poll 주기 가정. `GET /fleet`의 `online` = `last_seen` ≤ 3 × 이 값(기본 180 s, C8) — 현장 Updater `PUREIRON_POLL_INTERVAL_S`와 맞춘다 |
 | `PUREIRON_CONTROL_MAX_BUNDLE_BYTES` | `17179869184`(16 GiB) | `PUT /bundles` 업로드 상한(넘으면 413) |
-| `PUREIRON_CONTROL_MIGRATIONS_DIR` | 소스 트리 `services/control-api/migrations` | 이미지(M4-3)에서는 설치 경로 |
+| `PUREIRON_CONTROL_MIGRATIONS_DIR` | 소스 트리 `services/control-api/migrations` | 이미지(`pureiron/control-api`, M4-3)에서는 `/opt/pureiron/migrations` |
 | `PUREIRON_RELEASE` | 패키지 버전 | `schema_migrations.release` 기록값 |
 | `PUREIRON_DEV_CONTROL_DB_PORT` | `25433` | 개발·통합 테스트 compose(`deploy/compose/control.dev.yml`) control-db 호스트 포트 |
 
 초·바이트 값은 양의 유한 수만 받고 잘못된 값은 기동 시 `SettingsError`(CLI 종료 코드 4)다. 사람·CI token은 env가 아니라 `pureiron-control token create --role admin|ci|viewer --name <이름>`으로만 만든다(원문은 그때 한 번만 출력, DB에는 SHA-256).
+
+### V1 중앙 compose 변수·비밀 파일 (M4-3 구현)
+
+정본은 `deploy/central/compose.yml`·`Caddyfile`·`.env.example`, 절차는 `deploy/central/README.md`. compose 변수(보간용, `.env` 또는 `--env-file`):
+
+| 변수 | 기본값 | 의미 |
+|---|---|---|
+| `PUREIRON_CENTRAL_RELEASE` | `0.1.0-dev` | `pureiron/control-api`·`control-web` 이미지 태그 = release 이름(기록 `deploy/releases/central/<이름>.json`). control-api `PUREIRON_RELEASE`로도 넘어간다 |
+| `PUREIRON_CENTRAL_SECRETS_DIR` | 없음(필수 — 없으면 compose가 거부) | 비밀 파일 디렉터리(저장소 밖, 0700) |
+| `PUREIRON_CENTRAL_HOST` | `localhost` | Caddy 사이트 주소 = `tls internal` 인증서 이름(쉼표로 여러 개) |
+| `PUREIRON_CENTRAL_BIND` / `PUREIRON_CENTRAL_HTTPS_PORT` | `127.0.0.1` / `28443` | 바깥에 여는 유일한 포트(Caddy 컨테이너 8443). control-db·control-api는 호스트 포트 없음 |
+| `PUREIRON_CONTROL_POLL_S` | `60` | control-api 설정 그대로 전달(위 표) |
+
+비밀 파일(`$PUREIRON_CENTRAL_SECRETS_DIR/…`, 컨테이너 `/run/secrets/…`): `control_db_password`(control-db·control-api), `viewer_token`(Caddy만 — `GET /ui/fleet`에 Bearer로 붙임, `{file.*}` placeholder가 요청마다 읽고 끝 줄바꿈은 버린다), `ui_basic_auth`(Caddy만 — 한 줄 `<사용자> <bcrypt 해시>`, Caddyfile `import`, 없으면 Caddy가 뜨지 않는다). 컨테이너 사용자가 읽도록 파일은 0644, 보호는 디렉터리 권한. 볼륨: `control-db`·`control-data`(`/var/lib/pureiron-control` 번들·드래프트, 이미지가 UID 10001 소유로 만든다)·`caddy-data`(로컬 CA — 지우면 루트 CA가 바뀐다)·`caddy-config`.
+
+e2e(`deploy/tests/central_stack.py`)는 `PUREIRON_IT_PROJECT`(프로젝트 `<값>-central`)·`PUREIRON_IT_CENTRAL_PORT`(기본 28543)·`PUREIRON_RELEASE`로 격리하고 `PUREIRON_CONTROL_POLL_S=2`로 띄운다. 쓰지 않는 포트: 25432·25433(CI DB), 25443·8100(M4-2 리허설 central).
 
 ### V1 fleet publish 호스트 경로·환경변수 (M4-2 구현)
 

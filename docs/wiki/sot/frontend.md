@@ -340,3 +340,38 @@ bash scripts/g1.sh web-e2e       # 이미지 빌드 → pureiron-it compose(쓰�
 ```
 
 e2e 결과·trace·화면 스크린샷은 `artifacts/web-e2e/`(`test-results/`·`report/`·`screens/`·`compose.log`). `PUREIRON_IT_KEEP=1`이면 스택을 내리지 않는다. 포트·프로젝트 이름은 core 통합 테스트와 같은 환경변수(`PUREIRON_IT_PROJECT`·`PUREIRON_DEV_*_PORT`·`PUREIRON_IT_WEB_PORT`)로 바꾼다.
+
+## 17. V1 control-web (M4-3)
+
+> 이 절은 **PureIron_V1 현행**이다. 중앙(벤더 쪽) 현장 현황 화면. 근거: plan M4-3 ★G1·G7·G8, 배포·경로 규칙은 `deploy/central/README.md`와 [api-events](api-events.md) "중앙 경로 노출".
+
+**스택**: site web과 같은 도구체인(Vite + React 19 + TypeScript strict + eslint `strictTypeChecked` + `@playwright/test`). 라우터·`openapi-fetch`·상태 라이브러리는 없다(화면 1장, 호출 1개). 타입 정본은 `packages/contracts/openapi/control-api.json` → `src/api/schema.d.ts`(contracts-drift가 검사).
+
+**브라우저는 토큰을 갖지 않는다(★G1)**: 사람 관문은 Caddy basic auth이고 화면은 `GET /ui/fleet` 하나만 부른다. Caddy가 그 경로에만 viewer 토큰(비밀 파일)을 붙여 control-api `GET /api/v1/fleet`로 넘긴다 — sessionStorage·쿠키·CORS 없음, control-api 무변경. 개발 서버(`npm run dev`, :3100)도 같은 모양으로 `/ui/fleet`만 프록시하고 토큰은 `PUREIRON_CONTROL_VIEWER_TOKEN_FILE`에서 읽는다.
+
+| 경로 | 책임 |
+|---|---|
+| `src/fleetView.ts` | 판정 순수 함수: 연결 문구, "최신" 배지, current 칸 종류, 마지막 적용 시도 요약, 시각 형식, 실패 문구 |
+| `src/fleetView.test.ts` | 판정 단위 표(`npm run unit`, Playwright 러너·브라우저 없음 — `playwright.unit.config.ts`) |
+| `src/App.tsx` · `src/FleetTable.tsx` | 화면 1장: 조회 차례(30초 자동·수동 새로고침), 표 그리기만 |
+| `src/api/client.ts` | `fetch("/ui/fleet")` → 성공 행 또는 실패 종류(http 상태·network·format) |
+| `e2e/` · `playwright.config.ts` | deploy/central compose 위 chromium(`bash scripts/g1.sh control-web-e2e`) |
+
+**표 규칙(G7)** — 읽기 전용 표 1장, 한국어, 편집 기능 없음.
+- 열: 현장 · 연결 · 목표(desired: `g<gen> · <제품> / <프로젝트>`, 없으면 "게시 없음") · 현재(current) · 중앙 수신 시각 · 마지막 적용 시도(`result · g<from>→g<to> · 단계 · 코드`, source는 괄호) · 디스크.
+- 연결은 control-api가 응답 때 중앙 시각으로 계산한 `connection`을 그대로 쓴다(online "연결됨"·stale "응답 없음"·never "수신 없음"). 브라우저 시계로 다시 판정하지 않는다.
+- **"최신" 배지는 `connection == online`이고 `current.gen == desired.generation`일 때만**. 게시 없음·보고 없음·gen null이면 없다.
+- **stale·never면 current 칸에 "마지막 보고값" 레이블**을 붙이고 배지를 달지 않는다.
+- 두 시각은 이름과 칸을 나눈다: current 칸의 "현장 보고 시각"(`current.reported_at`, 현장 시계) ≠ "중앙 수신 시각" 열(`last_seen`, 중앙 시계). 시각은 브라우저 시간대 `YYYY-MM-DD HH:mm:ss`.
+- 30초마다 자동 새로고침 + "새로고침" 버튼(조회 중 비활성). 앞 조회는 취소한다.
+- **조회가 실패하면 표를 지우고 오류 문구만**(`role="alert"`): 401 "control-api가 조회 토큰을 거부했습니다"(viewer 토큰 설정 확인), 403 권한, 503 "중앙 DB에 연결할 수 없습니다", 502·504 "control-api가 응답하지 않습니다", 네트워크 "중앙 서버에 연결할 수 없습니다", 모양이 다른 본문 "응답 형식이 올바르지 않습니다". 이전 표를 남기면 끊긴 현장이 "연결됨"으로 남아 보이기 때문이다.
+
+**명령**
+
+```bash
+cd services/control-web && npm ci && npm run typecheck && npm run lint && npm run unit && npm run build
+PUREIRON_CONTROL_VIEWER_TOKEN_FILE=… npm run dev   # http://localhost:3100 → control-api 127.0.0.1:8100 (PUREIRON_CONTROL_URL)
+bash scripts/g1.sh control-web-e2e                 # 중앙 이미지 빌드 → deploy/central compose(poll_s 2) → Playwright
+```
+
+e2e는 `PUREIRON_IT_PROJECT`(프로젝트 `<값>-central`)·`PUREIRON_IT_CENTRAL_PORT`(기본 28543)·`PUREIRON_RELEASE`로 격리하고, 결과는 `artifacts/control-web-e2e/`(`test-results/`·`report/`·`compose.log`). `ignoreHTTPSErrors`는 e2e 브라우저만 — 루트 CA 검증 경로는 준비 스크립트가 따로 본다(계획 R5).
