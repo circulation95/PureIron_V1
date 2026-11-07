@@ -1,0 +1,97 @@
+# fleet PR 검사 check-gen(M4-2 F4, plan C10): 변경된 sites/<site>.yaml마다 계약·파일명·.retired(E_FLEET)와
+# generation 규칙(E_GEN: new == old+1, new > control-api max_published_gen, 미등록은 gen 1만).
+# 도구는 이 workflow 파일과 같은 커밋(job.workflow_sha)의 PureIron_V1 — 호출자의 `@<ref>`가 곧 도구 버전이다(F6).
+# control-api가 publish 호스트(WSL) 안에 있어 self-hosted `publish` runner에서 돈다. 토큰은 viewer
+# (fleet repo secret PUREIRON_FLEET_VIEWER_TOKEN) — PR 단계에는 게시 권한을 두지 않는다(M4-0 L-7).
+name: fleet-check-gen
+
+on:
+  workflow_call:
+    inputs:
+      runs_on:
+        description: runner 라벨(JSON 문자열 또는 배열)
+        type: string
+        default: '["self-hosted", "publish"]'
+      control_api:
+        description: control-api 기준 URL(runner에서 닿는 주소)
+        type: string
+        default: "http://127.0.0.1:8100/api/v1"
+    secrets:
+      # PureIron_V1이 private이라 App 토큰으로 도구를 읽는다(validate-project와 같은 App).
+      PUREIRON_CI_APP_ID:
+        required: true
+      PUREIRON_CI_APP_KEY:
+        required: true
+      PUREIRON_FLEET_VIEWER_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check-gen:
+    runs-on: ${{ fromJSON(inputs.runs_on) }}
+    env:
+      PYTHONUTF8: "1"
+      UV_VERSION: "0.10.12"
+    steps:
+      - if: github.event_name != 'pull_request'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          echo "::error::check-gen은 pull_request 이벤트 전용이다(받은 이벤트: $EVENT_NAME)"
+          exit 1
+      # 기본 ref = refs/pull/<n>/merge(PR을 지금 base에 합친 결과). 첫 부모가 base다.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: fleet
+          fetch-depth: 0
+          persist-credentials: false
+      - id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.PUREIRON_CI_APP_ID }}
+          private-key: ${{ secrets.PUREIRON_CI_APP_KEY }}
+          owner: circulation95
+          repositories: PureIron_V1
+          permission-contents: read
+      - id: tool
+        env:
+          WORKFLOW_SHA: ${{ job.workflow_sha || github.job_workflow_sha }}
+        run: |
+          if ! [[ "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::호출된 workflow 커밋을 알 수 없다: '$WORKFLOW_SHA'"
+            exit 1
+          fi
+          echo "호출된 workflow sha: $WORKFLOW_SHA"
+          echo "sha=$WORKFLOW_SHA" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: circulation95/PureIron_V1
+          ref: ${{ steps.tool.outputs.sha }}
+          token: ${{ steps.app-token.outputs.token }}
+          path: pureiron-v1
+          persist-credentials: false
+      # 도구 커밋은 checkout 결과로 기록한다(annotated tag면 workflow_sha는 태그 객체 sha, M4 C11).
+      - run: |
+          tool_commit="$(git -C pureiron-v1 rev-parse HEAD)"
+          echo "PureIron_V1 도구 커밋: $tool_commit"
+          echo "PureIron_V1 도구 커밋: \`$tool_commit\`" >> "$GITHUB_STEP_SUMMARY"
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - run: uv sync --directory pureiron-v1 --package pureiron-project-tools --locked --no-dev
+      - env:
+          PUREIRON_FLEET_VIEWER_TOKEN: ${{ secrets.PUREIRON_FLEET_VIEWER_TOKEN }}
+          CONTROL_API: ${{ inputs.control_api }}
+        run: |
+          head="$(git -C fleet rev-parse HEAD)"
+          base="$(git -C fleet rev-parse HEAD^1)"
+          echo "check-gen: base $base → head $head(PR merge 결과)"
+          pureiron-v1/.venv/bin/python pureiron-v1/deploy/fleet/check_gen.py \
+            --repo fleet --base "$base" --head "$head" --control-api "$CONTROL_API"

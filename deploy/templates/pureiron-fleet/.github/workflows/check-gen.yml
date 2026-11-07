@@ -1,0 +1,22 @@
+# fleet PR 검사: PureIron_V1의 reusable workflow가 변경 현장 파일의 계약·파일명·.retired(E_FLEET)와
+# generation 규칙(E_GEN)을 control-api(viewer 토큰)로 확인한다.
+name: check-gen
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check-gen:
+    # @ref = 도구 버전. 리허설 동안 M4-2 머지 커밋 sha, 운영은 PureIron_V1 릴리스 태그(r5~)로 고정하고
+    # publish.yml과 같은 ref를 쓴다.
+    uses: circulation95/PureIron_V1/.github/workflows/fleet-check-gen.yml@master
+    with:
+      runs_on: '["self-hosted", "publish"]'
+    secrets:
+      PUREIRON_CI_APP_ID: ${{ secrets.PUREIRON_CI_APP_ID }}
+      PUREIRON_CI_APP_KEY: ${{ secrets.PUREIRON_CI_APP_KEY }}
+      PUREIRON_FLEET_VIEWER_TOKEN: ${{ secrets.PUREIRON_FLEET_VIEWER_TOKEN }}

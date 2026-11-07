@@ -11,6 +11,7 @@ sources:
   - services/core/.importlinter
   - services/control-api/src/pureiron_control/runtime.py
   - services/control-api/.importlinter
+  - deploy/fleet/publish.py
   - services/core/src/pureiron_core/acquisition/server.py
   - services/core/src/pureiron_core/acquisition/ingest.py
   - services/core/src/pureiron_core/platform/bus.py
@@ -253,6 +254,18 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
   메타데이터는 bundle-tools를 현장과 같은 코드로 쓴다(P3). 현장은 polling(`GET …/desired` → Range로 번들 → 자체
   검증)만 하고 중앙이 현장에 접속하지 않는다. 폐쇄망 현장은 `report export` 파일을 USB로 반출해 `POST
   /offline-imports`로 같은 seq 규칙에 넣는다. API·저장 세부는 [api-events](api-events.md)·[data-contracts](data-contracts.md).
+- **fleet → 게시 경로(M4-2)**: fleet PR → check-gen(`publish` runner, viewer 토큰으로 `GET /fleet` — gen 규칙) →
+  `allowed_approvers.txt` 승인 → merge → fleet `main` push → publish workflow가 publish 호스트에서
+  `deploy/fleet/publish.py run --fleet-repo … --sha …` **한 진입점**만 부른다. 그 명령이 sha를 GitHub·git으로 다시
+  받아 승인 판정(`E_APPROVAL` — PR merge commit·최종 head 승인·merge 직전 목록·호스트 승인 사슬·merge 결과 트리 동치)
+  → 그 sha 트리의 **모든 활성 현장**을 게시 상태와 맞춤(정합화: 파일 gen > `max_published_gen`이면 게시) → 프로젝트
+  태그 → `build_bundle`(서명) → `PUT /bundles`(ci 토큰)까지 한다. 현장 Updater는 기존 polling으로 받는다. publish 호스트(PoC = 개발 PC WSL, M4 C3)는 전용 사용자 `pureiron-publish`의 self-hosted
+  runner(라벨 `publish`), 키 `/etc/pureiron/keys`, 토큰 `/etc/pureiron/publish/{ci_token, viewer_token, app.pem}`,
+  출력 `/srv/pureiron/{bundles,metrics,publish}`([runtime-config](runtime-config.md)). GitHub Free에서 runner를
+  workflow에 묶지 못하므로 fleet write 권한자는 그 runner 권한을 갖는다(K14 수용). 서명 경계 분리(전환 조건 = 외부인
+  write 권한·서명 호스트 이전)는 sudo 뒤로 옮기는 것만으로는 안 되고 root 소유 설치본·venv, 보안 설정을 root 소유 설정
+  파일에서만 읽는 signer 모드(argv는 `--fleet-repo`·`--sha`만 — 미구현 백로그), `trust-base`의 sudoers 제외가 필요하다
+  (`deploy/templates/pureiron-fleet/README.md`).
 
 ## V1 구현 현황 (2026-10-17)
 

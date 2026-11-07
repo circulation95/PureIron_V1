@@ -191,6 +191,8 @@ job_integration_compose() {
   uv run pytest services/core/tests/integration -m "integration and not perf" -q
   # control-api: control-db(PostgreSQL 16, deploy/compose/control.dev.yml)만 올린다(M4-0).
   uv run pytest services/control-api/tests/integration -m integration -q
+  # fleet publish 종단(M4-2): control-db + 실제 control-api + 실제 build_bundle + 로컬 git 원격.
+  uv run pytest deploy/tests/fleet -m integration -q
 }
 
 job_web_e2e() {

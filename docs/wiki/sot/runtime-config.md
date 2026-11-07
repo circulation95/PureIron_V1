@@ -8,7 +8,8 @@ sources:
   - https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/config.py
   - https://github.com/circulation95/PureIron_ignition/blob/legacy-final/.env.example
   - services/control-api/src/pureiron_control/settings.py
-last_verified: 2026-11-02
+  - deploy/fleet/publish.py
+last_verified: 2026-11-04
 ---
 
 # Runtime Config SOT
@@ -179,3 +180,26 @@ core의 초 단위 값(`…_S`)은 양의 유한 수만 받는다 — 0·음수�
 | `PUREIRON_DEV_CONTROL_DB_PORT` | `25433` | 개발·통합 테스트 compose(`deploy/compose/control.dev.yml`) control-db 호스트 포트 |
 
 초·바이트 값은 양의 유한 수만 받고 잘못된 값은 기동 시 `SettingsError`(CLI 종료 코드 4)다. 사람·CI token은 env가 아니라 `pureiron-control token create --role admin|ci|viewer --name <이름>`으로만 만든다(원문은 그때 한 번만 출력, DB에는 SHA-256).
+
+### V1 fleet publish 호스트 경로·환경변수 (M4-2 구현)
+
+정본은 `deploy/fleet/publish.py`(`Config`·`parser`)와 `deploy/fleet/check_gen.py`. publish 호스트(PoC = 개발 PC WSL, 전용 사용자 `pureiron-publish`, runner 라벨 `publish`)에서만 쓴다. 우선순위는 인자 > 환경변수 > 기본값이고, 테스트는 모두 tmp 경로를 넘긴다.
+
+| 인자 / 환경변수 | 기본값 | 의미 |
+|---|---|---|
+| `--keys-dir` / `PUREIRON_PUBLISH_KEYS_DIR` | `/etc/pureiron/keys` | `release.key`(0600)·`release-cert.json`·`release-cert.sig`·`root.pub`(`--root-pub`로 따로 지정 가능) |
+| `--ci-token-file` / `PUREIRON_PUBLISH_CI_TOKEN_FILE` | `/etc/pureiron/publish/ci_token` | control-api ci 토큰(0600) — `PUT /bundles` |
+| `--viewer-token-file` / `PUREIRON_PUBLISH_VIEWER_TOKEN_FILE` | `/etc/pureiron/publish/viewer_token` | control-api viewer 토큰(0600) — `GET /fleet`(ci 역할은 fleet을 못 읽는다) |
+| `--app-key-file` / `PUREIRON_PUBLISH_APP_KEY_FILE` | `/etc/pureiron/publish/app.pem` | GitHub App private key(0600) — fleet(contents·pull_requests 읽기)·프로젝트(contents 읽기) 설치 토큰 |
+| `--app-id` / `PUREIRON_PUBLISH_APP_ID` | 없으면 `/etc/pureiron/publish/app_id` 파일 | GitHub App ID(fleet-publish workflow가 secret `PUREIRON_CI_APP_ID`로 env를 준다) |
+| `--bundles-dir` / `PUREIRON_PUBLISH_BUNDLES_DIR` | `/srv/pureiron/bundles` | `<site>/pureiron-<site>-g<gen>.pib`(+ `.bundle-metrics.json`) |
+| `--metrics-dir` / `PUREIRON_PUBLISH_METRICS_DIR` | `/srv/pureiron/metrics` | `publish-<site>-g<gen>.json` 게시 기록 |
+| `--state-dir` / `PUREIRON_PUBLISH_STATE_DIR` | `/srv/pureiron/publish` | 승인 사슬 `<owner>/<repo>/{last_approved, approved.log}`(주 1회 백업 대상), 잠금 `lock`(run·trust-base `flock`), 프로젝트 태그별 직전 게시 커밋 `project_commits.json` |
+| `--store` / `PUREIRON_IMAGE_STORE` | `~/pureiron/images`(build_bundle 기본) | 이미지 store `<release>/<svc>.tar` — publish 호스트는 `/srv/pureiron/images`로 설정 |
+| `--control-api` / `PUREIRON_CONTROL_API` | `http://127.0.0.1:8100/api/v1` | control-api 기준 URL(publish·check-gen 공통) |
+| `--github-api` / `PUREIRON_GITHUB_API` | `https://api.github.com` | GitHub REST |
+| `--git-base` / `PUREIRON_GIT_BASE` | `https://github.com` | git 원격 앞부분(`<base>/<owner>/<repo>.git`, 테스트는 로컬 경로) |
+| `--project-owner` | fleet repo owner | 고객 프로젝트 repo owner |
+| `PUREIRON_FLEET_VIEWER_TOKEN` | 없음(필수) | check-gen viewer 토큰 — fleet repo secret 같은 이름에서 |
+
+토큰은 git argv가 아니라 환경(`GIT_CONFIG_*` → `http.extraHeader`)으로만 넘긴다. publish 호스트 git은 2.38 이상이어야 한다(승인 판정 트리 동치 `git merge-tree --write-tree`, WSL Ubuntu 24.04 = 2.43).

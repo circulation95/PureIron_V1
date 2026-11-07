@@ -1,0 +1,19 @@
+# 현장 파일 견본(fleet-site 계약 packages/contracts/fleet-site.schema.json, ADR-022).
+# 새 현장은 이 파일을 sites/<site>.yaml로 복사해 site를 파일명과 같게 바꾸고 generation 1로 시작한다.
+# 그 전에 control-api에 현장을 등록한다(README "새 현장 순서"). 이 견본은 sites/ 밖(examples/)에 있어
+# check-gen·publish가 보지 않는다 — sites/ 아래 활성 파일은 모두 게시 대상이므로 견본을 거기 두지 않는다.
+#
+# generation은 PR마다 정확히 +1, 그리고 control-api에 게시된 최대 gen보다 커야 한다(check-gen E_GEN).
+site: example
+generation: 1
+# PureIron 제품 release(달력 버전, PureIron_V1 deploy/releases 기록).
+product: 2026.11.0
+# 고객 프로젝트 repo 이름(owner 없이 — publish가 fleet repo owner를 붙인다)과 태그.
+project: { repo: pureiron-project-example, version: v1 }
+# 적용 창: 반복(요일·시각) 또는 1회 { once: { start: …, end: … } }.
+window: { recurring: { tz: Asia/Seoul, days: [sat, sun], start: "02:00", end: "05:00" } }
+# 쓰기 스위치(선택, 없으면 끔 — 기본 읽기 전용). 켜면 서명된 번들 manifest로 실려 현장 core 쓰기가
+# 켜진다. Updater 0.2.0 이상만 적용한다(구 Updater는 E_UPDATER로 거부).
+# 0.1.0 시절 updater.env의 PUREIRON_WRITES_ENABLED로 쓰기를 켠 현장은 Updater 0.2.0으로 바꾸면
+# 그 값이 무시돼 꺼진다 — Updater 교체 전에 이 파일에 writes.enabled: true를 먼저 게시한다.
+# writes: { enabled: true }

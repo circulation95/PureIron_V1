@@ -1,0 +1,106 @@
+# fleet publish(M4-2 ★F1·F5·F6, plan C9): fleet main push(또는 재실행용 workflow_dispatch)에서
+# `deploy/fleet/publish.py run --fleet-repo <repo> --sha <sha>`를 부르기만 한다. 승인 판정(E_APPROVAL)·
+# 빌드·서명·PUT은 모두 그 한 진입점이 하고, fleet repo는 GitHub·git으로 그 sha를 직접 다시 받는다 —
+# 이 job은 fleet repo를 checkout하지 않는다(runner 작업 디렉터리를 믿지 않음).
+# 키·토큰·출력 경로는 publish 호스트(F7)의 /etc/pureiron·/srv/pureiron 기본값을 쓴다(fleet README).
+# 도구 버전 = 이 workflow 파일과 같은 커밋(job.workflow_sha)의 PureIron_V1(호출자 `@<ref>`, F6).
+#
+# concurrency를 두지 않는다: 같은 group의 대기 run은 하나만 남고 나머지가 취소돼, 연속 merge 중
+# 가운데 커밋이 publish되지 않으면 다음 커밋이 승인 사슬 끊김(E_APPROVAL)이 된다. runner가 하나라
+# job은 순서대로 돈다.
+name: fleet-publish
+
+on:
+  workflow_call:
+    inputs:
+      runs_on:
+        description: runner 라벨(JSON 문자열 또는 배열)
+        type: string
+        default: '["self-hosted", "publish"]'
+      control_api:
+        description: control-api 기준 URL(publish 호스트에서 닿는 주소)
+        type: string
+        default: "http://127.0.0.1:8100/api/v1"
+      project_owner:
+        description: 고객 프로젝트 repo owner(비우면 fleet repo owner)
+        type: string
+        default: ""
+    secrets:
+      # PureIron_V1(private) 도구 checkout용. App ID는 publish.py가 호스트 App 키(app.pem)와 함께 쓴다.
+      PUREIRON_CI_APP_ID:
+        required: true
+      PUREIRON_CI_APP_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  publish:
+    runs-on: ${{ fromJSON(inputs.runs_on) }}
+    env:
+      PYTHONUTF8: "1"
+      UV_VERSION: "0.10.12"
+    steps:
+      # 판정은 main 커밋만: push(main) 또는 main에서 연 workflow_dispatch. publish.py도 sha가 원격
+      # main 이력에 있는지 다시 본다.
+      - env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REF" != "refs/heads/main" ] || { [ "$EVENT" != "push" ] && [ "$EVENT" != "workflow_dispatch" ]; }; then
+            echo "::error::publish는 main의 push·workflow_dispatch 전용이다(event $EVENT, ref $REF)"
+            exit 1
+          fi
+      - id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.PUREIRON_CI_APP_ID }}
+          private-key: ${{ secrets.PUREIRON_CI_APP_KEY }}
+          owner: circulation95
+          repositories: PureIron_V1
+          permission-contents: read
+      - id: tool
+        env:
+          WORKFLOW_SHA: ${{ job.workflow_sha || github.job_workflow_sha }}
+        run: |
+          if ! [[ "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::호출된 workflow 커밋을 알 수 없다: '$WORKFLOW_SHA'"
+            exit 1
+          fi
+          echo "호출된 workflow sha: $WORKFLOW_SHA"
+          echo "sha=$WORKFLOW_SHA" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: circulation95/PureIron_V1
+          ref: ${{ steps.tool.outputs.sha }}
+          token: ${{ steps.app-token.outputs.token }}
+          path: pureiron-v1
+          persist-credentials: false
+      # 도구 커밋은 checkout 결과로 기록한다(annotated tag면 workflow_sha는 태그 객체 sha, M4 C11).
+      - run: |
+          tool_commit="$(git -C pureiron-v1 rev-parse HEAD)"
+          echo "PureIron_V1 도구 커밋: $tool_commit"
+          echo "PureIron_V1 도구 커밋: \`$tool_commit\`" >> "$GITHUB_STEP_SUMMARY"
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - run: uv sync --directory pureiron-v1 --package pureiron-project-tools --locked --no-dev
+      - env:
+          SHA: ${{ github.sha }}
+          CONTROL_API: ${{ inputs.control_api }}
+          PROJECT_OWNER: ${{ inputs.project_owner }}
+          PUREIRON_PUBLISH_APP_ID: ${{ secrets.PUREIRON_CI_APP_ID }}
+        run: |
+          owner_args=()
+          if [ -n "$PROJECT_OWNER" ]; then
+            owner_args=(--project-owner "$PROJECT_OWNER")
+          fi
+          pureiron-v1/.venv/bin/python pureiron-v1/deploy/fleet/publish.py run \
+            --fleet-repo "$GITHUB_REPOSITORY" --sha "$SHA" --control-api "$CONTROL_API" \
+            "${owner_args[@]}"
