@@ -12,6 +12,10 @@ epoch 하나만 올려야 한다. base에 있는 SQL 파일의 수정·삭제는
 release 기록이 하나도 없는 base(bootstrap·테스트 저장소)는 모든 epoch를 release된 것으로 본다.
 기준이 되는 base의 release 기록 자체도 지우거나 고칠 수 없다(기록을 먼저 지워 epoch를 풀어 주는
 우회를 막는다).
+
+release 기록 위치는 카탈로그마다 다르다(`releases_dir`): core = `deploy/releases`(현장 release),
+control-api = `deploy/releases/central`(중앙 release, M4-3 G10). 하위 디렉터리는 위쪽 디렉터리의
+기록으로 읽히지 않는다(`ls-tree`는 한 단계만 본다).
 """
 
 from __future__ import annotations
@@ -36,7 +40,7 @@ from pureiron_core.platform.migrate import (
 from pureiron_core.platform.sqltext import SqlSyntaxError, Statement, split_statements
 
 BASELINE_EPOCH = 1
-# 저장소 루트 기준 release 기록 위치(deploy/build/release_record.py가 쓰는 곳).
+# 저장소 루트 기준 release 기록 위치(deploy/build/release_record.py가 쓰는 곳). core 카탈로그 기본.
 RELEASES_DIR = "deploy/releases"
 
 _CONTRACT = re.compile(
@@ -273,7 +277,9 @@ def _normalized(data: bytes) -> bytes:
     return data.replace(b"\r\n", b"\n")
 
 
-def _lint_against_base(directory: Path, base_ref: str, report: LintReport) -> None:
+def _lint_against_base(
+    directory: Path, base_ref: str, releases_dir: str, report: LintReport
+) -> None:
     top = _git(directory, "rev-parse", "--show-toplevel")
     if top.returncode != 0:
         report.add(str(directory), "--base-ref needs a git checkout")
@@ -311,7 +317,8 @@ def _lint_against_base(directory: Path, base_ref: str, report: LintReport) -> No
         base_bytes = _git(root, "show", f"{base_ref}:{rel}/{name}").stdout
         current = directory / name
         if name == EPOCHS_FILE:
-            _compare_epochs(directory, base_bytes, _released_epoch(root, base_ref, report), report)
+            released = _released_epoch(root, base_ref, releases_dir, report)
+            _compare_epochs(directory, base_bytes, released, report)
         elif name.endswith(".sql"):
             if not current.exists():
                 report.add(name, f"released migration deleted (present in {base_ref})")
@@ -319,18 +326,20 @@ def _lint_against_base(directory: Path, base_ref: str, report: LintReport) -> No
                 report.add(
                     name, f"released migration modified (differs from {base_ref}); add a new file"
                 )
-    _check_release_records(root, base_ref, report)
+    _check_release_records(root, base_ref, releases_dir, report)
 
 
-def _check_release_records(root: Path, base_ref: str, report: LintReport) -> None:
-    listing = _git(root, "ls-tree", "--name-only", f"{base_ref}:{RELEASES_DIR}")
+def _check_release_records(
+    root: Path, base_ref: str, releases_dir: str, report: LintReport
+) -> None:
+    listing = _git(root, "ls-tree", "--name-only", f"{base_ref}:{releases_dir}")
     if listing.returncode != 0:
         return
     for name in listing.stdout.decode().split():
         if not name.endswith(".json"):
             continue
-        record_path = f"{RELEASES_DIR}/{name}"
-        current = root / RELEASES_DIR / name
+        record_path = f"{releases_dir}/{name}"
+        current = root / releases_dir / name
         if not current.exists():
             report.add(record_path, f"release record deleted (present in {base_ref})")
             continue
@@ -339,20 +348,20 @@ def _check_release_records(root: Path, base_ref: str, report: LintReport) -> Non
             report.add(record_path, f"release record modified (differs from {base_ref})")
 
 
-def _released_epoch(root: Path, base_ref: str, report: LintReport) -> int | None:
+def _released_epoch(root: Path, base_ref: str, releases_dir: str, report: LintReport) -> int | None:
     """base의 release 기록 중 가장 큰 `schema.app_expected`. 기록이 하나도 없으면 None.
 
     읽을 수 없는 기록은 lint 실패로 본다 — 조용히 건너뛰면 release된 epoch가 미release로 보여
     바꿀 수 있게 된다.
     """
-    listing = _git(root, "ls-tree", "--name-only", f"{base_ref}:{RELEASES_DIR}")
+    listing = _git(root, "ls-tree", "--name-only", f"{base_ref}:{releases_dir}")
     if listing.returncode != 0:
         return None
     epochs: list[int] = []
     for name in listing.stdout.decode().split():
         if not name.endswith(".json"):
             continue
-        record_path = f"{RELEASES_DIR}/{name}"
+        record_path = f"{releases_dir}/{name}"
         try:
             record: object = json.loads(_git(root, "show", f"{base_ref}:{record_path}").stdout)
         except ValueError as exc:
@@ -410,7 +419,10 @@ def _compare_epochs(
         )
 
 
-def lint_directory(directory: Path, *, base_ref: str | None = None) -> LintReport:
+def lint_directory(
+    directory: Path, *, base_ref: str | None = None, releases_dir: str = RELEASES_DIR
+) -> LintReport:
+    """`releases_dir`: 이 카탈로그의 release 기록 디렉터리(저장소 루트 기준, `--base-ref` 때만)."""
     report = LintReport()
     _scan_names(directory, report)
     if report.issues:
@@ -422,5 +434,5 @@ def lint_directory(directory: Path, *, base_ref: str | None = None) -> LintRepor
         return report
     _lint_rules(catalog, report)
     if base_ref is not None:
-        _lint_against_base(directory, base_ref, report)
+        _lint_against_base(directory, base_ref, releases_dir, report)
     return report

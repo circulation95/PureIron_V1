@@ -1661,6 +1661,7 @@ PureIron_V1 core의 정본은 `services/core/src/pureiron_core/api/` 와 생성�
 - **seq 규칙(C7)**: heartbeat·보고는 현장 하나의 `report_seq` 카운터를 함께 쓰지만(R2 — 온라인·USB가 겹치지 않게) **반영 수위는 종류별**이다(`sites.last_heartbeat_seq`·`last_report_seq`). 메시지는 **자기 종류의 수위보다 큰 seq**만 반영(`applied`: 그 수위·last_attempt·(`current_seq`보다 크면) current 갱신), 그 밖은 **이력만**(`history`, current·last_attempt 그대로) — 둘 다 200·201. 폐쇄망 반입 묶음(`site-reports`)은 보고 종류다. 수위가 하나면 끊겼다 재전송된 보고 seq 11이 그 사이 성공한 heartbeat seq 12에 가려 `last_attempt`에 남지 않는다(실패한 업데이트가 안 보임) — 종류별 수위는 이 순서를 현장 구현에 기대지 않고 중앙이 보장한다. 한 묶음 안에서 seq가 수위를 가로지르면 수위 이하만 이력이고 나머지는 반영된다. **current는 두 종류 공용이라 공용 카운터 순서(`sites.current_seq`)로 한 번 더 거른다** — 반영된 메시지라도 `current_seq`보다 큰 seq만 current를 쓰고 `current_seq`를 그 seq로 올린다(늦게 온 heartbeat 11은 heartbeat 수위로 반영돼 `updater_phase`·`disk_state`는 바꾸지만, 먼저 반영된 성공 보고 12의 current는 덮지 않는다). payload 정수가 열 범위를 넘으면(seq > 2⁶³−1, `generation`·`to`·`from`·`current.gen` ∉ 0..2³¹−1) 또는 문자열·키에 저장할 수 없는 문자(NUL `\u0000` — jsonb·text 거부, 짝 없는 서로게이트 `\ud800`..`\udfff` — UTF-8 인코딩 불가)가 있으면 저장 전 400이다 — 서로게이트는 서명 확인 단계(`open_document`, JCS 직렬화 불가 → `SignedDocumentError`)에서 먼저 400이 되고, payload 검사는 서명 경로를 거치지 않는 호출자를 위한 방어로 남는다(500이면 그 USB 파일·큐 맨 앞 메시지를 영원히 못 보낸다). 온라인·폐쇄망이 같은 함수(`PgReportStore.record`, 현장 행 잠금 한 트랜잭션)를 지나고 이력 행에 `source`(online·offline)·`outcome`을 남긴다. 성공(`result = succeeded`) 보고는 current를 `to` gen + 그 gen 게시 번들의 버전으로 바꾼다.
 - **연결 판정(C8)**: `last_seen` = token·서명이 확인된 **온라인** 메시지(반영·이력 모두)와 token이 확인된 `GET /desired` polling(M4-1 E3)의 중앙 수신 시각(폐쇄망 반입은 바꾸지 않는다, 동시 요청이 더 늦은 값을 되돌리지 않게 `GREATEST`). `GET /fleet` 응답 때 `online`(now − last_seen ≤ 3 × `PUREIRON_CONTROL_POLL_S`, 기본 180s)·`stale`·`never`로 계산하고 저장하지 않는다. stale 현장의 `current`는 마지막 보고값이고 시각은 `current.reported_at`이다.
 - control-db 장애는 503 `{"detail": "control-db unavailable"}`(원문은 로그에만).
+- **중앙 경로 노출(M4-3, `deploy/central/Caddyfile`)**: 바깥에 열리는 것은 Caddy HTTPS 포트 하나(`tls internal`)이고 control-db·control-api 포트는 compose 네트워크 안에만 있다. ① `/api/v1/*` = basic auth 없이 control-api 그대로 — 위 인증 표가 관문이고 현장 Updater도 여기로 polling한다(G3). ② `GET /ui/fleet` = basic auth 뒤에서 `GET /api/v1/fleet`로 바꾸고 viewer 토큰(비밀 파일 `/run/secrets/viewer_token`, Caddy `{file.*}` placeholder가 요청마다 읽음)을 `Authorization: Bearer`로 붙인다 — **토큰을 붙이는 유일한 경로**이고 브라우저는 토큰을 갖지 않는다(★G1, control-api 무변경·CORS 없음). ③ 그 밖의 `/ui/*`(다른 메서드·하위 경로 포함) = basic auth 뒤 404, 프록시·토큰 없음. ④ `/`·정적 = basic auth 뒤 control-web. ⑤ 설정에 없는 `Host` = 421. 브라우저가 보내는 basic auth 자격(`Authorization: Basic`)은 `/api/v1/*`에서 control-api가 401로 거절한다(권한이 아니다). Caddy 핸들러를 지나는 모든 응답에 site web nginx와 같은 보안 헤더 4개(Go HTTP 서버가 핸들러 전에 400으로 답하는 빈 `Host:`·HTTP/1.1 Host 없음·쉼표나 `@`가 든 Host는 예외). admin·ci 경로를 바깥에서 막는 출처 제한은 첫 계약 전 강화 항목이다(`deploy/central/README.md`) — 경로 deny 목록이 아니라 allow 목록·별도 listener로 만든다(Caddy는 정규화한 경로로 판정하고 upstream에는 원문 경로를 넘기므로 dot-segment·`%2F`로 deny 목록이 우회될 수 있다).
 
 ## 내부 이벤트 버스
 
@@ -1926,6 +1927,16 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
   write 권한·서명 호스트 이전)는 sudo 뒤로 옮기는 것만으로는 안 되고 root 소유 설치본·venv, 보안 설정을 root 소유 설정
   파일에서만 읽는 signer 모드(argv는 `--fleet-repo`·`--sha`만 — 미구현 백로그), `trust-base`의 sudoers 제외가 필요하다
   (`deploy/templates/pureiron-fleet/README.md`).
+- **중앙 배포(M4-3)**: `deploy/central/compose.yml` = control-db(업스트림 PostgreSQL 16 digest 고정) + control-api
+  (`pureiron/control-api`, core와 같은 재현 빌드, migrations 포함·기동 때 migrate 안 함) + control-web(`pureiron/control-web`
+  = Caddy 2.11.7 + 정적 dist, Caddyfile은 `deploy/central`에서 마운트). 바깥에 여는 포트는 Caddy HTTPS 하나(`tls internal`,
+  호스트 이름·포트는 env, PoC = 개발 PC WSL). `/api/v1/*`는 basic auth 없이 control-api로(API 인증이 관문 — 현장 Updater
+  polling 경로), 사람 화면(`/`·`/ui/*`)은 basic auth 뒤, viewer 토큰은 `GET /ui/fleet` 한 경로에만 Caddy가 붙인다(브라우저는
+  토큰을 갖지 않는다, ★G1). 중앙 이미지는 현장 번들·manifest에 들어가지 않고 신원은 중앙 release 기록
+  `deploy/releases/central/<이름>.json`(config digest + control-api 스키마 epoch, `release_record.py --central`)이다 —
+  control-api `migrate lint`의 release 기준도 이 디렉터리(G10). import-linter (d): `pureiron_control`은 `pureiron_core.platform`
+  밖을 import하지 않는다(이미지는 아직 core 의존을 통째로 싣는다 — platform 분리는 백로그). 현장 Updater가 사설 CA HTTPS를
+  신뢰하는 설정·admin·ci 경로 출처 제한·공인 인증서(M6)는 범위 밖(`deploy/central/README.md` 강화 항목).
 
 ## V1 구현 현황 (2026-10-17)
 
@@ -1936,7 +1947,7 @@ legacy와 달리 V1에는 `tag.changed.all` 토픽이 없고, historian은 이�
 | M3a | collector(Modbus·링버퍼·replay), core tags·historian·정의, r2(epoch 3), VM 실측 r1→r2 30/30 | 완료 |
 | M3b | alarms·auth·audit·realtime·devices·history API, web 로그인 + 5화면, r3(epoch 4), VM 실측 r2→r3 30/30 | 완료 |
 | M3c | PLC 쓰기 경로(ADR-013 가드레일): M3c-0 REST Origin/CSRF·로그인 제한, M3c-1 계약·collector 쓰기·simulator, M3c-2 core 쓰기(writes·REST·감사) | 진행 중 — M3c-3 web 쓰기 화면 예정 |
-| M4 | control-api·control-web·fleet·release 파이프라인 | 진행 중 — M4-0 control-api 본체(API·control-db·인증·seq 규칙), M4-1 현장 송신(heartbeat·보고 온라인 전송·드래프트 업로드·쓰기 스위치 서명화, Updater 0.2.0). fleet/publish M4-2·control-web M4-3 예정 |
+| M4 | control-api·control-web·fleet·release 파이프라인 | 진행 중 — M4-0 control-api 본체(API·control-db·인증·seq 규칙), M4-1 현장 송신(heartbeat·보고 온라인 전송·드래프트 업로드·쓰기 스위치 서명화, Updater 0.2.0), M4-2 fleet/publish, M4-3 control-web·`deploy/central`(Caddy·중앙 이미지·중앙 release 기록 경로). 마감(r5·15분 실측·VM) 예정 |
 | M5 | 프로젝트 수명주기(project-tools 완성, apply·드래프트 회수), r4(epoch 5), VM 실측 r3→r4 35/35 | 진행 중 — VM 실측 35/35 완료, `@r4` 태그·고객 테스트 repo ref 확정 남음 |
 
 진행 기록의 정본은 각 PR과 [data-contracts](data-contracts.md)의 release·실측 절이다.
@@ -3055,6 +3066,41 @@ bash scripts/g1.sh web-e2e       # 이미지 빌드 → pureiron-it compose(쓰�
 
 e2e 결과·trace·화면 스크린샷은 `artifacts/web-e2e/`(`test-results/`·`report/`·`screens/`·`compose.log`). `PUREIRON_IT_KEEP=1`이면 스택을 내리지 않는다. 포트·프로젝트 이름은 core 통합 테스트와 같은 환경변수(`PUREIRON_IT_PROJECT`·`PUREIRON_DEV_*_PORT`·`PUREIRON_IT_WEB_PORT`)로 바꾼다.
 
+## 17. V1 control-web (M4-3)
+
+> 이 절은 **PureIron_V1 현행**이다. 중앙(벤더 쪽) 현장 현황 화면. 근거: plan M4-3 ★G1·G7·G8, 배포·경로 규칙은 `deploy/central/README.md`와 [api-events](api-events.md) "중앙 경로 노출".
+
+**스택**: site web과 같은 도구체인(Vite + React 19 + TypeScript strict + eslint `strictTypeChecked` + `@playwright/test`). 라우터·`openapi-fetch`·상태 라이브러리는 없다(화면 1장, 호출 1개). 타입 정본은 `packages/contracts/openapi/control-api.json` → `src/api/schema.d.ts`(contracts-drift가 검사).
+
+**브라우저는 토큰을 갖지 않는다(★G1)**: 사람 관문은 Caddy basic auth이고 화면은 `GET /ui/fleet` 하나만 부른다. Caddy가 그 경로에만 viewer 토큰(비밀 파일)을 붙여 control-api `GET /api/v1/fleet`로 넘긴다 — sessionStorage·쿠키·CORS 없음, control-api 무변경. 개발 서버(`npm run dev`, :3100, 개발 전용 — basic auth 없음, 기본 대상은 M4-2 리허설 control-api `127.0.0.1:8100`)도 같은 모양으로 `/ui/fleet`만 프록시하고 토큰은 `PUREIRON_CONTROL_VIEWER_TOKEN_FILE`에서 읽어 GET에만 붙인다.
+
+| 경로 | 책임 |
+|---|---|
+| `src/fleetView.ts` | 판정 순수 함수: 연결 문구, "최신" 배지, current 칸 종류, 마지막 적용 시도 요약, 시각 형식, 실패 문구 |
+| `src/fleetView.test.ts` | 판정 단위 표(`npm run unit`, Playwright 러너·브라우저 없음 — `playwright.unit.config.ts`) |
+| `src/App.tsx` · `src/FleetTable.tsx` | 화면 1장: 조회 차례(30초 자동·수동 새로고침), 표 그리기만 |
+| `src/api/client.ts` | `fetch("/ui/fleet")` → 성공 행 또는 실패 종류(http 상태·network·format) |
+| `e2e/` · `playwright.config.ts` | deploy/central compose 위 chromium(`bash scripts/g1.sh control-web-e2e`) |
+
+**표 규칙(G7)** — 읽기 전용 표 1장, 한국어, 편집 기능 없음.
+- 열: 현장 · 연결 · 목표(desired: `g<gen> · <제품> / <프로젝트>`, 없으면 "게시 없음") · 현재(current) · 중앙 수신 시각 · 마지막 적용 시도(`result · g<from>→g<to> · 단계 · 코드`, source는 괄호) · 디스크.
+- 연결은 control-api가 응답 때 중앙 시각으로 계산한 `connection`을 그대로 쓴다(online "연결됨"·stale "응답 없음"·never "수신 없음"). 브라우저 시계로 다시 판정하지 않는다.
+- **"최신" 배지는 `connection == online`이고 `current.gen == desired.generation`일 때만**. 게시 없음·보고 없음·gen null이면 없다.
+- **stale·never면 current 칸에 "마지막 보고값" 레이블**을 붙이고 배지를 달지 않는다.
+- 두 시각은 이름과 칸을 나눈다: current 칸의 "현장 보고 시각"(`current.reported_at`, 현장 시계) ≠ "중앙 수신 시각" 열(`last_seen`, 중앙 시계). 시각은 브라우저 시간대 `YYYY-MM-DD HH:mm:ss`이고, 표시 기준 시간대(`GMT+9` 꼴, `timeZoneLabel`)를 "중앙 수신 시각" 열 머리와 조회 시각 옆에 붙인다(원격 지원자 등 다른 시간대 브라우저에서 장애 시각을 대조할 수 있게). 이 표기는 지금 시점의 오프셋 하나라 일광 절약 시간 지역에서는 다른 계절의 시각과 오프셋이 다를 수 있다.
+- 30초마다 자동 새로고침 + "새로고침" 버튼(조회 중 비활성). 앞 조회는 취소한다.
+- **조회가 실패하면 표를 지우고 오류 문구만**(`role="alert"`): 401 "인증에 실패했습니다 — 화면 로그인 또는 중앙 서버의 viewer 토큰"(Caddy basic auth와 control-api 둘 다 401을 낼 수 있어 둘을 함께 안내), 403 권한, 503 "중앙 DB에 연결할 수 없습니다", 502·504 "control-api가 응답하지 않습니다", 네트워크 "중앙 서버에 연결할 수 없습니다", 모양이 다른 본문 "응답 형식이 올바르지 않습니다". 이전 표를 남기면 끊긴 현장이 "연결됨"으로 남아 보이기 때문이다.
+
+**명령**
+
+```bash
+cd services/control-web && npm ci && npm run typecheck && npm run lint && npm run unit && npm run build
+PUREIRON_CONTROL_VIEWER_TOKEN_FILE=… npm run dev   # http://localhost:3100 → control-api 127.0.0.1:8100 (PUREIRON_CONTROL_URL)
+bash scripts/g1.sh control-web-e2e                 # 중앙 이미지 빌드 → deploy/central compose(poll_s 2) → Playwright
+```
+
+e2e는 `PUREIRON_IT_PROJECT`(프로젝트 `<값>-central`)·`PUREIRON_IT_CENTRAL_PORT`(기본 28543)·`PUREIRON_RELEASE`로 격리하고, 결과는 `artifacts/control-web-e2e/`(`test-results/`·`report/`·`compose.log`). `ignoreHTTPSErrors`는 e2e 브라우저만 — 루트 CA 검증 경로는 준비 스크립트가 따로 본다(계획 R5).
+
 ---
 
 <!-- source: docs/wiki/sot/mes-schedule.md -->
@@ -3551,7 +3597,7 @@ core의 초 단위 값(`…_S`)은 양의 유한 수만 받는다 — 0·음수�
 
 ### V1 control-api 환경변수 (M4-0 구현)
 
-정본은 `services/control-api/src/pureiron_control/settings.py`. 벤더 쪽 중앙(M4 C3: 개발 PC WSL compose, 운영 compose는 M4-3 `deploy/central`)에서만 쓴다. 비밀값은 파일 경로로만 받는다.
+정본은 `services/control-api/src/pureiron_control/settings.py`. 벤더 쪽 중앙(M4 C3: 개발 PC WSL compose, 운영 compose는 `deploy/central` — 아래 M4-3 절)에서만 쓴다. 비밀값은 파일 경로로만 받는다.
 
 | 변수 | 기본값 | 의미 |
 |---|---|---|
@@ -3561,11 +3607,30 @@ core의 초 단위 값(`…_S`)은 양의 유한 수만 받는다 — 0·음수�
 | `PUREIRON_CONTROL_DATA_DIR` | `/var/lib/pureiron-control` | 게시 번들 `bundles/<site>/g<gen>.pib`·드래프트 `drafts/<site>/<sha256>.tar` |
 | `PUREIRON_CONTROL_POLL_S` | `60` | 현장 poll 주기 가정. `GET /fleet`의 `online` = `last_seen` ≤ 3 × 이 값(기본 180 s, C8) — 현장 Updater `PUREIRON_POLL_INTERVAL_S`와 맞춘다 |
 | `PUREIRON_CONTROL_MAX_BUNDLE_BYTES` | `17179869184`(16 GiB) | `PUT /bundles` 업로드 상한(넘으면 413) |
-| `PUREIRON_CONTROL_MIGRATIONS_DIR` | 소스 트리 `services/control-api/migrations` | 이미지(M4-3)에서는 설치 경로 |
+| `PUREIRON_CONTROL_MIGRATIONS_DIR` | 소스 트리 `services/control-api/migrations` | 이미지(`pureiron/control-api`, M4-3)에서는 `/opt/pureiron/migrations` |
 | `PUREIRON_RELEASE` | 패키지 버전 | `schema_migrations.release` 기록값 |
 | `PUREIRON_DEV_CONTROL_DB_PORT` | `25433` | 개발·통합 테스트 compose(`deploy/compose/control.dev.yml`) control-db 호스트 포트 |
 
 초·바이트 값은 양의 유한 수만 받고 잘못된 값은 기동 시 `SettingsError`(CLI 종료 코드 4)다. 사람·CI token은 env가 아니라 `pureiron-control token create --role admin|ci|viewer --name <이름>`으로만 만든다(원문은 그때 한 번만 출력, DB에는 SHA-256).
+
+### V1 중앙 compose 변수·비밀 파일 (M4-3 구현)
+
+정본은 `deploy/central/compose.yml`·`Caddyfile`·`.env.example`, 절차는 `deploy/central/README.md`. compose 변수(보간용, `.env` 또는 `--env-file`):
+
+| 변수 | 기본값 | 의미 |
+|---|---|---|
+| `PUREIRON_CENTRAL_RELEASE` | compose `0.1.0-dev`, `.env.example` `c0` | `pureiron/control-api`·`control-web` 이미지 태그 = release 이름(기록 `deploy/releases/central/<이름>.json`). control-api `PUREIRON_RELEASE`로도 넘어간다. 운영은 기록이 있는 이름(`c0`, `c1`, …)만 — `0.1.0-dev`는 CI·개발용 태그(같은 docker 데몬의 CI가 PR 코드로 다시 빌드해 덮어씀)라 운영 금지 |
+| `PUREIRON_CENTRAL_SECRETS_DIR` | 없음(필수 — 없으면 compose가 거부) | 비밀 파일 디렉터리(저장소 밖, 0700) |
+| `PUREIRON_CENTRAL_HOST` | `localhost` | Caddy 사이트 주소 = `tls internal` 인증서 이름(쉼표로 여러 개). 여기 없는 `Host`로 온 요청은 421 |
+| `PUREIRON_CENTRAL_DEFAULT_SNI` | `localhost` | Caddy 전역 `default_sni` — SNI 없는 클라이언트에 줄 인증서 이름. **IP로 운영하면 그 IP**(같은 IP를 `PUREIRON_CENTRAL_HOST`에도): IP로 접속하는 클라이언트는 SNI를 보내지 않아 기본값이면 TLS 핸드셰이크가 끊긴다(alert 80, M4-3 리뷰 실측). IP는 하나만 — 나머지는 DNS 이름으로 접속 |
+| `PUREIRON_CENTRAL_BIND` / `PUREIRON_CENTRAL_HTTPS_PORT` | `127.0.0.1` / `28443` | 바깥에 여는 유일한 포트(Caddy 컨테이너 8443). control-db·control-api는 호스트 포트 없음 |
+| `PUREIRON_CONTROL_POLL_S` | `60` | control-api 설정 그대로 전달(위 표) |
+
+비밀 파일(`$PUREIRON_CENTRAL_SECRETS_DIR/…`, 컨테이너 `/run/secrets/…`): `control_db_password`(control-db·control-api), `viewer_token`(Caddy만 — `GET /ui/fleet`에 Bearer로 붙임, `{file.*}` placeholder가 요청마다 읽고 끝 줄바꿈은 버린다), `ui_basic_auth`(Caddy만 — 한 줄 `<사용자> <bcrypt 해시>`, 기동 때 Caddyfile `import`, 없으면 Caddy가 뜨지 않는다. **빈 파일이면 경고만 남기고 떠서 화면 요청이 모두 401**). 컨테이너 사용자가 읽도록 파일은 0644, 보호는 디렉터리 권한. 볼륨: `control-db`·`control-data`(`/var/lib/pureiron-control` 번들·드래프트, 이미지가 UID 10001 소유로 만든다)·`caddy-data`(로컬 CA — 지우면 루트 CA가 바뀐다)·`caddy-config`.
+
+**비밀 파일 교체 규칙(모든 비밀 파일 공통)**: 같은 파일에 덮어쓴다(`cat 새파일 > 비밀파일`), `mv`로 바꾸지 않는다. compose `secrets:`는 파일 하나의 bind mount라 컨테이너가 처음 inode를 계속 본다. Docker Desktop(WSL) 실측(M4-3 수정 r1): 덮어쓰기는 재시작 없이 보이고, `mv` 뒤에는 옛 내용을 보다가 `restart`·`up -d` 때 `error mounting … no such file or directory`로 컨테이너가 뜨지 않는다. 복구는 `up -d --force-recreate <서비스>`. viewer 토큰 교체 순서 = 새 이름으로 `token create` → 다른 파일에 받기 → 확인 → 같은 파일에 덮어쓰기(여기까지 실패하면 멈추는 한 명령) → 화면 확인 → 옛 토큰 `token revoke --name`. `control_db_password` 값 변경은 덮어쓰기만으로 끝나지 않는다: postgres는 이 파일을 첫 initdb 때만 읽으므로 먼저 `ALTER ROLE` → 같은 파일에 덮어쓰기 → `restart control-api` 순서다. 파일만 바꾸면 재시작 뒤 `GET /ui/fleet` 503, `/api/v1/healthz` 200, 컨테이너 healthy다(실측). 명령은 `deploy/central/README.md` "비밀 파일 교체".
+
+e2e(`deploy/tests/central_stack.py`)는 `PUREIRON_IT_PROJECT`(프로젝트 `<값>-central`)·`PUREIRON_IT_CENTRAL_PORT`(기본 28543)·`PUREIRON_RELEASE`로 격리하고 `PUREIRON_CONTROL_POLL_S=2`로 띄운다. 쓰지 않는 포트: 25432·25433(CI DB), 25443·8100(M4-2 리허설 central).
 
 ### V1 fleet publish 호스트 경로·환경변수 (M4-2 구현)
 
@@ -3923,23 +3988,25 @@ E2E/NF:
 | job | 내용 | 실행 조건 |
 |---|---|---|
 | `lint-type` | `uv sync --locked`, ruff check·format, pyright strict(패키지 6 + `packages/contracts` + `deploy`), 억제 주석·`app.state` grep 0건 | 항상 |
-| `import-linter` | core 계약 3종 + 음성 fixture(`services/core/tests/test_importlinter_negative.py`), control-api 계약 3종 + 음성 사례(`services/control-api/tests/test_importlinter.py`) | 항상 |
+| `import-linter` | core 계약 3종 + 음성 fixture(`services/core/tests/test_importlinter_negative.py`), control-api 계약 4종 + 음성 사례(`services/control-api/tests/test_importlinter.py` — (d) `pureiron_control`은 `pureiron_core.platform` 밖 import 금지, M4-3 G6) | 항상 |
 | `unit` | `pytest services packages deploy`(통합 제외) | 항상 |
 | `contracts-diff` | `buf lint`·`buf breaking`(FILE), `oasdiff breaking --fail-on ERR`, `schema_diff.py` — base에 파일이 없으면 notice 후 통과 | 항상 |
 | `contracts-drift` | OpenAPI export·proto 생성·`schema.d.ts`·project-tools 스키마 복사 후 `git status` 변경 0 | 항상 |
-| `migration-lint` | `pureiron-core migrate lint services/core/migrations --base-ref $BASE_REF` + `pureiron-control migrate lint services/control-api/migrations --base-ref $BASE_REF` | 항상 |
+| `migration-lint` | `pureiron-core migrate lint services/core/migrations --base-ref $BASE_REF` + `pureiron-control migrate lint services/control-api/migrations --base-ref $BASE_REF`. "release된 epoch" 기준은 카탈로그별 release 기록이다: core = `deploy/releases/*.json`, control-api = `deploy/releases/central/*.json`(M4-3 G10). 기록이 하나도 없으면 base의 모든 epoch를 release된 것으로 본다(epoch 항목 변경 금지 — 중앙 기록은 M4 마감 r5에서 처음 생긴다) | 항상 |
 | `no-customer-branching` | `(project_id\|site_id) == "…"` 리터럴, `deploy/lint/customer-names.txt` 이름 0건(제품 `src/`만) | 항상 |
-| `web` | `npm ci`, `tsc --noEmit`, `eslint --max-warnings 0`, `vite build` | 항상 |
+| `web` | `services/web`·`services/control-web` 각각 `npm ci`, `tsc --noEmit`, `eslint --max-warnings 0`, `vite build` + control-web 판정 단위 표(`npm run unit` — Playwright 러너, 브라우저 없음, `src/fleetView.test.ts`) | 항상 |
 | `template-validate` → `template-outputs` | G1-8 V1 안 대리: 고객 repo와 같은 reusable workflow `validate-project.yml`을 `./`로 불러 `deploy/templates/pureiron-project`를 validate·`fmt --check`·hash → 출력 `content_hash`가 `sha256:` 형식이고 로컬 `pureiron-project hash`와 같으며 `project_version`이 빈 값(태그 실행 아님)인지 확인. 자기 호출은 `project/`·`pureiron-v1/`가 같은 트리라 hash 비교로는 경로 분리를 못 잡으므로 reusable 안에서 도구·프로젝트 경로를 직접 확인한다. 경로 분리·`project_version` 태그 분기는 외부 run(G1-8)에서 검증. 로컬 대응은 `unit`의 `deploy/tests/test_project_template.py` | CI만(`g1.sh`에 없는 job), 항상 |
-| `integration-compose` | 이미지 빌드 → compose(`pureiron-it`, `PUREIRON_IT_PROJECT`로 변경 가능) site-db → `migrate up` → 전체 기동 → `pytest -m "integration and not perf"`(readyz 200, migrate 종료코드, Timescale 객체, edit-lock 경쟁, historian DB, 시뮬레이터 100태그·collector kill, collector 30 s 네트워크 분리 replay, 현장 PATCH·드래프트 게이트·서명 export(M5-2)) 이어서 control-api 통합(`deploy/compose/control.dev.yml` control-db PostgreSQL 16만, 프로젝트 `<PUREIRON_IT_PROJECT>-control`·포트 `PUREIRON_DEV_CONTROL_DB_PORT`(25433), 테스트마다 새 DB → `pureiron-control migrate up`: gen 역행 409·타 site 403·서명 400·seq 규칙·stale·offline·ETag 304·Range 206·r4 Updater poll 클라이언트 호환, M4-0), 이어서 fleet publish 종단(`deploy/tests/fleet -m integration`, 같은 compose 파일·프로젝트 `<PUREIRON_IT_PROJECT>-fleet`: 로컬 git 원격 fleet 이력 → 가짜 GitHub 승인 → 실제 `build_bundle` → 실제 control-api `PUT` → `max_published_gen` 증가·재실행 건너뜀·본문 전 409·404, M4-2). | 항상 |
+| `integration-compose` | 이미지 빌드 → compose(`pureiron-it`, `PUREIRON_IT_PROJECT`로 변경 가능) site-db → `migrate up` → 전체 기동 → `pytest -m "integration and not perf"`(readyz 200, migrate 종료코드, Timescale 객체, edit-lock 경쟁, historian DB, 시뮬레이터 100태그·collector kill, collector 30 s 네트워크 분리 replay, 현장 PATCH·드래프트 게이트·서명 export(M5-2)) 이어서 control-api 통합(`deploy/compose/control.dev.yml` control-db PostgreSQL 16만, 프로젝트 `<PUREIRON_IT_PROJECT>-control`·포트 `PUREIRON_DEV_CONTROL_DB_PORT`(25433), 테스트마다 새 DB → `pureiron-control migrate up`: gen 역행 409·타 site 403·서명 400·seq 규칙·stale·offline·ETag 304·Range 206·r4 Updater poll 클라이언트 호환, M4-0), 이어서 fleet publish 종단(`deploy/tests/fleet -m integration`, 같은 compose 파일·프로젝트 `<PUREIRON_IT_PROJECT>-fleet`: 로컬 git 원격 fleet 이력 → 가짜 GitHub 승인 → 실제 `build_bundle` → 실제 control-api `PUT` → `max_published_gen` 증가·재실행 건너뜀·본문 전 409·404, M4-2), 이어서 중앙 Caddyfile·compose 실제 도구 검사(`deploy/tests/test_central_compose.py -m integration`: control-web 이미지의 `caddy validate`(비밀 파일 import·`{file.*}` 해석, basic auth 비밀 없으면 실패)·`docker compose config`, 그리고 저장소 Caddyfile을 실제로 띄워(임시 호스트 포트, upstream 없음) SNI 없는 IP 접속 핸드셰이크(`PUREIRON_CENTRAL_DEFAULT_SNI`)·설정에 없는 Host 421 + 보안 헤더·빈 `ui_basic_auth`는 뜨지만 모두 401, M4-3). | 항상 |
+| `control-web-e2e` | 중앙 이미지 빌드(`control-api control-web`) → `uv sync` → `deploy/tests/central_stack.py up`: 프로젝트 `<PUREIRON_IT_PROJECT>-central`, HTTPS `127.0.0.1:${PUREIRON_IT_CENTRAL_PORT:-28543}`, `PUREIRON_CONTROL_POLL_S=2`, 비밀 파일 3개(임시 디렉터리) → `run --rm control-api migrate up` → CLI로 viewer·ci 토큰 → 실제 Updater `enroll`로 만든 enrollment를 CLI `site register` → `up -d --wait` → Caddy 루트 CA 내보내기 → 그 CA로 검증하는 HTTPS `PUT /bundles/<site>/1`(ci 토큰, basic auth 없음) → Playwright chromium: basic auth 없으면 `/`·`/ui/*` 401·`/api/v1/healthz` 200·basic 자격만으로 `/api/v1/fleet` 401, 보안 헤더 4개(정적·프록시·401), 토큰 주입은 `GET /ui/fleet`뿐(다른 `/ui/*` 경로·POST·PUT·DELETE 404), `/`·`/ui/fleet` 응답 헤더·본문에 viewer 토큰 원문 없음, 화면 로드("수신 없음") → 현장 서명 heartbeat 1건 → 새로고침 → online·"최신"·현장 보고 시각 ≠ 중앙 수신 시각(화면 로드 시간이 6초 online 창을 깎지 않게 heartbeat는 화면이 뜬 뒤 보낸다) → 약 7초 뒤 새로고침 → stale·"마지막 보고값"·"최신" 없음, `/ui/fleet` 401·503·네트워크 실패 문구(표 없음). 결과·trace·스크린샷·`compose.log`는 `artifacts/control-web-e2e/`(basic auth 비밀번호·토큰이 든 상태 파일은 임시 디렉터리). 명세 `services/control-web/e2e/`, 정본 [frontend](frontend.md) 17절 | 항상(CI: integration-compose 다음 job) |
 | `web-e2e` | 이미지 빌드 → `uv sync` → compose(`pureiron-it`) site-db → `migrate up` → 전체 기동 → core 쓰기 스위치 켬(`PUREIRON_WRITES_ENABLED=true`) → 시뮬레이터 100태그 + 쓰기 선언 2개(설정값 `sim/sp_float`·명령 `sim/start`) + 허가 조건 coil `sim/remote_ok` + 알람 1개 정의 apply·CLI 계정(engineer·operator·viewer) → 쓰기 검사 통과 대기 → Playwright chromium 스모크(로그인 → Overview GOOD → Alarms ACK 1회 → Trend canvas → Devices 연결됨 → Audit `alarm.ack` → 로그아웃 뒤 보호 경로 리다이렉트, 조회자 권한, 로그인 실패 고정 문구) + 쓰기(M3c-3: 설정값 CONFIRMED·표 값 갱신, 조회자 쓰기 버튼 없음, 허가 조건 거짓 → 검사 거부, 명령 확인 2단계 → 장비 수신, confirm 응답을 바꿔(core에 보내지 않음) "장비 수신, 값 미확인"·"결과 모름" 문구, 명령 더블클릭·Enter 연타가 2단계 확인을 건너뛰지 않음, 전송 중 Esc 반복에도 대화상자 유지, confirm 409·410·404·503 문구). 결과·trace·스크린샷 `artifacts/web-e2e/`, CI는 성공·실패 모두 `artifacts/web-e2e/` 전체(스크린샷 포함)를 artifact로 올린다. 명세는 `services/web/e2e/`, 정본은 [frontend](frontend.md) 16절 | 항상(CI: integration-compose 다음 job) |
 | `perf-ingest` | 이미지 빌드 → `PUREIRON_SIM_REGISTERS=2000` compose → 2,000태그·poll 1 s 60 s 측정(r3부터 알람 정의 50개 + 전 태그 구독 WS 1개를 붙여서) → `artifacts/perf/<PUREIRON_PERF_RELEASE:-r3>/ingest.json`(batch/s·샘플/s·write_lag p50/p95/max·buffer max·drop·CPU/RSS·분당 행, r3부터 `alarms`·`ws` 수신 통계). 기록만, 합격선 없음 | 수동 |
 | `n-minus-1` | 현재 커밋 core를 `pureiron/core:ci-<sha>`로 빌드해 migrate한 DB에서, 직전 epoch release 기록(`deploy/releases/r<N>.json`, 번호 순)의 core-test 이미지를 실행. 이미지가 없으면 image store(`PUREIRON_IMAGE_STORE`, 기본 `~/pureiron/images/<release>/`)의 tar를 load하고 config digest를 기록과 대조. 테스트와 별개로 N-1 앱의 `migrate status --json`이 N 스키마에서 envelope 안인지 확인. `deploy/build/n_minus_1_waivers.json`의 테스트만 deselect(waiver 테스트는 따로 돌려 여전히 실패해야 하고, 본 실행은 통과 ≥ 1·deselect 수 == waiver 수). 현재 epoch 5(r4) × r3 core-test. epoch 1이면 notice 후 통과 | 마이그레이션·`db` 경로 변경 PR, master push, nightly, `full-gate` 라벨 |
-| `repro-build` | 캐시 없이 2회 빌드해 core·collector·web·simulator·core-test config digest 동일 확인(site-db 제외) | Dockerfile·`uv.lock`·`package-lock.json`·`deploy/build/` 변경 PR, master push, nightly, `full-gate` 라벨 |
+| `repro-build` | 캐시 없이 2회 빌드해 core·collector·web·simulator·core-test·control-api·control-web config digest 동일 확인(site-db 제외) | Dockerfile·`uv.lock`·`package-lock.json`·`deploy/build/` 변경 PR, master push, nightly, `full-gate` 라벨 |
 
 - **G1-8 고객 repo workflow**(M5-3b): V1 안 대리는 위 `template-*` job. 외부 run = private 테스트 repo `circulation95/pureiron-project-acme-test`(PureIron_V1 Actions access `user`, secret `PUREIRON_CI_APP_ID`·`PUREIRON_CI_APP_KEY`)에 템플릿을 복사하고 workflow ref를 검증할 브랜치로 바꿔 PR → run 로그 `content_hash` = 로컬 `pureiron-project hash deploy/templates/pureiron-project`, 이어서 태그 `v1` push → `project_version: v1`. 계약·접근 조건은 [data-contracts](data-contracts.md) M5-3b 절. 외부 run은 M5-3b 브랜치 push 뒤 실행한다(2026-10-30 기준 미실행).
 - **fleet·publish(M4-2)**: `unit`에 `deploy/tests/fleet/`(fleet 파일 규칙·check-gen·승인 판정 표(트리 동치 포함)·GitHub REST 가짜 HTTP·`merge-tree`·publish 흐름 가짜 의존성 + 로컬 git 원격·본문 전 409·revert, 리뷰 r1·r2 회귀 `test_publish_review_r1.py`·`test_publish_review_r2.py`)와 `deploy/tests/test_fleet_template.py`(템플릿 스키마·workflow 고정값·C11 `rev-parse HEAD`)가 들어 있다. 실제 GitHub·`/etc`·`/srv`는 건드리지 않는다(경로는 모두 tmp 인자, git 원격은 로컬 경로, 전역 git 설정 무시). 외부 리허설(테스트 fleet repo `circulation95/pureiron-fleet-test`, runner `publish`, PR → 사람 승인 → merge → 게시 1회 + `E_APPROVAL` 거부 5종 + 사슬 복구)은 plan `pureiron-m4-2.md` §4, 결과 `.omc/artifacts/m4/m4-2-rehearsal.md`.
-- release 기록: `PUREIRON_RELEASE=r<N> bash deploy/build/build_images.sh` → `uv run python deploy/build/release_record.py r<N>`(커밋된 깨끗한 트리에서만, 이미지 tar를 image store에 보관).
+- **중앙 Caddyfile 정적 구조(M4-3)**: `unit`의 `deploy/tests/test_central.py`가 Caddyfile을 블록 트리로 읽어 단언한다 — 바깥 `handle`의 첫 지시가 `basic_auth`이고 `@fleet`·`handle @fleet`·`handle /ui/*`·정적 `handle`이 그 뒤 같은 깊이, basic auth 밖 핸들러는 토큰 주입 없는 `handle /api/v1/*` 하나, `Authorization` 주입은 `GET /ui/fleet` 핸들러 한 줄, `viewer_token`을 읽는 줄도 그 `header_up` 하나뿐(`header`·`header_down`으로 읽으면 응답에 토큰이 나간다), `@fleet`·`handle @fleet`·그 안 `reverse_proxy`·`handle /ui/*`·정적 `handle`·전역 옵션은 지시 줄을 정확히 비교(토큰이 다른 경로·upstream으로 가는 변경, 프록시 추가, `admin off` 삭제), `header` 블록은 site web nginx와 같은 4줄뿐(삭제 `-`·defer `>` 없음 — 하나라도 있으면 오류 응답에서 헤더가 모두 빠진다), 전역 `default_sni`(env)·설정에 없는 Host 421 블록. 리뷰 변이(basic_auth를 `/ui/*` 안으로·`-Server` 추가)를 무거운 e2e 없이 잡는다.
+- release 기록: `PUREIRON_RELEASE=r<N> bash deploy/build/build_images.sh` → `uv run python deploy/build/release_record.py r<N>`(커밋된 깨끗한 트리에서만, 이미지 tar를 image store에 보관). 중앙 이미지는 `release_record.py <이름> --central` → `deploy/releases/central/<이름>.json`(control-api·control-web config digest + control-api 스키마 epoch, 현장 기록을 읽는 번들 빌더·check-gen·n-minus-1은 하위 디렉터리를 읽지 않는다 — `deploy/tests/test_central_release.py`).
 - 도구 버전 고정: buf·oasdiff는 `scripts/tools.sh`(버전·sha256), uv 0.10.12, Node 22, 베이스 이미지·BuildKit은 digest 고정.
 - 이미지 빌드(`deploy/build/build_images.sh`)는 전용 docker-container builder + `SOURCE_DATE_EPOCH`·`rewrite-timestamp`로 tar를 만든 뒤 `docker load` 한다(현장 번들과 같은 save/load 경로). uv가 남기는 설치 시각 메타데이터(`uv_cache.json`)는 `deploy/build/normalize_venv.py`가 지운다.
 - web-e2e의 Playwright는 CI에서 브라우저만 받는다(`npx playwright install chromium`, `--with-deps` 아님). chromium 실행에 필요한 시스템 라이브러리는 self-hosted runner에 미리 설치돼 있어야 하며, runner 준비 때 한 번만 `sudo npx playwright install-deps chromium`을 실행한다(job에서는 sudo를 쓰지 않는다).

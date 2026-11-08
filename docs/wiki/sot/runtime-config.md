@@ -165,7 +165,7 @@ core의 초 단위 값(`…_S`)은 양의 유한 수만 받는다 — 0·음수�
 
 ### V1 control-api 환경변수 (M4-0 구현)
 
-정본은 `services/control-api/src/pureiron_control/settings.py`. 벤더 쪽 중앙(M4 C3: 개발 PC WSL compose, 운영 compose는 M4-3 `deploy/central`)에서만 쓴다. 비밀값은 파일 경로로만 받는다.
+정본은 `services/control-api/src/pureiron_control/settings.py`. 벤더 쪽 중앙(M4 C3: 개발 PC WSL compose, 운영 compose는 `deploy/central` — 아래 M4-3 절)에서만 쓴다. 비밀값은 파일 경로로만 받는다.
 
 | 변수 | 기본값 | 의미 |
 |---|---|---|
@@ -175,11 +175,30 @@ core의 초 단위 값(`…_S`)은 양의 유한 수만 받는다 — 0·음수�
 | `PUREIRON_CONTROL_DATA_DIR` | `/var/lib/pureiron-control` | 게시 번들 `bundles/<site>/g<gen>.pib`·드래프트 `drafts/<site>/<sha256>.tar` |
 | `PUREIRON_CONTROL_POLL_S` | `60` | 현장 poll 주기 가정. `GET /fleet`의 `online` = `last_seen` ≤ 3 × 이 값(기본 180 s, C8) — 현장 Updater `PUREIRON_POLL_INTERVAL_S`와 맞춘다 |
 | `PUREIRON_CONTROL_MAX_BUNDLE_BYTES` | `17179869184`(16 GiB) | `PUT /bundles` 업로드 상한(넘으면 413) |
-| `PUREIRON_CONTROL_MIGRATIONS_DIR` | 소스 트리 `services/control-api/migrations` | 이미지(M4-3)에서는 설치 경로 |
+| `PUREIRON_CONTROL_MIGRATIONS_DIR` | 소스 트리 `services/control-api/migrations` | 이미지(`pureiron/control-api`, M4-3)에서는 `/opt/pureiron/migrations` |
 | `PUREIRON_RELEASE` | 패키지 버전 | `schema_migrations.release` 기록값 |
 | `PUREIRON_DEV_CONTROL_DB_PORT` | `25433` | 개발·통합 테스트 compose(`deploy/compose/control.dev.yml`) control-db 호스트 포트 |
 
 초·바이트 값은 양의 유한 수만 받고 잘못된 값은 기동 시 `SettingsError`(CLI 종료 코드 4)다. 사람·CI token은 env가 아니라 `pureiron-control token create --role admin|ci|viewer --name <이름>`으로만 만든다(원문은 그때 한 번만 출력, DB에는 SHA-256).
+
+### V1 중앙 compose 변수·비밀 파일 (M4-3 구현)
+
+정본은 `deploy/central/compose.yml`·`Caddyfile`·`.env.example`, 절차는 `deploy/central/README.md`. compose 변수(보간용, `.env` 또는 `--env-file`):
+
+| 변수 | 기본값 | 의미 |
+|---|---|---|
+| `PUREIRON_CENTRAL_RELEASE` | compose `0.1.0-dev`, `.env.example` `c0` | `pureiron/control-api`·`control-web` 이미지 태그 = release 이름(기록 `deploy/releases/central/<이름>.json`). control-api `PUREIRON_RELEASE`로도 넘어간다. 운영은 기록이 있는 이름(`c0`, `c1`, …)만 — `0.1.0-dev`는 CI·개발용 태그(같은 docker 데몬의 CI가 PR 코드로 다시 빌드해 덮어씀)라 운영 금지 |
+| `PUREIRON_CENTRAL_SECRETS_DIR` | 없음(필수 — 없으면 compose가 거부) | 비밀 파일 디렉터리(저장소 밖, 0700) |
+| `PUREIRON_CENTRAL_HOST` | `localhost` | Caddy 사이트 주소 = `tls internal` 인증서 이름(쉼표로 여러 개). 여기 없는 `Host`로 온 요청은 421 |
+| `PUREIRON_CENTRAL_DEFAULT_SNI` | `localhost` | Caddy 전역 `default_sni` — SNI 없는 클라이언트에 줄 인증서 이름. **IP로 운영하면 그 IP**(같은 IP를 `PUREIRON_CENTRAL_HOST`에도): IP로 접속하는 클라이언트는 SNI를 보내지 않아 기본값이면 TLS 핸드셰이크가 끊긴다(alert 80, M4-3 리뷰 실측). IP는 하나만 — 나머지는 DNS 이름으로 접속 |
+| `PUREIRON_CENTRAL_BIND` / `PUREIRON_CENTRAL_HTTPS_PORT` | `127.0.0.1` / `28443` | 바깥에 여는 유일한 포트(Caddy 컨테이너 8443). control-db·control-api는 호스트 포트 없음 |
+| `PUREIRON_CONTROL_POLL_S` | `60` | control-api 설정 그대로 전달(위 표) |
+
+비밀 파일(`$PUREIRON_CENTRAL_SECRETS_DIR/…`, 컨테이너 `/run/secrets/…`): `control_db_password`(control-db·control-api), `viewer_token`(Caddy만 — `GET /ui/fleet`에 Bearer로 붙임, `{file.*}` placeholder가 요청마다 읽고 끝 줄바꿈은 버린다), `ui_basic_auth`(Caddy만 — 한 줄 `<사용자> <bcrypt 해시>`, 기동 때 Caddyfile `import`, 없으면 Caddy가 뜨지 않는다. **빈 파일이면 경고만 남기고 떠서 화면 요청이 모두 401**). 컨테이너 사용자가 읽도록 파일은 0644, 보호는 디렉터리 권한. 볼륨: `control-db`·`control-data`(`/var/lib/pureiron-control` 번들·드래프트, 이미지가 UID 10001 소유로 만든다)·`caddy-data`(로컬 CA — 지우면 루트 CA가 바뀐다)·`caddy-config`.
+
+**비밀 파일 교체 규칙(모든 비밀 파일 공통)**: 같은 파일에 덮어쓴다(`cat 새파일 > 비밀파일`), `mv`로 바꾸지 않는다. compose `secrets:`는 파일 하나의 bind mount라 컨테이너가 처음 inode를 계속 본다. Docker Desktop(WSL) 실측(M4-3 수정 r1): 덮어쓰기는 재시작 없이 보이고, `mv` 뒤에는 옛 내용을 보다가 `restart`·`up -d` 때 `error mounting … no such file or directory`로 컨테이너가 뜨지 않는다. 복구는 `up -d --force-recreate <서비스>`. viewer 토큰 교체 순서 = 새 이름으로 `token create` → 다른 파일에 받기 → 확인 → 같은 파일에 덮어쓰기(여기까지 실패하면 멈추는 한 명령) → 화면 확인 → 옛 토큰 `token revoke --name`. `control_db_password` 값 변경은 덮어쓰기만으로 끝나지 않는다: postgres는 이 파일을 첫 initdb 때만 읽으므로 먼저 `ALTER ROLE` → 같은 파일에 덮어쓰기 → `restart control-api` 순서다. 파일만 바꾸면 재시작 뒤 `GET /ui/fleet` 503, `/api/v1/healthz` 200, 컨테이너 healthy다(실측). 명령은 `deploy/central/README.md` "비밀 파일 교체".
+
+e2e(`deploy/tests/central_stack.py`)는 `PUREIRON_IT_PROJECT`(프로젝트 `<값>-central`)·`PUREIRON_IT_CENTRAL_PORT`(기본 28543)·`PUREIRON_RELEASE`로 격리하고 `PUREIRON_CONTROL_POLL_S=2`로 띄운다. 쓰지 않는 포트: 25432·25433(CI DB), 25443·8100(M4-2 리허설 central).
 
 ### V1 fleet publish 호스트 경로·환경변수 (M4-2 구현)
 

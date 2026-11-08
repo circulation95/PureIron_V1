@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 현장 이미지 빌드: pureiron/{core,collector,web,simulator,core-test}:<release> + pureiron/site-db retag.
+# 이미지 빌드: 현장 pureiron/{core,collector,web,simulator,core-test}:<release> + pureiron/site-db retag,
+# 중앙 pureiron/{control-api,control-web}:<release>(M4-3, 현장 번들에는 들어가지 않는다).
 #
 #   bash deploy/build/build_images.sh [svc ...]   # 기본 release = PUREIRON_RELEASE 또는 0.1.0-dev
 #   NO_CACHE=1 bash deploy/build/build_images.sh  # 재현 빌드 검사용
@@ -26,11 +27,13 @@ declare -A DOCKERFILES=(
   [collector]=services/collector/Dockerfile
   [web]=services/web/Dockerfile
   [simulator]=deploy/simulator/Dockerfile
+  [control-api]=services/control-api/Dockerfile
+  [control-web]=services/control-web/Dockerfile
 )
 if [ "$#" -gt 0 ]; then
   SERVICES=("$@")
 else
-  SERVICES=(core core-test collector web simulator)
+  SERVICES=(core core-test collector web simulator control-api control-web)
 fi
 
 OUT_DIR="$ROOT/artifacts/images"

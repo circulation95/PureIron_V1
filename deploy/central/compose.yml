@@ -1,0 +1,93 @@
+# 중앙 compose(M4-3): control-db(PostgreSQL 16) + control-api + control-web(Caddy: HTTPS·basic auth·프록시).
+# 절차·비밀 파일·루트 CA 내보내기는 deploy/central/README.md.
+#
+#   docker compose -p pureiron-central -f deploy/central/compose.yml --env-file <env> run --rm control-api migrate up
+#   docker compose -p pureiron-central -f deploy/central/compose.yml --env-file <env> up -d --wait
+#
+# - 이미지: pureiron/control-api·control-web은 build_images.sh가 만든 로컬 이미지만 쓴다(pull_policy: never,
+#   현장 site compose와 같은 규칙). 신원은 release 기록 deploy/releases/central/<release>.json의 config digest
+#   (release_record.py --central). control-db는 업스트림 PostgreSQL 16을 digest로 고정한다(control.dev.yml과 같은 값,
+#   벤더 측 중앙이라 registry pull 허용 — 현장 registry pull 금지 규칙과 무관).
+# - 마이그레이션은 기동 때 실행하지 않는다(불변 규칙): 배포 절차가 `run --rm control-api migrate up`을 먼저 한다.
+# - 비밀값은 파일로만(${PUREIRON_CENTRAL_SECRETS_DIR}): control_db_password, viewer_token, ui_basic_auth.
+# - 바깥에 여는 포트는 Caddy HTTPS 하나(기본 127.0.0.1:28443). control-db·control-api는 compose 네트워크 안에만.
+name: pureiron-central
+
+services:
+  control-db:
+    image: postgres:16@sha256:5d143123fdf80462d1778cd4f24b9f7ca13c87174bca19141fb194c5a1ebca59
+    pull_policy: missing
+    environment:
+      POSTGRES_USER: pureiron
+      POSTGRES_DB: pureiron_control
+      POSTGRES_PASSWORD_FILE: /run/secrets/control_db_password
+    secrets: [control_db_password]
+    volumes:
+      - control-db:/var/lib/postgresql/data
+    healthcheck:
+      # TCP로 본다 — 첫 기동 initdb 임시 서버는 unix socket만 연다(site.compose.yml과 같은 이유).
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U pureiron -d pureiron_control"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+    restart: unless-stopped
+
+  control-api:
+    image: pureiron/control-api:${PUREIRON_CENTRAL_RELEASE:-0.1.0-dev}
+    pull_policy: never
+    depends_on:
+      control-db:
+        condition: service_healthy
+    environment:
+      PUREIRON_CONTROL_DB_DSN: postgresql://pureiron@control-db:5432/pureiron_control
+      PUREIRON_CONTROL_DB_PASSWORD_FILE: /run/secrets/control_db_password
+      PUREIRON_CONTROL_POLL_S: ${PUREIRON_CONTROL_POLL_S:-60}
+      PUREIRON_RELEASE: ${PUREIRON_CENTRAL_RELEASE:-0.1.0-dev}
+    secrets: [control_db_password]
+    volumes:
+      - control-data:/var/lib/pureiron-control
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/api/v1/healthz', timeout=2)"
+      interval: 2s
+      timeout: 3s
+      retries: 60
+    restart: unless-stopped
+
+  control-web:
+    image: pureiron/control-web:${PUREIRON_CENTRAL_RELEASE:-0.1.0-dev}
+    pull_policy: never
+    depends_on:
+      control-api:
+        condition: service_healthy
+    environment:
+      # Caddyfile의 사이트 주소(인증서 이름). 여러 개면 쉼표로: "localhost, 192.168.0.10".
+      PUREIRON_CENTRAL_HOST: ${PUREIRON_CENTRAL_HOST:-localhost}
+      # SNI 없는 클라이언트(IP로 접속하는 현장 VM·브라우저)에 줄 인증서 이름. IP로 접속하면 그 IP로.
+      PUREIRON_CENTRAL_DEFAULT_SNI: ${PUREIRON_CENTRAL_DEFAULT_SNI:-localhost}
+    ports:
+      - ${PUREIRON_CENTRAL_BIND:-127.0.0.1}:${PUREIRON_CENTRAL_HTTPS_PORT:-28443}:8443
+    secrets: [viewer_token, ui_basic_auth]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Caddy 로컬 CA·인증서(tls internal). 지우면 루트 CA가 바뀐다 — 현장·브라우저 신뢰를 다시 설정해야 한다.
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+
+secrets:
+  control_db_password:
+    file: ${PUREIRON_CENTRAL_SECRETS_DIR:?set PUREIRON_CENTRAL_SECRETS_DIR}/control_db_password
+  viewer_token:
+    file: ${PUREIRON_CENTRAL_SECRETS_DIR:?set PUREIRON_CENTRAL_SECRETS_DIR}/viewer_token
+  ui_basic_auth:
+    file: ${PUREIRON_CENTRAL_SECRETS_DIR:?set PUREIRON_CENTRAL_SECRETS_DIR}/ui_basic_auth
+
+volumes:
+  control-db: {}
+  control-data: {}
+  caddy-data: {}
+  caddy-config: {}
