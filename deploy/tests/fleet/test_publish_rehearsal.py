@@ -68,7 +68,11 @@ def test_app_id_file_is_checked_the_same_way(tmp_path: Path) -> None:
 def test_bad_app_id_fails_the_cli_before_github(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(publish.os, "umask", lambda mask: 0o022)
+    def keep_umask(mask: int) -> int:
+        del mask
+        return 0o022
+
+    monkeypatch.setattr(publish.os, "umask", keep_umask)
     key = tmp_path / "app.pem"
     key.write_text("not a key", encoding="utf-8")
     code = publish.main(
