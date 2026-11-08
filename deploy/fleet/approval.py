@@ -3,8 +3,13 @@
 main에 들어온 커밋 `sha`를 서명해도 되는지. 하나라도 어기면 `E_APPROVAL`(사유마다 한 줄),
 서명하지 않는다.
 
-① `sha`는 **merge된 PR의 `merge_commit_sha`와 정확히 같다**(직접 push·PR 머리 커밋 직접 push 차단).
-   PR base 브랜치는 main, `sha`는 main 이력 안에 있어야 한다.
+① `sha`는 **merge된 PR의 `merge_commit_sha`와 정확히 같다**(PR 없는 직접 push 차단). PR base
+   브랜치는 main, `sha`는 main 이력 안에 있어야 한다. ①만으로는 PR 머리 커밋을 main에 직접 push한
+   경우를 막지 못한다: GitHub은 머리 커밋을 main으로 fast-forward하면 그 PR을 merged로 바꾸고
+   `merge_commit_sha` = 머리 커밋으로 둔다(M4-2 리허설 §3-3 S4b) — 버튼 merge와 구분되지 않는다.
+   승인 없는 머리면 ②가, 승인본과 다른 내용이면 ⑤가 막는다. **승인된** 최종 head를 fast-forward한
+   것은 내용이 승인본과 같으므로 통과한다(`test_approval.py` fast-forward 표). PR이 아직 merged로
+   바뀌지 않은 머리 커밋 push는 ①이 "머리 커밋을 main에 직접 push"로 거부한다.
 ② 그 PR의 **최종 head sha**에 대한 승인이 1명 이상: 리뷰어별 마지막 상태(APPROVED·CHANGES_REQUESTED·
    DISMISSED만 상태를 바꾼다, COMMENTED·PENDING은 무시)가 APPROVED이고 `commit_id == head sha`
    (Free에는 "stale review dismiss"가 없다 — 승인 뒤 커밋이 붙으면 그 승인은 무효), 리뷰어 ∈
