@@ -18,6 +18,7 @@ export const STATE_ENV = "PUREIRON_CONTROL_WEB_E2E_STATE"; // globalSetup → �
 const COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
 
 export interface StackState {
+  work: string; // 임시 작업 디렉터리(비밀 파일은 `<work>/secrets/`)
   base_url: string;
   user: string;
   password: string;

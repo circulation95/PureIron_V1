@@ -1,7 +1,8 @@
 // control-web e2e(M4-3 G8): 실제 deploy/central 스택(Caddy·control-api·control-db, poll_s = 2 → stale 6s).
-// 순서가 의미 있다(serial): 경로 규칙 → 화면 로드(수신 없음) → heartbeat 1건 → 새로고침 → online·최신
+// 순서가 의미 있다(serial): 경로 규칙 → 응답에 토큰 없음 → 화면 로드(수신 없음) → heartbeat 1건 → 새로고침 → online·최신
 // → 약 7초 뒤 stale·마지막 보고값 → 오류 표시.
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { expect, request, test, type APIRequestContext, type Page } from "@playwright/test";
 
@@ -92,6 +93,18 @@ test("viewer 토큰 주입은 GET /ui/fleet 하나뿐 — 다른 /ui/* 경로·�
   }
   for (const method of ["POST", "PUT", "DELETE"] as const) {
     expect((await operator.fetch("/ui/fleet", { method })).status(), method).toBe(404);
+  }
+});
+
+test("브라우저가 받는 응답 헤더·본문에 viewer 토큰 원문이 없다(★G1)", async () => {
+  const token = readFileSync(join(stack.work, "secrets", "viewer_token"), "utf-8").trim();
+  expect(token).not.toBe("");
+  expect(token).not.toBe("not-issued-yet"); // central_stack.py가 발급 전에 넣어 두는 값
+  for (const path of ["/", "/ui/fleet"]) {
+    const response = await operator.get(path);
+    expect(response.status(), path).toBe(200);
+    expect(JSON.stringify(response.headersArray()), `${path} 헤더`).not.toContain(token);
+    expect(await response.text(), `${path} 본문`).not.toContain(token);
   }
 });
 

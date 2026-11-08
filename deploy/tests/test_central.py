@@ -1,7 +1,8 @@
 """중앙 compose·Caddyfile·이미지 정적 규칙(M4-3 G1·G3·G4·G5). docker 없이 돈다.
 
-실제 동작(Caddy가 토큰을 `/ui/fleet`에만 붙이는지, basic auth·보안 헤더)은 control-web e2e가,
-`caddy validate`·`docker compose config`는 test_central_compose.py(integration)가 본다.
+실제 동작은 두 곳에서 본다. 토큰이 `/ui/fleet`에만 붙고 응답에 나가지 않는지, basic auth·보안 헤더는
+control-web e2e. `caddy validate`·`docker compose config`와 저장소 Caddyfile을 실제 Caddy로 띄운
+검사(SNI 없는 IP 접속, 설정에 없는 Host 421, 빈 `ui_basic_auth`)는 test_central_compose.py(integration).
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ SITE_WEB_DOCKERFILE = REPO / "services" / "web" / "Dockerfile"
 # CI(25432·25433)·M4-2 리허설(25443 control-db, 8100 control-api)이 쓰는 호스트 포트.
 PORTS_IN_USE = {"25432", "25433", "25443", "8100"}
 E2E_PORT = "28543"  # deploy/tests/central_stack.py 기본
+FLEET_TOKEN_HEADER = 'header_up Authorization "Bearer {file./run/secrets/viewer_token}"'
 
 
 class _Loader(Protocol):
@@ -201,12 +203,52 @@ def test_token_is_added_only_inside_the_fleet_handler() -> None:
     """★G1·R1: Authorization을 만드는 줄은 하나뿐이고 GET `/ui/fleet` 핸들러 안에 있다."""
     lines = _caddy_lines()
     injections = [line for line in lines if "Authorization" in line]
-    assert injections == ['header_up Authorization "Bearer {file./run/secrets/viewer_token}"']
+    assert injections == [FLEET_TOKEN_HEADER]
     assert _block(lines, "@fleet") == ["path /ui/fleet", "method GET"]
     fleet = _block(lines, "handle @fleet")
     assert fleet[0] == "rewrite * /api/v1/fleet"
     assert injections[0] in fleet
     assert "respond 404" in _block(lines, "handle /ui/*")
+
+
+def test_viewer_token_appears_only_in_the_fleet_header_up() -> None:
+    """★G1(리뷰 L-A): 비밀 파일을 읽는 줄은 upstream 요청 헤더 하나뿐이다. 정적 핸들러의 `header`나
+    프록시의 `header_down`으로 읽으면 브라우저 응답에 토큰이 나간다(리뷰 실측 X13·X16)."""
+    readers = [line for line in _caddy_lines() if "viewer_token" in line]
+    assert readers == [FLEET_TOKEN_HEADER]
+
+
+def test_fleet_handler_is_exact() -> None:
+    """★G1(리뷰 L-A): 토큰이 가는 곳은 control-api `GET /api/v1/fleet` 하나다. 경로를 또 바꾸거나
+    upstream을 바꾸면(리뷰 X14·X15) 토큰이 다른 곳으로 간다."""
+    outer = _site().child("handle")
+    assert outer.child("@fleet").heads() == ["path /ui/fleet", "method GET"]
+    fleet = outer.child("handle @fleet")
+    assert fleet.heads() == ["rewrite * /api/v1/fleet", "reverse_proxy control-api:8100"]
+    assert fleet.child("reverse_proxy control-api:8100").heads() == [FLEET_TOKEN_HEADER]
+
+
+def test_other_ui_handlers_are_exact() -> None:
+    """리뷰 L-A: `/ui/*`는 404뿐이고 정적 핸들러는 파일만 낸다(리뷰 X17·X23: 프록시 추가 금지)."""
+    outer = _site().child("handle")
+    assert outer.child("handle /ui/*").heads() == ["respond 404"]
+    static = outer.child("handle")
+    assert static.heads() == [
+        "root * /srv/control-web",
+        "try_files {path} /index.html",
+        "file_server",
+    ]
+
+
+def test_global_options_are_exact() -> None:
+    """리뷰 L-A: admin API는 꺼 둔다(리뷰 X18). 전역 옵션은 이 다섯 줄뿐이다."""
+    assert _caddy_tree().child("{").heads() == [
+        "admin off",
+        "skip_install_trust",
+        "https_port 8443",
+        "auto_https disable_redirects",
+        "default_sni {$PUREIRON_CENTRAL_DEFAULT_SNI:localhost}",
+    ]
 
 
 def test_api_is_proxied_without_basic_auth() -> None:
