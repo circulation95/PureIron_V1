@@ -11,11 +11,13 @@ permissions:
 
 jobs:
   check-gen:
-    # @ref = 도구 버전. 리허설 동안 M4-2 머지 커밋 sha, 운영은 PureIron_V1 릴리스 태그(r5~)로 고정하고
-    # publish.yml과 같은 ref를 쓴다.
-    uses: circulation95/PureIron_V1/.github/workflows/fleet-check-gen.yml@master
+    # @ref = 도구 버전 = PureIron_V1 릴리스 태그(r5~). publish.yml과 같은 ref를 쓴다(README "도구 버전").
+    uses: circulation95/PureIron_V1/.github/workflows/fleet-check-gen.yml@r5
     with:
       runs_on: '["self-hosted", "publish"]'
+      # control-api 기준 URL(publish 호스트에서 닿는 주소). 없으면 http://127.0.0.1:8100/api/v1.
+      # 중앙 compose(Caddy HTTPS, 사설 CA)면 publish.yml과 같은 값으로(README "control-api 주소").
+      # control_api: https://<중앙 주소>:28443/api/v1
     secrets:
       PUREIRON_CI_APP_ID: ${{ secrets.PUREIRON_CI_APP_ID }}
       PUREIRON_CI_APP_KEY: ${{ secrets.PUREIRON_CI_APP_KEY }}
