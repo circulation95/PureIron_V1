@@ -66,10 +66,11 @@ OLD=<위 목록에서 화면이 지금 쓰는 viewer 토큰 이름>
 NEW=control-web-$(date +%Y%m%d)               # 유효한 토큰 사이에서 유일한 이름(같은 날 또 하면 뒤에 -2)
 ```
 
-아래 네 줄은 한 명령이다. 어느 단계든 실패하면 거기서 멈추고 `viewer_token`은 그대로다.
+아래 다섯 줄은 한 명령이다. 어느 단계든 실패하면 거기서 멈추고 `viewer_token`은 그대로다. CLI는 빈 이름도 받으므로 첫 줄에서 `NEW`가 비어 있지 않은지 본다.
 
 ```bash
-$C run --rm -T control-api token create --role viewer --name "$NEW" > "$S/viewer_token.new" &&  # 1. 새 토큰(다른 파일에)
+test -n "$NEW" &&
+  $C run --rm -T control-api token create --role viewer --name "$NEW" > "$S/viewer_token.new" &&  # 1. 새 토큰(다른 파일에)
   test "$(wc -l < "$S/viewer_token.new")" -eq 1 && test -s "$S/viewer_token.new" &&             # 2. 한 줄·비어 있지 않음
   cat "$S/viewer_token.new" > "$S/viewer_token" &&                                              # 3. 같은 파일에 덮어쓰기(mv 금지)
   rm "$S/viewer_token.new"
