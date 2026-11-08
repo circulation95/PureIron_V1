@@ -1215,16 +1215,16 @@ plan M2 종료 조건 실측.
 | `install bundle bootstrap + g1(r3) on offline VM` | `install bundle bootstrap + g1(r4) on offline VM` | c0 = epoch 5(`project_files` 포함, BASE_TABLES로 옮김), `next_absent` 제거(NEXT 산출물 없음) |
 | `r3→r4 on compressed epoch-4 DB` | `r4→r5 on compressed epoch-5 DB` | 마이그레이션 없음(phase만) |
 | `r4 schema after upgrade` | `r5 schema after upgrade` | `next_tables` 제거, BASE 산출물(0010~0013) 유지만 |
-| `r4 project tree applied …` | `r5 project tree applied …` | 같음 |
-| `r4' health failure → rollback (transition, E_DEFINITIONS_LEFT)` | `r5' health failure → rollback (no alarm, r4 tree and definitions back)` | 전환기 경보 기대 → **경보 없음**, FAULT가 다른 트리(fixture − `absorbs`)를 실어 롤백 뒤 content_hash·정의 = fixture |
+| `r4 project tree applied …` | `r5 project tree applied …` | 업그레이드 번들이 NEXT 트리(fixture에서 `line1/temp_sp` description만 `… (r5)`)를 싣는다 — 같은 트리면 core no-op이라 c0 시드가 남아 실패(수정 r1, 리뷰 H1). 판정에 c0 시드 retire·그 태그의 DB 정의 값 추가 |
+| `r4' health failure → rollback (transition, E_DEFINITIONS_LEFT)` | `r5' health failure → rollback (no alarm, r4 tree and definitions back)` | 전환기 경보 기대 → **경보 없음**, FAULT가 FAULT 트리(`line1/temp_sp` description `… (r5f)`)를 실어 롤백 뒤 content_hash·DB 정의 값 = fixture(c0) |
 | `rollback within 5 min to r3 digests` | `rollback within 5 min to r4 digests` | 같음(300 s) |
-| `r4 tree bundle after transition rollback → succeeded, alarm cleared` | `r5 retry after r5' rollback → succeeded` | 경보 해제 → 롤백 뒤 NEXT 재시도 성공(경보·메트릭 0, 트리 = fixture) |
+| `r4 tree bundle after transition rollback → succeeded, alarm cleared` | `r5 retry after r5' rollback → succeeded` | 경보 해제 → 롤백 뒤 NEXT 재시도 성공(경보·메트릭 0, NEXT 트리·정의 값 = NEXT) |
 | — | `online: HTTPS heartbeat to central c0 (private CA trusted) → /fleet online` | 새 ① |
 | — | `online: central-published r4 g2 → download + apply succeeded` | 새 ② |
 | — | `online: ApplyAttempt report → /fleet current + last_attempt (source online)` | 새 ③ |
 | — | `online: central web down → site keeps running, /fleet stale → back online` | 새 ④ |
 
-**사전 검증(VM 전, 워커, 2026-11-09).** 중앙 헬퍼 `central.py`를 WSL에서 `10.77.0.1` bind로 띄워 `curl --cacert` healthz 200, CA 없이 `curl` 실패(rc 60), 컨테이너(`python:3.12-slim`)에서 CA를 OS 신뢰 저장소에 넣기 전 `CERTIFICATE_VERIFY_FAILED` → 넣은 뒤 `http.client`·`urllib` 200(D8 규칙이 publish·Updater의 기본 SSL 설정으로 동작). 실제 r4 g2 번들(744,806,400 B)을 ci 토큰으로 HTTPS PUT 201(5.4 s), VM Updater와 같은 형식의 서명 heartbeat·보고 → `/fleet` online·current g2·last_attempt `succeeded`(`source` online), control-web 중지 1 s 뒤 online·36 s 뒤 `stale`(control-api 직접 조회), 재기동 뒤 heartbeat로 online. 로컬 site-db에서 r4 설치 → 시드 → r5 업그레이드 순서의 probe `db`는 c0와 r5가 바이트까지 같았다(마이그레이션 없음 확인). VM Updater의 실제 HTTPS polling·적용·보고는 VM 몫이다.
+**사전 검증(VM 전, 워커, 2026-11-09).** 중앙 헬퍼 `central.py`를 WSL에서 `10.77.0.1` bind로 띄워 `curl --cacert` healthz 200, CA 없이 `curl` 실패(rc 60), 컨테이너(`python:3.12-slim`)에서 CA를 OS 신뢰 저장소에 넣기 전 `CERTIFICATE_VERIFY_FAILED` → 넣은 뒤 `http.client`·`urllib` 200(D8 규칙이 publish·Updater의 기본 SSL 설정으로 동작). 실제 r4 g2 번들(744,806,400 B)을 ci 토큰으로 HTTPS PUT 201(5.4 s), VM Updater와 같은 형식의 서명 heartbeat·보고 → `/fleet` online·current g2·last_attempt `succeeded`(`source` online), control-web 중지 1 s 뒤 online·36 s 뒤 `stale`(control-api 직접 조회), 재기동 뒤 heartbeat로 online. 로컬 site-db에서 r4 설치 → 시드 → r5 업그레이드 순서의 probe `db`는 c0와 r5가 바이트까지 같았다(마이그레이션 없음 확인). **수정 r1(리뷰 H1)**: 그 같음은 같은 트리 재적용이 no-op(`changed=False`)이라 c0 시드 장비·태그가 retire되지 않았다는 뜻이기도 해, 그대로면 ⓐ가 VM에서 실패한다. 로컬 site-db + core r4·r5 CLI로 다시 재서(`tests/e2e/tests/fixtures/m4c-tree-db.json`) NEXT 트리 업그레이드는 `changed=True`·시드 retire·`line1/temp_sp` 정의 = `… (r5)`, FAULT 트리 적용 → r4 백업 복원은 정의 = fixture, 이어서 NEXT 재시도는 정의 = `… (r5)`임을 확인하고 판정 시험에 고정했다. VM Updater의 실제 HTTPS polling·적용·보고는 VM 몫이다.
 
 **실측 결과.** (코디네이터 기입: run id, 39/39·missing, 하네스 HEAD, 온라인 ①~④ 수치 — 등록·online까지 초, g2 다운로드·적용 초, 보고 반영 초, stale까지 초·복귀 초, 외부 접속 누적, 번들 크기)
 
@@ -2782,8 +2782,8 @@ fleet repo 규칙·PR 검사·승인 판정·게시 도구. 근거 plan `pureiro
 - **승인 ① 설명(#4)**: `approval.py` 독스트링·템플릿 README 규칙 1을 GitHub fast-forward 동작(위 M4-2 절 ①)에 맞췄고, `test_approval.py` 표가 "승인된 head fast-forward = 통과, 승인 없는 head(S4b) = ② 거부"를 고정한다.
 - **승인 절차·복구 문서(#1·#2)**: 템플릿 README "승인하는 법"(Submit review → `approved these changes` 확인 → merge, Free는 승인 없는 merge 버튼을 막지 못한다는 경고와 복구 안내), 복구 (a)에 `delete_branch_on_merge`로 지워진 PR 브랜치 재생성(`git push origin <PR 머리 sha>:refs/heads/<브랜치>`)과 되돌리는 force push의 publish 결과(승인 커밋 대상 = 초록, PR 없는 커밋 대상 = 빨강이지만 무해). 사람 클릭으로는 검증하지 않았다(15분 실측의 승인·merge는 에이전트 토큰, D6).
 - **중앙 HTTPS + 사설 CA(D8·D9)**: publish·check-gen·현장 Updater 모두 Python 기본 SSL 설정 = OS 신뢰 저장소. 규칙은 루트 CA를 `/usr/local/share/ca-certificates/` + `update-ca-certificates`(지문은 CA와 다른 경로로 받아 대조), `SSL_CERT_FILE` 금지. 절차 정본은 `deploy/central/README.md` "CA 신뢰"·`deploy/install/README.md` "온라인 현장". fleet workflow의 `control_api` 입력 = `https://<중앙>:28443/api/v1`(템플릿 README "control-api 주소").
-- **VM 하네스(D4·★D5)**: 쌍 r4→r5(`r5f`), 39항목 = M5 마감 35개(경보 해제 자리 → "롤백 뒤 재시도") + 온라인 4개(`run.py online` — WSL 중앙 c0에 HTTPS heartbeat·게시 g2 적용·온라인 보고·control-web 중지 stale). 정본 `tests/e2e/README.md`.
-- **백로그(#7, D1)**: 게시 번들 보관 정책 — publish 호스트 `/srv/pureiron/bundles/<site>/`에 게시마다 약 0.7 GB `.pib`가 그대로 쌓인다(USB 반입용 사본). 지우는 규칙(최근 N개·현장 적용 확인 뒤 등)은 첫 계약 전에 정한다.
+- **VM 하네스(D4·★D5)**: 쌍 r4→r5(`r5f`), 39항목 = M5 마감 35개(경보 해제 자리 → "롤백 뒤 재시도") + 온라인 4개(`run.py online` — WSL 중앙 c0에 HTTPS heartbeat·게시 g2 적용·온라인 보고·control-web 중지 stale). 업그레이드·재시도·FAULT 번들은 c0(fixture)와 다른 트리(태그 하나의 description만 다름)를 싣는다 — core가 같은 트리 재적용을 no-op으로 건너뛰어 트리·정의 판정이 늘 참(또는 c0 시드 때문에 거짓)이 되지 않게(수정 r1, 리뷰 H1·M1). 정본 `tests/e2e/README.md`.
+- **백로그(#7, D1)**: 게시 번들 보관 정책 — publish 호스트 `/srv/pureiron/bundles/<site>/`에 게시마다 약 0.7 GB `.pib`가 그대로 쌓인다(USB 반입용 사본 — umask 027이라 파일 0640·디렉터리 0750, 꺼내는 운영자는 `pureiron-publish` 그룹 또는 sudo, 템플릿 README 배치 절). 지우는 규칙(최근 N개·현장 적용 확인 뒤 등)은 첫 계약 전에 정한다.
 
 ---
 

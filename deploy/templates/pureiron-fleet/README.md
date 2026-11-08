@@ -51,7 +51,7 @@ publish는 main 커밋 sha를 GitHub API·git으로 다시 받아 아래를 **�
 거부된 커밋은 사슬을 전진시키지 않는다. 그래서 그 뒤에 새 PR을 그냥 올리면 "승인 사슬 끊김"이 된다. 사유("승인 0건·오래된 승인·목록 밖·트리 불일치·직접 push·승인 사슬 끊김")와 상관없이 복구는 둘 중 하나다.
 
 - (a) **되돌리고 다시 승인**: main을 마지막 승인 커밋(`approved.log` 마지막 줄 또는 오류의 "마지막 승인 …")으로 되돌린다(`git push --force-with-lease origin <마지막 승인 sha>:main`, Free에서 가능). 그다음 원래 PR 브랜치로 **새 PR**을 열어(merge된 PR은 다시 열 수 없다) 정상 승인 → merge. 직접 push된 내용은 PR 브랜치로 옮겨 같은 방법으로 올린다.
-  - **PR 브랜치는 이미 지워져 있다**: 이 repo는 merge 때 브랜치를 자동 삭제한다(`delete_branch_on_merge`). 거부된 merge의 PR 머리 커밋(PR 화면의 마지막 커밋 sha)으로 다시 만든다: `git push origin <PR 머리 sha>:refs/heads/<브랜치>` → 그 브랜치로 새 PR. 되돌린 main과 충돌이 없으면 내용은 그대로다.
+  - **PR 브랜치는 이미 지워져 있다**: 이 repo는 merge 때 브랜치를 자동 삭제한다(`delete_branch_on_merge`). 거부된 merge의 PR 머리 커밋(PR 화면의 마지막 커밋 sha)으로 다시 만든다. squash merge·브랜치 삭제 뒤라 그 커밋은 보통 로컬 clone에 없으므로 먼저 받는다: `git fetch origin pull/<PR 번호>/head` → `git push origin <PR 머리 sha>:refs/heads/<브랜치>`(받지 않으면 `src refspec … does not match`로 실패) → 그 브랜치로 새 PR. 되돌린 main과 충돌이 없으면 내용은 그대로다.
   - **되돌리는 force push도 publish를 띄운다**(main push). 결과는 되돌린 대상에 따라 다르다. PR로 만들어진 승인 커밋으로 되돌리면 초록(`게시 0, 건너뜀 1` 등 — 같은 sha 재실행이라 게시할 것이 없다). PR이 없는 커밋(이 템플릿의 첫 커밋, trust-base로만 기준이 된 커밋)으로 되돌리면 빨강(`E_APPROVAL 직접 push — … merged된 PR이 없다`)이지만 **무해하다** — 사슬도 게시도 바뀌지 않는다. 다음 승인 merge가 초록이면 복구된 것이다.
 - (b) **사람이 검토하고 기준으로 기록**: 거부된 main 커밋의 내용을 사람이 검토한 뒤 publish 호스트에서 `publish.py trust-base --fleet-repo <owner>/<repo> --sha <검토한 main 커밋> --reason <사유>`. 그 커밋 자체의 publish는 다시 돌려도 ①·②·⑤로 거부되므로, **다음 승인 merge**(내용 없는 PR이어도 된다)가 정합화로 그 커밋의 현장 변경까지 게시한다 — gen을 다시 올릴 필요는 없다.
 - 연속 merge로 앞 publish가 아직 안 돈 상태에서 뒤 커밋이 먼저 돌아 "사슬 끊김"이 나면: 앞 run이 끝난 뒤 publish를 workflow_dispatch로 재실행.
@@ -101,7 +101,7 @@ publish·check-gen은 self-hosted runner(라벨 `publish`, 전용 사용자 `pur
 | `/etc/pureiron/publish/ci_token` | control-api ci 토큰(0600, `PUT /bundles`) |
 | `/etc/pureiron/publish/viewer_token` | control-api viewer 토큰(0600, `GET /fleet` — ci는 fleet을 못 읽는다) |
 | `/etc/pureiron/publish/app.pem` | GitHub App private key(0600, fleet·프로젝트 repo 읽기 토큰용) |
-| `/etc/pureiron/publish/app_id` | (선택) App ID — workflow가 env `PUREIRON_PUBLISH_APP_ID`로 주면 불필요 |
+| `/etc/pureiron/publish/app_id` | (선택) 숫자 App ID(Client ID 아님) — workflow가 env `PUREIRON_PUBLISH_APP_ID`로 주면 불필요 |
 | `/srv/pureiron/images/` | 이미지 store(`PUREIRON_IMAGE_STORE`, release별 `<release>/<svc>.tar`) |
 | `/srv/pureiron/bundles/<site>/` | 만든 `.pib`(USB 반입용 사본) |
 | `/srv/pureiron/metrics/` | 게시 기록 `publish-<site>-g<gen>.json` |
@@ -113,6 +113,8 @@ publish는 시작할 때 umask `027`을 건다 — 새로 만드는 사슬·번�
 sudo chmod -R g-w,o-rwx /srv/pureiron/publish /srv/pureiron/bundles /srv/pureiron/metrics
 ```
 
+그래서 `/srv/pureiron/bundles`의 `.pib`(USB 반입용 사본, 파일 0640·디렉터리 0750)는 `pureiron-publish`와 그 그룹만 읽는다 — USB 사본을 꺼낼 운영자는 `pureiron-publish` 그룹에 넣거나(`sudo usermod -aG pureiron-publish <운영자>`, 다시 로그인) `sudo cp`로 꺼낸다.
+
 같은 sha의 재실행(Re-run·workflow_dispatch)은 `approved.log`에 줄을 더하지 않는다. `trust-base`는 같은 sha여도 사유 줄을 남긴다.
 
 모든 경로는 `publish.py` 인자·환경변수(`PUREIRON_PUBLISH_*`, `PUREIRON_CONTROL_API`)로 바꿀 수 있다(PureIron_V1 위키 runtime-config).
@@ -121,7 +123,7 @@ sudo chmod -R g-w,o-rwx /srv/pureiron/publish /srv/pureiron/bundles /srv/pureiro
 
 | secret | 내용 |
 |---|---|
-| `PUREIRON_CI_APP_ID` | PureIron CI GitHub App ID(private PureIron_V1 도구 checkout) |
+| `PUREIRON_CI_APP_ID` | PureIron CI GitHub App ID(private PureIron_V1 도구 checkout). **숫자 App ID만** 넣는다(App 설정 화면 "App ID" — `Iv23…`로 시작하는 Client ID가 아니다). publish가 이 값을 10진 숫자로 검사한다 |
 | `PUREIRON_CI_APP_KEY` | 같은 App private key(PEM 전체) |
 | `PUREIRON_FLEET_VIEWER_TOKEN` | control-api viewer 토큰(check-gen — 게시 권한 없음) |
 

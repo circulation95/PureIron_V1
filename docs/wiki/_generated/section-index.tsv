@@ -87,12 +87,12 @@ report-mvp-gap	docs/wiki/reports/mvp-gap.md	다음-구현-우선순위-issue-후
 report-mvp-gap	docs/wiki/reports/mvp-gap.md	다음-후보-backlog-잔여만	80	8	902	h2	다음 후보 backlog (잔여만)
 report-mvp-gap	docs/wiki/reports/mvp-gap.md	v1에서-유지되는-제외-backlog-낮춤	88	9	456	h2	v1에서 유지되는 제외 (backlog 낮춤)
 report-mvp-gap	docs/wiki/reports/mvp-gap.md	검증	97	8	147	h2	검증
-report-vm-e2e-runs	docs/wiki/reports/vm-e2e-runs.md	hyper-v-vm-실측-기록	22	117	20904	h1	Hyper-V VM 실측 기록
+report-vm-e2e-runs	docs/wiki/reports/vm-e2e-runs.md	hyper-v-vm-실측-기록	22	117	21763	h1	Hyper-V VM 실측 기록
 report-vm-e2e-runs	docs/wiki/reports/vm-e2e-runs.md	m2-r0r1-run-20261005t055523z-3030-pass	28	13	2044	h2	M2 r0→r1 (run `20261005T055523Z`, 30/30 PASS)
 report-vm-e2e-runs	docs/wiki/reports/vm-e2e-runs.md	s3-r1r2-run-20261009t231040z-3030-pass-missing-0-2026-10-10	41	10	1124	h2	S3 r1→r2 (run `20261009T231040Z`, 30/30 PASS, missing 0, 2026-10-10)
 report-vm-e2e-runs	docs/wiki/reports/vm-e2e-runs.md	s4-r2r3-run-20261017t132857z-3030-pass-missing-0-2026-10-17	51	11	1973	h2	S4 r2→r3 (run `20261017T132857Z`, 30/30 PASS, missing 0, 2026-10-17)
 report-vm-e2e-runs	docs/wiki/reports/vm-e2e-runs.md	m5-마감-r3r4-run-20261101t035728z-3535-pass-missing-0-2026-11-01	62	50	10573	h2	M5 마감 r3→r4 (run `20261101T035728Z`, 35/35 PASS, missing 0, 2026-11-01)
-report-vm-e2e-runs	docs/wiki/reports/vm-e2e-runs.md	m4-마감-r4r5-run-결과-기입-전	112	27	4250	h2	M4 마감 r4→r5 (run 결과 기입 전)
+report-vm-e2e-runs	docs/wiki/reports/vm-e2e-runs.md	m4-마감-r4r5-run-결과-기입-전	112	27	5109	h2	M4 마감 r4→r5 (run 결과 기입 전)
 sot-agent-rules	docs/wiki/sot/agent-rules.md	agent-rules-sot	15	215	17834	h1	Agent Rules SOT
 sot-agent-rules	docs/wiki/sot/agent-rules.md	이-문서의-역할	23	33	2198	h2	이 문서의 역할
 sot-agent-rules	docs/wiki/sot/agent-rules.md	작업-전-컨텍스트-로딩-순서	56	17	632	h2	작업 전 컨텍스트 로딩 순서
@@ -156,7 +156,7 @@ sot-coding-style	docs/wiki/sot/coding-style.md	10-프론트엔드-servicesweb-�
 sot-coding-style	docs/wiki/sot/coding-style.md	11-리뷰-체크리스트-가독성구조	232	17	1522	h2	11. 리뷰 체크리스트 (가독성·구조)
 sot-coding-style	docs/wiki/sot/coding-style.md	12-현재-코드와의-차이-백로그-2026-10-11-검토-기준	249	14	1423	h2	12. 현재 코드와의 차이 (백로그, 2026-10-11 검토 기준)
 sot-coding-style	docs/wiki/sot/coding-style.md	13-이-문서를-바꾸는-법	263	4	281	h2	13. 이 문서를 바꾸는 법
-sot-data-contracts	docs/wiki/sot/data-contracts.md	data-contracts-sot	28	530	127346	h1	Data Contracts SOT
+sot-data-contracts	docs/wiki/sot/data-contracts.md	data-contracts-sot	28	530	127790	h1	Data Contracts SOT
 sot-data-contracts	docs/wiki/sot/data-contracts.md	이-문서의-원천	36	8	847	h2	이 문서의 원천
 sot-data-contracts	docs/wiki/sot/data-contracts.md	마이그레이션-규율	44	17	1446	h2	마이그레이션 규율
 sot-data-contracts	docs/wiki/sot/data-contracts.md	tag-정의-계약	61	20	1040	h2	Tag 정의 계약
@@ -166,7 +166,7 @@ sot-data-contracts	docs/wiki/sot/data-contracts.md	historian-retention--query-wi
 sot-data-contracts	docs/wiki/sot/data-contracts.md	project-config-root-계약	145	57	5026	h2	Project config root 계약
 sot-data-contracts	docs/wiki/sot/data-contracts.md	project-package-exportimport-계약	169	33	3368	h3	Project package export/import 계약
 sot-data-contracts	docs/wiki/sot/data-contracts.md	문서화-원칙	202	7	385	h2	문서화 원칙
-sot-data-contracts	docs/wiki/sot/data-contracts.md	목표-설계미구현	209	349	111546	h2	목표 설계(미구현)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	목표-설계미구현	209	349	111990	h2	목표 설계(미구현)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	마이그레이션스키마-호환-adr-024	213	8	1952	h3	마이그레이션·스키마 호환 (ADR-024)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	기록-정책-adr-021	221	4	195	h3	기록 정책 (ADR-021)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	프로젝트-정본-adr-025	225	20	2046	h3	프로젝트 정본 (ADR-025)
@@ -189,7 +189,7 @@ sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m5-3b-고객
 sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m4-0-control-api-중앙-db-2026-11-01	489	24	5669	h3	V1 구현 현황 (M4-0 control-api 중앙 DB, 2026-11-01)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m4-1-현장-송신쓰기-스위치-서명화-2026-11-02	513	19	11616	h3	V1 구현 현황 (M4-1 현장 송신·쓰기 스위치 서명화, 2026-11-02)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m4-2-fleetpublish-2026-11-04	532	14	10908	h3	V1 구현 현황 (M4-2 fleet·publish, 2026-11-04)
-sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m4-마감-준비--리허설-수정r5c0-2026-11-09	546	12	3137	h3	V1 구현 현황 (M4 마감 준비 — 리허설 수정·r5·c0, 2026-11-09)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m4-마감-준비--리허설-수정r5c0-2026-11-09	546	12	3581	h3	V1 구현 현황 (M4 마감 준비 — 리허설 수정·r5·c0, 2026-11-09)
 sot-frontend	docs/wiki/sot/frontend.md	frontend-sot	24	354	30833	h1	Frontend SOT
 sot-frontend	docs/wiki/sot/frontend.md	1-문서-경계	32	12	702	h2	1. 문서 경계
 sot-frontend	docs/wiki/sot/frontend.md	2-스택과-실행-명령	44	24	625	h2	2. 스택과 실행 명령

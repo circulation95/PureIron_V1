@@ -95,12 +95,12 @@
     },
     {
       "audience": "both",
-      "bytes": 21408,
+      "bytes": 22267,
       "id": "report-vm-e2e-runs",
       "last_verified": "2026-11-01",
       "path": "docs/wiki/reports/vm-e2e-runs.md",
       "section_count": 6,
-      "sha256": "b1c79328bb53a418b2f9bc9610f3c334921faf01bcb21da40958329df7348f1f",
+      "sha256": "fb6d913274ff988a2f7d2651ec94dff1fdcf1588977eb2dd3e78742c08e76af8",
       "source_globs": [],
       "sources": [
         "tests/e2e/README.md",
@@ -226,12 +226,12 @@
     },
     {
       "audience": "both",
-      "bytes": 128456,
+      "bytes": 128900,
       "id": "sot-data-contracts",
       "last_verified": "2026-11-09",
       "path": "docs/wiki/sot/data-contracts.md",
       "section_count": 34,
-      "sha256": "825cc8a3740e6218d2981efaf6c3e9b5721507c578fff52524cc82c90526ec19",
+      "sha256": "2383a59b73a8a091bc81fb05b05905052ebf015000f9a17efcb35cb58b52a021",
       "source_globs": [
         "projects/demo-coffee/**/*.yaml",
         "projects/demo-coffee/**/*.json"

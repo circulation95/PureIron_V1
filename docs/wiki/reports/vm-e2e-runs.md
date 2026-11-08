@@ -122,16 +122,16 @@ plan M2 종료 조건 실측.
 | `install bundle bootstrap + g1(r3) on offline VM` | `install bundle bootstrap + g1(r4) on offline VM` | c0 = epoch 5(`project_files` 포함, BASE_TABLES로 옮김), `next_absent` 제거(NEXT 산출물 없음) |
 | `r3→r4 on compressed epoch-4 DB` | `r4→r5 on compressed epoch-5 DB` | 마이그레이션 없음(phase만) |
 | `r4 schema after upgrade` | `r5 schema after upgrade` | `next_tables` 제거, BASE 산출물(0010~0013) 유지만 |
-| `r4 project tree applied …` | `r5 project tree applied …` | 같음 |
-| `r4' health failure → rollback (transition, E_DEFINITIONS_LEFT)` | `r5' health failure → rollback (no alarm, r4 tree and definitions back)` | 전환기 경보 기대 → **경보 없음**, FAULT가 다른 트리(fixture − `absorbs`)를 실어 롤백 뒤 content_hash·정의 = fixture |
+| `r4 project tree applied …` | `r5 project tree applied …` | 업그레이드 번들이 NEXT 트리(fixture에서 `line1/temp_sp` description만 `… (r5)`)를 싣는다 — 같은 트리면 core no-op이라 c0 시드가 남아 실패(수정 r1, 리뷰 H1). 판정에 c0 시드 retire·그 태그의 DB 정의 값 추가 |
+| `r4' health failure → rollback (transition, E_DEFINITIONS_LEFT)` | `r5' health failure → rollback (no alarm, r4 tree and definitions back)` | 전환기 경보 기대 → **경보 없음**, FAULT가 FAULT 트리(`line1/temp_sp` description `… (r5f)`)를 실어 롤백 뒤 content_hash·DB 정의 값 = fixture(c0) |
 | `rollback within 5 min to r3 digests` | `rollback within 5 min to r4 digests` | 같음(300 s) |
-| `r4 tree bundle after transition rollback → succeeded, alarm cleared` | `r5 retry after r5' rollback → succeeded` | 경보 해제 → 롤백 뒤 NEXT 재시도 성공(경보·메트릭 0, 트리 = fixture) |
+| `r4 tree bundle after transition rollback → succeeded, alarm cleared` | `r5 retry after r5' rollback → succeeded` | 경보 해제 → 롤백 뒤 NEXT 재시도 성공(경보·메트릭 0, NEXT 트리·정의 값 = NEXT) |
 | — | `online: HTTPS heartbeat to central c0 (private CA trusted) → /fleet online` | 새 ① |
 | — | `online: central-published r4 g2 → download + apply succeeded` | 새 ② |
 | — | `online: ApplyAttempt report → /fleet current + last_attempt (source online)` | 새 ③ |
 | — | `online: central web down → site keeps running, /fleet stale → back online` | 새 ④ |
 
-**사전 검증(VM 전, 워커, 2026-11-09).** 중앙 헬퍼 `central.py`를 WSL에서 `10.77.0.1` bind로 띄워 `curl --cacert` healthz 200, CA 없이 `curl` 실패(rc 60), 컨테이너(`python:3.12-slim`)에서 CA를 OS 신뢰 저장소에 넣기 전 `CERTIFICATE_VERIFY_FAILED` → 넣은 뒤 `http.client`·`urllib` 200(D8 규칙이 publish·Updater의 기본 SSL 설정으로 동작). 실제 r4 g2 번들(744,806,400 B)을 ci 토큰으로 HTTPS PUT 201(5.4 s), VM Updater와 같은 형식의 서명 heartbeat·보고 → `/fleet` online·current g2·last_attempt `succeeded`(`source` online), control-web 중지 1 s 뒤 online·36 s 뒤 `stale`(control-api 직접 조회), 재기동 뒤 heartbeat로 online. 로컬 site-db에서 r4 설치 → 시드 → r5 업그레이드 순서의 probe `db`는 c0와 r5가 바이트까지 같았다(마이그레이션 없음 확인). VM Updater의 실제 HTTPS polling·적용·보고는 VM 몫이다.
+**사전 검증(VM 전, 워커, 2026-11-09).** 중앙 헬퍼 `central.py`를 WSL에서 `10.77.0.1` bind로 띄워 `curl --cacert` healthz 200, CA 없이 `curl` 실패(rc 60), 컨테이너(`python:3.12-slim`)에서 CA를 OS 신뢰 저장소에 넣기 전 `CERTIFICATE_VERIFY_FAILED` → 넣은 뒤 `http.client`·`urllib` 200(D8 규칙이 publish·Updater의 기본 SSL 설정으로 동작). 실제 r4 g2 번들(744,806,400 B)을 ci 토큰으로 HTTPS PUT 201(5.4 s), VM Updater와 같은 형식의 서명 heartbeat·보고 → `/fleet` online·current g2·last_attempt `succeeded`(`source` online), control-web 중지 1 s 뒤 online·36 s 뒤 `stale`(control-api 직접 조회), 재기동 뒤 heartbeat로 online. 로컬 site-db에서 r4 설치 → 시드 → r5 업그레이드 순서의 probe `db`는 c0와 r5가 바이트까지 같았다(마이그레이션 없음 확인). **수정 r1(리뷰 H1)**: 그 같음은 같은 트리 재적용이 no-op(`changed=False`)이라 c0 시드 장비·태그가 retire되지 않았다는 뜻이기도 해, 그대로면 ⓐ가 VM에서 실패한다. 로컬 site-db + core r4·r5 CLI로 다시 재서(`tests/e2e/tests/fixtures/m4c-tree-db.json`) NEXT 트리 업그레이드는 `changed=True`·시드 retire·`line1/temp_sp` 정의 = `… (r5)`, FAULT 트리 적용 → r4 백업 복원은 정의 = fixture, 이어서 NEXT 재시도는 정의 = `… (r5)`임을 확인하고 판정 시험에 고정했다. VM Updater의 실제 HTTPS polling·적용·보고는 VM 몫이다.
 
 **실측 결과.** (코디네이터 기입: run id, 39/39·missing, 하네스 HEAD, 온라인 ①~④ 수치 — 등록·online까지 초, g2 다운로드·적용 초, 보고 반영 초, stale까지 초·복귀 초, 외부 접속 누적, 번들 크기)
 
