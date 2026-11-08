@@ -19,15 +19,17 @@ r4(epoch 5)→r5(epoch 5, 현장 마이그레이션 없음), fault r5'(`r5f`). �
    `c0`를 만든다.
 4. `scenarios` — `c0`에서 거부(다른 현장 `E_SITE`·변조 `E_DIGEST`) exit 1과 같은 gen 재빌드 no-op
    exit 0(R-7 멱등), 모두 core `StartedAt`·실행 이미지 불변. `c0`에서 BASE→NEXT(압축 DB 위 NEXT
-   epoch migrate) 성공 + NEXT 스키마 확인 → 그 위에서 낮은 gen `E_GEN` 거부. 이어서 M5 확인 4개
-   (`step_m5`): ⓐ 트리 적용(`project_files`·정의·`site_rev == base_site_rev`) ⓑ web 경유 admin
+   epoch migrate, 번들 트리 = NEXT 트리 — fixture에서 태그 `release_pair.TREE_TAG` description만
+   바꾼 것이라 core가 정의를 다시 쓴다) 성공 + NEXT 스키마 확인 → 그 위에서 낮은 gen `E_GEN` 거부.
+   이어서 M5 확인 4개(`step_m5`): ⓐ NEXT 트리 적용(`project_files`·정의 값·c0 시드 retire·
+   `site_rev == base_site_rev`) ⓑ web 경유 admin
    로그인 → 태그·알람 운영 값 PATCH(site_rev +2, DB 정의 일치) ⓒ absorb하지 않은 repo로 만든 번들
    `E_DRAFT` 거부 ⓓ `pureiron-site project export` → 호스트 → WSL `absorb`·`gate` → 그 트리 번들
    적용(`base_site_rev == site_rev`, PATCH 값 유지). `c0`에서 FAULT → 5분 안에 BASE digest 복귀 +
    `failed`. BASE(r4)도 트리를 적용하는 release라 트리 백업이 있는 일반 롤백이다(경보 없음,
-   메트릭 `updater_failed_manual 0`): FAULT 번들은 fixture와 다른 트리(`m5-project`)를 실어서
-   롤백 뒤 BASE 트리·정의가 되돌아왔는지(content_hash·DB 정의 = fixture) 보인다. 그 상태에서
-   정상 NEXT 번들(fixture 트리)로 다시 올리면 `succeeded`.
+   메트릭 `updater_failed_manual 0`): FAULT 번들은 fixture·NEXT와 다른 트리(FAULT 트리)를 실어서
+   롤백 뒤 BASE 트리·정의가 되돌아왔는지(content_hash·DB 태그 정의 값 = fixture) 보인다. 그
+   상태에서 정상 NEXT 번들(NEXT 트리)로 다시 올리면 `succeeded`(정의 값 = NEXT 트리).
 5. `crash` — phase마다 `systemctl kill -s KILL pureiron-updater`와 `Restart-VM -Force`를 1회씩.
    서비스가 그 시도를 실행하도록 창이 조금 뒤에 열리는 번들을 CLI로 스테이징하고(`verified` 대기),
    VM 쪽 `crash_at.py`가 해당 phase 진입 순간 프로세스를 얼린 뒤 kill/리셋한다. `migrating`은
@@ -70,6 +72,7 @@ from typing import cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "infra"))
 
+import bundles
 import golden
 import hyperv
 from release_pair import (
@@ -82,6 +85,7 @@ from release_pair import (
     FAULT,
     NEXT,
     RELEASES,
+    TREE_TAG,
 )
 from vm import Vm, VmError
 
@@ -770,11 +774,15 @@ def judge_next_schema(db: dict[str, object]) -> dict[str, bool]:
     }
 
 
+SEED_DEVICE, SEED_TAG = "e2e-dev", "e2e/tag"
+"""c0 이력 시드가 DB에 직접 넣는 장비·태그 — 트리 밖이라 트리를 다시 적용하면 retire된다."""
 SEED_SQL = (
-    "INSERT INTO devices (id, protocol) VALUES ('e2e-dev', 'modbus_tcp') ON CONFLICT DO NOTHING; "
-    "INSERT INTO tags (path, device_id) VALUES ('e2e/tag', 'e2e-dev') ON CONFLICT DO NOTHING; "
+    f"INSERT INTO devices (id, protocol) VALUES ('{SEED_DEVICE}', 'modbus_tcp') "
+    "ON CONFLICT DO NOTHING; "
+    f"INSERT INTO tags (path, device_id) VALUES ('{SEED_TAG}', '{SEED_DEVICE}') "
+    "ON CONFLICT DO NOTHING; "
     "INSERT INTO tag_history (time, tag_id, value_num, quality) "
-    "SELECT ts, (SELECT id FROM tags WHERE path = 'e2e/tag'), extract(epoch FROM ts), 1 "
+    f"SELECT ts, (SELECT id FROM tags WHERE path = '{SEED_TAG}'), extract(epoch FROM ts), 1 "
     "FROM generate_series(now() - interval '5 days', now() - interval '1 hour', "
     "interval '1 minute') ts ON CONFLICT DO NOTHING; "
     "SELECT count(compress_chunk(c, if_not_compressed => true)) "
@@ -1018,6 +1026,15 @@ class TreeExpect:
     devices: frozenset[str]
     tags: frozenset[str]
     alarms: frozenset[str]
+    tree_tag_description: str | None
+    """태그 `release_pair.TREE_TAG`의 description — 트리마다 다른 정의 값(fixture·NEXT·FAULT)."""
+
+
+def release_tree(ctx: Context, release: str) -> Path:
+    """NEXT·FAULT 번들 트리(`bundles.release_tree`)를 이 run의 번들 디렉터리에 새로 만든다(Windows
+    호스트). 번들은 WSL이 이 디렉터리(`golden.wsl_path`)를 읽어 싣고, 판정 기대값(`tree_expect`)도
+    같은 디렉터리에서 읽는다 — 실은 트리와 기대값이 어긋나지 않는다."""
+    return bundles.release_tree(BUNDLES / ctx.run_id / "trees" / release, release)
 
 
 def tree_expect(directory: Path) -> TreeExpect:
@@ -1026,6 +1043,7 @@ def tree_expect(directory: Path) -> TreeExpect:
         raise E2EError(f"{directory}: " + "; ".join(project.problems))
     keys = {Kind.DEVICE: "id", Kind.TAG_LIST: "path", Kind.ALARM_LIST: "id"}
     found: dict[Kind, set[str]] = {kind: set() for kind in keys}
+    description: str | None = None
     for f in project.files:
         key = keys.get(f.kind)
         items = [f.data] if isinstance(f.data, dict) else f.data if isinstance(f.data, list) else []
@@ -1033,12 +1051,16 @@ def tree_expect(directory: Path) -> TreeExpect:
             value = item.get(key) if key is not None and isinstance(item, dict) else None
             if isinstance(value, str):
                 found[f.kind].add(value)
+            if f.kind is Kind.TAG_LIST and value == TREE_TAG and isinstance(item, dict):
+                text = item.get("description")
+                description = text if isinstance(text, str) else None
     return TreeExpect(
         files=len(project.files),
         content_hash=project.content_hash(),
         devices=frozenset(found[Kind.DEVICE]),
         tags=frozenset(found[Kind.TAG_LIST]),
         alarms=frozenset(found[Kind.ALARM_LIST]),
+        tree_tag_description=description,
     )
 
 
@@ -1059,19 +1081,30 @@ def revs(body: object) -> tuple[int, int] | None:
 
 
 def judge_tree(snap: dict[str, object], want: TreeExpect) -> dict[str, bool]:
-    """ⓐ NEXT 트리 적용: `GET /project`의 version·content_hash가 번들 트리이고 드래프트가 없으며
-    (`site_rev == base_site_rev`), DB `project_files` 행 수 = 트리 파일 수, retire되지 않은 장비·
-    태그·알람이 트리와 같다(c0 시드 장비·태그는 트리 교체로 retire된다)."""
+    """번들 트리 `want`가 적용된 상태인가: `GET /project`의 version·content_hash가 그 트리이고
+    드래프트가 없으며(`site_rev == base_site_rev`), DB `project_files` 행 수 = 트리 파일 수,
+    retire되지 않은 장비·태그·알람이 트리와 같고, c0 시드 장비·태그(`SEED_DEVICE`·`SEED_TAG`, 트리
+    밖)가 retire됐으며(`seed_retired`), 태그 `TREE_TAG`의 DB 정의 값(description)이 그 트리 값이다
+    (`definition`). 시드 retire·정의 값은 core가 트리를 실제로 다시 적용했을 때만 참이다 — 같은
+    트리 재적용은 no-op이라(H1) c0 DB가 그대로 남는다."""
     body, db = project_body(snap), db_of(snap)
     rev = revs(body)
+    devices, tags = names(db, "device_ids"), names(db, "tag_paths")
+    tag_def = definitions(db, "tag_defs").get(TREE_TAG, {})
     return {
         "project_version": body.get("version") == PROJECT_VERSION
         and body.get("content_hash") == want.content_hash,
         "base_site_rev": rev is not None and rev[0] == rev[1],
         "project_files": as_int(db.get("project_files")) == want.files,
-        "devices": names(db, "device_ids") == want.devices,
-        "tags": names(db, "tag_paths") == want.tags,
+        "devices": devices == want.devices,
+        "tags": tags == want.tags,
         "alarms": names(db, "alarm_ids") == want.alarms,
+        "seed_retired": bool(devices)
+        and bool(tags)
+        and SEED_DEVICE not in devices
+        and SEED_TAG not in tags,
+        "definition": want.tree_tag_description is not None
+        and tag_def.get("description") == want.tree_tag_description,
     }
 
 
@@ -1208,12 +1241,14 @@ def site_patch(host: Vm) -> tuple[dict[str, object], dict[str, object]]:
 
 
 def step_m5(ctx: Context, gens: dict[str, int]) -> None:
-    """업그레이드(NEXT, fixture 트리) 위 M5 확인 ⓐ~ⓓ. gen은 `scenario_gens`(ⓒ 거부 `draft_gate`,
-    ⓓ 적용 `absorb`)."""
+    """업그레이드(NEXT, NEXT 트리) 위 M5 확인 ⓐ~ⓓ. gen은 `scenario_gens`(ⓒ 거부 `draft_gate`,
+    ⓓ 적용 `absorb`). ⓑ PATCH 대상·ⓒ·ⓓ의 fixture 경로는 NEXT 트리와 무관하다(NEXT 트리는
+    `TREE_TAG` description만 다르다 — ⓓ absorb는 그 값도 PATCH 허용 필드라 드래프트에서 함께
+    옮긴다)."""
     host = vm()
-    # ⓐ 트리 적용
+    # ⓐ NEXT 트리 적용(정의 값·c0 시드 retire까지)
     snap = probe(host)
-    tree = judge_fixture_tree(snap)
+    tree = judge_tree(snap, tree_expect(release_tree(ctx, NEXT)))
     db = db_of(snap)
     ctx.record(
         ITEM_TREE,
@@ -1221,6 +1256,7 @@ def step_m5(ctx: Context, gens: dict[str, int]) -> None:
         checks=tree,
         project=project_body(snap),
         db={k: db.get(k) for k in ("project_files", "device_ids", "tag_paths", "alarm_ids")},
+        tree_tag_def=definitions(db, "tag_defs").get(TREE_TAG),
     )
     # ⓑ web 경유 admin 로그인 → 태그·알람 운영 값 PATCH
     out, admin = site_patch(host)
@@ -1350,31 +1386,57 @@ def step_scenarios(ctx: Context) -> None:
 
     # c0(BASE epoch, 압축 chunk)에서 BASE→NEXT — 압축 DB 위에서 NEXT 마이그레이션이 실제로 돈다
     restore_c0(ctx)
-    up = apply_and_check(ctx, ITEM_UPGRADE, gen, NEXT, expect="succeeded", prev=BASE)
-    db = db_of(cast(dict[str, object], up["snapshot"]))
-    schema_checks = judge_next_schema(db)
-    ctx.record(ITEM_SCHEMA, all(schema_checks.values()), checks=schema_checks, db=db)
+    upgrade_next(ctx, gen)
     # applied g2 위에서 g1 → E_GEN(낮은 gen). g2보다 뒤에 빌드해야 한다 — 먼저 만든 번들은
     # cert 단계의 `max_seen_created_at` 역행(E_CERT)에 먼저 걸린다(첫 실측).
     lower = build_site_bundle(ctx, 1, NEXT, datetime.now(UTC) - timedelta(days=1))
     stage_untouched(ctx, ITEM_LOWER_GEN, vm(), lower, want_exit=1, want_code="E_GEN", want=NEXT)
     m5_guarded(ctx, gens)
-    # c0에서 FAULT → 5분 안에 BASE 복귀 + failed. BASE(r4)도 트리 release라 Updater 백업에 트리가
-    # 있고 롤백이 트리·정의까지 되돌린다 — 경보 없음(전환기 E_DEFINITIONS_LEFT는 r3→r4에서만,
-    # 단위 시험이 고정). FAULT 번들은 fixture와 다른 트리(absorbs만 뺀 m5 사본 — c0에는 드래프트가
-    # 없어 게이트 통과)를 실어 "되돌아왔다"가 판정에 보이게 한다.
     restore_c0(ctx)
-    other_tree = wsl(
-        f"uv run --no-sync python tests/e2e/m2d/bundles.py m5-project --work {WSL_HOME}/work"
+    fault_and_retry(ctx, gens)
+    ctx.next_gen = gens["next"]
+    ctx.save()
+
+
+Apply = Callable[..., dict[str, object]]
+"""`apply_and_check`와 같은 호출 모양 — 배선 단위 시험이 가짜로 바꿔 끼운다."""
+
+
+def upgrade_next(ctx: Context, gen: int, apply: Apply = apply_and_check) -> None:
+    """c0에서 BASE→NEXT(ITEM_UPGRADE) + NEXT 스키마(ITEM_SCHEMA). 번들 트리는 NEXT 트리 — c0의
+    fixture 트리와 같으면 core가 재적용을 건너뛰어 ⓐ(ITEM_TREE)가 c0 DB(시드 남음)를 보고
+    실패한다(H1)."""
+    up = apply(
+        ctx,
+        ITEM_UPGRADE,
+        gen,
+        NEXT,
+        expect="succeeded",
+        prev=BASE,
+        project_dir=golden.wsl_path(release_tree(ctx, NEXT)),
     )
-    rb = apply_and_check(
+    db = db_of(cast(dict[str, object], up["snapshot"]))
+    schema_checks = judge_next_schema(db)
+    ctx.record(ITEM_SCHEMA, all(schema_checks.values()), checks=schema_checks, db=db)
+
+
+def fault_and_retry(ctx: Context, gens: dict[str, int], apply: Apply = apply_and_check) -> None:
+    """c0에서 FAULT → 5분 안에 BASE 복귀 + failed, 이어서 NEXT 재시도 → succeeded.
+
+    BASE(r4)도 트리 release라 Updater 백업에 트리가 있고 롤백이 트리·정의까지 되돌린다 — 경보
+    없음(전환기 E_DEFINITIONS_LEFT는 r3→r4에서만, 단위 시험이 고정). FAULT 번들은 fixture와 다른
+    FAULT 트리(c0에는 드래프트가 없어 게이트 통과)를 싣는다 — 롤백 뒤 content_hash와 태그 정의
+    값이 fixture(c0)로 돌아왔는지가 판정에 보인다. 재시도는 NEXT 트리라 롤백된 fixture 상태에서
+    정의를 다시 쓴다(정의 값 = NEXT 트리) — fixture를 실으면 no-op이라 늘 참인 판정이 된다."""
+    fault_tree, next_tree = release_tree(ctx, FAULT), release_tree(ctx, NEXT)
+    rb = apply(
         ctx,
         ITEM_FAULT,
         gens["fault"],
         FAULT,
         expect="failed",
         prev=BASE,
-        project_dir=other_tree.strip().splitlines()[-1],
+        project_dir=golden.wsl_path(fault_tree),
         expect_code=FAULT_CODE,
         check_metric=True,
         extra=judge_fixture_tree,
@@ -1385,19 +1447,22 @@ def step_scenarios(ctx: Context) -> None:
         seconds=rb["seconds"],
         code=rb["code"],
     )
-    # 그 상태에서 정상 NEXT(fixture 트리)로 다시 올린다 → succeeded, 경보 없음, 트리 = fixture.
-    apply_and_check(
+    next_expect = tree_expect(next_tree)
+
+    def next_tree_applied(snap: dict[str, object]) -> dict[str, bool]:
+        return judge_tree(snap, next_expect)
+
+    apply(
         ctx,
         ITEM_RETRY,
         gens["retry"],
         NEXT,
         expect="succeeded",
         prev=BASE,
+        project_dir=golden.wsl_path(next_tree),
         check_metric=True,
-        extra=judge_fixture_tree,
+        extra=next_tree_applied,
     )
-    ctx.next_gen = gens["next"]
-    ctx.save()
 
 
 # ---------------------------------------------------------------- crash 주입
@@ -1857,7 +1922,7 @@ def online_guarded(ctx: Context, keep_central: bool) -> None:
         if not keep_central:
             try:
                 central("down")
-            except (RuntimeError, ValueError) as exc:
+            except (RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
                 log(f"online: central down failed: {exc}")
 
 

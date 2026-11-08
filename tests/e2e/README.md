@@ -64,13 +64,22 @@ image store(`~/pureiron/images`, `PUREIRON_IMAGE_STORE`)의 BASE·NEXT tar(`<이
   `migrate_to`가 없어도 phase를 기록한다) SQL은 돌지 않는다. c0와 r5 업그레이드 뒤 probe `db`는 실측에서
   바이트까지 같다(`test_harness.py` `C0_DB`·`NEXT_DB`) — 스키마 판정의 교차 실패는 지난 쌍의 c0(epoch 4,
   `R3_C0_DB`)로 고정한다.
+- **NEXT·FAULT 트리(수정 r1, 리뷰 H1·M1)**: c0는 fixture 트리다. core는 같은 트리 재적용을 no-op
+  (`changed=False`)으로 건너뛰므로, 업그레이드가 fixture를 실으면 정의를 다시 쓰지 않아 c0 시드 장비·태그가
+  남고 ⓐ가 실패한다(로컬 실측 — `fixtures/m4c-tree-db.json` `next_same_tree` = c0). 그래서 NEXT 번들
+  (업그레이드·재시도)은 **NEXT 트리**, FAULT 번들은 **FAULT 트리**를 싣는다 — fixture 사본에서 태그
+  `line1/temp_sp`(`release_pair.TREE_TAG`, ⓑ PATCH 대상과 겹치지 않음)의 description만 `… (r5)`·`… (r5f)`로
+  바꾼 것(`bundles.release_tree`, `run.py`가 run 번들 디렉터리 `trees/<release>`에 만들고 WSL 경로로 넘긴다).
+  `judge_tree`는 트리 기대값에 더해 c0 시드 retire(`seed_retired`)와 그 태그의 DB 정의 값(`definition`)을 본다 —
+  같은 epoch에서 늘 참인 항목이 되지 않게. crash·온라인 ②·ⓒ·ⓓ 번들은 fixture 경로 그대로다(트리를 판정하지
+  않거나 fixture 기준 판정).
 - **FAULT = 일반 롤백**: r4도 트리 release라 Updater 백업에 트리가 있고 롤백이 트리·정의까지 되돌린다 — 경보
-  없음, 메트릭 `updater_failed_manual 0`, 보고 `code` `E_HEALTH`. FAULT 번들은 fixture에서 `absorbs`만 뺀
-  사본(`bundles.py m5-project`, content_hash가 다름 — c0에는 드래프트가 없어 게이트 통과)을 실어서, 롤백 뒤
-  `GET /project` content_hash·DB 정의가 fixture로 돌아왔는지(`judge_fixture_tree`)를 본다. 전환기 경보
-  `E_DEFINITIONS_LEFT`·`judge_attempt(expect_alarm=…)`는 단위 시험이 계속 고정한다(r3 현장 경로).
-- **롤백 뒤 재시도**(M5 마감의 경보 해제 자리): 그 상태에서 정상 r5(fixture 트리) → `succeeded`, 경보 없음,
-  트리 = fixture.
+  없음, 메트릭 `updater_failed_manual 0`, 보고 `code` `E_HEALTH`. FAULT 트리(c0에는 드래프트가 없어 게이트
+  통과)를 실어서, 롤백 뒤 `GET /project` content_hash·DB 태그 정의 값이 fixture(c0)로 돌아왔는지
+  (`judge_fixture_tree`)를 본다. 전환기 경보 `E_DEFINITIONS_LEFT`·`judge_attempt(expect_alarm=…)`는 단위
+  시험이 계속 고정한다(r3 현장 경로).
+- **롤백 뒤 재시도**(M5 마감의 경보 해제 자리): 그 상태에서 정상 r5(NEXT 트리) → `succeeded`, 경보 없음,
+  트리·정의 값 = NEXT 트리(롤백된 fixture 위라 정의를 다시 쓴다).
 - **온라인 4개**(`online` 단계, 아래 절).
 
 ### M5 마감에서 바뀐 판정
@@ -117,7 +126,9 @@ image store(`~/pureiron/images`, `PUREIRON_IMAGE_STORE`)의 BASE·NEXT tar(`<이
    control_api_token`에 넘긴다(명령 줄·파일·결과·로그에 남기지 않는다) → Updater 재시작.
 3. 항목:
    - ① `online: HTTPS heartbeat …` — `/fleet`(Caddy HTTPS, viewer 토큰) connection `online`, heartbeat 수위 > 0,
-     current = g1(BASE), CA 지문 일치, 등록 site_id.
+     current = g1(BASE), CA 지문 일치, 등록 site_id. 결과의 `ca_fingerprint`·`registered`는 하네스가 만든 값끼리의
+     비교라 전송 손상 확인일 뿐이다 — VM이 사설 CA를 실제로 믿는지는 `connection_online`·`heartbeat_seq`(Updater가
+     HTTPS로 보낸 heartbeat)가 판정한다.
    - ② `online: central-published r4 g2 …` — 하네스가 BASE g2(fixture 트리)를 만들어 ci 토큰으로 `PUT` → 201,
      `/fleet` desired·max_published_gen = 2 → Updater가 polling으로 받아 적용 `succeeded`(기존 `judge_attempt`,
      경보·메트릭 0). **gen 2인 이유**: 15분 실측의 fleet PR이 site-a gen 2 → 3이어야 check-gen의
@@ -166,7 +177,7 @@ uv run python tests/e2e/m2d/run.py destroy         # VM·차분 디스크 삭제
 | `prepare` | WSL 사본에서 FAULT(`r3f`: NEXT 이미지에 collector가 세션을 맺지 않는 파생 → `/readyz` 503. 로컬 NEXT 이미지 digest가 기록과 다르면 store tar를 다시 load, 파생 뒤 core·web digest == NEXT 기록 확인), release 기록 version·epoch·앱 envelope [epoch, epoch + 1] 대조, 설치 번들 **실빌드**(`fetch_debs.sh`·`build_updater.sh`, manifest release = BASE), g1(BASE) |
 | `vm` | golden(클라우드 이미지 → 64 GiB 동적 VHDX, 읽기 전용) 위 차분 디스크, seed ISO(cloud-init: 사용자·고정 IP·OS phone-home 끄기·nftables 감시 테이블) |
 | `install` | runbook 2단계(메타데이터만 전용 디렉터리에 추출 → `bootstrap-verify.sh` sha256·root 지문 대조) → `install.sh --offline-time-confirmed` → enroll → g1 → 서비스 시작. `/readyz` 200, overlay2 + classic store, 실행 이미지 `.Id` == BASE config digest. 압축 chunk 이력 시드, c0 기반(DB epoch == BASE epoch·BASE 산출물·압축 chunk·이력 행, NEXT가 epoch를 올리는 쌍이면 NEXT 테이블 없음) 확인 후 체크포인트 `c0` |
-| `scenarios` | `c0`에서 거부(다른 현장 `E_SITE`·변조 `E_DIGEST`) exit 1, 같은 gen 재빌드는 no-op exit 0(R-7 멱등) — 모두 core `StartedAt`·실행 이미지 불변 / `c0`에서 BASE→NEXT(압축 DB 위, r4→r5는 마이그레이션 없음) 성공 + NEXT 스키마(epoch 5·0010~0013 테이블·인덱스·1m/1h CAGG와 실시간 집계·0008/0009 열·압축 chunk 유지) → 낮은 gen `E_GEN` 거부 → M5 확인 ⓐ~ⓓ / `c0`에서 FAULT(다른 트리) → 5분 안에 BASE digest + `failed`, 경보 없음, BASE 트리·정의 복원 → 정상 NEXT로 재시도 `succeeded` |
+| `scenarios` | `c0`에서 거부(다른 현장 `E_SITE`·변조 `E_DIGEST`) exit 1, 같은 gen 재빌드는 no-op exit 0(R-7 멱등) — 모두 core `StartedAt`·실행 이미지 불변 / `c0`에서 BASE→NEXT(압축 DB 위, r4→r5는 마이그레이션 없음) 성공 + NEXT 스키마(epoch 5·0010~0013 테이블·인덱스·1m/1h CAGG와 실시간 집계·0008/0009 열·압축 chunk 유지) → 낮은 gen `E_GEN` 거부 → M5 확인 ⓐ~ⓓ(ⓐ = NEXT 트리·정의 값·c0 시드 retire) / `c0`에서 FAULT(FAULT 트리) → 5분 안에 BASE digest + `failed`, 경보 없음, BASE 트리·정의 값 복원 → 정상 NEXT(NEXT 트리)로 재시도 `succeeded`(정의 값 = NEXT) |
 | `crash` | phase(`fetched`~`rolling_back`)마다 `systemctl kill -s KILL pureiron-updater`와 `Restart-VM -Type Reset -Force` 각 1회 → 10분 안에 수렴(결과·실행 이미지·편집 잠금 해제) |
 | `online` | `c0` 복원 → WSL 중앙 c0(`central.py up`) → VM CA 신뢰·`updater.env`·등록·현장 token·재시작 → ① HTTPS heartbeat `/fleet` online ② 중앙 게시 BASE g2 다운로드·적용 ③ 온라인 보고 current·last_attempt ④ control-web 중지 → 현장 정상·`/fleet` stale → 재기동 뒤 online. `--keep-central`이 아니면 중앙을 내린다 |
 | `report` | nftables 외부 접속 카운터(`ext_out_v4`·`dns_out`·`ext_out_v6`·`ext_fwd`)의 **누적** 합 0 (`vm` 단계 기준값도 따로 0이어야 한다). 선언 장비 폴링 `field_fwd`는 판정에서 빼고 누적값만 증거로 남긴다. online 구간 포함. `results.json`의 `missing`은 39개 중 기록되지 않은 항목 |
@@ -220,4 +231,4 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
 
 ## 단위 테스트
 
-`tests/e2e/tests/` — phase 순서·상태 읽기·nft 규칙(현장 장비 `field_fwd` 규칙 위치·끝점 추출·외부 접속 판정)·seed ISO 왕복·PowerShell 인용·수렴 판정·release 쌍(BASE·NEXT 기록 대조 필수·crash 순서·항목 39개·단계 순서·c0/NEXT 스키마 집합 판정(같은 epoch 실측값, 지난 쌍 c0 교차)·전환기 경보·FAULT 트리 복원·M5 확인 판정(트리·PATCH·absorb·재적용)·gen 배정)·온라인 판정(`test_online.py` — 실측 `/fleet` 행으로 단계별 통과·교차 실패, CA 지문 표기, `central.py` 값·토큰을 출력에 내지 않음)·store symlink 다시 연결·`ensure_image` 적재 조건·스테이징 진단 기록(`stage_for_window`). G1 `unit`에 포함된다.
+`tests/e2e/tests/` — phase 순서·상태 읽기·nft 규칙(현장 장비 `field_fwd` 규칙 위치·끝점 추출·외부 접속 판정)·seed ISO 왕복·PowerShell 인용·수렴 판정·release 쌍(BASE·NEXT 기록 대조 필수·crash 순서·항목 39개·단계 순서·c0/NEXT 스키마 집합 판정(같은 epoch 실측값, 지난 쌍 c0 교차)·전환기 경보·FAULT 트리 복원·M5 확인 판정(트리·PATCH·absorb·재적용)·gen 배정·NEXT/FAULT 트리 판정(로컬 실측 `fixtures/m4c-tree-db.json` — 같은 트리 재적용 no-op에서 ⓐ 실패, NEXT 트리에서 통과, 롤백·재시도 정의 값)·업그레이드/FAULT/재시도 배선(가짜 `apply`))·온라인 판정(`test_online.py` — 실측 `/fleet` 행으로 단계별 통과·교차 실패, CA 지문 표기, `central.py` 값·토큰을 출력에 내지 않음, 화면 비밀번호·현장 token이 명령 줄에 없고 stdin으로만 감 — `basic_auth_line`·`site_online`·`Vm.run(input=)`)·store symlink 다시 연결·`ensure_image` 적재 조건·스테이징 진단 기록(`stage_for_window`). G1 `unit`에 포함된다.

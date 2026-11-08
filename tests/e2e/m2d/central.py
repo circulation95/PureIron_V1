@@ -183,19 +183,14 @@ def ensure_images() -> dict[str, str]:
 
 
 def basic_auth_line(password: str) -> str:
+    """control-web 화면 basic auth 한 줄(`ops <bcrypt>`). 원문은 `caddy hash-password`의 stdin으로만
+    넘긴다 — `--plaintext`면 `docker run` 인자라 호스트 `ps`·컨테이너 프로세스 인자에 보인다.
+    stdin이 터미널이 아니면 caddy는 첫 줄을 읽고 끝 줄바꿈을 떼어 낸다(줄바꿈이 없으면 실패 —
+    v2.11.7에서 확인)."""
     image = f"pureiron/control-web:{RELEASE}"
     hashed = subprocess.run(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "--entrypoint",
-            "caddy",
-            image,
-            "hash-password",
-            "--plaintext",
-            password,
-        ],
+        ["docker", "run", "--rm", "-i", "--entrypoint", "caddy", image, "hash-password"],
+        input=password + "\n",
         capture_output=True,
         text=True,
         timeout=COMMAND_TIMEOUT_S,

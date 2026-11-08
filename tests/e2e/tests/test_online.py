@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import subprocess
 import sys
 from pathlib import Path
 from typing import cast
@@ -18,6 +19,7 @@ from typing import cast
 import central
 import pytest
 import run
+import vm
 from release_pair import BASE, RELEASES
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -127,6 +129,8 @@ def test_online_published_needs_201_and_desired_gen() -> None:
     assert failing == {"desired_gen", "desired_product"}
     conflict: dict[str, object] = {"status": 409, "body": {"detail": "generation 2 <= published 2"}}
     assert not run.judge_online_published(conflict, PUBLISHED)["put_201"]
+    # desired는 g2인데 게시 수위가 다르면(다른 gen이 이미 게시됨) 실패 — 15분 실측 PR이 gen 3
+    assert not run.judge_online_published(PUT, {**PUBLISHED, "max_published_gen": 3})["desired_gen"]
 
 
 def test_online_report_passes_after_report_and_back_online() -> None:
@@ -332,3 +336,126 @@ def test_write_secret_modes(tmp_path: Path) -> None:
     central.write_secret(tmp_path / "b", "y", mode=0o644)
     assert stat.S_IMODE(os.stat(tmp_path / "a").st_mode) == 0o600
     assert stat.S_IMODE(os.stat(tmp_path / "b").st_mode) == 0o644
+
+
+def test_basic_auth_password_goes_through_stdin_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """L1: control-web 화면 비밀번호는 `caddy hash-password`의 stdin으로만 — `docker run` 인자
+    (호스트 `ps`·컨테이너 프로세스 인자)에 없다. caddy는 끝 줄바꿈이 있어야 읽는다."""
+    password = "ui-password-should-not-be-an-argument"
+    seen: dict[str, object] = {}
+
+    def fake_run(argv: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        seen["argv"], seen["kw"] = argv, kw
+        return subprocess.CompletedProcess[str](argv, 0, "$2a$14$hash\n", "")
+
+    monkeypatch.setattr(central.subprocess, "run", fake_run)
+    assert central.basic_auth_line(password) == f"{central.UI_USER} $2a$14$hash"
+    argv = cast(list[str], seen["argv"])
+    assert not any(password in a for a in argv)
+    assert "--plaintext" not in argv
+    assert argv[:4] == ["docker", "run", "--rm", "-i"]
+    assert cast(dict[str, object], seen["kw"])["input"] == password + "\n"
+
+
+class FakeVm:
+    """`site_online`이 부르는 Vm 메서드만 — 원격 명령과 stdin을 기록한다."""
+
+    def __init__(self) -> None:
+        self.runs: list[tuple[str, str | None]] = []
+
+    def put(self, local: Path, remote: str) -> None:
+        del local, remote
+
+    def get(self, remote: str, local: Path) -> None:
+        del remote
+        local.parent.mkdir(parents=True, exist_ok=True)
+        local.write_text("{}", encoding="utf-8")
+
+    def run(
+        self, command: str, *, timeout_s: float = 600, check: bool = True, input: str | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        del timeout_s, check
+        self.runs.append((command, input))
+        out = ""
+        if "openssl x509" in command:
+            out = f"sha256 Fingerprint={CA_SHA256}\n"
+        elif "grep -E" in command:
+            out = f"PUREIRON_CONTROL_API={run.CENTRAL_URL}\nPUREIRON_POLL_INTERVAL_S=10\n"
+        return subprocess.CompletedProcess[str](command, 0, out, "")
+
+
+def test_site_online_passes_the_site_token_by_stdin_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """L2: 현장 token은 `pureiron-site secret set`의 stdin으로만 간다 — 어느 원격 명령 줄에도,
+    결과 기록에도 없다(변이 M26: token을 `secret set` 인자로)."""
+    token = "site-token-must-stay-off-the-command-line"
+    monkeypatch.setattr(run, "BUNDLES", tmp_path)
+
+    def fake_central(command: str, *args: str) -> dict[str, object]:
+        del command, args
+        return {"site_id": run.SITE, "next_seq": 1}
+
+    def fake_wsl(script: str, *, timeout_s: float = 3600) -> str:
+        del script, timeout_s
+        return token + "\n"
+
+    monkeypatch.setattr(run, "central", fake_central)
+    monkeypatch.setattr(run, "wsl", fake_wsl)
+    ctx = run.Context(run_id="t", artifacts=str(tmp_path))
+    host = FakeVm()
+    ca = tmp_path / "central-root.crt"
+    ca.write_text(CA_PEM, encoding="ascii")
+    setup = run.site_online(ctx, cast(run.Vm, host), ca, CA_SHA256)
+    assert all(token not in command for command, _ in host.runs)
+    fed = [(command, given) for command, given in host.runs if given is not None]
+    assert fed == [("sudo pureiron-site secret set control_api_token", token + "\n")]
+    assert token not in json.dumps(setup)
+    assert setup["vm_ca_sha256"] == CA_SHA256
+
+
+def test_vm_run_feeds_input_to_ssh_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """L2: `Vm.run(input=)`은 ssh 표준 입력으로만 넘긴다(명령 줄 아님). input이 없으면 stdin을
+    닫는다(콘솔 stdin 공유 금지 — S4 crash). 변이 M24(input 무시)를 잡는다."""
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_run(argv: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        calls.append((argv, kw))
+        return subprocess.CompletedProcess[str](argv, 0, "", "")
+
+    def fake_tool(name: str) -> str:
+        return name
+
+    monkeypatch.setattr(vm, "_tool", fake_tool)
+    monkeypatch.setattr(vm.subprocess, "run", fake_run)
+    host = vm.Vm("10.77.0.10", Path("id_ed25519"))
+    host.run("sudo pureiron-site secret set control_api_token", input="vm-secret-x9\n")
+    host.run("true")
+    (fed_argv, fed), (_, closed) = calls
+    assert fed["input"] == "vm-secret-x9\n"
+    assert fed["stdin"] is None
+    assert not any("vm-secret-x9" in a for a in fed_argv)
+    assert closed["input"] is None
+    assert closed["stdin"] is subprocess.DEVNULL
+
+
+def test_online_guarded_survives_a_hung_central_down(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`online_guarded` finally의 `central down`이 시간 초과(`TimeoutExpired`)여도 report로
+    넘어간다 — 온라인 항목 실패 기록은 그대로 남는다."""
+    monkeypatch.setattr(run, "STATE_FILE", tmp_path / "state.json")  # 실제 state.json 보호
+    ctx = run.Context(run_id="t", artifacts=str(tmp_path))
+
+    def broken_online(c: run.Context) -> None:
+        del c
+        raise run.VmError("ssh exited 255")
+
+    def hung_central(command: str, *args: str) -> dict[str, object]:
+        raise subprocess.TimeoutExpired(["central.py", command, *args], 3600)
+
+    monkeypatch.setattr(run, "step_online", broken_online)
+    monkeypatch.setattr(run, "central", hung_central)
+    run.online_guarded(ctx, keep_central=False)
+    by_name = {r["name"]: r for r in ctx.results}
+    assert all(by_name[name]["ok"] is False for name in run.ONLINE_ITEMS)

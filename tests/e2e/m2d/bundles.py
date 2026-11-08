@@ -18,11 +18,15 @@ release 쌍(`BASE`·`NEXT`·`FAULT`)은 `release_pair.py`가 정한다(M4 마감
 - `site`: fleet 현장 파일을 쓰고 `deploy/bundle/build_bundle.py`로 서명 번들을 만든다(release는
   `--releases W/releases`에서 `version == --product`로 찾는다). 프로젝트 트리는 `--project-dir`
   (기본 fixture `acme`).
-- `m5-project`(M5 확인 ⓒ·ⓓ, M4 마감 FAULT의 다른 트리): `W/m5/repo` = fixture `acme` 사본에서
-  `project.yaml absorbs`를 뺀 것 —
+- `m5-project`(M5 확인 ⓒ·ⓓ): `W/m5/repo` = fixture `acme` 사본에서 `project.yaml absorbs`를 뺀
+  것 —
   "아직 absorb하지 않은 고객 repo". fixture는 `absorbs: {site-a: 3}`라 그대로 쓰면 VM의 현장
   site_rev(PATCH 2번 = 2)가 3 이하여서 드래프트 게이트가 통과하고(ⓒ가 `E_DRAFT`를 못 본다) absorb는
   리비전 퇴행(2 < 3) 충돌이 된다(ⓓ). 그 밖의 파일은 fixture와 바이트까지 같다.
+- `release_tree`(함수 — `run.py`가 Windows 호스트에서 run 번들 디렉터리에 만들고 WSL 경로로
+  `site --project-dir`에 넘긴다): NEXT·FAULT 번들 트리 = fixture 사본에서 태그
+  `release_pair.TREE_TAG`의 description만 `TREE_DESCRIPTIONS[release]`로 바꾼 것. c0(fixture)와
+  다른 트리라 업그레이드·FAULT·재시도가 정의를 실제로 다시 쓴다(같은 트리는 core no-op).
 - `absorb`(ⓓ): `W/m5/repo`를 `W/m5/absorbed`로 새로 복사하고 `pureiron-project absorb`(VM이
   서명한 draft.tar + VM `enrollment.json`) → `pureiron-project gate --draft`를 차례로 실행한다. 각
   종료 코드와 출력을 JSON 한 줄로 내고 판정은 `run.py`가 한다(실패해도 exit 0 — 결과에 증거를
@@ -46,7 +50,7 @@ from typing import cast
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "deploy" / "build"))
 
 from images import config_digest_from_tar, config_digest_of_image, image_store
-from release_pair import BASE, FAULT, NEXT, RELEASES
+from release_pair import BASE, FAULT, NEXT, RELEASES, TREE_DESCRIPTIONS, TREE_TAG
 
 from pureiron_project import canonical
 from pureiron_project.project import load_project
@@ -240,6 +244,30 @@ def unabsorbed_copy(source: Path, dest: Path) -> Path:
 
 def m5_project(work: Path) -> Path:
     return unabsorbed_copy(FIXTURE, work / "m5" / "repo")
+
+
+def release_tree(dest: Path, release: str, source: Path = FIXTURE) -> Path:
+    """`source` 트리를 `dest`에 새로 복사하고 태그 `TREE_TAG`의 `description`만
+    `TREE_DESCRIPTIONS[release]`로 바꾼다(그 태그 파일을 정규형으로 다시 쓴다). 결과가 유효한
+    프로젝트가 아니거나 태그가 정확히 하나가 아니면 멈춘다."""
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(source, dest)
+    found: list[tuple[Path, list[dict[str, canonical.Json]]]] = []
+    for path in sorted((dest / "tags").glob("*.yaml")):
+        items = cast(list[dict[str, canonical.Json]], canonical.load(path.read_text("utf-8")))
+        for item in items:
+            if item.get("path") == TREE_TAG:
+                item["description"] = TREE_DESCRIPTIONS[release]
+                found.append((path, items))
+    if len(found) != 1:
+        raise SystemExit(f"{source}: tag {TREE_TAG} found {len(found)} times (want 1)")
+    path, items = found[0]
+    path.write_text(canonical.dump(cast(canonical.Json, items)), encoding="utf-8", newline="\n")
+    project = load_project(dest)
+    if not project.ok:
+        raise SystemExit(f"{dest}: " + "; ".join(project.problems))
+    return dest
 
 
 def _tool(*cmd: str) -> dict[str, object]:

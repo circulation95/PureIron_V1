@@ -68,3 +68,14 @@ NEXT_TABLES: frozenset[str] = frozenset()
 여기에 적고 두 판정을 되살린다(`test_next_artifacts_empty_until_epoch_moves`)."""
 NEXT_INDEXES: frozenset[str] = frozenset()
 """NEXT가 이름을 붙여 만든 인덱스 — 없다(위와 같은 이유로 판정에서 뺐다)."""
+
+# 프로젝트 트리(M4 마감 수정 r1). c0(BASE g1)는 fixture `acme` 트리다. NEXT·FAULT 번들은 fixture
+# 사본에서 태그 하나의 `description`만 바꾼 트리를 싣는다(`bundles.release_tree`) — 같은 트리면
+# core가 재적용을 no-op(`changed=False`)으로 건너뛰어 업그레이드가 정의를 다시 쓰지 않고(c0 시드
+# 장비·태그가 retire되지 않는다), "트리 적용"·"롤백 뒤 정의 복원"이 같은 epoch에서 늘 참인 판정이
+# 된다. 판정은 이 값이 DB 태그 정의에 들어갔는지(`run.judge_tree`의 `definition`)로 구별한다.
+TREE_TAG = "line1/temp_sp"
+"""NEXT·FAULT 트리가 fixture와 다르게 두는 태그. M5 확인 ⓑ의 PATCH 대상(`line1/temp`·
+`temp-high`)과 겹치지 않는다."""
+TREE_DESCRIPTIONS = {NEXT: "1라인 온도 설정값 (r5)", FAULT: "1라인 온도 설정값 (r5f)"}
+"""release → 그 번들 트리의 `TREE_TAG` description(fixture는 "1라인 온도 설정값")."""
