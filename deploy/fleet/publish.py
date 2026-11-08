@@ -10,7 +10,8 @@ merge 직전 main 대비 변경 파일의 구조 규칙(`E_FLEET`)·`new == old 
 실패, 파일 gen == `max_published_gen`이면 최신·건너뜀, 작으면 역행 실패) → 프로젝트 repo
 (`<project-owner>/<project.repo>`, 기본 owner = fleet repo owner) 태그 `version` checkout
 (App 토큰) → `build_bundle.build`(같은 venv 함수 호출, 프로젝트 검증·자체 verify 포함) →
-스트리밍 `PUT /bundles/{site}/{gen}`(ci 토큰, 본문 전에 온 404·409 응답도 읽는다). 현장 하나가
+스트리밍 `PUT /bundles/{site}/{gen}`(ci 토큰, 본문 전에 온 404·409 응답도 읽는다 — HTTPS의
+TLS 세션 티켓은 응답으로 보지 않는다). 현장 하나가
 실패해도 나머지는 진행하고 끝에 exit 1. 드래프트 게이트는 여기서 하지 않는다(F12 — 현장
 `E_DRAFT`가 최종).
 
@@ -35,6 +36,7 @@ import argparse
 import contextlib
 import dataclasses
 import http.client
+import io
 import json
 import os
 import re
@@ -42,12 +44,13 @@ import secrets
 import select
 import shutil
 import socket
+import ssl
 import sys
 import tempfile
 import time
 import traceback
 import urllib.parse
-from collections.abc import Callable, Generator, Mapping, Sequence
+from collections.abc import Buffer, Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -95,6 +98,7 @@ ETC = Path("/etc/pureiron")
 SRV = Path("/srv/pureiron")
 DEFAULT_CONTROL_API = "http://127.0.0.1:8100/api/v1"
 UPLOAD_CHUNK = 1024 * 1024
+EARLY_READ = 64 * 1024
 APP_ID = re.compile(r"[0-9]+")
 """GitHub App ID 형식(ASCII 10진 숫자만 — `str.isdecimal`은 전각 숫자도 받는다)."""
 FILE_UMASK = 0o027
@@ -188,11 +192,77 @@ def read_token(path: Path) -> str:
 # ---------------------------------------------------------------------------- control-api HTTP
 
 
-def _readable(sock: socket.socket | None) -> bool:
+def _early_response(sock: socket.socket | None) -> bytes | None:
+    """본문을 보내는 중에 서버 응답(404·409 — M4-0 L-7)이 왔는지.
+
+    None = 아직 없음(계속 보낸다). bytes = 왔음(보내기를 멈춘다) — 이미 소켓에서 읽은 응답 앞부분
+    (평문은 읽지 않으므로 b"", 서버가 TLS를 닫았으면 b"").
+
+    TLS 1.3 서버는 핸드셰이크 직후 NewSessionTicket 레코드를 보내므로 소켓이 HTTP 응답 없이도
+    readable이 된다 — `select`만 보고 멈추면 첫 청크도 못 보내고 응답을 120 s 기다리다 timeout
+    난다(M4 마감 15분 실측, run 42536145640). 그래서 TLS 소켓은 non-blocking으로 한 번 읽어 앱
+    데이터가 있을 때만 응답으로 본다. 티켓 같은 레코드뿐이면 ssl 모듈이 처리하고
+    `SSLWantReadError`를 낸다. 읽은 앱 데이터는 버리지 않고 `_prefixed_response`로 응답 앞에 붙인다.
+    """
     if sock is None:
-        return False
+        return None
     ready, _, _ = select.select([sock], [], [], 0)
-    return bool(ready)
+    if not ready:
+        return None
+    if not isinstance(sock, ssl.SSLSocket):
+        return b""  # 평문은 읽지 않는다 — HTTPResponse가 소켓에서 그대로 읽는다
+    timeout = sock.gettimeout()
+    sock.setblocking(False)
+    try:
+        return sock.recv(EARLY_READ)
+    except (ssl.SSLWantReadError, ssl.SSLWantWriteError):
+        return None  # 앱 데이터 없음(세션 티켓 등 TLS 레코드뿐)
+    finally:
+        sock.settimeout(timeout)
+
+
+class _PrefixedRaw(io.RawIOBase):
+    """먼저 읽어 둔 바이트를 내준 뒤 나머지는 응답 스트림에서 읽는다(`readinto1` — 소켓 읽기 한 번,
+    Content-Length보다 더 기다리지 않는다)."""
+
+    def __init__(self, prefix: bytes, rest: io.BufferedReader) -> None:
+        super().__init__()
+        self._prefix = prefix
+        self._rest = rest
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer: Buffer, /) -> int:
+        view = memoryview(buffer).cast("B")
+        if self._prefix:
+            n = min(len(view), len(self._prefix))
+            view[:n] = self._prefix[:n]
+            self._prefix = self._prefix[n:]
+            return n
+        return self._rest.readinto1(view)
+
+    def close(self) -> None:
+        if not self.closed:
+            self._rest.close()
+        super().close()
+
+
+def _prefixed_response(prefix: bytes) -> type[http.client.HTTPResponse]:
+    """`prefix`(이른 응답에서 이미 읽은 바이트)를 앞에 붙여 읽는 HTTPResponse 클래스."""
+
+    class PrefixedResponse(http.client.HTTPResponse):
+        def __init__(
+            self,
+            sock: socket.socket,
+            debuglevel: int = 0,
+            method: str | None = None,
+            url: str | None = None,
+        ) -> None:
+            super().__init__(sock, debuglevel, method, url)
+            self.fp = io.BufferedReader(_PrefixedRaw(prefix, self.fp))
+
+    return PrefixedResponse
 
 
 @dataclass(slots=True)
@@ -203,13 +273,19 @@ class ControlApi:
     viewer_token: str | None
     ci_token: str | None
     timeout: float = HTTP_TIMEOUT_S
+    ssl_context: ssl.SSLContext | None = None
+    """HTTPS 신뢰 설정. None(운영 기본) = http.client 기본(OS 신뢰 저장소). 시험이 자체 서명 CA를
+    프로세스 전역을 바꾸지 않고 주입할 때만 쓴다."""
 
     def _connection(self) -> tuple[http.client.HTTPConnection, str]:
         url = urllib.parse.urlsplit(self.base_url.rstrip("/"))
         if url.scheme not in ("http", "https") or not url.hostname:
             raise ControlApiError(f"control-api URL must be http(s)://host…: {self.base_url!r}")
-        cls = http.client.HTTPSConnection if url.scheme == "https" else http.client.HTTPConnection
-        return cls(url.hostname, url.port, timeout=self.timeout), url.path
+        if url.scheme == "https":
+            return http.client.HTTPSConnection(
+                url.hostname, url.port, timeout=self.timeout, context=self.ssl_context
+            ), url.path
+        return http.client.HTTPConnection(url.hostname, url.port, timeout=self.timeout), url.path
 
     @staticmethod
     def _detail(body: bytes) -> str:
@@ -277,6 +353,7 @@ class ControlApi:
         """스트리밍 업로드.
 
         본문을 다 보내기 전에 서버가 답하면(404·409 — M4-0 L-7) 보내기를 멈추고 그 응답을 읽는다.
+        HTTPS에서 TLS 레코드(세션 티켓)만 온 것은 응답이 아니다(`_early_response`).
         """
         if self.ci_token is None:
             raise ControlApiError("ci token missing")
@@ -293,7 +370,10 @@ class ControlApi:
                 contextlib.suppress(BrokenPipeError, ConnectionResetError, ConnectionAbortedError),
             ):
                 while chunk := source.read(UPLOAD_CHUNK):
-                    if _readable(conn.sock):
+                    early = _early_response(conn.sock)
+                    if early is not None:
+                        if early:
+                            conn.response_class = _prefixed_response(early)
                         break  # 본문 전에 온 응답(404·409 등)
                     conn.send(chunk)
             response = conn.getresponse()

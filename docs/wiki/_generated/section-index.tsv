@@ -156,7 +156,7 @@ sot-coding-style	docs/wiki/sot/coding-style.md	10-프론트엔드-servicesweb-�
 sot-coding-style	docs/wiki/sot/coding-style.md	11-리뷰-체크리스트-가독성구조	232	17	1522	h2	11. 리뷰 체크리스트 (가독성·구조)
 sot-coding-style	docs/wiki/sot/coding-style.md	12-현재-코드와의-차이-백로그-2026-10-11-검토-기준	249	14	1423	h2	12. 현재 코드와의 차이 (백로그, 2026-10-11 검토 기준)
 sot-coding-style	docs/wiki/sot/coding-style.md	13-이-문서를-바꾸는-법	263	4	281	h2	13. 이 문서를 바꾸는 법
-sot-data-contracts	docs/wiki/sot/data-contracts.md	data-contracts-sot	28	530	127790	h1	Data Contracts SOT
+sot-data-contracts	docs/wiki/sot/data-contracts.md	data-contracts-sot	28	530	128110	h1	Data Contracts SOT
 sot-data-contracts	docs/wiki/sot/data-contracts.md	이-문서의-원천	36	8	847	h2	이 문서의 원천
 sot-data-contracts	docs/wiki/sot/data-contracts.md	마이그레이션-규율	44	17	1446	h2	마이그레이션 규율
 sot-data-contracts	docs/wiki/sot/data-contracts.md	tag-정의-계약	61	20	1040	h2	Tag 정의 계약
@@ -166,7 +166,7 @@ sot-data-contracts	docs/wiki/sot/data-contracts.md	historian-retention--query-wi
 sot-data-contracts	docs/wiki/sot/data-contracts.md	project-config-root-계약	145	57	5026	h2	Project config root 계약
 sot-data-contracts	docs/wiki/sot/data-contracts.md	project-package-exportimport-계약	169	33	3368	h3	Project package export/import 계약
 sot-data-contracts	docs/wiki/sot/data-contracts.md	문서화-원칙	202	7	385	h2	문서화 원칙
-sot-data-contracts	docs/wiki/sot/data-contracts.md	목표-설계미구현	209	349	111990	h2	목표 설계(미구현)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	목표-설계미구현	209	349	112310	h2	목표 설계(미구현)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	마이그레이션스키마-호환-adr-024	213	8	1952	h3	마이그레이션·스키마 호환 (ADR-024)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	기록-정책-adr-021	221	4	195	h3	기록 정책 (ADR-021)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	프로젝트-정본-adr-025	225	20	2046	h3	프로젝트 정본 (ADR-025)
@@ -188,7 +188,7 @@ sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m5-3a-드래
 sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m5-3b-고객-repo-템플릿validate-project-2026-10-30	474	15	5314	h3	V1 구현 현황 (M5-3b 고객 repo 템플릿·validate-project, 2026-10-30)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m4-0-control-api-중앙-db-2026-11-01	489	24	5669	h3	V1 구현 현황 (M4-0 control-api 중앙 DB, 2026-11-01)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m4-1-현장-송신쓰기-스위치-서명화-2026-11-02	513	19	11616	h3	V1 구현 현황 (M4-1 현장 송신·쓰기 스위치 서명화, 2026-11-02)
-sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m4-2-fleetpublish-2026-11-04	532	14	10908	h3	V1 구현 현황 (M4-2 fleet·publish, 2026-11-04)
+sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m4-2-fleetpublish-2026-11-04	532	14	11228	h3	V1 구현 현황 (M4-2 fleet·publish, 2026-11-04)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m4-마감-준비--리허설-수정r5c0-2026-11-09	546	12	3581	h3	V1 구현 현황 (M4 마감 준비 — 리허설 수정·r5·c0, 2026-11-09)
 sot-frontend	docs/wiki/sot/frontend.md	frontend-sot	24	354	30833	h1	Frontend SOT
 sot-frontend	docs/wiki/sot/frontend.md	1-문서-경계	32	12	702	h2	1. 문서 경계
@@ -247,7 +247,7 @@ sot-runtime-config	docs/wiki/sot/runtime-config.md	v1-환경변수-m1m3a-구현	
 sot-runtime-config	docs/wiki/sot/runtime-config.md	v1-control-api-환경변수-m4-0-구현	166	18	1815	h3	V1 control-api 환경변수 (M4-0 구현)
 sot-runtime-config	docs/wiki/sot/runtime-config.md	v1-중앙-compose-변수비밀-파일-m4-3-구현	184	19	3937	h3	V1 중앙 compose 변수·비밀 파일 (M4-3 구현)
 sot-runtime-config	docs/wiki/sot/runtime-config.md	v1-fleet-publish-호스트-경로환경변수-m4-2-구현	203	22	2844	h3	V1 fleet publish 호스트 경로·환경변수 (M4-2 구현)
-sot-testing	docs/wiki/sot/testing.md	testing-sot	32	352	41790	h1	Testing SOT
+sot-testing	docs/wiki/sot/testing.md	testing-sot	32	352	41834	h1	Testing SOT
 sot-testing	docs/wiki/sot/testing.md	1-문서-경계	40	20	1306	h2	1. 문서 경계
 sot-testing	docs/wiki/sot/testing.md	2-기본-실행-명령	60	35	1204	h2	2. 기본 실행 명령
 sot-testing	docs/wiki/sot/testing.md	3-테스트-계층	95	73	9877	h2	3. 테스트 계층
@@ -264,4 +264,4 @@ sot-testing	docs/wiki/sot/testing.md	7-외부-의존성환경-기준	272	16	777	
 sot-testing	docs/wiki/sot/testing.md	8-테스트-작성-규칙	288	25	1603	h2	8. 테스트 작성 규칙
 sot-testing	docs/wiki/sot/testing.md	9-실패-처리-원칙	313	19	809	h2	9. 실패 처리 원칙
 sot-testing	docs/wiki/sot/testing.md	10-pr작업-완료-보고-형식	332	19	492	h2	10. PR/작업 완료 보고 형식
-sot-testing	docs/wiki/sot/testing.md	11-v1-g1-게이트-pureiron_v1-m1-구현	351	33	14158	h2	11. V1 G1 게이트 (PureIron_V1, M1 구현)
+sot-testing	docs/wiki/sot/testing.md	11-v1-g1-게이트-pureiron_v1-m1-구현	351	33	14202	h2	11. V1 G1 게이트 (PureIron_V1, M1 구현)
