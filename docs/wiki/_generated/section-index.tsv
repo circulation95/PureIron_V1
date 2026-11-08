@@ -106,7 +106,7 @@ sot-agent-rules	docs/wiki/sot/agent-rules.md	문서-읽기-규율-섹션-단위-
 sot-agent-rules	docs/wiki/sot/agent-rules.md	중복-방지-원칙	190	17	795	h2	중복 방지 원칙
 sot-agent-rules	docs/wiki/sot/agent-rules.md	자동-생성-vs-수기-관리-범위	207	8	773	h2	자동 생성 vs 수기 관리 범위
 sot-agent-rules	docs/wiki/sot/agent-rules.md	기여-흐름-raw--wiki--pr--review	215	15	1647	h2	기여 흐름 (raw → wiki → PR → review)
-sot-api-events	docs/wiki/sot/api-events.md	api--events-sot	18	253	45596	h1	API & Events SOT
+sot-api-events	docs/wiki/sot/api-events.md	api--events-sot	18	253	45752	h1	API & Events SOT
 sot-api-events	docs/wiki/sot/api-events.md	이-문서의-원천	26	8	868	h2	이 문서의 원천
 sot-api-events	docs/wiki/sot/api-events.md	라우터-프리픽스	34	31	2580	h2	라우터 프리픽스
 sot-api-events	docs/wiki/sot/api-events.md	주요-api-계약-요약	65	16	3308	h2	주요 API 계약 요약
@@ -121,7 +121,7 @@ sot-api-events	docs/wiki/sot/api-events.md	v1-알람실시간장비이력-api-ap
 sot-api-events	docs/wiki/sot/api-events.md	websocket-apiv1ws-v1-m3b-2	182	10	2259	h3	WebSocket `/api/v1/ws` (V1, M3b-2)
 sot-api-events	docs/wiki/sot/api-events.md	v1-쓰기-api-apiv1-m3c-2-구현	192	16	4861	h2	V1 쓰기 API (`/api/v1`, M3c-2 구현)
 sot-api-events	docs/wiki/sot/api-events.md	v1-현장-프로젝트-api-apiv1project-m1m5-2-구현	208	18	3672	h2	V1 현장 프로젝트 API (`/api/v1/project`, M1·M5-2 구현)
-sot-api-events	docs/wiki/sot/api-events.md	v1-중앙-control-api-apiv1-m4-0-구현	226	27	11408	h2	V1 중앙 control-api (`/api/v1`, M4-0 구현)
+sot-api-events	docs/wiki/sot/api-events.md	v1-중앙-control-api-apiv1-m4-0-구현	226	27	11564	h2	V1 중앙 control-api (`/api/v1`, M4-0 구현)
 sot-api-events	docs/wiki/sot/api-events.md	내부-이벤트-버스	253	18	1432	h2	내부 이벤트 버스
 sot-architecture	docs/wiki/sot/architecture.md	architecture-sot	29	292	27062	h1	Architecture SOT
 sot-architecture	docs/wiki/sot/architecture.md	이-문서의-원천	43	8	449	h2	이 문서의 원천
@@ -188,7 +188,7 @@ sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m5-3b-고객
 sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m4-0-control-api-중앙-db-2026-11-01	483	24	5669	h3	V1 구현 현황 (M4-0 control-api 중앙 DB, 2026-11-01)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m4-1-현장-송신쓰기-스위치-서명화-2026-11-02	507	19	11616	h3	V1 구현 현황 (M4-1 현장 송신·쓰기 스위치 서명화, 2026-11-02)
 sot-data-contracts	docs/wiki/sot/data-contracts.md	v1-구현-현황-m4-2-fleetpublish-2026-11-04	526	13	10668	h3	V1 구현 현황 (M4-2 fleet·publish, 2026-11-04)
-sot-frontend	docs/wiki/sot/frontend.md	frontend-sot	24	354	30679	h1	Frontend SOT
+sot-frontend	docs/wiki/sot/frontend.md	frontend-sot	24	354	30833	h1	Frontend SOT
 sot-frontend	docs/wiki/sot/frontend.md	1-문서-경계	32	12	702	h2	1. 문서 경계
 sot-frontend	docs/wiki/sot/frontend.md	2-스택과-실행-명령	44	24	625	h2	2. 스택과 실행 명령
 sot-frontend	docs/wiki/sot/frontend.md	3-디렉터리-책임	68	20	1219	h2	3. 디렉터리 책임
@@ -204,7 +204,7 @@ sot-frontend	docs/wiki/sot/frontend.md	12-변경검증-원칙	238	19	926	h2	12. 
 sot-frontend	docs/wiki/sot/frontend.md	13-design-system-primitive-계약	257	25	4881	h2	13. Design system primitive 계약
 sot-frontend	docs/wiki/sot/frontend.md	15-overlay-계약	282	11	1172	h2	15. Overlay 계약
 sot-frontend	docs/wiki/sot/frontend.md	16-v1-web-m3b	293	51	8731	h2	16. V1 web (M3b)
-sot-frontend	docs/wiki/sot/frontend.md	17-v1-control-web-m4-3	344	34	4574	h2	17. V1 control-web (M4-3)
+sot-frontend	docs/wiki/sot/frontend.md	17-v1-control-web-m4-3	344	34	4728	h2	17. V1 control-web (M4-3)
 sot-mes-schedule	docs/wiki/sot/mes-schedule.md	messchedule-sot	15	88	8875	h1	MES/Schedule SOT
 sot-mes-schedule	docs/wiki/sot/mes-schedule.md	결정-상태-표기	25	10	456	h2	결정 상태 표기
 sot-mes-schedule	docs/wiki/sot/mes-schedule.md	1-내부-모델-vs-고객-노출-라벨-분리	35	14	1084	h2	1. 내부 모델 vs 고객 노출 라벨 분리
@@ -230,22 +230,22 @@ sot-product	docs/wiki/sot/product.md	디자인-방향	200	12	688	h2	디자인 �
 sot-product	docs/wiki/sot/product.md	첫-계약-전략	212	16	1670	h2	첫 계약 전략
 sot-product	docs/wiki/sot/product.md	성공-기준	228	14	655	h2	성공 기준
 sot-product	docs/wiki/sot/product.md	성능--비기능-요구	242	9	240	h2	성능 / 비기능 요구
-sot-runtime-config	docs/wiki/sot/runtime-config.md	runtime-config-sot	15	210	23912	h1	Runtime Config SOT
+sot-runtime-config	docs/wiki/sot/runtime-config.md	runtime-config-sot	15	210	24331	h1	Runtime Config SOT
 sot-runtime-config	docs/wiki/sot/runtime-config.md	이-문서의-원천	27	5	335	h2	이 문서의 원천
 sot-runtime-config	docs/wiki/sot/runtime-config.md	settings-환경변수	32	32	2226	h2	`Settings` 환경변수
 sot-runtime-config	docs/wiki/sot/runtime-config.md	직접-읽는-환경변수	64	9	461	h2	직접 읽는 환경변수
 sot-runtime-config	docs/wiki/sot/runtime-config.md	설정-파일-위치	73	6	515	h2	설정 파일 위치
 sot-runtime-config	docs/wiki/sot/runtime-config.md	agent-troubleshooting-poc-설정	79	9	1112	h2	Agent troubleshooting PoC 설정
 sot-runtime-config	docs/wiki/sot/runtime-config.md	drift-검사	88	10	508	h2	drift 검사
-sot-runtime-config	docs/wiki/sot/runtime-config.md	목표-설계미구현	98	127	17988	h2	목표 설계(미구현)
+sot-runtime-config	docs/wiki/sot/runtime-config.md	목표-설계미구현	98	127	18407	h2	목표 설계(미구현)
 sot-runtime-config	docs/wiki/sot/runtime-config.md	지원-호스트-adr-027	102	5	448	h3	지원 호스트 (ADR-027)
 sot-runtime-config	docs/wiki/sot/runtime-config.md	호스트-경로	107	11	625	h3	호스트 경로
 sot-runtime-config	docs/wiki/sot/runtime-config.md	실행-규칙	118	10	2621	h3	실행 규칙
 sot-runtime-config	docs/wiki/sot/runtime-config.md	v1-환경변수-m1m3a-구현	128	38	5753	h3	V1 환경변수 (M1~M3a 구현)
 sot-runtime-config	docs/wiki/sot/runtime-config.md	v1-control-api-환경변수-m4-0-구현	166	18	1815	h3	V1 control-api 환경변수 (M4-0 구현)
-sot-runtime-config	docs/wiki/sot/runtime-config.md	v1-중앙-compose-변수비밀-파일-m4-3-구현	184	19	3518	h3	V1 중앙 compose 변수·비밀 파일 (M4-3 구현)
+sot-runtime-config	docs/wiki/sot/runtime-config.md	v1-중앙-compose-변수비밀-파일-m4-3-구현	184	19	3937	h3	V1 중앙 compose 변수·비밀 파일 (M4-3 구현)
 sot-runtime-config	docs/wiki/sot/runtime-config.md	v1-fleet-publish-호스트-경로환경변수-m4-2-구현	203	22	2844	h3	V1 fleet publish 호스트 경로·환경변수 (M4-2 구현)
-sot-testing	docs/wiki/sot/testing.md	testing-sot	32	352	41362	h1	Testing SOT
+sot-testing	docs/wiki/sot/testing.md	testing-sot	32	352	41790	h1	Testing SOT
 sot-testing	docs/wiki/sot/testing.md	1-문서-경계	40	20	1306	h2	1. 문서 경계
 sot-testing	docs/wiki/sot/testing.md	2-기본-실행-명령	60	35	1204	h2	2. 기본 실행 명령
 sot-testing	docs/wiki/sot/testing.md	3-테스트-계층	95	73	9877	h2	3. 테스트 계층
@@ -262,4 +262,4 @@ sot-testing	docs/wiki/sot/testing.md	7-외부-의존성환경-기준	272	16	777	
 sot-testing	docs/wiki/sot/testing.md	8-테스트-작성-규칙	288	25	1603	h2	8. 테스트 작성 규칙
 sot-testing	docs/wiki/sot/testing.md	9-실패-처리-원칙	313	19	809	h2	9. 실패 처리 원칙
 sot-testing	docs/wiki/sot/testing.md	10-pr작업-완료-보고-형식	332	19	492	h2	10. PR/작업 완료 보고 형식
-sot-testing	docs/wiki/sot/testing.md	11-v1-g1-게이트-pureiron_v1-m1-구현	351	33	13730	h2	11. V1 G1 게이트 (PureIron_V1, M1 구현)
+sot-testing	docs/wiki/sot/testing.md	11-v1-g1-게이트-pureiron_v1-m1-구현	351	33	14158	h2	11. V1 G1 게이트 (PureIron_V1, M1 구현)

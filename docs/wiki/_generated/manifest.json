@@ -136,12 +136,12 @@
     },
     {
       "audience": "both",
-      "bytes": 46326,
+      "bytes": 46482,
       "id": "sot-api-events",
       "last_verified": "2026-11-02",
       "path": "docs/wiki/sot/api-events.md",
       "section_count": 17,
-      "sha256": "b98f6645ae56f793207597abf7b8b1f9601c5822b984bd9488684c8aa6ea38a3",
+      "sha256": "9d4124d08d600c936f2465db33fb32889fa8b3b8845ab3348b4b231381d9fdd8",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/main.py",
@@ -252,12 +252,12 @@
     },
     {
       "audience": "both",
-      "bytes": 32204,
+      "bytes": 32358,
       "id": "sot-frontend",
       "last_verified": "2026-07-23",
       "path": "docs/wiki/sot/frontend.md",
       "section_count": 17,
-      "sha256": "58c49d7c8b18ddfb5f03ca41103f758beac6f2d534472f0c14b39fa4b5b26b3a",
+      "sha256": "0f0fcfe92cf0531809bc439753b558dc805cbb10a702a8b19077b502d6c28f60",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/frontend/package.json",
@@ -313,12 +313,12 @@
     },
     {
       "audience": "both",
-      "bytes": 24363,
+      "bytes": 24782,
       "id": "sot-runtime-config",
       "last_verified": "2026-11-04",
       "path": "docs/wiki/sot/runtime-config.md",
       "section_count": 15,
-      "sha256": "44510fe590d75ff51d517067fa84e4dff66f8e7d0b6903e7cd122cd63f450b4d",
+      "sha256": "625b152ac6b52b9a0f6305cf70912024d3b3c7a6224e172e40559e79934af3ba",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/src/pureiron/config.py",
@@ -331,12 +331,12 @@
     },
     {
       "audience": "both",
-      "bytes": 43778,
+      "bytes": 44206,
       "id": "sot-testing",
       "last_verified": "2026-08-22",
       "path": "docs/wiki/sot/testing.md",
       "section_count": 18,
-      "sha256": "87e0bce7222ddd356c62c3785d1dc93c44a43075ade22318e986947fe9a09e8b",
+      "sha256": "9817c0d987240544b3158c810b6a943d374917200e84beeac60a687ad23256e2",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/pyproject.toml",

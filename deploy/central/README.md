@@ -10,7 +10,7 @@ control-db(PostgreSQL 16) + control-api + control-web(Caddy: HTTPS·basic auth·
 | `/`, 정적 파일 | 필요 | control-web 정적(SPA) | 읽기 전용 표 1장 |
 | 설정에 없는 `Host` | - | 없음(421) | `PUREIRON_CENTRAL_HOST`에 없는 이름으로 온 요청 |
 
-모든 응답에 보안 헤더 4개(site web nginx와 같은 값): `Content-Security-Policy: frame-ancestors 'none'`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`.
+Caddy 핸들러를 지나는 모든 응답에 보안 헤더 4개(site web nginx와 같은 값): `Content-Security-Policy: frame-ancestors 'none'`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`. 예외는 Go HTTP 서버가 핸들러 전에 400으로 답하는 요청이다(빈 `Host:`, HTTP/1.1 Host 없음, 쉼표나 `@`가 든 Host). 브라우저가 만들 요청이 아니다.
 
 ## 비밀 파일
 
@@ -24,25 +24,7 @@ control-db(PostgreSQL 16) + control-api + control-web(Caddy: HTTPS·basic auth·
 
 컨테이너 사용자가 읽을 수 있어야 한다(control-api는 UID 10001): 파일은 0644, 보호는 디렉터리 권한으로.
 
-**비밀 파일은 같은 파일에 덮어쓴다(`cat 새파일 > 비밀파일`). `mv`·`cp --remove-destination`·편집기의 "새 파일로 저장 후 바꾸기"로 교체하지 않는다.** compose `secrets:`는 파일 하나를 bind mount하므로 컨테이너는 처음 파일(inode)을 계속 본다. Docker Desktop(WSL)에서 실측한 결과(M4-3 수정 r1, Caddy 2.11.7): 같은 파일 덮어쓰기는 재시작 없이 바로 보인다. `mv`로 바꾸면 컨테이너는 옛 내용을 계속 보고, 그 상태에서 `restart`·`up -d`는 `error mounting … no such file or directory`로 **컨테이너가 뜨지 않는다**(현장 polling도 Caddy를 거치므로 중앙 전체가 끊긴다. 재부팅 뒤 `restart: unless-stopped`도 같다).
-
-- 실수로 `mv`했을 때 복구: `$C up -d --force-recreate <서비스>`(viewer_token·ui_basic_auth → `control-web`, control_db_password → `control-db control-api`). 컨테이너를 새로 만들어 지금 파일을 다시 마운트한다.
-- `ui_basic_auth`는 기동 때만 읽는다 — 덮어쓴 뒤 `$C restart control-web`.
-
-viewer 토큰 교체(새 토큰을 먼저 쓰고 옛 토큰은 마지막에 끊는다):
-
-```bash
-$C run --rm -T control-api token create --role viewer --name control-web-2 > "$S/viewer_token.new"   # 1. 새 토큰(다른 파일에)
-test "$(wc -l < "$S/viewer_token.new")" -eq 1 && test -s "$S/viewer_token.new"                       # 2. 한 줄·비어 있지 않음
-cat "$S/viewer_token.new" > "$S/viewer_token" && rm "$S/viewer_token.new"                            # 3. 같은 파일에 덮어쓰기(mv 금지)
-#                                                                                                       4. 화면 새로고침으로 표가 뜨는지 확인
-$C run --rm control-api token list                                                                    # 5. 옛 토큰 이름 확인 후
-$C run --rm control-api token revoke --name control-web                                               #    옛 토큰 revoke
-```
-
-토큰 이름은 유효한 토큰 사이에서 유일해야 하므로 새 토큰은 다른 이름(`control-web-2` 등)으로 만든다.
-
-Caddy는 요청마다 파일을 읽으므로 재시작은 필요 없다. 1단계가 실패해도(DB 중단 등) 지금 쓰는 파일은 그대로다. 3단계에서 파일이 비는 구간은 몇 바이트를 쓰는 동안뿐이고, 그 사이 요청은 401(fail-closed)이다.
+교체·변경 절차는 아래 "비밀 파일 교체" 절.
 
 ## 첫 기동
 
@@ -60,9 +42,71 @@ $C up -d --wait                                             # 4. 기동
 
 현장 등록은 CLI 또는 `POST /api/v1/sites`(admin): `$C run --rm -T control-api site register /dev/stdin < enrollment.json` → 현장 token 원문(1회).
 
-업그레이드: 새 release 이미지 빌드 → `.env`의 `PUREIRON_CENTRAL_RELEASE` 변경 → `migrate up` → `up -d --wait`.
+업그레이드: 새 release 이미지 빌드(위 `build_images.sh`) → release 기록(저장소 루트, 커밋된 깨끗한 트리에서 `uv run python deploy/build/release_record.py <release> --central`) → `.env`의 `PUREIRON_CENTRAL_RELEASE` 변경 → `$C run --rm control-api migrate up` → `$C up -d --wait`. 기록은 이미지가 있어야 만들 수 있으므로 `.env`를 바꾸기 전에 빌드와 기록을 끝낸다. 첫 기동도 빌드 뒤에 기록한다.
 
 release 이름은 release 기록이 있는 이름(`c0`, `c1`, … — `deploy/releases/central/<이름>.json`)만 쓴다. **`0.1.0-dev`는 CI·개발용 태그라 운영에 쓰지 않는다**: 같은 docker 데몬을 쓰는 CI(integration-compose·control-web-e2e)가 이 태그로 PR 코드를 다시 빌드해 덮어쓰므로, 다음 재시작(`restart: unless-stopped`·재부팅) 때 중앙이 PR 코드로 바뀐다.
+
+## 비밀 파일 교체
+
+명령은 `deploy/central`에서 실행한다. `$C`·`$S`는 위 첫 기동 절과 같다.
+
+**비밀 파일은 같은 파일에 덮어쓴다(`cat 새파일 > 비밀파일`). `mv`·`cp --remove-destination`·편집기의 "새 파일로 저장 후 바꾸기"로 교체하지 않는다.** compose `secrets:`는 파일 하나를 bind mount하므로 컨테이너는 처음 파일(inode)을 계속 본다. Docker Desktop(WSL)에서 실측한 결과(M4-3 수정 r1, Caddy 2.11.7): 같은 파일 덮어쓰기는 재시작 없이 바로 보인다. `mv`로 바꾸면 컨테이너는 옛 내용을 계속 보고, 그 상태에서 `restart`·`up -d`는 `error mounting … no such file or directory`로 **컨테이너가 뜨지 않는다**(현장 polling도 Caddy를 거치므로 중앙 전체가 끊긴다. 재부팅 뒤 `restart: unless-stopped`도 같다).
+
+- 실수로 `mv`했을 때 복구: `$C up -d --force-recreate <서비스>`(viewer_token·ui_basic_auth → `control-web`, control_db_password → `control-db control-api`). 컨테이너를 새로 만들어 지금 파일을 다시 마운트한다.
+- `ui_basic_auth`는 기동 때만 읽는다 — 덮어쓴 뒤 `$C restart control-web`.
+- `control_db_password`는 덮어쓰기만으로 값이 바뀌지 않는다 — 아래 "control_db_password 변경".
+
+### viewer 토큰 교체
+
+새 토큰을 먼저 쓰고 옛 토큰은 마지막에 끊는다. 토큰은 해시로만 저장되어 지운 원문을 되살릴 수 없다.
+
+```bash
+$C run --rm control-api token list            # 유효한 토큰 이름 확인(원문은 나오지 않는다)
+OLD=<위 목록에서 화면이 지금 쓰는 viewer 토큰 이름>
+NEW=control-web-$(date +%Y%m%d)               # 유효한 토큰 사이에서 유일한 이름(같은 날 또 하면 뒤에 -2)
+```
+
+아래 네 줄은 한 명령이다. 어느 단계든 실패하면 거기서 멈추고 `viewer_token`은 그대로다.
+
+```bash
+$C run --rm -T control-api token create --role viewer --name "$NEW" > "$S/viewer_token.new" &&  # 1. 새 토큰(다른 파일에)
+  test "$(wc -l < "$S/viewer_token.new")" -eq 1 && test -s "$S/viewer_token.new" &&             # 2. 한 줄·비어 있지 않음
+  cat "$S/viewer_token.new" > "$S/viewer_token" &&                                              # 3. 같은 파일에 덮어쓰기(mv 금지)
+  rm "$S/viewer_token.new"
+```
+
+4단계는 화면을 새로고침해 표가 뜨는지 보는 것이다. Caddy는 요청마다 파일을 읽으므로 재시작은 필요 없다. 표를 확인한 뒤에만 옛 토큰을 끊는다(5단계).
+
+```bash
+$C run --rm control-api token revoke --name "$OLD"
+```
+
+- 1단계가 실패하면(이름 중복, DB 인증 실패, 이미지 없음) 비어 있는 `viewer_token.new`만 남는다. 원인을 고치고 이름을 확인한 뒤 다시 실행하면 덮어쓴다. 멈춰 있는 control-db는 `compose run`이 다시 띄우므로 실패 원인이 아니다.
+- 2단계가 실패하면 새 토큰은 이미 유효하다. `viewer_token.new`를 지우고 `$C run --rm control-api token revoke --name "$NEW"`로 끊은 뒤 다시 한다.
+- 3단계에서 파일이 비는 구간은 몇 바이트를 쓰는 동안뿐이고, 그 사이 요청은 401(fail-closed)이다.
+
+### control_db_password 변경
+
+postgres는 이 파일을 데이터 디렉터리를 처음 만들 때(initdb)만 읽는다. **파일만 바꾸면 DB 비밀번호는 그대로이고 control-api만 새 값을 쓰므로, 재시작 뒤 `/ui/fleet`은 503이고 `/api/v1/healthz`는 200이며 컨테이너도 healthy다.** healthz로는 드러나지 않는다. 그래서 DB 쪽을 먼저 바꾼다.
+
+```bash
+openssl rand -base64 24 > "$S/control_db_password.new"                       # 새 값(다른 파일에)
+printf "ALTER ROLE pureiron PASSWORD '%s';\n" "$(cat "$S/control_db_password.new")" |
+  $C exec -T control-db psql -v ON_ERROR_STOP=1 -U pureiron -d pureiron_control &&  # 1. DB 먼저
+  cat "$S/control_db_password.new" > "$S/control_db_password" &&               # 2. 같은 파일에 덮어쓰기(mv 금지)
+  rm "$S/control_db_password.new" &&
+  $C restart control-api                                                       # 3. 새 값으로 다시 연결
+```
+
+`psql`이 실패하면 거기서 멈추고 `control_db_password`는 그대로다(`.new`만 지운다). `ALTER ROLE` 뒤에는 control-api가 이미 연 DB 연결만 계속 쓰이고 새 연결(CLI 포함)은 파일을 바꿀 때까지 실패하므로, 세 단계를 이어서 한다. 재시작 동안 `/ui/fleet`은 502다(실측 약 2초).
+
+파일을 먼저 바꿔 버렸으면 DB를 파일 값에 맞춘다(컨테이너 안 psql은 비밀번호를 묻지 않는다).
+
+```bash
+printf "ALTER ROLE pureiron PASSWORD '%s';\n" "$(cat "$S/control_db_password")" |
+  $C exec -T control-db psql -v ON_ERROR_STOP=1 -U pureiron -d pureiron_control &&
+  $C restart control-api
+```
 
 ## 이미지 신원
 
