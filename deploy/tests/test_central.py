@@ -2,7 +2,8 @@
 
 실제 동작은 두 곳에서 본다. 토큰이 `/ui/fleet`에만 붙고 응답에 나가지 않는지, basic auth·보안 헤더는
 control-web e2e. `caddy validate`·`docker compose config`와 저장소 Caddyfile을 실제 Caddy로 띄운
-검사(SNI 없는 IP 접속, 설정에 없는 Host 421, 빈 `ui_basic_auth`)는 test_central_compose.py(integration).
+검사(SNI 없는 IP 접속, 설정에 없는 Host 421, 빈 `ui_basic_auth`)는 test_central_compose.py
+(integration).
 """
 
 from __future__ import annotations

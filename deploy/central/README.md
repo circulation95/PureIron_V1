@@ -90,20 +90,22 @@ $C run --rm control-api token revoke --name "$OLD"
 postgres는 이 파일을 데이터 디렉터리를 처음 만들 때(initdb)만 읽는다. **파일만 바꾸면 DB 비밀번호는 그대로이고 control-api만 새 값을 쓰므로, 재시작 뒤 `/ui/fleet`은 503이고 `/api/v1/healthz`는 200이며 컨테이너도 healthy다.** healthz로는 드러나지 않는다. 그래서 DB 쪽을 먼저 바꾼다.
 
 ```bash
-openssl rand -base64 24 > "$S/control_db_password.new"                       # 새 값(다른 파일에)
-printf "ALTER ROLE pureiron PASSWORD '%s';\n" "$(cat "$S/control_db_password.new")" |
+openssl rand -base64 24 > "$S/control_db_password.new" &&                      # 새 값(다른 파일에)
+  test -s "$S/control_db_password.new" &&
+  printf "ALTER ROLE pureiron PASSWORD '%s';\n" "$(cat "$S/control_db_password.new")" |
   $C exec -T control-db psql -v ON_ERROR_STOP=1 -U pureiron -d pureiron_control &&  # 1. DB 먼저
-  cat "$S/control_db_password.new" > "$S/control_db_password" &&               # 2. 같은 파일에 덮어쓰기(mv 금지)
+  cat "$S/control_db_password.new" > "$S/control_db_password" &&                 # 2. 같은 파일에 덮어쓰기(mv 금지)
   rm "$S/control_db_password.new" &&
-  $C restart control-api                                                       # 3. 새 값으로 다시 연결
+  $C restart control-api                                                         # 3. 새 값으로 다시 연결
 ```
 
-`psql`이 실패하면 거기서 멈추고 `control_db_password`는 그대로다(`.new`만 지운다). `ALTER ROLE` 뒤에는 control-api가 이미 연 DB 연결만 계속 쓰이고 새 연결(CLI 포함)은 파일을 바꿀 때까지 실패하므로, 세 단계를 이어서 한다. 재시작 동안 `/ui/fleet`은 502다(실측 약 2초).
+이 블록은 한 명령이다. 새 값 만들기나 `psql`이 실패하면 거기서 멈추고 `control_db_password`는 그대로다(`.new`만 지운다). `ALTER ROLE` 뒤에는 control-api가 이미 연 DB 연결만 계속 쓰이고 새 연결(CLI 포함)은 파일을 바꿀 때까지 실패하므로, 세 단계를 이어서 한다. 재시작 동안 `/ui/fleet`은 502다(실측 약 2초).
 
-파일을 먼저 바꿔 버렸으면 DB를 파일 값에 맞춘다(컨테이너 안 psql은 비밀번호를 묻지 않는다).
+파일을 먼저 바꿔 버렸으면 DB를 파일 값에 맞춘다(컨테이너 안 psql은 비밀번호를 묻지 않는다). 값은 위 `openssl` 출력처럼 작은따옴표가 없어야 한다.
 
 ```bash
-printf "ALTER ROLE pureiron PASSWORD '%s';\n" "$(cat "$S/control_db_password")" |
+test -s "$S/control_db_password" &&
+  printf "ALTER ROLE pureiron PASSWORD '%s';\n" "$(cat "$S/control_db_password")" |
   $C exec -T control-db psql -v ON_ERROR_STOP=1 -U pureiron -d pureiron_control &&
   $C restart control-api
 ```
