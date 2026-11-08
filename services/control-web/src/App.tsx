@@ -62,7 +62,7 @@ export function App() {
         <span className="summary">30초마다 자동으로 새로고침합니다. 읽기 전용 화면입니다.</span>
         {state.kind === "ok" && (
           <span className="summary" data-testid="fetched-at">
-            조회 시각 {formatTime(state.fetchedAt)} ({timeZoneLabel()}, 화면의 모든 시각은 이 시간대)
+            조회 시각 {formatTime(state.fetchedAt)} ({timeZoneLabel()}, 표시 기준 시간대)
           </span>
         )}
       </div>

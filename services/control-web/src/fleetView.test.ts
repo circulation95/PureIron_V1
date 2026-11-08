@@ -136,6 +136,10 @@ test("formatTime: 시간대를 넘기면 그 시간대의 24시간제", () => {
 test("timeZoneLabel: 화면 시각 옆에 붙이는 시간대 표기", () => {
   expect(timeZoneLabel(new Date(REPORTED_AT), "Asia/Seoul")).toBe("GMT+9");
   expect(timeZoneLabel(new Date(REPORTED_AT), "Asia/Kolkata")).toBe("GMT+5:30");
+  // 이름(EST·EDT)이 아니라 오프셋이다. Seoul·Kolkata는 en-US에서 둘이 같아 구분하지 못한다(리뷰 W3).
+  // 일광 절약 시간 지역은 넘긴 시각의 오프셋이라 시각을 고정한다.
+  expect(timeZoneLabel(new Date("2026-01-15T12:00:00Z"), "America/New_York")).toBe("GMT-5");
+  expect(timeZoneLabel(new Date("2026-07-15T12:00:00Z"), "America/New_York")).toBe("GMT-4");
 });
 
 // 상태마다 그 상태에만 있는 문구까지 본다 — 분기를 지우면 기본 문구("현장 현황을 불러오지 못했습니다(HTTP n)")로

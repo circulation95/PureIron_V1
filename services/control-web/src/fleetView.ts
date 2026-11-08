@@ -129,7 +129,10 @@ export function formatTime(iso: string, timeZone?: string): string {
   return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}:${part("second")}`;
 }
 
-/** 시간대 표기("GMT+9"). 화면의 모든 시각은 브라우저 시간대라 표 머리·조회 시각 옆에 붙인다(시험은 timeZone을 넘긴다). */
+/**
+ * 표시 기준 시간대("GMT+9"). 표 머리·조회 시각 옆에 붙인다(시험은 timeZone을 넘긴다).
+ * `at` 시점의 오프셋 하나다 — 일광 절약 시간 지역에서는 다른 계절의 시각과 오프셋이 다를 수 있다.
+ */
 export function timeZoneLabel(at: Date = new Date(), timeZone?: string): string {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZoneName: "shortOffset",
