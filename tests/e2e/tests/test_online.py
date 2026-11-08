@@ -111,6 +111,73 @@ def test_online_poll_needs_matching_ca_and_registration() -> None:
     assert not poll(ONLINE_G1, site_id=None)["registered"]
 
 
+REPORT_CLEARED: dict[str, object] = {
+    **ONLINE_G1,
+    "last_heartbeat_seq": 1,
+    "last_report_seq": 2,
+    "current": {
+        "gen": 1,
+        "product": None,
+        "project_version": None,
+        "reported_at": "2026-11-08T21:03:07Z",
+        "source": "online",
+    },
+}
+"""VM run 20261108T205941Z의 ① 행: 폐쇄망 g1의 outbox 성공 보고(seq 2)가 첫 heartbeat(seq 1) 다음에
+들어와 current를 덮었다 — 중앙에 g1 게시 번들이 없어 버전이 null(control-api `reports.py`)."""
+HEARTBEAT_REFILLED: dict[str, object] = {
+    **REPORT_CLEARED,
+    "last_heartbeat_seq": 3,
+    "current": {**run.sub(ONLINE_G1, "current"), "reported_at": "2026-11-08T21:03:17Z"},
+}
+"""이어서 다음 heartbeat(seq 3, poll 10 s)가 manifest의 product·project_version으로 다시 채운 행."""
+
+
+def test_online_poll_fails_while_g1_report_cleared_the_versions() -> None:
+    checks = poll(REPORT_CLEARED)
+    assert {k for k, ok in checks.items() if not ok} == {"current_g1"}
+    assert all(poll(HEARTBEAT_REFILLED).values())
+
+
+def test_online_poll_waits_past_the_report_cleared_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """① 대기는 `connection == online`이 아니라 판정의 행 항목 전체로 끝난다 — 실측 행(online이지만
+    current 버전 null)에서 멈추지 않고 heartbeat가 채운 두 번째 행에서 끝나 통과로 기록한다
+    (변이: 대기 조건을 connection만으로 되돌리면 첫 행에서 끝나 실패)."""
+    replies = [REPORT_CLEARED, HEARTBEAT_REFILLED]
+    asked: list[tuple[str, ...]] = []
+
+    def fake_central(command: str, *args: str) -> dict[str, object]:
+        asked.append((command, *args))
+        return {"status": 200, "body": [replies[min(len(asked), len(replies)) - 1]]}
+
+    def no_sleep(seconds: float) -> None:
+        del seconds
+
+    monkeypatch.setattr(run, "central", fake_central)
+    monkeypatch.setattr(run.time, "sleep", no_sleep)
+    monkeypatch.setattr(run, "STATE_FILE", tmp_path / "state.json")  # 실제 state.json 보호
+    ctx = run.Context(run_id="t", artifacts=str(tmp_path))
+    setup: dict[str, object] = {
+        "ca_sha256": CA_SHA256,
+        "vm_ca_sha256": CA_SHA256,
+        "registered": {"site_id": run.SITE},
+    }
+    run.online_poll(ctx, setup)
+    assert asked == [("fleet", "--site", run.SITE)] * 2
+    (result,) = ctx.results
+    assert result["name"] == run.ITEM_ONLINE_POLL
+    assert result["ok"] is True
+    assert result["row"] == HEARTBEAT_REFILLED
+
+
+def test_online_poll_waits_on_row_checks_only() -> None:
+    """CA 지문·등록은 행과 무관해 대기 조건에서 빠진다(어긋나도 시간 초과까지 기다리지 않는다)."""
+    unrelated = {"ca_fingerprint", "registered"}
+    assert set(run.ONLINE_POLL_ROW_CHECKS) == set(poll(ONLINE_G1)) - unrelated
+
+
 def test_ca_fingerprint_matches_openssl_and_python() -> None:
     line = f"sha256 Fingerprint={CA_SHA256}\n"
     assert run.ca_fingerprint(line) == CA_SHA256

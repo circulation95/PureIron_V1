@@ -1848,6 +1848,33 @@ def online_outage(ctx: Context, host: Vm) -> None:
     )
 
 
+ONLINE_POLL_ROW_CHECKS = ("connection_online", "heartbeat_seq", "current_g1")
+"""`judge_online_poll`에서 `/fleet` 행으로 정해지는 항목. CA 지문·등록은 행과 무관해 기다려도
+안 바뀐다 — 대기 조건에서 빼도 판정(전체 항목)은 같다."""
+
+
+def online_poll(ctx: Context, setup: dict[str, object]) -> None:
+    """① `/fleet` 행이 판정의 행 항목을 모두 채울 때까지 기다린 뒤 판정한다(시간 초과면 마지막 행).
+    `connection == online`만 기다리면 이르다: c0의 g1은 폐쇄망 `apply`라 중앙에 게시 번들이 없어,
+    outbox의 g1 성공 보고(첫 heartbeat 다음 seq)가 current 버전을 null로 덮고 다음 heartbeat가 다시
+    채운다(control-api `reports.py`, VM run 20261108T205941Z)."""
+    registered = cast(dict[str, object], setup["registered"])
+
+    def judge(r: dict[str, object]) -> dict[str, bool]:
+        return judge_online_poll(
+            r,
+            ca_sha256=str(setup["ca_sha256"]),
+            vm_ca_sha256=str(setup["vm_ca_sha256"]),
+            site_id=registered.get("site_id"),
+        )
+
+    row, waited = wait_fleet(lambda r: all(judge(r)[k] for k in ONLINE_POLL_ROW_CHECKS))
+    checks = judge(row)
+    ctx.record(
+        ITEM_ONLINE_POLL, all(checks.values()), checks=checks, waited_s=waited, row=row, **setup
+    )
+
+
 def step_online(ctx: Context) -> None:
     """c0(BASE g1, 폐쇄망) 위에서 중앙 c0로 온라인 경로 4항목. 앞 항목이 깨지면 뒤 항목은 실패로
     남기고(`online_guarded`) report로 넘어간다. 중앙 정리도 `online_guarded`가 한다
@@ -1860,18 +1887,7 @@ def step_online(ctx: Context) -> None:
     ctx.central = status
     ctx.save()
     setup = site_online(ctx, host, out / "central-root.crt", str(status.get("ca_sha256") or ""))
-    # ① HTTPS heartbeat → /fleet online
-    row, waited = wait_fleet(lambda r: r.get("connection") == "online")
-    registered = cast(dict[str, object], setup["registered"])
-    checks = judge_online_poll(
-        row,
-        ca_sha256=str(setup["ca_sha256"]),
-        vm_ca_sha256=str(setup["vm_ca_sha256"]),
-        site_id=registered.get("site_id"),
-    )
-    ctx.record(
-        ITEM_ONLINE_POLL, all(checks.values()), checks=checks, waited_s=waited, row=row, **setup
-    )
+    online_poll(ctx, setup)  # ① HTTPS heartbeat → /fleet online
     # ② 중앙이 게시한 BASE g2 → Updater가 polling으로 받아 적용
     pib = build_site_bundle(ctx, ONLINE_GEN, BASE, datetime.now(UTC) - timedelta(minutes=5))
     put = central("put", "--site", SITE, "--gen", str(ONLINE_GEN), "--pib", golden.wsl_path(pib))
