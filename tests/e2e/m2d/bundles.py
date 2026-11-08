@@ -7,9 +7,9 @@
     uv run --no-sync python tests/e2e/m2d/bundles.py m5-project --work W
     uv run --no-sync python tests/e2e/m2d/bundles.py absorb --work W --draft D --site-key E
 
-release 쌍(`BASE`·`NEXT`·`FAULT`)은 `release_pair.py`가 정한다(M5 마감: r3→r4, fault r4f).
+release 쌍(`BASE`·`NEXT`·`FAULT`)은 `release_pair.py`가 정한다(M4 마감: r4→r5, fault r5f).
 
-- `fault-release`: `FAULT`(r4', `2026.11.0-fault1`) — `NEXT` 이미지 그대로에 collector만 세션을 맺지
+- `fault-release`: `FAULT`(r5', `2026.11.1-fault1`) — `NEXT` 이미지 그대로에 collector만 세션을 맺지
   않는 파생 이미지(`sleep`). core는 healthy라 `up --wait`는 통과하고 `/readyz`(collector 세션)가
   실패해 `checking`에서 `E_HEALTH` → 롤백을 일으킨다. 저장소 `deploy/releases`는 건드리지 않고
   `W/releases`(저장소 release 기록 전부의 사본 + `FAULT`)와 `W/store`(`BASE`·`NEXT`는 실제 image
@@ -18,7 +18,8 @@ release 쌍(`BASE`·`NEXT`·`FAULT`)은 `release_pair.py`가 정한다(M5 마감
 - `site`: fleet 현장 파일을 쓰고 `deploy/bundle/build_bundle.py`로 서명 번들을 만든다(release는
   `--releases W/releases`에서 `version == --product`로 찾는다). 프로젝트 트리는 `--project-dir`
   (기본 fixture `acme`).
-- `m5-project`(M5 확인 ⓒ·ⓓ): `W/m5/repo` = fixture `acme` 사본에서 `project.yaml absorbs`를 뺀 것 —
+- `m5-project`(M5 확인 ⓒ·ⓓ, M4 마감 FAULT의 다른 트리): `W/m5/repo` = fixture `acme` 사본에서
+  `project.yaml absorbs`를 뺀 것 —
   "아직 absorb하지 않은 고객 repo". fixture는 `absorbs: {site-a: 3}`라 그대로 쓰면 VM의 현장
   site_rev(PATCH 2번 = 2)가 3 이하여서 드래프트 게이트가 통과하고(ⓒ가 `E_DRAFT`를 못 본다) absorb는
   리비전 퇴행(2 < 3) 충돌이 된다(ⓓ). 그 밖의 파일은 fixture와 바이트까지 같다.
