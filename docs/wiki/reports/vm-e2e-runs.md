@@ -12,6 +12,8 @@ sources:
   - deploy/releases/r2.json
   - deploy/releases/r3.json
   - deploy/releases/r4.json
+  - deploy/releases/r5.json
+  - tests/e2e/m2d/central.py
   - tests/e2e/infra/vm.py
   - tests/e2e/infra/golden.py
 last_verified: 2026-11-01
@@ -21,7 +23,7 @@ last_verified: 2026-11-01
 
 > **시점 스냅샷 (`docs/wiki/reports/`)** — 이 문서는 불변 계약이 아니라 각 실측 run 시점의 **결과 기록**이다. 하네스·제품이 그 뒤에 바뀌었을 수 있으므로, 여기 적힌 수치를 근거로 결론을 쓰기 전에 해당 run의 `results.json`이나 새 실측으로 다시 확인한다. 새 실측을 하면 절을 더하고 `last_verified`를 갱신한다. 하네스 구성·판정의 정본은 [`tests/e2e/README.md`](../../../tests/e2e/README.md), 계약 쪽 요약은 [data-contracts](../sot/data-contracts.md)의 M2d VM 절이다.
 
-M2d 하네스(`tests/e2e`, PD-24)를 release 쌍(`tests/e2e/m2d/release_pair.py`)마다 한 번씩 `run.py all`로 돌린 결과다. 항목은 S4까지 30개, M5 마감부터 35개(`run.expected_items()`)이고, 결과 파일은 `artifacts/e2e/m2d-<run>/results.json`·`bundle-metrics.json`(gitignore)이다.
+M2d 하네스(`tests/e2e`, PD-24)를 release 쌍(`tests/e2e/m2d/release_pair.py`)마다 한 번씩 `run.py all`로 돌린 결과다. 항목은 S4까지 30개, M5 마감 35개, M4 마감부터 39개(`run.expected_items()`)이고, 결과 파일은 `artifacts/e2e/m2d-<run>/results.json`·`bundle-metrics.json`(gitignore)이다.
 
 ## M2 r0→r1 (run `20261005T055523Z`, 30/30 PASS)
 
@@ -106,3 +108,31 @@ plan M2 종료 조건 실측.
 - **"외부 접속 시도 0"의 정의가 S4까지와 다르다.** M5 마감부터 선언 장비 폴링 `field_fwd`는 판정에서 뺀다. `field_fwd`는 eth0으로 나가는 forward 중 IPv4·TCP·번들 트리가 선언한 장비 host·port 쌍(이번 fixture `10.0.0.5:502`)만이다. 다른 목적지·포트, UDP, IPv6, VM 자신의 송신(`audit_out`)은 여전히 `ext_*`·`dns_out`에 잡힌다. S4까지는 트리가 적용되지 않아 collector가 장비를 폴링하지 않았으므로 이 구분이 없었다. 정본 정의는 [`tests/e2e/README.md`](../../../tests/e2e/README.md) nftables 절.
 - 번들: install 80 MB, r4 현장 번들 745 MB(site-db 599 MB, core 66 MB), r3 740 MB, 현장 번들 24개 빌드 각 59~63 s.
 - **1차 실패와 수정**: 1차 run `20261101T022914Z`(HEAD `6d0a6dc`)는 34/35로 `no external connection …`만 실패했다 — 누적 `ext_fwd` 216, 나머지 0. 커널 로그 216건이 모두 `172.18.0.5 → 10.0.0.5:502` TCP SYN(collector → fixture 장비 `plc-1`)이었다. r4가 처음 트리를 적용해 collector가 선언 장비를 폴링하기 시작한 것이라 외부 접속이 아니고, 하네스가 이를 외부로 센 판정 결함이었다. `072df90`에서 선언 장비 끝점을 `field_fwd` 규칙으로 `ext_fwd`보다 앞에 분리하고 판정에서 그 키만 뺐다(단위 테스트가 규칙 위치·끝점 추출·판정을 고정). 2차는 같은 폴링이 `field_fwd` 217로 가고 `ext_fwd` 0이었다.
+
+## M4 마감 r4→r5 (run 결과 기입 전)
+
+> 이 절은 **틀**이다. 하네스 준비(브랜치 `chore/m4-close-r5`)까지만 적었고, 결과 칸은 코디네이터가 VM `run.py all --keep-central`과 15분 실측 뒤 채운다. 채우기 전에는 결론 근거로 쓰지 않는다.
+
+쌍 r4→r5(fault `r5f`). r5 = `329ec2c` 기록(2026.11.1, epoch 5) — **현장 마이그레이션이 없다**(같은 epoch). 그래서 업그레이드·crash `migrating`은 phase만 지나가고 SQL은 돌지 않는다. r4가 이미 트리 적용 release라 c0(r4)의 FAULT는 전환기가 아니라 트리 백업이 있는 일반 롤백(경보 없음)이다. 새 `online` 단계가 c0 위에서 WSL 중앙 c0(`deploy/central` compose, `10.77.0.1:28443`, Caddy 사설 CA)에 VM을 붙인다.
+
+**항목 대응(M5 마감 35개 → 39개).** 이름이 쌍을 따라 바뀐 것과 새·바뀐 판정만 적는다. 나머지(`vm boot`·`OS quiet`·`reject site`·`reject tampered`·`same gen rebuild → no-op`·`reject lower gen`·M5 확인 ⓑ~ⓓ·crash 18개·`no external connection …`)는 이름 그대로다.
+
+| M5 마감(35) | M4 마감(39) | 판정 변화 |
+|---|---|---|
+| `install bundle bootstrap + g1(r3) on offline VM` | `install bundle bootstrap + g1(r4) on offline VM` | c0 = epoch 5(`project_files` 포함, BASE_TABLES로 옮김), `next_absent` 제거(NEXT 산출물 없음) |
+| `r3→r4 on compressed epoch-4 DB` | `r4→r5 on compressed epoch-5 DB` | 마이그레이션 없음(phase만) |
+| `r4 schema after upgrade` | `r5 schema after upgrade` | `next_tables` 제거, BASE 산출물(0010~0013) 유지만 |
+| `r4 project tree applied …` | `r5 project tree applied …` | 같음 |
+| `r4' health failure → rollback (transition, E_DEFINITIONS_LEFT)` | `r5' health failure → rollback (no alarm, r4 tree and definitions back)` | 전환기 경보 기대 → **경보 없음**, FAULT가 다른 트리(fixture − `absorbs`)를 실어 롤백 뒤 content_hash·정의 = fixture |
+| `rollback within 5 min to r3 digests` | `rollback within 5 min to r4 digests` | 같음(300 s) |
+| `r4 tree bundle after transition rollback → succeeded, alarm cleared` | `r5 retry after r5' rollback → succeeded` | 경보 해제 → 롤백 뒤 NEXT 재시도 성공(경보·메트릭 0, 트리 = fixture) |
+| — | `online: HTTPS heartbeat to central c0 (private CA trusted) → /fleet online` | 새 ① |
+| — | `online: central-published r4 g2 → download + apply succeeded` | 새 ② |
+| — | `online: ApplyAttempt report → /fleet current + last_attempt (source online)` | 새 ③ |
+| — | `online: central web down → site keeps running, /fleet stale → back online` | 새 ④ |
+
+**사전 검증(VM 전, 워커, 2026-11-09).** 중앙 헬퍼 `central.py`를 WSL에서 `10.77.0.1` bind로 띄워 `curl --cacert` healthz 200, CA 없이 `curl` 실패(rc 60), 컨테이너(`python:3.12-slim`)에서 CA를 OS 신뢰 저장소에 넣기 전 `CERTIFICATE_VERIFY_FAILED` → 넣은 뒤 `http.client`·`urllib` 200(D8 규칙이 publish·Updater의 기본 SSL 설정으로 동작). 실제 r4 g2 번들(744,806,400 B)을 ci 토큰으로 HTTPS PUT 201(5.4 s), VM Updater와 같은 형식의 서명 heartbeat·보고 → `/fleet` online·current g2·last_attempt `succeeded`(`source` online), control-web 중지 1 s 뒤 online·36 s 뒤 `stale`(control-api 직접 조회), 재기동 뒤 heartbeat로 online. 로컬 site-db에서 r4 설치 → 시드 → r5 업그레이드 순서의 probe `db`는 c0와 r5가 바이트까지 같았다(마이그레이션 없음 확인). VM Updater의 실제 HTTPS polling·적용·보고는 VM 몫이다.
+
+**실측 결과.** (코디네이터 기입: run id, 39/39·missing, 하네스 HEAD, 온라인 ①~④ 수치 — 등록·online까지 초, g2 다운로드·적용 초, 보고 반영 초, stale까지 초·복귀 초, 외부 접속 누적, 번들 크기)
+
+**15분 실측(★D6).** (코디네이터 기입: PR 생성 → check-gen → 승인 → merge → publish → 게시 시각, PR→게시 분, 현장 적용(r4→r5 g3 `succeeded`)까지 분. 승인·merge는 에이전트 토큰이라 사람 대기 없는 기계 시간이다 — 사람 승인 시간과 README 승인 절차는 이 수치로 검증되지 않는다)

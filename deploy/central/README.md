@@ -135,7 +135,26 @@ openssl x509 -in pureiron-central-root.crt -noout -subject -fingerprint -sha256 
 curl --cacert pureiron-central-root.crt https://localhost:28443/api/v1/healthz
 ```
 
-브라우저는 이 CA를 신뢰 저장소에 넣거나 경고를 감수한다. 현장 Updater(시스템 CA, urllib)가 이 CA를 신뢰하게 하는 설정은 M4 마감 VM 항목에서 정한다(M4-3 범위 밖).
+### CA 신뢰 — 현장·publish 호스트 (M4 마감 D8)
+
+코드 설정 없이 **OS 신뢰 저장소**에 넣는 것이 현장과 publish 호스트의 공통 규칙이다. 현장 Updater(`urllib`)와 publish·check-gen(`http.client`)은 둘 다 Python 기본 SSL 설정으로 OS 신뢰 저장소를 쓴다. `SSL_CERT_FILE`은 같은 프로세스의 GitHub 호출까지 신뢰 대상을 바꾸므로 쓰지 않는다.
+
+1. 위 명령으로 `pureiron-central-root.crt`를 내보내고 **SHA-256 지문을 기록**한다(`openssl x509 -noout -fingerprint -sha256`).
+2. CA 파일과 지문을 **서로 다른 경로**로 전달한다(예: CA는 USB·메일, 지문은 종이 runbook·전화). 같은 경로면 그 경로를 바꿔치기한 사람이 둘 다 바꿀 수 있어 대조가 의미 없다.
+3. 받는 쪽(현장 호스트·publish 호스트):
+
+```bash
+openssl x509 -in pureiron-central-root.crt -noout -subject -fingerprint -sha256   # 받은 지문과 대조 — 다르면 멈춘다
+sudo install -m 0644 pureiron-central-root.crt /usr/local/share/ca-certificates/pureiron-central-root.crt
+sudo update-ca-certificates
+curl -fsS https://<중앙>:28443/api/v1/healthz                                    # --cacert 없이 200
+```
+
+4. 현장은 이어서 `updater.env`의 `PUREIRON_CONTROL_API`·현장 token·Updater 재시작(`deploy/install/README.md` "온라인 현장"). publish 호스트는 fleet workflow의 `control_api` 입력을 이 URL로(fleet 템플릿 README "control-api 주소").
+
+이 규칙은 M4 마감 VM 실측의 온라인 단계가 그대로 밟는다(`tests/e2e/m2d/run.py online`: VM에서 지문을 다시 재서 중앙 값과 대조 → OS 신뢰 저장소 → Updater HTTPS heartbeat·polling·보고). Python 기본 SSL 설정이 이 저장소를 따른다는 것은 워커가 컨테이너에서 확인했다(CA를 넣기 전 `CERTIFICATE_VERIFY_FAILED`, 넣은 뒤 `http.client`·`urllib` 모두 200).
+
+루트 CA가 바뀌면(`caddy-data` 볼륨 삭제) 현장·publish 호스트 모두 새 CA로 1~3을 다시 한다 — 그 전까지 현장 polling·게시가 TLS에서 실패한다(현장 동작 자체는 계속된다). 브라우저는 이 CA를 신뢰 저장소에 넣거나 경고를 감수한다. M6 공인 인증서(ACME)로 가면 이 절차는 없어진다.
 
 ## 첫 계약 전 강화 항목
 

@@ -95,12 +95,12 @@
     },
     {
       "audience": "both",
-      "bytes": 17083,
+      "bytes": 21408,
       "id": "report-vm-e2e-runs",
       "last_verified": "2026-11-01",
       "path": "docs/wiki/reports/vm-e2e-runs.md",
-      "section_count": 5,
-      "sha256": "f6ecc5b3d5c46ff7c31150053befd514f3e246f0b1a319fc6dca9eab34fe2c61",
+      "section_count": 6,
+      "sha256": "b1c79328bb53a418b2f9bc9610f3c334921faf01bcb21da40958329df7348f1f",
       "source_globs": [],
       "sources": [
         "tests/e2e/README.md",
@@ -110,6 +110,8 @@
         "deploy/releases/r2.json",
         "deploy/releases/r3.json",
         "deploy/releases/r4.json",
+        "deploy/releases/r5.json",
+        "tests/e2e/m2d/central.py",
         "tests/e2e/infra/vm.py",
         "tests/e2e/infra/golden.py"
       ],
@@ -157,12 +159,12 @@
     },
     {
       "audience": "both",
-      "bytes": 28083,
+      "bytes": 28568,
       "id": "sot-architecture",
       "last_verified": "2026-11-02",
       "path": "docs/wiki/sot/architecture.md",
       "section_count": 18,
-      "sha256": "aae9c0d12b300f6aa505b1b4cad3a6181fd6afd3a0a2b801851bd3715c4e5b87",
+      "sha256": "5f67a325869e45f59127bbf658590751588b68c04465638867c9f0fea4f88448",
       "source_globs": [],
       "sources": [
         "services/core/src/pureiron_core/runtime.py",
@@ -224,12 +226,12 @@
     },
     {
       "audience": "both",
-      "bytes": 122756,
+      "bytes": 128456,
       "id": "sot-data-contracts",
-      "last_verified": "2026-11-04",
+      "last_verified": "2026-11-09",
       "path": "docs/wiki/sot/data-contracts.md",
-      "section_count": 33,
-      "sha256": "1122143f5a3a09d5217727a996f524f7d89b3172a1aa64cdb132f2ee74c1aa2c",
+      "section_count": 34,
+      "sha256": "825cc8a3740e6218d2981efaf6c3e9b5721507c578fff52524cc82c90526ec19",
       "source_globs": [
         "projects/demo-coffee/**/*.yaml",
         "projects/demo-coffee/**/*.json"
@@ -245,7 +247,10 @@
         "services/updater/src/pureiron_updater/outbox.py",
         "deploy/fleet/approval.py",
         "deploy/fleet/fleetfiles.py",
-        "deploy/templates/pureiron-fleet/README.md"
+        "deploy/templates/pureiron-fleet/README.md",
+        "deploy/releases/r5.json",
+        "deploy/releases/central/c0.json",
+        "deploy/fleet/publish.py"
       ],
       "status": "canonical",
       "title": "Data Contracts SOT — DB·설정 스키마"
