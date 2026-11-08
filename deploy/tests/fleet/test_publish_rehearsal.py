@@ -42,7 +42,7 @@ def test_app_id_from_env_is_stripped(raw: str) -> None:
     [
         ("12a45", "10진 숫자여야 한다(env PUREIRON_PUBLISH_APP_ID(또는 --app-id)): '12a45'"),
         ("123 45", "'123 45'"),
-        ("１２３", "'１２３'"),  # 전각 숫자는 isdecimal이 받지만 JWT iss 정수가 아니다
+        ("\uff11\uff12\uff13", "10진 숫자"),  # 전각: isdecimal은 받지만 JWT iss 정수가 아니다
         (" \n", "GitHub App ID가 비어 있다(env PUREIRON_PUBLISH_APP_ID(또는 --app-id))"),
     ],
     ids=["letter", "inner-space", "fullwidth", "blank"],
@@ -127,7 +127,7 @@ def test_chain_bundle_and_metrics_files_are_not_group_writable(
         *world.config.metrics_dir.glob("*.json"),
     ]
     assert len(files) == 6
-    modes = {path.relative_to(tmp_path).as_posix(): stat.S_IMODE(path.stat().st_mode) for path in files}
+    modes = {p.relative_to(tmp_path).as_posix(): stat.S_IMODE(p.stat().st_mode) for p in files}
     assert modes == dict.fromkeys(modes, 0o640)
     for directory in (chain, world.config.bundles_dir, world.config.metrics_dir):
         assert stat.S_IMODE(directory.stat().st_mode) == 0o750
@@ -154,5 +154,6 @@ def test_trust_base_of_the_same_sha_is_still_logged(world: World) -> None:
     assert trust_base(world.config, merged, NoTokens(), "re-reviewed") == 0
     lines = log_lines(world)
     assert lines[:-1] == before
-    assert lines[-1].split()[1:] == [merged, "trust-base", f"previous={merged}", "reason=re-reviewed"]
+    want = [merged, "trust-base", f"previous={merged}", "reason=re-reviewed"]
+    assert lines[-1].split()[1:] == want
     assert world.chain.last_approved() == merged
