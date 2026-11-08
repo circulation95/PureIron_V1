@@ -17,7 +17,7 @@ import ssl
 import subprocess
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -114,7 +114,7 @@ class _Caddy:
 
 
 @contextmanager
-def _caddy(secrets: Path, env: dict[str, str]) -> Iterator[_Caddy]:
+def _caddy(secrets: Path, env: dict[str, str]) -> Generator[_Caddy, None, None]:
     name = f"pureiron-it-central-caddy-{uuid.uuid4().hex[:8]}"
     env_args = [arg for key, value in env.items() for arg in ("-e", f"{key}={value}")]
     started = _run(

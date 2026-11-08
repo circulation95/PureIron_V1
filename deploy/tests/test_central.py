@@ -62,12 +62,16 @@ def _block(lines: list[str], opener: str) -> list[str]:
     raise AssertionError(f"unterminated block {opener}")
 
 
+def _no_children() -> list[_Node]:
+    return []
+
+
 @dataclass
 class _Node:
     """Caddyfile 지시 한 줄. `head {`로 열린 블록이면 children에 안쪽 지시(순서 유지)."""
 
     head: str
-    children: list[_Node] = field(default_factory=list)
+    children: list[_Node] = field(default_factory=_no_children)
 
     def heads(self) -> list[str]:
         return [child.head for child in self.children]
