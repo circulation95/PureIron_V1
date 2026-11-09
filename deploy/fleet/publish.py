@@ -11,9 +11,8 @@ merge 직전 main 대비 변경 파일의 구조 규칙(`E_FLEET`)·`new == old 
 (`<project-owner>/<project.repo>`, 기본 owner = fleet repo owner) 태그 `version` checkout
 (App 토큰) → `build_bundle.build`(같은 venv 함수 호출, 프로젝트 검증·자체 verify 포함) →
 스트리밍 `PUT /bundles/{site}/{gen}`(ci 토큰, 본문 전에 온 404·409 응답도 읽는다 — HTTPS의
-TLS 세션 티켓은 응답으로 보지 않는다). 현장 하나가
-실패해도 나머지는 진행하고 끝에 exit 1. 드래프트 게이트는 여기서 하지 않는다(F12 — 현장
-`E_DRAFT`가 최종).
+TLS 세션 티켓은 응답으로 보지 않는다). 현장 하나가 실패해도 나머지는 진행하고 끝에 exit 1.
+드래프트 게이트는 여기서 하지 않는다(F12 — 현장 `E_DRAFT`가 최종).
 
 workflow는 이것을 부르기만 한다. 서명 호스트를 분리할 때(★F1 전환, fleet README)는 이 명령을
 sudo 뒤 전용 사용자로 옮기는 것만으로는 경계가 되지 않는다 — root 소유 설치본, 보안 설정을
@@ -273,7 +272,7 @@ class ControlApi:
     viewer_token: str | None
     ci_token: str | None
     timeout: float = HTTP_TIMEOUT_S
-    ssl_context: ssl.SSLContext | None = None
+    ssl_context: ssl.SSLContext | None = field(default=None, kw_only=True)
     """HTTPS 신뢰 설정. None(운영 기본) = http.client 기본(OS 신뢰 저장소). 시험이 자체 서명 CA를
     프로세스 전역을 바꾸지 않고 주입할 때만 쓴다."""
 
