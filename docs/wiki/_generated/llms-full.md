@@ -1202,9 +1202,9 @@ plan M2 종료 조건 실측.
 - 번들: install 80 MB, r4 현장 번들 745 MB(site-db 599 MB, core 66 MB), r3 740 MB, 현장 번들 24개 빌드 각 59~63 s.
 - **1차 실패와 수정**: 1차 run `20261101T022914Z`(HEAD `6d0a6dc`)는 34/35로 `no external connection …`만 실패했다 — 누적 `ext_fwd` 216, 나머지 0. 커널 로그 216건이 모두 `172.18.0.5 → 10.0.0.5:502` TCP SYN(collector → fixture 장비 `plc-1`)이었다. r4가 처음 트리를 적용해 collector가 선언 장비를 폴링하기 시작한 것이라 외부 접속이 아니고, 하네스가 이를 외부로 센 판정 결함이었다. `072df90`에서 선언 장비 끝점을 `field_fwd` 규칙으로 `ext_fwd`보다 앞에 분리하고 판정에서 그 키만 뺐다(단위 테스트가 규칙 위치·끝점 추출·판정을 고정). 2차는 같은 폴링이 `field_fwd` 217로 가고 `ext_fwd` 0이었다.
 
-## M4 마감 r4→r5 (run 결과 기입 전)
+## M4 마감 r4→r5 (run `20261108T205941Z`, 39/39 PASS, missing 0, 2026-11-09)
 
-> 이 절은 **틀**이다. 하네스 준비(브랜치 `chore/m4-close-r5`)까지만 적었고, 결과 칸은 코디네이터가 VM `run.py all --keep-central`과 15분 실측 뒤 채운다. 채우기 전에는 결론 근거로 쓰지 않는다.
+하네스 HEAD `b75755e`(`chore/m4-close-r5`)로 `run.py all --keep-central`을 돌렸고, 온라인 ①~④와 `report`만 `cf296cb`에서 다시 돌렸다(`run.py online --keep-central` + `report`, EXIT 0). 첫 전체 실행은 38/39였다 — 하네스 대기 조건 결함 1건을 고친 재실행까지 합친 결과가 이 기록이다(맨 아래 "1차 실패와 수정"). VM e2e 때문에 바꾼 제품 코드는 없다. 15분 실측이 찾은 publish 결함은 아래 15분 실측 절에 적었다.
 
 쌍 r4→r5(fault `r5f`). r5 = `329ec2c` 기록(2026.11.1, epoch 5) — **현장 마이그레이션이 없다**(같은 epoch). 그래서 업그레이드·crash `migrating`은 phase만 지나가고 SQL은 돌지 않는다. r4가 이미 트리 적용 release라 c0(r4)의 FAULT는 전환기가 아니라 트리 백업이 있는 일반 롤백(경보 없음)이다. 새 `online` 단계가 c0 위에서 WSL 중앙 c0(`deploy/central` compose, `10.77.0.1:28443`, Caddy 사설 CA)에 VM을 붙인다.
 
@@ -1226,9 +1226,58 @@ plan M2 종료 조건 실측.
 
 **사전 검증(VM 전, 워커, 2026-11-09).** 중앙 헬퍼 `central.py`를 WSL에서 `10.77.0.1` bind로 띄워 `curl --cacert` healthz 200, CA 없이 `curl` 실패(rc 60), 컨테이너(`python:3.12-slim`)에서 CA를 OS 신뢰 저장소에 넣기 전 `CERTIFICATE_VERIFY_FAILED` → 넣은 뒤 `http.client`·`urllib` 200(D8 규칙이 publish·Updater의 기본 SSL 설정으로 동작). 실제 r4 g2 번들(744,806,400 B)을 ci 토큰으로 HTTPS PUT 201(5.4 s), VM Updater와 같은 형식의 서명 heartbeat·보고 → `/fleet` online·current g2·last_attempt `succeeded`(`source` online), control-web 중지 1 s 뒤 online·36 s 뒤 `stale`(control-api 직접 조회), 재기동 뒤 heartbeat로 online. 로컬 site-db에서 r4 설치 → 시드 → r5 업그레이드 순서의 probe `db`는 c0와 r5가 바이트까지 같았다(마이그레이션 없음 확인). **수정 r1(리뷰 H1)**: 그 같음은 같은 트리 재적용이 no-op(`changed=False`)이라 c0 시드 장비·태그가 retire되지 않았다는 뜻이기도 해, 그대로면 ⓐ가 VM에서 실패한다. 로컬 site-db + core r4·r5 CLI로 다시 재서(`tests/e2e/tests/fixtures/m4c-tree-db.json`) NEXT 트리 업그레이드는 `changed=True`·시드 retire·`line1/temp_sp` 정의 = `… (r5)`, FAULT 트리 적용 → r4 백업 복원은 정의 = fixture, 이어서 NEXT 재시도는 정의 = `… (r5)`임을 확인하고 판정 시험에 고정했다. VM Updater의 실제 HTTPS polling·적용·보고는 VM 몫이다.
 
-**실측 결과.** (코디네이터 기입: run id, 39/39·missing, 하네스 HEAD, 온라인 ①~④ 수치 — 등록·online까지 초, g2 다운로드·적용 초, 보고 반영 초, stale까지 초·복귀 초, 외부 접속 누적, 번들 크기)
+**실측 결과(`results.json` 그대로, 온라인 ①~④는 재실행 값).**
 
-**15분 실측(★D6).** (코디네이터 기입: PR 생성 → check-gen → 승인 → merge → publish → 게시 시각, PR→게시 분, 현장 적용(r4→r5 g3 `succeeded`)까지 분. 승인·merge는 에이전트 토큰이라 사람 대기 없는 기계 시간이다 — 사람 승인 시간과 README 승인 절차는 이 수치로 검증되지 않는다)
+- 폐쇄망 부트스트랩 + g1(r4) 53.8 s, `/readyz` 200, overlay2 + classic image store, 실행 이미지 = r4. c0 = epoch 5 + 압축 chunk 3 + 이력 7141행 + `project_files` 4행, 장비 `e2e-dev`·`plc-1`(c0 판정 `epoch`·`base_schema`·`compressed_chunks`·`seed_rows` 모두 참).
+- 거부: `E_SITE`·`E_DIGEST` exit 1, 같은 gen 재빌드 no-op exit 0, r5 위 낮은 gen `E_GEN` exit 1 — 모두 core `StartedAt`·실행 이미지 불변.
+- r4→r5(g2) 24.0 s(`switching` 11.4 s, `fetched` 4.7 s, `locked` 1.9 s, `migrating` 0.6 s, 나머지 각 0.1 s 미만) → `succeeded`, epoch 5 그대로. CAGG 2개 실시간 집계·BASE 열/테이블/인덱스·압축 chunk 3·이력 행 보존, 경보 없음, `updater_failed_manual` 0.
+- ⓐ 트리 적용: `GET /api/v1/project` = `acme` `v1`, content_hash `sha256:b4fa1c9a…3ed8`, `site_rev` 0 == `base_site_rev` 0. DB `project_files` 4행, 장비 `plc-1`·태그 5개(c0 시드 `e2e-dev`·`e2e/tag` retire), `line1/temp_sp` description `1라인 온도 설정값 (r5)`(판정 `seed_retired`·`definition` 참).
+- ⓑ~ⓓ 통과.
+  - ⓑ `e2e-admin` 생성 rc 0 → web 로그인 200 → `line1/temp` record PATCH 200(`site_rev` 1, deadband 0.5→0.8·max_interval_s 60→30) → `temp-high` setpoint PATCH 200(80→82.5, `site_rev` 2) → readback = PATCH 값, base 0 그대로.
+  - ⓒ absorb 안 한 repo로 만든 번들 → exit 1 `E_DRAFT`, core `StartedAt`·이미지 불변.
+  - ⓓ export(`site_rev` 2, base 0, draft hash `sha256:53194037…9d9b`) → absorb rc 0(`absorbs[site-a]: (absent) -> 2`, 바뀐 파일 3개) → `gate --draft` rc 0 → g4 `succeeded` 13.8 s, `base_site_rev == site_rev == 2`, PATCH 값 유지, 편집 잠금 해제.
+- 롤백(c0 위 r5f g2): `failed`, code `E_HEALTH`, 134.4 s 안에 r4 digest 복귀(5분 기준 통과; `checking` 90.2 s·`rolling_back` 19.3 s·`switching` 11.5 s). 경보 없음, `updater_failed_manual` 0, r4 트리·정의 복귀 판정(`project_version`·`base_site_rev`·`project_files`·`devices`·`tags`·`alarms`·`seed_retired`·`definition`) 모두 참. 편집 잠금 해제·이력 행 보존.
+- 재시도: 그 상태에서 r5 g5 → `succeeded` 23.8 s(`switching` 12.1 s), 경보·메트릭 0, NEXT 트리·정의 판정 모두 참.
+- crash 18회 모두 16.8~102.8 s 안에 수렴(`fetched`·`verified` 98.8~102.8 s, 나머지 16.8~53.3 s). r4↔r5를 오가며 r4 시도 7회(g7~g19 홀수)도 모두 `succeeded`. `rolling_back` 2건(r5f g21·g22)은 `failed`/`E_HEALTH`이고 경보 없음. service 대상 16회는 스테이징이 창보다 74.7~79.1 s 먼저 끝났다(apply rc 0, 1회).
+- 온라인 ①~④(c0 위, 중앙 c0 `https://10.77.0.1:28443/api/v1`, Updater `PUREIRON_POLL_INTERVAL_S=10`).
+  - ① VM이 신뢰한 CA 지문 = 중앙 CA 지문(`97:D5:B7:…:28:D7`), site-a 등록(현장 키 `629d5a0d…f0cf`). 등록·Updater 재시작 뒤 11.3 s에 행 판정 항목이 모두 찼다: `connection` online, heartbeat seq 3, current g1 `2026.11.0`/`v1`(source online). 등록 자체에 걸린 시간은 기록 없음.
+  - ② r4 g2(744,806,400 B) PUT 201(게시 22:59:26Z) → desired g2 → Updater가 polling으로 받아 `succeeded`. PUT 뒤 수렴 34.7 s, 시도 22:59:43→22:59:55Z(`switching` 4.4 s·`locked` 3.4 s·`fetched` 3.3 s). 실행 이미지 = r4, 경보·메트릭 0. 다운로드만의 시간과 PUT 업로드 시간은 기록 없음.
+  - ③ 수렴 뒤 5.9 s에 `/fleet` current g2(source online)·last_attempt 1→2 `succeeded`(report_seq 15).
+  - ④ control-web(Caddy) 중지 → 48.1 s 뒤 조회에서 `stale`. 하네스는 고정 대기 뒤 한 번 보므로 stale이 된 시점 자체는 기록 없음. 그동안 현장 ready, 실행 이미지 = r4, core·Updater 재시작 없음, 경보·새 시도 없음. 재기동 뒤 5.8 s에 online(heartbeat seq 21).
+- 외부 접속: `vm` 기준값 5개 카운터 모두 0. 설치 이후 누적 `ext_out_v4` 0·`dns_out` 0·`ext_out_v6` 0·`ext_fwd` 0, `field_fwd` 351(선언 장비 폴링, M5 마감부터 판정 제외). `dns_lookups` `{core: 12}`는 M5 마감과 같은 이유로 판정 대상이 아니다.
+- 번들: install 80 MB, r4·r5 현장 번들 각 745 MB(744,806,400 B; site-db 599 MB, core 66 MB), 현장 번들 25개 빌드 59.8~75.9 s(가장 긴 것은 온라인 단계 r4 g2).
+
+**15분 실측(★D6, 2026-11-09, 시각은 UTC).** fleet repo `circulation95/pureiron-fleet-test`, 중앙 c0(`https://10.77.0.1:28443/api/v1`, Caddy TLS·사설 CA), 현장 VM site-a, self-hosted runner. 승인과 merge는 **에이전트 토큰**(작성 ws-blip, 승인·merge circulation95)으로 했고, 승인 기록(`pulls/N/reviews`)을 확인한 뒤 merge했다. 그래서 아래 값은 **기계 시간**이다. 사람이 승인하는 시간과 새 README 절차를 사람이 따라 하는 것은 이 측정으로 검증되지 않았다.
+
+성공한 실측은 PR #19(site-a gen 5, r4→r5, VM g4→g5)다.
+
+| 단계 | 시각 | t0부터 |
+|---|---|---|
+| t0(브랜치 생성 시작) | 03:19:35 | 0:00 |
+| PR 열림 | 03:19:39 | 0:04 |
+| check-gen success | 03:20:11 | 0:36 |
+| 승인(reviews 확인) | 03:20:12 | 0:37 |
+| merge `624c80d` | 03:20:15 | 0:40 |
+| 중앙 게시(published_at) | 03:20:58 | 1:23 |
+| VM 적용 시작(attempt g4→g5) | 03:21:02 | 1:27 |
+| publish run 42555841403 success | 03:21:10 | 1:35 |
+| VM 적용 succeeded | 03:21:26 | 1:51 |
+| 중앙 `/fleet` current gen 5·2026.11.1 반영 | 03:21:36 | 2:01 |
+
+- t0→VM 성공 **1분 51초**, 중앙 반영까지 **2분 1초** — 15분 기준 통과(기계 시간).
+- VM: `applied_gen` 5, `last_result` succeeded, `schema_epoch` 5. core·collector·web이 r5로 재시작했고 이미지 ID = `deploy/releases/r5.json` `config_digest`(core `fd6264b3…`, collector `d78476bd…`, web `852c4f07…`), site-db는 그대로(r5 site-db == r4). 번들 sha256 `f6074c9f…044b`, 744,806,400 B.
+- control-web: basic auth(`ops`)로 `/` 200(현장 현황 SPA), `/ui/fleet`에서 site-a desired·current gen 5·2026.11.1·online·last_attempt 4→5 succeeded. 브라우저 화면 렌더링은 육안으로 확인하지 않았다.
+- 측정 전에 no-op publish(workflow_dispatch, "건너뜀 1", 3초)로 runner 배정을 확인했다.
+
+실패·중단 시도와 전환 PR:
+
+- #15(merged `1f9e46b`, 측정 아님): workflow를 V1 도구 `@cf296cb`와 `control_api` 중앙 c0로 전환.
+- #16(site-a gen 3, merged `92b32bf`) **실패**: publish run 42536145640 `E_PUBLISH … PUT /bundles/site-a/3 failed: The read operation timed out`. `put_bundle`의 이른 응답 감지가 TLS 1.3 세션 티켓을 HTTP 응답으로 봤다(리허설 M4-2는 평문 HTTP라 드러나지 않음). 수정 r3 `af99c61` — 동작 설명은 [data-contracts](../sot/data-contracts.md) `V1 구현 현황 (M4-2 fleet·publish, 2026-11-04)` 절의 publish 항목. gen 3은 게시되지 않았다.
+- #17(merged `e91df84`, 측정 아님): 도구를 `@af99c61`로 올리고 gen 4를 r4(2026.11.0) 기준선으로, project를 `change-me`(acme-test v1)로 교체. 코디네이터 스크립트 실수 2건(짧은 sha ref, `control_api` 줄 중복으로 workflow 파싱 실패)을 같은 PR에서 고쳤다. publish success로 744,806,400 B 번들을 실제 Caddy TLS로 게시해 수정 r3를 실기동으로 확인했고, VM g2→g4 succeeded(02:47:54→02:48:05).
+- #18(gen 5) **중단**: 코디네이터 PC 메모리 부족으로 측정 스크립트가 강제 종료됐고 check-gen job이 4분 넘게 queued였다. merge하지 않고 닫았다(gen 5 미게시).
+- 실측은 단일 PC(Hyper-V VM 4 GB + WSL 중앙 + self-hosted runner)에서 했다. 운영 사이징 근거로 쓰지 않는다.
+
+**1차 실패와 수정**: 첫 전체 실행(HEAD `b75755e`)은 38/39로 온라인 ①만 실패했다(`current_g1` false, waited 0.5 s). c0의 g1은 폐쇄망 `apply`로 적용해 중앙에 게시 번들이 없다. 그 성공 보고(seq 2)가 첫 heartbeat 다음에 도착하면 control-api `reports.py` 규칙대로 current 버전이 null이 되고, 다음 heartbeat가 manifest로 다시 채운다. 제품은 설계대로 동작했고, 하네스가 `connection == online`만 기다린 뒤 판정한 것이 결함이었다. 수정 r2 `cf296cb`에서 ① 대기 조건을 행 판정 항목 전체(`connection_online`·`heartbeat_seq`·`current_g1`)로 바꿨다. 재실행(`run.py online --keep-central` + `report`, EXIT 0)에서 ①은 11.3 s 기다려 통과했고 39/39가 됐다. 시나리오·crash 단계는 첫 전체 실행에서 모두 통과했다.
 
 ---
 

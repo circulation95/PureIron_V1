@@ -95,12 +95,12 @@
     },
     {
       "audience": "both",
-      "bytes": 22267,
+      "bytes": 30521,
       "id": "report-vm-e2e-runs",
-      "last_verified": "2026-11-01",
+      "last_verified": "2026-11-09",
       "path": "docs/wiki/reports/vm-e2e-runs.md",
       "section_count": 6,
-      "sha256": "fb6d913274ff988a2f7d2651ec94dff1fdcf1588977eb2dd3e78742c08e76af8",
+      "sha256": "65dba542d7d1845bb3e623cafe66da578f19f265c102e569aa87f377001c0038",
       "source_globs": [],
       "sources": [
         "tests/e2e/README.md",
