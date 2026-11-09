@@ -1,12 +1,12 @@
 {
   "include": [
-    "infra",
+    "gates",
     "m2d",
     "site",
     "tests"
   ],
   "extraPaths": [
-    "infra",
+    "gates",
     "site",
     "m2d",
     "../../deploy/build"
