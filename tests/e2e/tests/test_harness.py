@@ -7,6 +7,7 @@ import json
 import re
 import shutil
 import subprocess
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path, PureWindowsPath
 from typing import cast
@@ -20,7 +21,17 @@ import pycdlib
 import pytest
 import run
 import site_api
-from release_pair import BASE, EPOCHS, FAULT, NEXT, NEXT_INDEXES, RELEASES
+from release_pair import (
+    BASE,
+    EPOCHS,
+    FAULT,
+    NEXT,
+    NEXT_INDEXES,
+    NEXT_TABLES,
+    RELEASES,
+    TREE_DESCRIPTIONS,
+    TREE_TAG,
+)
 
 from pureiron_project import canonical
 from pureiron_project.project import load_project
@@ -364,8 +375,12 @@ def test_ensure_image_stops_when_store_tar_differs() -> None:
 RELEASE_RECORDS = Path(__file__).resolve().parents[3] / "deploy" / "releases"
 
 
-def test_release_pair_is_one_epoch_step_with_derived_fault() -> None:
-    assert EPOCHS[NEXT] == EPOCHS[BASE] + 1
+def test_release_pair_epoch_step_and_derived_fault() -> None:
+    # NEXT는 BASE와 같은 epoch(마이그레이션 없음, M4 마감 r4→r5)이거나 한 단계 위다. 같으면 NEXT
+    # 산출물 집합이 비어 있어야 한다(늘 참인 판정을 남기지 않는다).
+    assert EPOCHS[NEXT] in (EPOCHS[BASE], EPOCHS[BASE] + 1)
+    if EPOCHS[NEXT] == EPOCHS[BASE]:
+        assert frozenset() == NEXT_TABLES == NEXT_INDEXES
     assert RELEASES[FAULT].startswith(RELEASES[NEXT] + "-")
     assert EPOCHS[FAULT] == EPOCHS[NEXT]
     assert (
@@ -420,7 +435,9 @@ def test_crash_plan_covers_every_phase_and_mode_once() -> None:
 
 def test_crash_plan_releases() -> None:
     plan = run.crash_plan()
-    # migrating: c0(BASE epoch)에서 BASE→NEXT — 실제 마이그레이션이 일어나는 유일한 경로
+    # migrating: c0(BASE epoch)에서 BASE→NEXT — 마이그레이션이 있는 쌍이면 실제로 일어나는 유일한
+    # 경로(M4 마감 r4→r5는 같은 epoch라 phase만 지나간다 — Updater는 migrate_to가 없어도
+    # `migrating`을 기록한다)
     migrating = [c for c in plan if c.phase == "migrating"]
     assert all(c.from_c0 and (c.prev, c.release) == (BASE, NEXT) for c in migrating)
     assert [c.from_c0 for c in plan] == [True, True] + [False] * (len(plan) - 2)
@@ -434,58 +451,92 @@ def test_crash_plan_releases() -> None:
             current = case.release
 
 
-def test_release_pair_is_r3_to_r4() -> None:
-    """M5 마감 쌍 — 두 기록(r3·r4)이 모두 저장소에 있어야 한다
-    (`test_release_pair_matches_repo_records`)."""
-    assert (BASE, NEXT, FAULT) == ("r3", "r4", "r4f")
-    assert (EPOCHS[BASE], EPOCHS[NEXT]) == (4, 5)
+def test_release_pair_is_r4_to_r5() -> None:
+    """M4 마감 쌍 — 두 기록(r4·r5)이 모두 저장소에 있어야 한다
+    (`test_release_pair_matches_repo_records`). 같은 epoch 5."""
+    assert (BASE, NEXT, FAULT) == ("r4", "r5", "r5f")
+    assert (EPOCHS[BASE], EPOCHS[NEXT], EPOCHS[FAULT]) == (5, 5, 5)
+    assert RELEASES == {"r4": "2026.11.0", "r5": "2026.11.1", "r5f": "2026.11.1-fault1"}
 
 
-def test_expected_items_are_thirty_five_and_follow_pair() -> None:
+def test_expected_items_are_thirty_nine_and_follow_pair() -> None:
     items = run.expected_items()
-    assert len(items) == len(set(items)) == 35
-    assert items[2] == "install bundle bootstrap + g1(r3) on offline VM"
+    assert len(items) == len(set(items)) == 39
+    assert items[2] == "install bundle bootstrap + g1(r4) on offline VM"
     assert items[6:16] == [
-        "r3→r4 on compressed epoch-4 DB",
-        "r4 schema after upgrade",
+        "r4→r5 on compressed epoch-5 DB",
+        "r5 schema after upgrade",
         "reject lower gen",
-        "r4 project tree applied (project_files, definitions, base_site_rev)",
+        "r5 project tree applied (project_files, definitions, base_site_rev)",
         "site PATCH via web (admin login, tag + alarm) → site_rev +2",
         "reject unabsorbed site drafts (E_DRAFT)",
         "draft export → absorb → gate → reapply (PATCH kept, base_site_rev == site_rev)",
-        "r4' health failure → rollback (transition, E_DEFINITIONS_LEFT)",
-        "rollback within 5 min to r3 digests",
-        "r4 tree bundle after transition rollback → succeeded, alarm cleared",
+        "r5' health failure → rollback (no alarm, r4 tree and definitions back)",
+        "rollback within 5 min to r4 digests",
+        "r5 retry after r5' rollback → succeeded",
     ]
     assert items[16] == "crash kill @ migrating"
+    # 온라인 4개는 crash 뒤, 외부 접속(report) 앞 — report가 online 구간까지 누적한다
+    assert items[34:38] == [
+        "online: HTTPS heartbeat to central c0 (private CA trusted) → /fleet online",
+        "online: central-published r4 g2 → download + apply succeeded",
+        "online: ApplyAttempt report → /fleet current + last_attempt (source online)",
+        "online: central web down → site keeps running, /fleet stale → back online",
+    ]
     assert items[-1] == run.ITEM_NO_EXTERNAL
     # S4의 30개 중 쌍과 무관한 항목·crash 18개는 이름 그대로다(실측끼리 대응표로 비교)
     assert len([i for i in items if i.startswith("crash ")]) == 18
+
+
+def test_steps_put_online_between_crash_and_report() -> None:
+    assert run.STEPS == ("prepare", "vm", "install", "scenarios", "crash", "online", "report")
 
 
 def test_scenario_gens_keep_bundle_names_apart() -> None:
     gens = run.scenario_gens(2)
     # NEXT 줄(업그레이드 → ⓒ → ⓓ)은 차례로 올라가야 한다(낮은 gen은 E_GEN)
     assert gens["upgrade"] < gens["draft_gate"] < gens["absorb"]
-    # c0 복원 뒤 줄: applied g1 위 FAULT → 경보 해제
-    assert 1 < gens["fault"] < gens["alarm_clear"]
+    # c0 복원 뒤 줄: applied g1 위 FAULT → 재시도
+    assert 1 < gens["fault"] < gens["retry"]
     # 번들 파일 이름 `g<gen>-<release>`가 겹치지 않는다
     named = [
         (gens["upgrade"], NEXT),
         (gens["draft_gate"], NEXT),
         (gens["absorb"], NEXT),
         (gens["fault"], FAULT),
-        (gens["alarm_clear"], NEXT),
+        (gens["retry"], NEXT),
     ]
     assert len(set(named)) == len(named)
     assert gens["next"] > max(v for k, v in gens.items() if k != "next")
 
 
-# 로컬 TimescaleDB(site-db 2.30.2-pg16, compose pureiron-it-m5c)에서 Updater 순서로 실측한 probe
-# `db` 값: r3 core `migrate up`(0001~0012) → r3 `project apply`(메타만, 트리 이전 release) →
-# 시드(run.SEED_SQL) → C0_DB / r4 core `migrate up`(0013) → r4 `project apply --tar`(fixture 트리) →
-# NEXT_DB. `columns`는 판정에 쓰는 열만 남겼다.
-C0_DB: dict[str, object] = {
+def test_online_gen_follows_c0_and_leaves_gen3_for_the_measured_pr() -> None:
+    # c0의 applied gen은 설치 g1 — 온라인 ②는 그다음. 15분 실측 PR은 site-a gen 2 → 3.
+    assert run.ONLINE_GEN == 2
+    assert run.OUTAGE_WAIT_S > 3 * run.CENTRAL_POLL_S
+
+
+# M4 마감 수정 r1 실측(`fixtures/m4c-tree-db.json`, 로컬 site-db 2.30.2-pg16 + core r4·r5 CLI,
+# Updater 순서 — 파일의 `measured`): c0(fixture g1 + 시드) → 같은 트리 재적용(no-op, H1 재현)·NEXT
+# 트리 업그레이드·FAULT 트리 적용 → r4 백업 복원(롤백) → NEXT 트리 재시도. probe `db`에서 판정에
+# 쓰는 키(장비·태그·알람 목록, 정의 JSON 전체)만 남겼다.
+TREE_MEASURED = cast(
+    dict[str, object],
+    json.loads(
+        (Path(__file__).resolve().parent / "fixtures" / "m4c-tree-db.json").read_text("utf-8")
+    ),
+)
+TREE_STAGES = cast(dict[str, dict[str, object]], TREE_MEASURED["stages"])
+FIXTURE_TAG_DEFS = TREE_STAGES["c0"]["tag_defs"]
+"""fixture 트리를 적용한 DB의 태그 정의 JSON 전체(같은 fixture라 M5 실측 R4_TREE_DB와 같은 값)."""
+
+# M5 마감 실측(로컬 site-db 2.30.2-pg16, compose pureiron-it-m5c, Updater 순서): r3 core
+# `migrate up`(0001~0012) → r3 `project apply`(메타만) → 시드(run.SEED_SQL) → R3_C0_DB(epoch 4
+# c0) / r4 `migrate up`(0013) → r4 `project apply --tar`(fixture 트리) → R4_TREE_DB. `columns`는
+# 판정에 쓰는 열만 남겼다. M4 마감에서는 트리·PATCH 판정 시험과 "지난 쌍의 c0는 지금 c0가
+# 아니다" 교차 확인에 쓴다. R4_TREE_DB `tag_defs`는 M5 기록이 `line1/temp`만 남겼던 것을 같은
+# fixture 트리의 전체 실측값(FIXTURE_TAG_DEFS)으로 채웠다 — `judge_tree`가 `TREE_TAG` 정의를 본다.
+R3_C0_DB: dict[str, object] = {
     "epoch": "4",
     "caggs": "tag_history_1h,tag_history_1m",
     "compressed_chunks": "3",
@@ -507,8 +558,8 @@ C0_DB: dict[str, object] = {
     "tag_defs": "{}",
     "alarm_defs": "{}",
 }
-NEXT_DB: dict[str, object] = {
-    **C0_DB,
+R4_TREE_DB: dict[str, object] = {
+    **R3_C0_DB,
     "epoch": "5",
     "tag_history_rows": "7146",
     "tables": "alarm_journal,alarms,audit_log,devices,project_files,project_state,schema_meta,"
@@ -518,41 +569,77 @@ NEXT_DB: dict[str, object] = {
     "project_files_pkey,project_state_pkey,schema_meta_pkey,schema_migrations_pkey,"
     "sessions_pkey,sessions_user_id_idx,tag_history_tag_id_time_key,tag_history_time_idx,"
     "tags_path_key,tags_pkey,users_pkey,users_username_key",
-    "columns": str(C0_DB["columns"]) + ",project_files.content,project_files.path",
+    "columns": str(R3_C0_DB["columns"]) + ",project_files.content,project_files.path",
     "project_files": "4",
     "device_ids": "plc-1",
     "tag_paths": "line1/remote_ok,line1/running,line1/start,line1/temp,line1/temp_sp",
     "alarm_ids": "temp-high,temp-low",
-    "tag_defs": '{ "line1/temp" : {"eu": "°C", "path": "line1/temp", "device": "plc-1", '
-    '"modbus": {"address": 0, "data_type": "float32", "register_type": "holding"}, '
-    '"record": {"deadband": 0.5, "max_interval_s": 60}, "description": "1라인 온도"} }',
+    "tag_defs": FIXTURE_TAG_DEFS,
     "alarm_defs": '{ "temp-high" : {"id": "temp-high", "tag": "line1/temp", "type": "above", '
     '"priority": "high", "setpoint": 80}, "temp-low" : {"id": "temp-low", "tag": "line1/temp", '
     '"type": "below", "deadband": 1.5, "setpoint": 5, "on_delay_s": 10} }',
 }
 
 
+# M4 마감 실측(2026-11-09, WSL 로컬 site-db 2.30.2-pg16 컨테이너, Updater 설치·업그레이드 순서):
+# r4 core `migrate up`(0001~0013) → r4 `project apply --tar`(fixture acme 트리, g1) → 시드
+# (run.SEED_SQL) → probe `db` = C0_DB / r5 core `migrate up`(applied 0 — 같은 epoch) → r5
+# `project apply --tar`(같은 트리, changed false) → probe = NEXT_DB. **두 값은 바이트까지 같다**
+# (F1: r4..r5 마이그레이션 없음, 같은 트리) — 그래서 c0·NEXT 스키마 판정은 서로 바꿔 넣어도
+# 통과하는 것이 맞고, 교차 실패는 지난 쌍의 c0(R3_C0_DB, epoch 4)로 확인한다. `columns`는 판정에
+# 쓰는 열만, 정의 JSON(`tag_defs`·`alarm_defs`)은 스키마 판정이 보지 않아 뺐다. 같은 트리
+# 재적용이 no-op이라는 이 사실이 리뷰 H1이다 — #10 트리 판정은 NEXT_DB에서 실패해야 하고, 그래서
+# 업그레이드 번들은 다른 트리(NEXT 트리)를 싣는다(`test_tree_item_fails_on_same_tree_upgrade_db`).
+C0_DB: dict[str, object] = {
+    "epoch": "5",
+    "caggs": "tag_history_1h,tag_history_1m",
+    "compressed_chunks": "3",
+    "tag_history_rows": "7141",
+    "realtime_caggs": "tag_history_1h,tag_history_1m",
+    "tables": "alarm_journal,alarms,audit_log,devices,project_files,project_state,schema_meta,"
+    "schema_migrations,sessions,tag_history,tags,users",
+    "indexes": "alarm_journal_alarm_id_time_idx,alarm_journal_pkey,alarm_journal_time_idx,"
+    "alarms_pkey,audit_log_pkey,audit_log_time_idx,audit_log_username_time_idx,devices_pkey,"
+    "project_files_pkey,project_state_pkey,schema_meta_pkey,schema_migrations_pkey,"
+    "sessions_pkey,sessions_user_id_idx,tag_history_tag_id_time_key,tag_history_time_idx,"
+    "tags_path_key,tags_pkey,users_pkey,users_username_key",
+    "columns": "alarms.definition,devices.definition,devices.id,project_files.content,"
+    "project_files.path,project_state.definitions_rev,project_state.historian,project_state.id,"
+    "tags.definition,tags.id",
+    "project_files": "4",
+    "device_ids": "e2e-dev,plc-1",
+    "tag_paths": "e2e/tag,line1/remote_ok,line1/running,line1/start,line1/temp,line1/temp_sp",
+    "alarm_ids": "temp-high,temp-low",
+}
+NEXT_DB: dict[str, object] = dict(C0_DB)
+
+
 def test_judge_c0() -> None:
     assert all(run.judge_c0(C0_DB).values())
-    assert not run.judge_c0({**C0_DB, "epoch": "3"})["epoch"]
+    assert not run.judge_c0({**C0_DB, "epoch": "4"})["epoch"]
     assert not run.judge_c0({**C0_DB, "compressed_chunks": "0"})["compressed_chunks"]
-    # BASE 산출물이 빠졌거나(epoch 3 DB: 0010~0012 없음) NEXT 테이블이 이미 있으면(업그레이드된
-    # DB) c0가 아니다
+    assert not run.judge_c0({**C0_DB, "tag_history_rows": "0"})["seed_rows"]
+    # BASE(epoch 5) 산출물이 빠졌으면 c0가 아니다 — 지난 쌍의 c0(epoch 4, project_files 없음)도
+    failing = {k for k, ok in run.judge_c0(R3_C0_DB).items() if not ok}
+    assert failing == {"epoch", "base_schema"}
+    no_files = str(C0_DB["tables"]).replace("project_files,", "")
+    assert not run.judge_c0({**C0_DB, "tables": no_files})["base_schema"]
     assert not run.judge_c0({**C0_DB, "realtime_caggs": ""})["base_schema"]
     assert not run.judge_c0({**C0_DB, "columns": "devices.id"})["base_schema"]
-    no_alarms = str(C0_DB["tables"]).replace("alarm_journal,alarms,", "")
-    assert not run.judge_c0({**C0_DB, "tables": no_alarms})["base_schema"]
     no_index = str(C0_DB["indexes"]).replace("sessions_user_id_idx,", "")
     assert not run.judge_c0({**C0_DB, "indexes": no_index})["base_schema"]
-    assert not run.judge_c0(NEXT_DB)["next_absent"]
+    # NEXT 산출물이 없으므로(같은 epoch) next_absent는 판정에서 뺐다
+    assert "next_absent" not in run.judge_c0(C0_DB)
     assert not any(run.judge_c0({"error": "site-db not running"}).values())
 
 
 def test_judge_next_schema() -> None:
     assert all(run.judge_next_schema(NEXT_DB).values())
-    # 업그레이드 전(BASE) 스키마는 epoch·0013 산출물에서 걸린다(서로 바꿔 넣으면 실패)
-    failing = {k for k, ok in run.judge_next_schema(C0_DB).items() if not ok}
-    assert failing == {"epoch", "next_tables"}
+    # 같은 epoch라 c0와 NEXT는 실측값이 같다 — 서로 바꿔 넣어도 통과한다(정상). 교차 실패는 지난
+    # 쌍의 c0: epoch 4이고 0013 산출물(project_files)이 없다
+    assert NEXT_DB == C0_DB
+    failing = {k for k, ok in run.judge_next_schema(R3_C0_DB).items() if not ok}
+    assert failing == {"epoch", "base_tables"}
     partial = {**NEXT_DB, "realtime_caggs": "tag_history_1m"}
     assert not run.judge_next_schema(partial)["realtime_caggs"]
     # 집합 비교: 이름의 부분 문자열로는 통과하지 않는다
@@ -562,19 +649,22 @@ def test_judge_next_schema() -> None:
         **NEXT_DB,
         "tables": str(NEXT_DB["tables"]).replace("project_files,", "project_files_old,"),
     }
-    assert not run.judge_next_schema(lookalike_table)["next_tables"]
-    # BASE(epoch 4) 산출물이 업그레이드 뒤 사라지면 걸린다
+    assert not run.judge_next_schema(lookalike_table)["base_tables"]
+    # BASE(epoch 5) 산출물이 업그레이드 뒤 사라지면 걸린다
     no_index = {**NEXT_DB, "indexes": str(NEXT_DB["indexes"]).replace(",sessions_user_id_idx", "")}
     assert not run.judge_next_schema(no_index)["base_indexes"]
     no_users = {**NEXT_DB, "tables": str(NEXT_DB["tables"]).replace(",users", "")}
     assert not run.judge_next_schema(no_users)["base_tables"]
     assert not run.judge_next_schema({**NEXT_DB, "columns": {"error": "x"}})["base_columns"]
+    assert not run.judge_next_schema({**NEXT_DB, "compressed_chunks": "0"})["compressed_chunks"]
 
 
-def test_next_indexes_empty_until_named() -> None:
-    """0013은 이름 붙은 인덱스를 만들지 않는다 — 빈 집합 포함 검사는 늘 참이라 항목에서 뺐다."""
-    assert frozenset() == NEXT_INDEXES
-    assert "next_indexes" not in run.judge_next_schema(NEXT_DB)
+def test_next_artifacts_empty_until_epoch_moves() -> None:
+    """r5는 epoch 5 그대로 — NEXT 산출물 집합이 비어 있고, 빈 집합 검사(늘 참)는 판정에 없다.
+    다음 쌍이 epoch를 올리면 집합을 채우고 `next_absent`·`next_tables`를 되살린다."""
+    assert frozenset() == NEXT_TABLES == NEXT_INDEXES
+    assert {"next_tables", "next_indexes"}.isdisjoint(run.judge_next_schema(NEXT_DB))
+    assert "next_absent" not in run.judge_c0(C0_DB)
 
 
 def test_names_splits_probe_lists() -> None:
@@ -582,6 +672,208 @@ def test_names_splits_probe_lists() -> None:
     assert run.names({"k": ""}, "k") == frozenset()
     assert run.names({"k": {"error": "x"}}, "k") == frozenset()
     assert run.names({}, "k") == frozenset()
+
+
+def test_tree_measurements_agree_with_earlier_c0() -> None:
+    """두 실측(D4 C0_DB·수정 r1 TREE_STAGES)의 c0가 같은 값이고, 같은 트리 재적용은 DB를 한 글자도
+    바꾸지 않는다(core `changed=False`) — H1의 원인. 다른 트리는 모두 `changed=True`."""
+    c0 = TREE_STAGES["c0"]
+    assert {k: C0_DB[k] for k in c0 if k in C0_DB} == {k: v for k, v in c0.items() if k in C0_DB}
+    assert TREE_STAGES["next_same_tree"] == c0
+    changed = cast(dict[str, bool], TREE_MEASURED["apply_changed"])
+    assert changed == {
+        "next_same_tree": False,
+        "next_tree": True,
+        "fault_applied": True,
+        "fault_rolled_back": True,
+        "retry": True,
+    }
+
+
+def release_expect(tmp_path: Path, release: str) -> run.TreeExpect:
+    return run.tree_expect(bundles.release_tree(tmp_path / release, release))
+
+
+def tree_snap(want: run.TreeExpect, db: dict[str, object]) -> dict[str, object]:
+    """`want` 트리가 적용된 `GET /project` 본문(드래프트 없음) + 실측 DB."""
+    body = {**PROJECT_BODY, "content_hash": want.content_hash}
+    return {**SNAP, "project": {"status": 200, "body": body}, "db": db}
+
+
+def failing_keys(checks: dict[str, bool]) -> set[str]:
+    return {k for k, ok in checks.items() if not ok}
+
+
+def test_release_trees_differ_only_in_the_tree_tag_description(tmp_path: Path) -> None:
+    """NEXT·FAULT 트리 = fixture에서 `TREE_TAG` description만 바꾼 것 — 파일·장비·태그·알람 집합은
+    같고 content_hash와 정의 값만 다르다. 실측 파일의 hash와도 같다(같은 함수로 만든 트리)."""
+    hashes = cast(dict[str, str], TREE_MEASURED["content_hashes"])
+    assert TREE.content_hash == hashes["fixture"]
+    assert TREE.tree_tag_description == "1라인 온도 설정값"
+    assert TREE_TAG not in (run.PATCH_TAG, run.PATCH_ALARM)
+    for release, key in ((NEXT, "next"), (FAULT, "fault")):
+        want = release_expect(tmp_path, release)
+        assert want.content_hash == hashes[key]
+        assert want.tree_tag_description == TREE_DESCRIPTIONS[release]
+        assert (want.files, want.devices, want.tags, want.alarms) == (
+            TREE.files,
+            TREE.devices,
+            TREE.tags,
+            TREE.alarms,
+        )
+        changed = sorted(
+            p.relative_to(tmp_path / release).as_posix()
+            for p in (tmp_path / release).rglob("*.yaml")
+            if p.read_bytes() != (bundles.FIXTURE / p.relative_to(tmp_path / release)).read_bytes()
+        )
+        assert changed == ["tags/plc-1.yaml"]
+    assert (
+        len({TREE.content_hash, *(release_expect(tmp_path, r).content_hash for r in (NEXT, FAULT))})
+        == 3
+    )
+
+
+def test_tree_item_fails_on_same_tree_upgrade_db(tmp_path: Path) -> None:
+    """H1: 업그레이드가 c0와 같은 트리를 실으면 core가 no-op이라 DB는 c0 그대로다(실측 NEXT_DB·
+    `next_same_tree`, 시드 장비·태그 남음, 정의 = fixture). #10은 이 DB에서 실패해야 한다 — 같은
+    epoch에서 늘 참인 항목이 아니다."""
+    want = release_expect(tmp_path, NEXT)
+    for db in (NEXT_DB, TREE_STAGES["next_same_tree"]):
+        assert failing_keys(run.judge_tree(tree_snap(want, db), want)) == {
+            "devices",
+            "tags",
+            "seed_retired",
+            "definition",
+        }
+    # 예전 판정(fixture 기대값)으로 봐도 c0 DB는 시드 때문에 실패한다 — VM에서 #10이 깨질 자리
+    assert failing_keys(run.judge_fixture_tree(tree_snap(TREE, NEXT_DB))) >= {"devices", "tags"}
+
+
+def test_tree_item_passes_on_next_tree_upgrade_db(tmp_path: Path) -> None:
+    """NEXT 트리를 실은 업그레이드(실측 `next_tree`): 시드 retire, 정의 = NEXT 트리 값 → #10 통과.
+    다른 트리 기대값(fixture·FAULT)과 바꿔 넣으면 실패한다."""
+    want = release_expect(tmp_path, NEXT)
+    upgraded = TREE_STAGES["next_tree"]
+    assert all(run.judge_tree(tree_snap(want, upgraded), want).values())
+    # 본문은 NEXT인데 DB 정의가 fixture(정의 미적용) → definition만
+    assert failing_keys(
+        run.judge_tree(tree_snap(want, TREE_STAGES["fault_rolled_back"]), want)
+    ) == {"definition"}
+    # fixture 기대값으로 보면 content_hash·정의 둘 다 다르다
+    assert failing_keys(run.judge_tree(tree_snap(want, upgraded), TREE)) == {
+        "project_version",
+        "definition",
+    }
+    fault = release_expect(tmp_path, FAULT)
+    assert failing_keys(run.judge_tree(tree_snap(want, upgraded), fault)) == {
+        "project_version",
+        "definition",
+    }
+    # 정의 JSON을 못 읽었거나 태그가 없으면 실패
+    no_defs = {**upgraded, "tag_defs": {"error": "x"}}
+    assert failing_keys(run.judge_tree(tree_snap(want, no_defs), want)) == {"definition"}
+    # 시드가 남았으면(트리 밖 장비만 남은 경우도) seed_retired
+    seeded = {**upgraded, "device_ids": "e2e-dev,plc-1"}
+    assert {"devices", "seed_retired"} <= failing_keys(
+        run.judge_tree(tree_snap(want, seeded), want)
+    )
+
+
+def test_fault_rollback_restores_the_c0_definitions(tmp_path: Path) -> None:
+    """M1 #14: FAULT 트리 적용 → r4 백업 복원(실측 `fault_rolled_back`)이면 content_hash·정의 값이
+    fixture(c0)로 돌아온다. 복원이 hash·state만 되돌리고 정의를 남기면(실측 `fault_applied` DB +
+    fixture 본문) `definition`이, 트리도 못 되돌리면 `project_version`도 실패한다."""
+    fault = release_expect(tmp_path, FAULT)
+    rolled = TREE_STAGES["fault_rolled_back"]
+    assert all(run.judge_fixture_tree(tree_snap(TREE, rolled)).values())
+    left = TREE_STAGES["fault_applied"]
+    assert failing_keys(run.judge_fixture_tree(tree_snap(TREE, left))) == {"definition"}
+    assert failing_keys(run.judge_fixture_tree(tree_snap(fault, left))) == {
+        "project_version",
+        "definition",
+    }
+
+
+def test_retry_writes_the_next_definitions(tmp_path: Path) -> None:
+    """M1 #16: 롤백(fixture) 위 NEXT 트리 재시도(실측 `retry`) → 정의 = NEXT 값. 롤백 상태 그대로
+    (재시도가 트리를 쓰지 않음)면 실패한다 — fixture를 실었다면 늘 참이었을 항목."""
+    want = release_expect(tmp_path, NEXT)
+    assert all(run.judge_tree(tree_snap(want, TREE_STAGES["retry"]), want).values())
+    assert TREE_STAGES["retry"] == TREE_STAGES["next_tree"]
+    stuck = tree_snap(TREE, TREE_STAGES["fault_rolled_back"])
+    assert failing_keys(run.judge_tree(stuck, want)) == {"project_version", "definition"}
+
+
+class FakeApply:
+    """`apply_and_check` 대신 호출을 기록한다. 결과는 FAULT 판정에 쓰는 키만."""
+
+    def __init__(self, snapshot: dict[str, object] | None = None) -> None:
+        self.calls: dict[str, dict[str, object]] = {}
+        self.snapshot = snapshot or {}
+
+    def __call__(
+        self, ctx: run.Context, name: str, gen: int, release: str, **kw: object
+    ) -> dict[str, object]:
+        self.calls[name] = {"gen": gen, "release": release, **kw}
+        return {
+            "images_match": True,
+            "seconds": 120.0,
+            "code": "E_HEALTH",
+            "snapshot": self.snapshot,
+        }
+
+
+def wiring_ctx(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> run.Context:
+    monkeypatch.setattr(run, "STATE_FILE", tmp_path / "state.json")  # 실제 state.json 보호
+    monkeypatch.setattr(run, "BUNDLES", tmp_path / "bundles")
+    return run.Context(run_id="t", artifacts=str(tmp_path))
+
+
+def test_upgrade_carries_the_next_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """H1 배선: 업그레이드 번들은 NEXT 트리(이 run의 `trees/r5`)를 싣는다 — 빠지면(fixture) #10이
+    VM에서 c0 DB를 본다."""
+    ctx = wiring_ctx(tmp_path, monkeypatch)
+    fake = FakeApply({"db": {**NEXT_DB, **TREE_STAGES["next_tree"]}})
+    run.upgrade_next(ctx, 2, apply=fake)
+    call = fake.calls[run.ITEM_UPGRADE]
+    tree = tmp_path / "bundles" / "t" / "trees" / NEXT
+    assert call["project_dir"] == golden.wsl_path(tree)
+    assert (call["release"], call["expect"], call["prev"]) == (NEXT, "succeeded", BASE)
+    assert run.tree_expect(tree).tree_tag_description == TREE_DESCRIPTIONS[NEXT]
+    assert {r["name"]: r["ok"] for r in ctx.results} == {run.ITEM_SCHEMA: True}
+
+
+def test_fault_and_retry_wiring(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """M1 배선: FAULT 번들은 FAULT 트리, 판정 `extra`는 fixture 트리·정의 복원(롤백 실측에서 통과,
+    정의가 남은 DB에서 실패). 재시도는 NEXT 트리, `extra`는 NEXT 트리·정의(재시도 실측에서 통과,
+    롤백 상태 그대로면 실패). 변이 M20(FAULT를 fixture 트리로)·M25·M21(`extra` 제거)을 잡는다."""
+    ctx = wiring_ctx(tmp_path, monkeypatch)
+    fake = FakeApply()
+    gens = run.scenario_gens(2)
+    run.fault_and_retry(ctx, gens, apply=fake)
+    trees = tmp_path / "bundles" / "t" / "trees"
+
+    fault = fake.calls[run.ITEM_FAULT]
+    assert (fault["gen"], fault["release"], fault["expect"]) == (gens["fault"], FAULT, "failed")
+    assert fault["project_dir"] == golden.wsl_path(trees / FAULT)
+    assert run.tree_expect(trees / FAULT).tree_tag_description == TREE_DESCRIPTIONS[FAULT]
+    assert fault["expect_code"] == run.FAULT_CODE
+    assert fault["check_metric"] is True
+    fault_extra = cast(Callable[[dict[str, object]], dict[str, bool]], fault["extra"])
+    assert all(fault_extra(tree_snap(TREE, TREE_STAGES["fault_rolled_back"])).values())
+    assert not all(fault_extra(tree_snap(TREE, TREE_STAGES["fault_applied"])).values())
+
+    retry = fake.calls[run.ITEM_RETRY]
+    assert (retry["gen"], retry["release"], retry["expect"]) == (gens["retry"], NEXT, "succeeded")
+    assert retry["project_dir"] == golden.wsl_path(trees / NEXT)
+    assert retry["check_metric"] is True
+    retry_extra = cast(Callable[[dict[str, object]], dict[str, bool]], retry["extra"])
+    next_want = run.tree_expect(trees / NEXT)
+    assert all(retry_extra(tree_snap(next_want, TREE_STAGES["retry"])).values())
+    assert not all(retry_extra(tree_snap(TREE, TREE_STAGES["fault_rolled_back"])).values())
+
+    by_name = {r["name"]: r for r in ctx.results}
+    assert by_name[run.ITEM_ROLLBACK_TIME]["ok"] is True
 
 
 OPEN_AT = datetime(2026, 10, 17, 12, 0, 0, tzinfo=UTC)
@@ -756,16 +1048,30 @@ def test_judge_attempt_alarm_cleared_by_tree_release() -> None:
 
 
 def test_alarm_clear_sees_tree_rewritten() -> None:
-    """ITEM_ALARM_CLEAR의 `extra`: 경보 해제는 manifest만 보고 하므로, 롤백이 되돌린 r3 메타
-    (content_hash = r3 번들 값)가 fixture 트리로 다시 쓰였는지를 본다."""
+    """`judge_fixture_tree`(M5 마감 경보 해제, M4 마감 ITEM_FAULT·ITEM_RETRY의 `extra`): 메타만이
+    아니라 fixture 트리가 실제로 적용돼 있는지(content_hash·project_files·정의)를 본다."""
     assert all(run.judge_fixture_tree(TREE_SNAP).values())
     # 정의 교체 없이 메타만 남은 성공(회귀)이면 GET /project content_hash가 r3 값이다
     r3_meta = with_body(content_hash="sha256:" + "33" * 32)
     assert not run.judge_fixture_tree(r3_meta)["project_version"]
     # 트리 적용이 project_files·정의를 쓰지 않았으면(BASE DB 그대로) 그 항목들이 실패한다
-    untouched = {**TREE_SNAP, "db": C0_DB}
+    untouched = {**TREE_SNAP, "db": R3_C0_DB}
     failing = {k for k, ok in run.judge_fixture_tree(untouched).items() if not ok}
-    assert failing == {"project_files", "devices", "tags", "alarms"}
+    assert failing == {"project_files", "devices", "tags", "alarms", "seed_retired", "definition"}
+
+
+def test_fault_tree_differs_so_rollback_is_visible(tmp_path: Path) -> None:
+    """M4 마감 ITEM_FAULT: FAULT 번들은 FAULT 트리(fixture에서 `TREE_TAG` description만 바꾼 것)를
+    싣는다 — content_hash와 정의 값이 달라서, 롤백이 BASE 트리를 되돌리지 못하면
+    `judge_fixture_tree`의 `project_version`이, 정의를 되돌리지 못하면 `definition`이 실패한다
+    (같은 트리였다면 "되돌아왔다"를 구별할 수 없다)."""
+    other = release_expect(tmp_path, FAULT)
+    assert other.content_hash != TREE.content_hash
+    assert other.tree_tag_description != TREE.tree_tag_description
+    left_in_place = with_body(content_hash=other.content_hash)
+    assert {k for k, ok in run.judge_fixture_tree(left_in_place).items() if not ok} == {
+        "project_version"
+    }
 
 
 def test_alarm_has_matches_joined_entries() -> None:
@@ -806,7 +1112,7 @@ PROJECT_BODY: dict[str, object] = {
 TREE_SNAP: dict[str, object] = {
     **SNAP,
     "project": {"status": 200, "body": PROJECT_BODY},
-    "db": NEXT_DB,
+    "db": R4_TREE_DB,
 }
 
 
@@ -834,10 +1140,10 @@ def test_judge_tree() -> None:
     assert not run.judge_tree(with_body(version="v2"), TREE)["project_version"]
     assert not run.judge_tree(with_body(content_hash="sha256:00"), TREE)["project_version"]
     # r3(트리 이전) 적용이면 project_files가 없고 시드 장비·태그가 retire되지 않는다
-    r3 = {**TREE_SNAP, "db": C0_DB}
+    r3 = {**TREE_SNAP, "db": R3_C0_DB}
     failing = {k for k, ok in run.judge_tree(r3, TREE).items() if not ok}
-    assert failing == {"project_files", "devices", "tags", "alarms"}
-    extra = {**TREE_SNAP, "db": {**NEXT_DB, "device_ids": "e2e-dev,plc-1"}}
+    assert failing == {"project_files", "devices", "tags", "alarms", "seed_retired", "definition"}
+    extra = {**TREE_SNAP, "db": {**R4_TREE_DB, "device_ids": "e2e-dev,plc-1"}}
     assert not run.judge_tree(extra, TREE)["devices"]
     assert not any(run.judge_tree({"project": {"status": 503}, "db": {}}, TREE).values())
 
@@ -845,7 +1151,7 @@ def test_judge_tree() -> None:
 TAG_PATCHED = {"line1/temp": {"path": "line1/temp", "record": run.PATCH_TAG_BODY["record"]}}
 ALARM_PATCHED = {"temp-high": {"id": "temp-high", "setpoint": 82.5, "priority": "high"}}
 PATCHED_DB: dict[str, object] = {
-    **NEXT_DB,
+    **R4_TREE_DB,
     "tag_defs": json.dumps(TAG_PATCHED),
     "alarm_defs": json.dumps(ALARM_PATCHED),
 }
@@ -863,7 +1169,7 @@ PATCH_OUT: dict[str, object] = {
 def test_judge_patch() -> None:
     assert all(run.judge_patch(PATCH_OUT, PATCHED_DB).values())
     # PATCH 전 정의(fixture 값)이면 읽기 대조에서 걸린다
-    assert not run.judge_patch(PATCH_OUT, NEXT_DB)["readback"]
+    assert not run.judge_patch(PATCH_OUT, R4_TREE_DB)["readback"]
 
 
 @pytest.mark.parametrize(
@@ -935,7 +1241,7 @@ def test_judge_reapplied() -> None:
     assert not run.judge_reapplied(snap, 2, None)["content_hash"]
     moved = {**snap, "project": {"status": 200, "body": {**body, "base_site_rev": 0}}}
     assert not run.judge_reapplied(moved, 2, ABSORB_HASH)["base_site_rev"]
-    reverted = {**snap, "db": NEXT_DB}
+    reverted = {**snap, "db": R4_TREE_DB}
     assert not run.judge_reapplied(reverted, 2, ABSORB_HASH)["patch_kept"]
 
 

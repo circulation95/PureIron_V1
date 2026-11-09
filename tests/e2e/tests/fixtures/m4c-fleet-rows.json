@@ -1,0 +1,268 @@
+{
+  "_source": "M4 마감 워커 실측 2026-11-09(WSL): central.py up → VM과 같은 서명 heartbeat·보고(site-a, Updater payload 형식) → central.py fleet. 응답 그대로(현장 site 키·token 없음).",
+  "registered": {
+    "body": [
+      {
+        "connection": "never",
+        "current": null,
+        "desired": null,
+        "disk_state": null,
+        "last_attempt": null,
+        "last_heartbeat_seq": 0,
+        "last_report_seq": 0,
+        "last_seen": null,
+        "max_published_gen": null,
+        "site": "site-a",
+        "updater_phase": null
+      }
+    ],
+    "status": 200,
+    "via": "caddy"
+  },
+  "put": {
+    "body": {
+      "generation": 2,
+      "product_version": "2026.11.0",
+      "project_version": "v1",
+      "published_at": "2026-11-08T15:50:41.072475Z",
+      "sha256": "sha256:3178dc34e2a1cd1deaa10306cbd8f72c7589647635d23369b4a5c5389be33b65",
+      "site_id": "site-a",
+      "size": 744806400
+    },
+    "status": 201
+  },
+  "published": {
+    "body": [
+      {
+        "connection": "never",
+        "current": null,
+        "desired": {
+          "generation": 2,
+          "product_version": "2026.11.0",
+          "project_version": "v1",
+          "published_at": "2026-11-08T15:50:41.072475Z",
+          "sha256": "sha256:3178dc34e2a1cd1deaa10306cbd8f72c7589647635d23369b4a5c5389be33b65",
+          "size": 744806400
+        },
+        "disk_state": null,
+        "last_attempt": null,
+        "last_heartbeat_seq": 0,
+        "last_report_seq": 0,
+        "last_seen": null,
+        "max_published_gen": 2,
+        "site": "site-a",
+        "updater_phase": null
+      }
+    ],
+    "status": 200,
+    "via": "caddy"
+  },
+  "online_g1": {
+    "body": [
+      {
+        "connection": "online",
+        "current": {
+          "gen": 1,
+          "product": "2026.11.0",
+          "project_version": "v1",
+          "reported_at": "2026-11-08T15:50:41Z",
+          "source": "online"
+        },
+        "desired": {
+          "generation": 2,
+          "product_version": "2026.11.0",
+          "project_version": "v1",
+          "published_at": "2026-11-08T15:50:41.072475Z",
+          "sha256": "sha256:3178dc34e2a1cd1deaa10306cbd8f72c7589647635d23369b4a5c5389be33b65",
+          "size": 744806400
+        },
+        "disk_state": "ok",
+        "last_attempt": null,
+        "last_heartbeat_seq": 1,
+        "last_report_seq": 0,
+        "last_seen": "2026-11-08T15:50:41.586353Z",
+        "max_published_gen": 2,
+        "site": "site-a",
+        "updater_phase": "idle"
+      }
+    ],
+    "status": 200,
+    "via": "caddy"
+  },
+  "reported_g2": {
+    "body": [
+      {
+        "connection": "online",
+        "current": {
+          "gen": 2,
+          "product": "2026.11.0",
+          "project_version": "v1",
+          "reported_at": "2026-11-08T15:50:41Z",
+          "source": "online"
+        },
+        "desired": {
+          "generation": 2,
+          "product_version": "2026.11.0",
+          "project_version": "v1",
+          "published_at": "2026-11-08T15:50:41.072475Z",
+          "sha256": "sha256:3178dc34e2a1cd1deaa10306cbd8f72c7589647635d23369b4a5c5389be33b65",
+          "size": 744806400
+        },
+        "disk_state": "ok",
+        "last_attempt": {
+          "code": null,
+          "ended_at": "2026-11-08T15:50:41.845953+00:00",
+          "from": 1,
+          "generation": 2,
+          "phase": "done",
+          "received_at": "2026-11-08T15:50:41.853341Z",
+          "report_seq": 2,
+          "result": "succeeded",
+          "source": "online",
+          "started_at": "2026-11-08T15:50:41.845953+00:00",
+          "to": 2
+        },
+        "last_heartbeat_seq": 3,
+        "last_report_seq": 2,
+        "last_seen": "2026-11-08T15:50:41.866529Z",
+        "max_published_gen": 2,
+        "site": "site-a",
+        "updater_phase": "idle"
+      }
+    ],
+    "status": 200,
+    "via": "caddy"
+  },
+  "stopped_direct_early": {
+    "body": [
+      {
+        "connection": "online",
+        "current": {
+          "gen": 2,
+          "product": "2026.11.0",
+          "project_version": "v1",
+          "reported_at": "2026-11-08T15:50:41Z",
+          "source": "online"
+        },
+        "desired": {
+          "generation": 2,
+          "product_version": "2026.11.0",
+          "project_version": "v1",
+          "published_at": "2026-11-08T15:50:41.072475Z",
+          "sha256": "sha256:3178dc34e2a1cd1deaa10306cbd8f72c7589647635d23369b4a5c5389be33b65",
+          "size": 744806400
+        },
+        "disk_state": "ok",
+        "last_attempt": {
+          "code": null,
+          "ended_at": "2026-11-08T15:50:41.845953+00:00",
+          "from": 1,
+          "generation": 2,
+          "phase": "done",
+          "received_at": "2026-11-08T15:50:41.853341Z",
+          "report_seq": 2,
+          "result": "succeeded",
+          "source": "online",
+          "started_at": "2026-11-08T15:50:41.845953+00:00",
+          "to": 2
+        },
+        "last_heartbeat_seq": 3,
+        "last_report_seq": 2,
+        "last_seen": "2026-11-08T15:50:41.866529Z",
+        "max_published_gen": 2,
+        "site": "site-a",
+        "updater_phase": "idle"
+      }
+    ],
+    "status": 200,
+    "via": "control-api"
+  },
+  "stale_direct": {
+    "body": [
+      {
+        "connection": "stale",
+        "current": {
+          "gen": 2,
+          "product": "2026.11.0",
+          "project_version": "v1",
+          "reported_at": "2026-11-08T15:50:41Z",
+          "source": "online"
+        },
+        "desired": {
+          "generation": 2,
+          "product_version": "2026.11.0",
+          "project_version": "v1",
+          "published_at": "2026-11-08T15:50:41.072475Z",
+          "sha256": "sha256:3178dc34e2a1cd1deaa10306cbd8f72c7589647635d23369b4a5c5389be33b65",
+          "size": 744806400
+        },
+        "disk_state": "ok",
+        "last_attempt": {
+          "code": null,
+          "ended_at": "2026-11-08T15:50:41.845953+00:00",
+          "from": 1,
+          "generation": 2,
+          "phase": "done",
+          "received_at": "2026-11-08T15:50:41.853341Z",
+          "report_seq": 2,
+          "result": "succeeded",
+          "source": "online",
+          "started_at": "2026-11-08T15:50:41.845953+00:00",
+          "to": 2
+        },
+        "last_heartbeat_seq": 3,
+        "last_report_seq": 2,
+        "last_seen": "2026-11-08T15:50:41.866529Z",
+        "max_published_gen": 2,
+        "site": "site-a",
+        "updater_phase": "idle"
+      }
+    ],
+    "status": 200,
+    "via": "control-api"
+  },
+  "back_online": {
+    "body": [
+      {
+        "connection": "online",
+        "current": {
+          "gen": 2,
+          "product": "2026.11.0",
+          "project_version": "v1",
+          "reported_at": "2026-11-08T15:51:22Z",
+          "source": "online"
+        },
+        "desired": {
+          "generation": 2,
+          "product_version": "2026.11.0",
+          "project_version": "v1",
+          "published_at": "2026-11-08T15:50:41.072475Z",
+          "sha256": "sha256:3178dc34e2a1cd1deaa10306cbd8f72c7589647635d23369b4a5c5389be33b65",
+          "size": 744806400
+        },
+        "disk_state": "ok",
+        "last_attempt": {
+          "code": null,
+          "ended_at": "2026-11-08T15:50:41.845953+00:00",
+          "from": 1,
+          "generation": 2,
+          "phase": "done",
+          "received_at": "2026-11-08T15:50:41.853341Z",
+          "report_seq": 2,
+          "result": "succeeded",
+          "source": "online",
+          "started_at": "2026-11-08T15:50:41.845953+00:00",
+          "to": 2
+        },
+        "last_heartbeat_seq": 4,
+        "last_report_seq": 2,
+        "last_seen": "2026-11-08T15:51:22.447397Z",
+        "max_published_gen": 2,
+        "site": "site-a",
+        "updater_phase": "idle"
+      }
+    ],
+    "status": 200,
+    "via": "caddy"
+  }
+}

@@ -1,0 +1,416 @@
+"""M4 마감 VM 온라인 단계의 중앙(c0) — WSL에서 `deploy/central` compose를 띄우고 다룬다.
+
+    uv run --no-sync python tests/e2e/m2d/central.py up [--ca-out PATH]
+    uv run --no-sync python tests/e2e/m2d/central.py register --enrollment PATH
+    uv run --no-sync python tests/e2e/m2d/central.py site-token --site site-a   # 원문(파이프 전용)
+    uv run --no-sync python tests/e2e/m2d/central.py put --site site-a --gen 2 --pib PATH
+    uv run --no-sync python tests/e2e/m2d/central.py fleet [--site site-a] [--direct]
+    uv run --no-sync python tests/e2e/m2d/central.py stop-web | start-web | status | down
+
+`run.py online`(Windows 호스트)이 `golden.wsl`로 부른다. 운영 절차(deploy/central/README.md)를
+그대로 밟는다: **`up`은 항상 새로 시작한다**(같은 compose 프로젝트를 볼륨째 내리고) → 비밀 파일
+→ `run --rm control-api migrate up`(기동 때 자동 실행하지 않는다) → CLI로 admin·ci·viewer 토큰
+발급 → `up -d --wait` → Caddy 루트 CA 내보내기·SHA-256 지문 → 그 CA로 검증하는 HTTPS `healthz`
+200. 새로 시작하는 이유: VM 체크포인트 c0의 enrollment는 실행마다 새로 등록해야 하고(같은 키
+재등록은 409), 지난 실행의 게시·보고가 판정에 섞이지 않아야 한다.
+
+- 값(D9): compose 프로젝트 `pureiron-e2e-central`, release `c0`(이미지는
+  `deploy/releases/central/c0.json` config digest와 같아야 하고, 없거나 다르면 image store
+  `central/c0/*.tar`에서 적재), 바인드·인증서 이름·SNI 모두 `10.77.0.1`(내부 전용 vSwitch 호스트
+  주소 — LAN에 열리지 않는다), HTTPS 28443, `PUREIRON_CONTROL_POLL_S=10`(현장 Updater poll
+  주기와 같게 — online = 마지막 수신 ≤ 30 s).
+- **비밀값은 파일로만**: `~/pureiron-e2e-central/secrets`(0700, 저장소·artifacts 밖). 토큰
+  원문은 stdout에 내지 않는다 — 예외는 `site-token`(호출자가 VM `pureiron-site secret set`의
+  stdin으로 바로 넘긴다). 다른 명령의 출력(JSON)에는 파일 경로·지문·상태만 있다. 파일:
+  `control_db_password`·`viewer_token`(compose 비밀 — Caddy `/ui/fleet`)·`ui_basic_auth`(compose
+  비밀), `admin_token`·`ci_token`(publish `PUT /bundles`)·`publish_viewer_token`(publish·
+  check-gen `GET /fleet`)·`ui_password`(control-web 화면 basic auth 원문)·`<site>.token`(현장
+  token, `register`가 씀).
+- `down`은 compose를 볼륨째 내리고 작업 디렉터리(비밀 포함)를 지운다. 15분 실측(코디네이터)은
+  `run.py online --keep-central`로 남긴 중앙을 그대로 쓰고 끝나면 `down`.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import secrets
+import shutil
+import ssl
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+from typing import BinaryIO, cast
+
+from bundles import ensure_image, local_digest
+from images import image_store
+
+ROOT = Path(__file__).resolve().parents[3]
+COMPOSE_FILE = ROOT / "deploy" / "central" / "compose.yml"
+RECORD_DIR = ROOT / "deploy" / "releases" / "central"
+PROJECT = "pureiron-e2e-central"
+RELEASE = "c0"
+HOST = "10.77.0.1"
+PORT = 28443
+POLL_S = 10
+BASE_URL = f"https://{HOST}:{PORT}/api/v1"
+WORK = Path.home() / "pureiron-e2e-central"
+SECRETS = WORK / "secrets"
+CA_FILE = WORK / "central-root.crt"
+"""Caddy 로컬 CA 루트 인증서(공개값 — 비밀 디렉터리 밖)."""
+CA_IN_CONTAINER = "/data/caddy/pki/authorities/local/root.crt"
+CENTRAL_SERVICES = ("control-api", "control-web")
+UI_USER = "ops"
+TOKENS = {
+    "admin": ("admin", "e2e-admin"),
+    "ci": ("ci", "publish-ci"),
+    "publish_viewer": ("viewer", "publish-viewer"),
+}
+"""파일 이름 접두(`<접두>_token`) → (역할, 토큰 이름). Caddy용 viewer(`viewer_token`)는 따로."""
+READY_TIMEOUT_S = 120.0
+COMMAND_TIMEOUT_S = 600.0
+HTTP_TIMEOUT_S = 30.0
+UPLOAD_TIMEOUT_S = 600.0
+
+
+class CentralError(RuntimeError):
+    pass
+
+
+def compose_env() -> dict[str, str]:
+    return {
+        **os.environ,
+        "PUREIRON_CENTRAL_SECRETS_DIR": str(SECRETS),
+        "PUREIRON_CENTRAL_RELEASE": RELEASE,
+        "PUREIRON_CENTRAL_HOST": HOST,
+        "PUREIRON_CENTRAL_DEFAULT_SNI": HOST,
+        "PUREIRON_CENTRAL_BIND": HOST,
+        "PUREIRON_CENTRAL_HTTPS_PORT": str(PORT),
+        "PUREIRON_CONTROL_POLL_S": str(POLL_S),
+    }
+
+
+def compose(*args: str, stdin: bytes | None = None, check: bool = True) -> str:
+    """`docker compose -p pureiron-e2e-central -f deploy/central/compose.yml <args>`. 실패하면
+    명령과 stderr를 담아 멈춘다 — 토큰을 출력하는 명령(`token create`·`site register`)은
+    `_cli_json`만 부르고 그 출력은 오류 메시지에 넣지 않는다."""
+    result = subprocess.run(
+        ["docker", "compose", "-p", PROJECT, "-f", str(COMPOSE_FILE), *args],
+        env=compose_env(),
+        input=stdin,
+        capture_output=True,
+        timeout=COMMAND_TIMEOUT_S,
+        check=False,
+    )
+    out = result.stdout.decode("utf-8", "replace")
+    if check and result.returncode != 0:
+        err = result.stderr.decode("utf-8", "replace")
+        raise CentralError(f"docker compose {' '.join(args)} exited {result.returncode}\n{err}")
+    return out
+
+
+def _cli_json(*args: str, stdin: bytes | None = None) -> dict[str, object]:
+    """`pureiron-control <args> --json`(control-api 이미지, compose run). 끝 줄이 JSON. 출력에
+    토큰이 있으므로 실패해도 stdout은 오류에 싣지 않는다(stderr만)."""
+    command = ["run", "--rm", "-T", "control-api", *args, "--json"]
+    result = subprocess.run(
+        ["docker", "compose", "-p", PROJECT, "-f", str(COMPOSE_FILE), *command],
+        env=compose_env(),
+        input=stdin,
+        capture_output=True,
+        timeout=COMMAND_TIMEOUT_S,
+        check=False,
+    )
+    if result.returncode != 0:
+        err = result.stderr.decode("utf-8", "replace")
+        raise CentralError(f"pureiron-control {' '.join(args)} exited {result.returncode}\n{err}")
+    lines = result.stdout.decode("utf-8", "replace").strip().splitlines()
+    try:
+        return cast(dict[str, object], json.loads(lines[-1]))
+    except (IndexError, ValueError) as exc:
+        raise CentralError(f"pureiron-control {' '.join(args)}: no JSON on the last line") from exc
+
+
+def write_secret(path: Path, value: str, *, mode: int = 0o600) -> None:
+    """한 줄 비밀 파일. compose 비밀(컨테이너 사용자가 bind mount로 읽음)은 0644 — 보호는 0700
+    디렉터리(deploy/central/README.md "비밀 파일"). 같은 파일에 덮어쓴다(mv 금지 규칙과 같다)."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(value + "\n")
+    path.chmod(mode)
+
+
+def read_secret(name: str) -> str:
+    try:
+        value = (SECRETS / name).read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise CentralError(f"{SECRETS / name} unreadable — central.py up 먼저") from exc
+    if not value:
+        raise CentralError(f"{SECRETS / name} is empty")
+    return value
+
+
+def docker_load(tar: Path) -> None:
+    subprocess.run(["docker", "load", "-q", "-i", str(tar)], check=True, capture_output=True)
+
+
+def ensure_images() -> dict[str, str]:
+    """`pureiron/<svc>:c0`의 config digest를 release 기록 값으로(없거나 다르면 store tar 적재)."""
+    record = json.loads((RECORD_DIR / f"{RELEASE}.json").read_text(encoding="utf-8"))
+    images = cast(dict[str, dict[str, str]], record["images"])
+    store = image_store() / "central" / RELEASE
+    scratch = WORK / "digest-scratch"
+    scratch.mkdir(parents=True, exist_ok=True)
+    found: dict[str, str] = {}
+    for svc in CENTRAL_SERVICES:
+        want = images[svc]["config_digest"]
+        ensure_image(
+            f"pureiron/{svc}:{RELEASE}",
+            store / f"{svc}.tar",
+            want,
+            digest_of=lambda tag: local_digest(tag, scratch),
+            load=docker_load,
+        )
+        found[svc] = want
+    shutil.rmtree(scratch, ignore_errors=True)
+    return found
+
+
+def basic_auth_line(password: str) -> str:
+    """control-web 화면 basic auth 한 줄(`ops <bcrypt>`). 원문은 `caddy hash-password`의 stdin으로만
+    넘긴다 — `--plaintext`면 `docker run` 인자라 호스트 `ps`·컨테이너 프로세스 인자에 보인다.
+    stdin이 터미널이 아니면 caddy는 첫 줄을 읽고 끝 줄바꿈을 떼어 낸다(줄바꿈이 없으면 실패 —
+    v2.11.7에서 확인)."""
+    image = f"pureiron/control-web:{RELEASE}"
+    hashed = subprocess.run(
+        ["docker", "run", "--rm", "-i", "--entrypoint", "caddy", image, "hash-password"],
+        input=password + "\n",
+        capture_output=True,
+        text=True,
+        timeout=COMMAND_TIMEOUT_S,
+        check=True,
+    ).stdout.strip()
+    return f"{UI_USER} {hashed}"
+
+
+def fingerprint(pem: str) -> str:
+    """`openssl x509 -noout -fingerprint -sha256`와 같은 표기(대문자 hex, `:` 구분)."""
+    digest = hashlib.sha256(ssl.PEM_cert_to_DER_cert(pem)).hexdigest().upper()
+    return ":".join(digest[i : i + 2] for i in range(0, len(digest), 2))
+
+
+def context() -> ssl.SSLContext:
+    return ssl.create_default_context(cafile=str(CA_FILE))
+
+
+def healthz() -> int:
+    with urllib.request.urlopen(f"{BASE_URL}/healthz", context=context(), timeout=5) as response:
+        return response.status
+
+
+def export_ca() -> str:
+    """README의 루트 CA 내보내기 그대로(`compose cp`). Caddy가 첫 인증서를 만들 때까지 기다리고, 그
+    CA로 검증하는 HTTPS `healthz` 200을 확인한다."""
+    deadline = time.monotonic() + READY_TIMEOUT_S
+    last = ""
+    while time.monotonic() < deadline:
+        try:
+            compose("cp", f"control-web:{CA_IN_CONTAINER}", str(CA_FILE))
+            if healthz() == 200:
+                return CA_FILE.read_text(encoding="ascii")
+        except (CentralError, OSError, ssl.SSLError) as exc:
+            last = str(exc)
+        time.sleep(1)
+    raise CentralError(f"central HTTPS not ready within {READY_TIMEOUT_S}s (last: {last})")
+
+
+def status() -> dict[str, object]:
+    """비밀값 없는 상태 요약 — run.py가 결과에 남기고 코디네이터가 15분 실측에 넘긴다."""
+    pem = CA_FILE.read_text(encoding="ascii") if CA_FILE.is_file() else None
+    return {
+        "project": PROJECT,
+        "release": RELEASE,
+        "base_url": BASE_URL,
+        "poll_s": POLL_S,
+        "ca_file": str(CA_FILE),
+        "ca_sha256": fingerprint(pem) if pem else None,
+        "secrets_dir": str(SECRETS),
+        "token_files": {name: str(SECRETS / f"{name}_token") for name in (*TOKENS, "viewer")},
+        "ui_user": UI_USER,
+        "ui_password_file": str(SECRETS / "ui_password"),
+    }
+
+
+def up(ca_out: Path | None) -> dict[str, object]:
+    images = ensure_images()
+    compose("down", "-v", "--remove-orphans")
+    shutil.rmtree(WORK, ignore_errors=True)
+    SECRETS.mkdir(parents=True, mode=0o700)
+    SECRETS.chmod(0o700)
+    password = secrets.token_urlsafe(18)
+    write_secret(SECRETS / "ui_password", password)
+    write_secret(SECRETS / "control_db_password", secrets.token_urlsafe(24), mode=0o644)
+    write_secret(SECRETS / "viewer_token", "not-issued-yet", mode=0o644)
+    write_secret(SECRETS / "ui_basic_auth", basic_auth_line(password), mode=0o644)
+    compose("config", "--quiet")
+    compose("run", "--rm", "-T", "control-api", "migrate", "up")
+    viewer = _cli_json("token", "create", "--role", "viewer", "--name", "control-web")
+    write_secret(SECRETS / "viewer_token", str(viewer["token"]), mode=0o644)
+    for prefix, (role, name) in TOKENS.items():
+        created = _cli_json("token", "create", "--role", role, "--name", name)
+        write_secret(SECRETS / f"{prefix}_token", str(created["token"]))
+    compose("up", "-d", "--wait")
+    pem = export_ca()
+    if ca_out is not None:
+        ca_out.parent.mkdir(parents=True, exist_ok=True)
+        ca_out.write_text(pem, encoding="ascii")
+    return {**status(), "images": images, "healthz": healthz(), "ca_out": str(ca_out or "")}
+
+
+def register(enrollment: Path) -> dict[str, object]:
+    """CLI `site register`(README 첫 기동 절) → 현장 token은 `<site>.token`(0600)에만."""
+    done = _cli_json("site", "register", "/dev/stdin", stdin=enrollment.read_bytes())
+    site = str(done["site_id"])
+    write_secret(SECRETS / f"{site}.token", str(done["token"]))
+    return {k: v for k, v in done.items() if k != "token"} | {
+        "token_file": str(SECRETS / f"{site}.token")
+    }
+
+
+def _request(
+    method: str,
+    path: str,
+    token_name: str,
+    *,
+    body: BinaryIO | None = None,
+    length: int | None = None,
+) -> tuple[int, object]:
+    headers = {"Authorization": f"Bearer {read_secret(token_name)}"}
+    if length is not None:
+        headers |= {"Content-Type": "application/octet-stream", "Content-Length": str(length)}
+    request = urllib.request.Request(f"{BASE_URL}{path}", data=body, method=method, headers=headers)
+    timeout = UPLOAD_TIMEOUT_S if length is not None else HTTP_TIMEOUT_S
+    try:
+        with urllib.request.urlopen(request, context=context(), timeout=timeout) as response:
+            status_code, raw = response.status, response.read()
+    except urllib.error.HTTPError as exc:
+        status_code, raw = exc.code, exc.read()
+    try:
+        return status_code, cast(object, json.loads(raw))
+    except ValueError:
+        return status_code, raw.decode("utf-8", "replace")[:500]
+
+
+def put(site: str, gen: int, pib: Path) -> dict[str, object]:
+    """`PUT /bundles/{site}/{gen}`(ci 토큰, Caddy HTTPS — publish와 같은 경로)."""
+    with pib.open("rb") as body:
+        status_code, reply = _request(
+            "PUT", f"/bundles/{site}/{gen}", "ci_token", body=body, length=pib.stat().st_size
+        )
+    return {"status": status_code, "body": reply}
+
+
+def fleet_https(site: str | None) -> dict[str, object]:
+    query = "?" + urllib.parse.urlencode({"site": site}) if site else ""
+    status_code, reply = _request("GET", f"/fleet{query}", "publish_viewer_token")
+    return {"status": status_code, "body": reply, "via": "caddy"}
+
+
+DIRECT_FLEET = """\
+import json, sys, urllib.error, urllib.request
+token = sys.stdin.readline().strip()
+req = urllib.request.Request(sys.argv[1], headers={"Authorization": "Bearer " + token})
+try:
+    with urllib.request.urlopen(req, timeout=10) as r:
+        status, raw = r.status, r.read()
+except urllib.error.HTTPError as e:
+    status, raw = e.code, e.read()
+print(json.dumps({"status": status, "body": json.loads(raw)}))
+"""
+
+
+def fleet_direct(site: str | None) -> dict[str, object]:
+    """Caddy를 거치지 않고 control-api 컨테이너 안에서 `GET /fleet`(control-web을 멈춘 동안
+    판정용). 토큰은 stdin으로만 넘긴다(argv·env에 남기지 않는다)."""
+    query = "?" + urllib.parse.urlencode({"site": site}) if site else ""
+    out = compose(
+        "exec",
+        "-T",
+        "control-api",
+        "python",
+        "-c",
+        DIRECT_FLEET,
+        f"http://127.0.0.1:8100/api/v1/fleet{query}",
+        stdin=(read_secret("publish_viewer_token") + "\n").encode(),
+    )
+    reply = cast(dict[str, object], json.loads(out.strip().splitlines()[-1]))
+    return {**reply, "via": "control-api"}
+
+
+def start_web() -> dict[str, object]:
+    compose("start", "control-web")
+    deadline = time.monotonic() + READY_TIMEOUT_S
+    while time.monotonic() < deadline:
+        try:
+            return {"healthz": healthz()}
+        except (OSError, ssl.SSLError):
+            time.sleep(1)
+    raise CentralError(f"control-web did not come back within {READY_TIMEOUT_S}s")
+
+
+def down() -> dict[str, object]:
+    compose("down", "-v", "--remove-orphans")
+    shutil.rmtree(WORK, ignore_errors=True)
+    return {"project": PROJECT, "down": True, "work_removed": not WORK.exists()}
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="central")
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("up").add_argument("--ca-out", type=Path, default=None)
+    sub.add_parser("register").add_argument("--enrollment", type=Path, required=True)
+    sub.add_parser("site-token").add_argument("--site", required=True)
+    put_cmd = sub.add_parser("put")
+    put_cmd.add_argument("--site", required=True)
+    put_cmd.add_argument("--gen", type=int, required=True)
+    put_cmd.add_argument("--pib", type=Path, required=True)
+    fleet_cmd = sub.add_parser("fleet")
+    fleet_cmd.add_argument("--site", default=None)
+    fleet_cmd.add_argument("--direct", action="store_true", help="control-api 컨테이너 안에서 조회")
+    for name in ("stop-web", "start-web", "status", "down"):
+        sub.add_parser(name)
+    args = parser.parse_args(argv)
+    os.chdir(ROOT)
+    if args.command == "site-token":
+        sys.stdout.write(read_secret(f"{args.site}.token") + "\n")
+        return 0
+    result: dict[str, object]
+    if args.command == "up":
+        result = up(args.ca_out)
+    elif args.command == "register":
+        result = register(args.enrollment)
+    elif args.command == "put":
+        result = put(args.site, args.gen, args.pib)
+    elif args.command == "fleet":
+        result = fleet_direct(args.site) if args.direct else fleet_https(args.site)
+    elif args.command == "stop-web":
+        compose("stop", "control-web")
+        result = {"stopped": "control-web"}
+    elif args.command == "start-web":
+        result = start_web()
+    elif args.command == "status":
+        result = status()
+    else:
+        result = down()
+    print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -122,6 +122,33 @@ def test_pr_head_pushed_directly_to_main() -> None:
     assert "머리 커밋을 main에 직접 push" in reasons(ev)
 
 
+@pytest.mark.parametrize(
+    ("reviews", "expected"),
+    [
+        ((approve("circulation95", H),), None),
+        ((), "PR #7 유효 승인 0건(리뷰 없음)"),
+    ],
+    ids=["approved-head", "unapproved-head-S4b"],
+)
+def test_pr_head_fast_forwarded_to_main(reviews: tuple[Review, ...], expected: str | None) -> None:
+    # GitHub은 PR 머리 커밋 H를 main으로 fast-forward하면 PR을 merged로 바꾸고
+    # merge_commit_sha = H로 둔다(M4-2 리허설 §3-3 S4b) — ①은 버튼 merge와 구분하지 못한다.
+    # 승인 없는 머리는 ②가 막고, 승인된 최종 head면 결과 트리가 merge-tree(M0, H) = H 트리라
+    # (⑤ 참) 내용이 승인본과 같아 통과한다.
+    ev = evidence(
+        sha=H,
+        pulls=(merged_pr(merge_commit_sha=H),),
+        ancestry=(Commit(H, (M0,)), Commit(M0, (sha(0x9F),))),
+        reviews=reviews,
+    )
+    decision = decide(ev)
+    if expected is None:
+        assert decision.approved, decision.reasons
+        assert (decision.pull, decision.base) == (7, M0)
+    else:
+        assert expected in reasons(ev)
+
+
 def test_unmerged_pr_is_not_an_approval() -> None:
     assert "직접 push" in reasons(evidence(pulls=(merged_pr(merged=False),)))
 

@@ -14,9 +14,11 @@ permissions:
 jobs:
   publish:
     # check-gen.yml과 같은 ref로 고정한다(도구 버전).
-    uses: circulation95/PureIron_V1/.github/workflows/fleet-publish.yml@master
+    uses: circulation95/PureIron_V1/.github/workflows/fleet-publish.yml@r5
     with:
       runs_on: '["self-hosted", "publish"]'
+      # check-gen.yml과 같은 control-api 기준 URL(README "control-api 주소").
+      # control_api: https://<중앙 주소>:28443/api/v1
     secrets:
       PUREIRON_CI_APP_ID: ${{ secrets.PUREIRON_CI_APP_ID }}
       PUREIRON_CI_APP_KEY: ${{ secrets.PUREIRON_CI_APP_KEY }}

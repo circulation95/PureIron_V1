@@ -1,0 +1,83 @@
+{
+  "measured": "2026-11-09 WSL 로컬 site-db 2.30.2-pg16 + pureiron/core:r4·r5 CLI(Updater 순서). c0 = r4 migrate up → r4 project apply --tar fixture → run.SEED_SQL. next_same_tree = c0 → r5 migrate up(applied 0) → r5 apply fixture(changed false). next_tree = c0 → r5 migrate up → r5 apply NEXT 트리(bundles.release_tree r5). fault_applied = c0 → r4 project export --with-state(백업) → r5 migrate up → r5 apply FAULT 트리(r5f). fault_rolled_back = 이어서 r4 project restore --from 백업. retry = 이어서 r5 apply NEXT 트리. 값은 tests/e2e/site/probe.py DB_SQL 그대로(판정에 쓰는 키만).",
+  "content_hashes": {
+    "fixture": "sha256:bf7f88d2bb555afd76d10ca4ce1befa72c1cbc4a6cdd4d748d9938a1936499c6",
+    "next": "sha256:b4fa1c9afbc6507d374e12e3478c83de3ff4b94301a49a017c665dc7aa7a3ed8",
+    "fault": "sha256:7a95d2850e41ec20eab1ab599d7cb1903e45f9437e9b8e217ebe701073202bdc"
+  },
+  "apply_changed": {
+    "next_same_tree": false,
+    "next_tree": true,
+    "fault_applied": true,
+    "fault_rolled_back": true,
+    "retry": true
+  },
+  "stages": {
+    "c0": {
+      "epoch": "5",
+      "tag_history_rows": "7141",
+      "compressed_chunks": "3",
+      "project_files": "4",
+      "device_ids": "e2e-dev,plc-1",
+      "tag_paths": "e2e/tag,line1/remote_ok,line1/running,line1/start,line1/temp,line1/temp_sp",
+      "alarm_ids": "temp-high,temp-low",
+      "tag_defs": "{ \"line1/remote_ok\" : {\"path\": \"line1/remote_ok\", \"device\": \"plc-1\", \"modbus\": {\"address\": 11, \"data_type\": \"bool\", \"register_type\": \"coil\"}}, \"line1/running\" : {\"path\": \"line1/running\", \"device\": \"plc-1\", \"modbus\": {\"address\": 2, \"data_type\": \"bool\", \"register_type\": \"coil\"}}, \"line1/start\" : {\"path\": \"line1/start\", \"write\": {\"kind\": \"command\", \"values\": [true], \"permissive\": [\"line1/remote_ok\"]}, \"device\": \"plc-1\", \"modbus\": {\"address\": 10, \"data_type\": \"bool\", \"register_type\": \"coil\"}}, \"line1/temp\" : {\"eu\": \"°C\", \"path\": \"line1/temp\", \"device\": \"plc-1\", \"modbus\": {\"address\": 0, \"data_type\": \"float32\", \"register_type\": \"holding\"}, \"record\": {\"deadband\": 0.5, \"max_interval_s\": 60}, \"description\": \"1라인 온도\"}, \"line1/temp_sp\" : {\"eu\": \"°C\", \"path\": \"line1/temp_sp\", \"write\": {\"max\": 90, \"min\": 20, \"kind\": \"setpoint\"}, \"device\": \"plc-1\", \"modbus\": {\"address\": 100, \"data_type\": \"float32\", \"register_type\": \"holding\"}, \"description\": \"1라인 온도 설정값\"} }",
+      "alarm_defs": "{ \"temp-high\" : {\"id\": \"temp-high\", \"tag\": \"line1/temp\", \"type\": \"above\", \"priority\": \"high\", \"setpoint\": 80}, \"temp-low\" : {\"id\": \"temp-low\", \"tag\": \"line1/temp\", \"type\": \"below\", \"deadband\": 1.5, \"setpoint\": 5, \"on_delay_s\": 10} }"
+    },
+    "next_same_tree": {
+      "epoch": "5",
+      "tag_history_rows": "7141",
+      "compressed_chunks": "3",
+      "project_files": "4",
+      "device_ids": "e2e-dev,plc-1",
+      "tag_paths": "e2e/tag,line1/remote_ok,line1/running,line1/start,line1/temp,line1/temp_sp",
+      "alarm_ids": "temp-high,temp-low",
+      "tag_defs": "{ \"line1/remote_ok\" : {\"path\": \"line1/remote_ok\", \"device\": \"plc-1\", \"modbus\": {\"address\": 11, \"data_type\": \"bool\", \"register_type\": \"coil\"}}, \"line1/running\" : {\"path\": \"line1/running\", \"device\": \"plc-1\", \"modbus\": {\"address\": 2, \"data_type\": \"bool\", \"register_type\": \"coil\"}}, \"line1/start\" : {\"path\": \"line1/start\", \"write\": {\"kind\": \"command\", \"values\": [true], \"permissive\": [\"line1/remote_ok\"]}, \"device\": \"plc-1\", \"modbus\": {\"address\": 10, \"data_type\": \"bool\", \"register_type\": \"coil\"}}, \"line1/temp\" : {\"eu\": \"°C\", \"path\": \"line1/temp\", \"device\": \"plc-1\", \"modbus\": {\"address\": 0, \"data_type\": \"float32\", \"register_type\": \"holding\"}, \"record\": {\"deadband\": 0.5, \"max_interval_s\": 60}, \"description\": \"1라인 온도\"}, \"line1/temp_sp\" : {\"eu\": \"°C\", \"path\": \"line1/temp_sp\", \"write\": {\"max\": 90, \"min\": 20, \"kind\": \"setpoint\"}, \"device\": \"plc-1\", \"modbus\": {\"address\": 100, \"data_type\": \"float32\", \"register_type\": \"holding\"}, \"description\": \"1라인 온도 설정값\"} }",
+      "alarm_defs": "{ \"temp-high\" : {\"id\": \"temp-high\", \"tag\": \"line1/temp\", \"type\": \"above\", \"priority\": \"high\", \"setpoint\": 80}, \"temp-low\" : {\"id\": \"temp-low\", \"tag\": \"line1/temp\", \"type\": \"below\", \"deadband\": 1.5, \"setpoint\": 5, \"on_delay_s\": 10} }"
+    },
+    "next_tree": {
+      "epoch": "5",
+      "tag_history_rows": "7141",
+      "compressed_chunks": "3",
+      "project_files": "4",
+      "device_ids": "plc-1",
+      "tag_paths": "line1/remote_ok,line1/running,line1/start,line1/temp,line1/temp_sp",
+      "alarm_ids": "temp-high,temp-low",
+      "tag_defs": "{ \"line1/remote_ok\" : {\"path\": \"line1/remote_ok\", \"device\": \"plc-1\", \"modbus\": {\"address\": 11, \"data_type\": \"bool\", \"register_type\": \"coil\"}}, \"line1/running\" : {\"path\": \"line1/running\", \"device\": \"plc-1\", \"modbus\": {\"address\": 2, \"data_type\": \"bool\", \"register_type\": \"coil\"}}, \"line1/start\" : {\"path\": \"line1/start\", \"write\": {\"kind\": \"command\", \"values\": [true], \"permissive\": [\"line1/remote_ok\"]}, \"device\": \"plc-1\", \"modbus\": {\"address\": 10, \"data_type\": \"bool\", \"register_type\": \"coil\"}}, \"line1/temp\" : {\"eu\": \"°C\", \"path\": \"line1/temp\", \"device\": \"plc-1\", \"modbus\": {\"address\": 0, \"data_type\": \"float32\", \"register_type\": \"holding\"}, \"record\": {\"deadband\": 0.5, \"max_interval_s\": 60}, \"description\": \"1라인 온도\"}, \"line1/temp_sp\" : {\"eu\": \"°C\", \"path\": \"line1/temp_sp\", \"write\": {\"max\": 90, \"min\": 20, \"kind\": \"setpoint\"}, \"device\": \"plc-1\", \"modbus\": {\"address\": 100, \"data_type\": \"float32\", \"register_type\": \"holding\"}, \"description\": \"1라인 온도 설정값 (r5)\"} }",
+      "alarm_defs": "{ \"temp-high\" : {\"id\": \"temp-high\", \"tag\": \"line1/temp\", \"type\": \"above\", \"priority\": \"high\", \"setpoint\": 80}, \"temp-low\" : {\"id\": \"temp-low\", \"tag\": \"line1/temp\", \"type\": \"below\", \"deadband\": 1.5, \"setpoint\": 5, \"on_delay_s\": 10} }"
+    },
+    "fault_applied": {
+      "epoch": "5",
+      "tag_history_rows": "7141",
+      "compressed_chunks": "3",
+      "project_files": "4",
+      "device_ids": "plc-1",
+      "tag_paths": "line1/remote_ok,line1/running,line1/start,line1/temp,line1/temp_sp",
+      "alarm_ids": "temp-high,temp-low",
+      "tag_defs": "{ \"line1/remote_ok\" : {\"path\": \"line1/remote_ok\", \"device\": \"plc-1\", \"modbus\": {\"address\": 11, \"data_type\": \"bool\", \"register_type\": \"coil\"}}, \"line1/running\" : {\"path\": \"line1/running\", \"device\": \"plc-1\", \"modbus\": {\"address\": 2, \"data_type\": \"bool\", \"register_type\": \"coil\"}}, \"line1/start\" : {\"path\": \"line1/start\", \"write\": {\"kind\": \"command\", \"values\": [true], \"permissive\": [\"line1/remote_ok\"]}, \"device\": \"plc-1\", \"modbus\": {\"address\": 10, \"data_type\": \"bool\", \"register_type\": \"coil\"}}, \"line1/temp\" : {\"eu\": \"°C\", \"path\": \"line1/temp\", \"device\": \"plc-1\", \"modbus\": {\"address\": 0, \"data_type\": \"float32\", \"register_type\": \"holding\"}, \"record\": {\"deadband\": 0.5, \"max_interval_s\": 60}, \"description\": \"1라인 온도\"}, \"line1/temp_sp\" : {\"eu\": \"°C\", \"path\": \"line1/temp_sp\", \"write\": {\"max\": 90, \"min\": 20, \"kind\": \"setpoint\"}, \"device\": \"plc-1\", \"modbus\": {\"address\": 100, \"data_type\": \"float32\", \"register_type\": \"holding\"}, \"description\": \"1라인 온도 설정값 (r5f)\"} }",
+      "alarm_defs": "{ \"temp-high\" : {\"id\": \"temp-high\", \"tag\": \"line1/temp\", \"type\": \"above\", \"priority\": \"high\", \"setpoint\": 80}, \"temp-low\" : {\"id\": \"temp-low\", \"tag\": \"line1/temp\", \"type\": \"below\", \"deadband\": 1.5, \"setpoint\": 5, \"on_delay_s\": 10} }"
+    },
+    "fault_rolled_back": {
+      "epoch": "5",
+      "tag_history_rows": "7141",
+      "compressed_chunks": "3",
+      "project_files": "4",
+      "device_ids": "plc-1",
+      "tag_paths": "line1/remote_ok,line1/running,line1/start,line1/temp,line1/temp_sp",
+      "alarm_ids": "temp-high,temp-low",
+      "tag_defs": "{ \"line1/remote_ok\" : {\"path\": \"line1/remote_ok\", \"device\": \"plc-1\", \"modbus\": {\"address\": 11, \"data_type\": \"bool\", \"register_type\": \"coil\"}}, \"line1/running\" : {\"path\": \"line1/running\", \"device\": \"plc-1\", \"modbus\": {\"address\": 2, \"data_type\": \"bool\", \"register_type\": \"coil\"}}, \"line1/start\" : {\"path\": \"line1/start\", \"write\": {\"kind\": \"command\", \"values\": [true], \"permissive\": [\"line1/remote_ok\"]}, \"device\": \"plc-1\", \"modbus\": {\"address\": 10, \"data_type\": \"bool\", \"register_type\": \"coil\"}}, \"line1/temp\" : {\"eu\": \"°C\", \"path\": \"line1/temp\", \"device\": \"plc-1\", \"modbus\": {\"address\": 0, \"data_type\": \"float32\", \"register_type\": \"holding\"}, \"record\": {\"deadband\": 0.5, \"max_interval_s\": 60}, \"description\": \"1라인 온도\"}, \"line1/temp_sp\" : {\"eu\": \"°C\", \"path\": \"line1/temp_sp\", \"write\": {\"max\": 90, \"min\": 20, \"kind\": \"setpoint\"}, \"device\": \"plc-1\", \"modbus\": {\"address\": 100, \"data_type\": \"float32\", \"register_type\": \"holding\"}, \"description\": \"1라인 온도 설정값\"} }",
+      "alarm_defs": "{ \"temp-high\" : {\"id\": \"temp-high\", \"tag\": \"line1/temp\", \"type\": \"above\", \"priority\": \"high\", \"setpoint\": 80}, \"temp-low\" : {\"id\": \"temp-low\", \"tag\": \"line1/temp\", \"type\": \"below\", \"deadband\": 1.5, \"setpoint\": 5, \"on_delay_s\": 10} }"
+    },
+    "retry": {
+      "epoch": "5",
+      "tag_history_rows": "7141",
+      "compressed_chunks": "3",
+      "project_files": "4",
+      "device_ids": "plc-1",
+      "tag_paths": "line1/remote_ok,line1/running,line1/start,line1/temp,line1/temp_sp",
+      "alarm_ids": "temp-high,temp-low",
+      "tag_defs": "{ \"line1/remote_ok\" : {\"path\": \"line1/remote_ok\", \"device\": \"plc-1\", \"modbus\": {\"address\": 11, \"data_type\": \"bool\", \"register_type\": \"coil\"}}, \"line1/running\" : {\"path\": \"line1/running\", \"device\": \"plc-1\", \"modbus\": {\"address\": 2, \"data_type\": \"bool\", \"register_type\": \"coil\"}}, \"line1/start\" : {\"path\": \"line1/start\", \"write\": {\"kind\": \"command\", \"values\": [true], \"permissive\": [\"line1/remote_ok\"]}, \"device\": \"plc-1\", \"modbus\": {\"address\": 10, \"data_type\": \"bool\", \"register_type\": \"coil\"}}, \"line1/temp\" : {\"eu\": \"°C\", \"path\": \"line1/temp\", \"device\": \"plc-1\", \"modbus\": {\"address\": 0, \"data_type\": \"float32\", \"register_type\": \"holding\"}, \"record\": {\"deadband\": 0.5, \"max_interval_s\": 60}, \"description\": \"1라인 온도\"}, \"line1/temp_sp\" : {\"eu\": \"°C\", \"path\": \"line1/temp_sp\", \"write\": {\"max\": 90, \"min\": 20, \"kind\": \"setpoint\"}, \"device\": \"plc-1\", \"modbus\": {\"address\": 100, \"data_type\": \"float32\", \"register_type\": \"holding\"}, \"description\": \"1라인 온도 설정값 (r5)\"} }",
+      "alarm_defs": "{ \"temp-high\" : {\"id\": \"temp-high\", \"tag\": \"line1/temp\", \"type\": \"above\", \"priority\": \"high\", \"setpoint\": 80}, \"temp-low\" : {\"id\": \"temp-low\", \"tag\": \"line1/temp\", \"type\": \"below\", \"deadband\": 1.5, \"setpoint\": 5, \"on_delay_s\": 10} }"
+    }
+  }
+}

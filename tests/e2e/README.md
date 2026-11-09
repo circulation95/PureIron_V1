@@ -31,28 +31,56 @@ image store(`~/pureiron/images`, `PUREIRON_IMAGE_STORE`)의 BASE·NEXT tar(`<이
 ## release 쌍
 
 실측할 release 쌍은 `m2d/release_pair.py` 한 곳에 있다 — 설치 g1 = `BASE`, 업그레이드 `BASE`→`NEXT`,
-헬스 실패 롤백 `FAULT`(`NEXT` 파생), 기대 epoch `EPOCHS`. 결과 항목 35개(`run.expected_items()`) 이름도
-여기서 나온다(S4까지 30개, M5 마감에서 M5 확인 4개 + 전환기 경보 해제 1개를 더했다).
+헬스 실패 롤백 `FAULT`(`NEXT` 파생), 기대 epoch `EPOCHS`. 결과 항목 39개(`run.expected_items()`) 이름도
+여기서 나온다(S4까지 30개, M5 마감에서 M5 확인 4개 + 전환기 경보 해제 1개를 더했고, M4 마감에서 경보 해제
+자리를 "롤백 뒤 재시도"로 바꾸고 온라인 4개를 더했다).
 
 | 실측 | BASE | NEXT | FAULT | c0 | 업그레이드 마이그레이션 |
 |---|---|---|---|---|---|
 | M2(run 20261005T055523Z, 30/30) | r0 `2026.10.0` (epoch 1) | r1 `2026.10.1` (epoch 2) | `r1f` `2026.10.1-fault1` | epoch 1 + 압축 chunk | 0006·0007(1h CAGG) |
 | S3(run 20261009T231040Z, 30/30) | r1 `2026.10.1` (epoch 2) | r2 `2026.10.2` (epoch 3) | `r2f` `2026.10.2-fault1` | epoch 2(1h CAGG 있음) + 압축 chunk | 0008·0009(정의 jsonb, CAGG 실시간 집계, `project_state.historian`) |
 | S4(run 20261017T132857Z, 30/30) | r2 `2026.10.2` (epoch 3) | r3 `2026.10.3` (epoch 4) | `r3f` `2026.10.3-fault1` | epoch 3(1m·1h CAGG 실시간 집계, 0008·0009 열) + 압축 chunk, epoch 4 테이블 없음 | 0010~0012(`users`·`sessions`, `audit_log`, `alarms`·`alarm_journal`과 인덱스) |
-| **M5 마감(현재)** | r3 `2026.10.3` (epoch 4) | r4 `2026.11.0` (epoch 5) | `r4f` `2026.11.0-fault1` | epoch 4(0010~0012 테이블·인덱스, 1m·1h CAGG 실시간 집계, 0008·0009 열) + 압축 chunk, `project_files` 없음 | 0013(`project_files`, 이름 붙은 인덱스 없음) + 첫 프로젝트 트리 적용 |
+| M5 마감(run 20261101T035728Z, 35/35) | r3 `2026.10.3` (epoch 4) | r4 `2026.11.0` (epoch 5) | `r4f` `2026.11.0-fault1` | epoch 4(0010~0012 테이블·인덱스, 1m·1h CAGG 실시간 집계, 0008·0009 열) + 압축 chunk, `project_files` 없음 | 0013(`project_files`, 이름 붙은 인덱스 없음) + 첫 프로젝트 트리 적용 |
+| **M4 마감(현재)** | r4 `2026.11.0` (epoch 5) | r5 `2026.11.1` (epoch 5) | `r5f` `2026.11.1-fault1` | epoch 5(0010~0013 테이블·인덱스, 1m·1h CAGG 실시간 집계, 0008·0009 열) + fixture 트리 + 압축 chunk | **없음**(같은 epoch — r4..r5 core 변경은 `migrate_lint.py`뿐) |
 
-항목 이름 중 release가 들어가는 것은 쌍을 따라간다: `install bundle bootstrap + g1(r3) on offline VM`,
-`r3→r4 on compressed epoch-4 DB`, `r4 schema after upgrade`, `rollback within 5 min to r3 digests`,
-`r4 project tree applied …`, `r4' health failure → rollback (transition, E_DEFINITIONS_LEFT)`,
-`r4 tree bundle after transition rollback → succeeded, alarm cleared`(S4에서는 `g1(r2)`·`r2→r3 … epoch-3`·
-`r3 schema`·`r3' health failure → rollback`·`to r2`).
+항목 이름 중 release가 들어가는 것은 쌍을 따라간다: `install bundle bootstrap + g1(r4) on offline VM`,
+`r4→r5 on compressed epoch-5 DB`, `r5 schema after upgrade`, `rollback within 5 min to r4 digests`,
+`r5 project tree applied …`, `r5' health failure → rollback (no alarm, r4 tree and definitions back)`,
+`r5 retry after r5' rollback → succeeded`, `online: central-published r4 g2 → …`(M5 마감에서는 `g1(r3)`·
+`r3→r4 … epoch-4`·`r4 schema`·`r4' health failure → rollback (transition, E_DEFINITIONS_LEFT)`·`to r3`·
+`r4 tree bundle after transition rollback → succeeded, alarm cleared`).
 
 스키마 판정은 이름 집합으로 비교한다(`release_pair.py`의 `CAGGS`·`BASE_COLUMNS`·`BASE_TABLES`·`BASE_INDEXES`·
 `NEXT_TABLES`, probe `db`의 `caggs`·`realtime_caggs`·`tables`·`indexes`·`columns`). c0는 BASE epoch 산출물이
-있고 NEXT 테이블이 없어야 하며, 업그레이드 뒤에는 NEXT 테이블이 생기고 BASE 산출물이 남아야 한다. 0013은
-이름 붙은 인덱스를 만들지 않아 `NEXT_INDEXES`는 빈 집합이고 판정 항목에서 뺐다(빈 집합 포함 검사는 늘
-참). 쌍을 바꿀 때는 새 NEXT epoch의 migration SQL을 읽고 이 집합들을 함께 바꾼다(지난 NEXT 산출물은
-BASE로 옮긴다).
+있어야 하고, 업그레이드 뒤에도 BASE 산출물이 남아야 한다. NEXT가 epoch를 올리는 쌍이면 c0에 NEXT 테이블이
+없고(`next_absent`) 업그레이드 뒤 생겨야 한다(`next_tables`). **M4 마감 r4→r5는 같은 epoch라 `NEXT_TABLES`·
+`NEXT_INDEXES`가 빈 집합이고 두 판정을 뺐다**(빈 집합 검사는 늘 참이라 아무것도 확인하지 않는 항목이 남는다).
+0013 `project_files`는 BASE_TABLES로 옮겼다. 쌍을 바꿀 때는 새 NEXT epoch의 migration SQL을 읽고 이
+집합들을 함께 바꾼다(지난 NEXT 산출물은 BASE로 옮긴다).
+
+### M4 마감에서 바뀐 판정
+
+- **마이그레이션 없는 업그레이드**: `r4→r5`·crash `migrating` 2건은 `migrating` phase를 지나가지만(Updater는
+  `migrate_to`가 없어도 phase를 기록한다) SQL은 돌지 않는다. c0와 r5 업그레이드 뒤 probe `db`는 실측에서
+  바이트까지 같다(`test_harness.py` `C0_DB`·`NEXT_DB`) — 스키마 판정의 교차 실패는 지난 쌍의 c0(epoch 4,
+  `R3_C0_DB`)로 고정한다.
+- **NEXT·FAULT 트리(수정 r1, 리뷰 H1·M1)**: c0는 fixture 트리다. core는 같은 트리 재적용을 no-op
+  (`changed=False`)으로 건너뛰므로, 업그레이드가 fixture를 실으면 정의를 다시 쓰지 않아 c0 시드 장비·태그가
+  남고 ⓐ가 실패한다(로컬 실측 — `fixtures/m4c-tree-db.json` `next_same_tree` = c0). 그래서 NEXT 번들
+  (업그레이드·재시도)은 **NEXT 트리**, FAULT 번들은 **FAULT 트리**를 싣는다 — fixture 사본에서 태그
+  `line1/temp_sp`(`release_pair.TREE_TAG`, ⓑ PATCH 대상과 겹치지 않음)의 description만 `… (r5)`·`… (r5f)`로
+  바꾼 것(`bundles.release_tree`, `run.py`가 run 번들 디렉터리 `trees/<release>`에 만들고 WSL 경로로 넘긴다).
+  `judge_tree`는 트리 기대값에 더해 c0 시드 retire(`seed_retired`)와 그 태그의 DB 정의 값(`definition`)을 본다 —
+  같은 epoch에서 늘 참인 항목이 되지 않게. crash·온라인 ②·ⓒ·ⓓ 번들은 fixture 경로 그대로다(트리를 판정하지
+  않거나 fixture 기준 판정).
+- **FAULT = 일반 롤백**: r4도 트리 release라 Updater 백업에 트리가 있고 롤백이 트리·정의까지 되돌린다 — 경보
+  없음, 메트릭 `updater_failed_manual 0`, 보고 `code` `E_HEALTH`. FAULT 트리(c0에는 드래프트가 없어 게이트
+  통과)를 실어서, 롤백 뒤 `GET /project` content_hash·DB 태그 정의 값이 fixture(c0)로 돌아왔는지
+  (`judge_fixture_tree`)를 본다. 전환기 경보 `E_DEFINITIONS_LEFT`·`judge_attempt(expect_alarm=…)`는 단위
+  시험이 계속 고정한다(r3 현장 경로).
+- **롤백 뒤 재시도**(M5 마감의 경보 해제 자리): 그 상태에서 정상 r5(NEXT 트리) → `succeeded`, 경보 없음,
+  트리·정의 값 = NEXT 트리(롤백된 fixture 위라 정의를 다시 쓴다).
+- **온라인 4개**(`online` 단계, 아래 절).
 
 ### M5 마감에서 바뀐 판정
 
@@ -79,15 +107,59 @@ BASE로 옮긴다).
 - probe가 `metrics`(`state/metrics/updater.prom`)와 `db`의 `project_files`·`device_ids`·`tag_paths`·
   `alarm_ids`·`tag_defs`·`alarm_defs`를 더 낸다. gen 배정은 `run.scenario_gens()`.
 
+## 온라인 단계 (M4 마감 ★D5)
+
+`crash` 뒤·`report` 앞. `c0`(BASE g1, 폐쇄망 상태)로 복원한 VM을 WSL의 중앙 c0에 붙여 온라인 경로를 실측한다.
+`report`의 외부 접속 판정이 이 구간까지 누적한다 — VM → `10.77.0.1`은 내부 전용 망이라 `ext_out_v4` 제외
+대상(`golden.OUT_RULES`의 `{cidr}`)이고 IP 직접 접속이라 DNS 질의가 없다(F6). 새 규칙을 더하지 않는다.
+
+1. **중앙**: `m2d/central.py up`(WSL, 저장소 사본에서) — `deploy/central` compose를 프로젝트
+   `pureiron-e2e-central`·release `c0`(이미지 config digest = `deploy/releases/central/c0.json`, 없으면 image
+   store `central/c0/*.tar`에서 적재)로 **새로** 띄운다(볼륨째 내리고 다시). 바인드·인증서 이름·SNI
+   `10.77.0.1`, HTTPS 28443, `PUREIRON_CONTROL_POLL_S=10`. `migrate up`(기동 때 자동 실행 안 함) → CLI로
+   admin·ci·viewer 토큰을 **파일로만** 발급(`~/pureiron-e2e-central/secrets`, 0700, 저장소·artifacts 밖) →
+   `up -d --wait` → 루트 CA 내보내기·SHA-256 지문 → 그 CA로 HTTPS `healthz` 200.
+2. **현장(VM)**: CA를 `/usr/local/share/ca-certificates/` + `update-ca-certificates`(D8, VM에서 지문을 다시
+   재서 중앙 값과 대조), `updater.env`에 `PUREIRON_CONTROL_API=https://10.77.0.1:28443/api/v1`·
+   `PUREIRON_POLL_INTERVAL_S=10`, VM `state/enrollment.json`을 호스트로 받아 `central.py register`(현장 token은
+   WSL 비밀 파일에만) → `central.py site-token`의 출력을 **ssh stdin으로만** `pureiron-site secret set
+   control_api_token`에 넘긴다(명령 줄·파일·결과·로그에 남기지 않는다) → Updater 재시작.
+3. 항목:
+   - ① `online: HTTPS heartbeat …` — `/fleet`(Caddy HTTPS, viewer 토큰) connection `online`, heartbeat 수위 > 0,
+     current = g1(BASE), CA 지문 일치, 등록 site_id. 결과의 `ca_fingerprint`·`registered`는 하네스가 만든 값끼리의
+     비교라 전송 손상 확인일 뿐이다 — VM이 사설 CA를 실제로 믿는지는 `connection_online`·`heartbeat_seq`(Updater가
+     HTTPS로 보낸 heartbeat)가 판정한다.
+   - ② `online: central-published r4 g2 …` — 하네스가 BASE g2(fixture 트리)를 만들어 ci 토큰으로 `PUT` → 201,
+     `/fleet` desired·max_published_gen = 2 → Updater가 polling으로 받아 적용 `succeeded`(기존 `judge_attempt`,
+     경보·메트릭 0). **gen 2인 이유**: 15분 실측의 fleet PR이 site-a gen 2 → 3이어야 check-gen의
+     `new == old + 1`·`new > max_published_gen`을 함께 만족한다.
+   - ③ `online: ApplyAttempt report …` — `/fleet` current = g2·BASE·v1(`source` online), last_attempt = g2
+     `succeeded`(`source` online).
+   - ④ `online: central web down …` — control-web(Caddy)만 `compose stop`(현장이 닿는 유일한 입구, control-api
+     직접 포트 없음) → `3 x poll + 15 s` 동안 현장 core ready·실행 이미지·core `StartedAt` 불변, Updater
+     active·재시작 없음·경보 없음·새 시도 없음 → control-api 컨테이너 안에서 본 `/fleet`(`central.py fleet
+     --direct`)이 `stale` → `compose start` 뒤 `last_seen`이 더 새로운 `online`.
+4. 판정 fixture는 실측이다(`tests/fixtures/m4c-fleet-rows.json` — 워커가 같은 `central.py`로 띄운 중앙에 VM
+   Updater와 같은 서명 heartbeat·보고를 보내 단계별로 남긴 `/fleet` 응답). 각 판정은 자기 단계 행에서 통과하고
+   다른 단계 행에서 실패한다(`test_online.py`).
+
+중앙은 단계가 끝나면 내린다. `--keep-central`이면 남긴다 — VM은 r4 g2·online 상태, 중앙 DB에 site-a 등록·g2
+게시가 있어 15분 실측(fleet PR gen 3 → publish → VM r4→r5)이 그대로 이어 쓴다. 남긴 중앙의 값:
+`central.py status`(URL·CA 파일·지문·토큰 파일 경로, 비밀값 없음 — `results.json` 온라인 ① `ca_sha256`와
+`state.json` `central`에도 있다). 정리: `run.py central-down` 또는 WSL `central.py down`(볼륨·비밀 디렉터리
+삭제).
+
 r3부터 core API에 사용자 세션 인증이 있다. 하네스(probe)가 읽는 HTTP 경로 `/api/v1/readyz`·`GET /api/v1/project`는
 무인증이라 그대로 쓴다(Updater의 편집 잠금은 Updater 토큰).
 
 ## 실행
 
 ```bash
-uv run python tests/e2e/m2d/run.py all             # prepare → vm → install → scenarios → crash → report
+uv run python tests/e2e/m2d/run.py all             # prepare → vm → install → scenarios → crash → online → report
+uv run python tests/e2e/m2d/run.py all --keep-central   # online의 중앙 c0를 남긴다(15분 실측이 이어 쓴다)
 uv run python tests/e2e/m2d/run.py crash           # 한 단계만(앞 단계 context: C:\PureIron_e2e\state.json)
 uv run python tests/e2e/m2d/run.py all --from scenarios
+uv run python tests/e2e/m2d/run.py central-down    # 남긴 중앙 c0 정리(볼륨·비밀 디렉터리 삭제)
 uv run python tests/e2e/m2d/run.py destroy         # VM·차분 디스크 삭제(golden 유지)
 ```
 
@@ -104,10 +176,11 @@ uv run python tests/e2e/m2d/run.py destroy         # VM·차분 디스크 삭제
 |---|---|
 | `prepare` | WSL 사본에서 FAULT(`r3f`: NEXT 이미지에 collector가 세션을 맺지 않는 파생 → `/readyz` 503. 로컬 NEXT 이미지 digest가 기록과 다르면 store tar를 다시 load, 파생 뒤 core·web digest == NEXT 기록 확인), release 기록 version·epoch·앱 envelope [epoch, epoch + 1] 대조, 설치 번들 **실빌드**(`fetch_debs.sh`·`build_updater.sh`, manifest release = BASE), g1(BASE) |
 | `vm` | golden(클라우드 이미지 → 64 GiB 동적 VHDX, 읽기 전용) 위 차분 디스크, seed ISO(cloud-init: 사용자·고정 IP·OS phone-home 끄기·nftables 감시 테이블) |
-| `install` | runbook 2단계(메타데이터만 전용 디렉터리에 추출 → `bootstrap-verify.sh` sha256·root 지문 대조) → `install.sh --offline-time-confirmed` → enroll → g1 → 서비스 시작. `/readyz` 200, overlay2 + classic store, 실행 이미지 `.Id` == BASE config digest. 압축 chunk 이력 시드, c0 기반(DB epoch == BASE epoch·BASE 산출물·NEXT 테이블 없음·압축 chunk·이력 행) 확인 후 체크포인트 `c0` |
-| `scenarios` | `c0`에서 거부(다른 현장 `E_SITE`·변조 `E_DIGEST`) exit 1, 같은 gen 재빌드는 no-op exit 0(R-7 멱등) — 모두 core `StartedAt`·실행 이미지 불변 / `c0`에서 BASE→NEXT(압축 DB 위 NEXT epoch migrate) 성공 + NEXT 스키마(epoch 5·`project_files`·0010~0012 테이블·인덱스·1m/1h CAGG와 실시간 집계·0008/0009 열·압축 chunk 유지) → 낮은 gen `E_GEN` 거부 → M5 확인 ⓐ~ⓓ / `c0`에서 FAULT → 5분 안에 BASE digest + `failed` + 전환기 경보 `E_DEFINITIONS_LEFT` → 정상 NEXT 트리 번들로 경보 해제 |
+| `install` | runbook 2단계(메타데이터만 전용 디렉터리에 추출 → `bootstrap-verify.sh` sha256·root 지문 대조) → `install.sh --offline-time-confirmed` → enroll → g1 → 서비스 시작. `/readyz` 200, overlay2 + classic store, 실행 이미지 `.Id` == BASE config digest. 압축 chunk 이력 시드, c0 기반(DB epoch == BASE epoch·BASE 산출물·압축 chunk·이력 행, NEXT가 epoch를 올리는 쌍이면 NEXT 테이블 없음) 확인 후 체크포인트 `c0` |
+| `scenarios` | `c0`에서 거부(다른 현장 `E_SITE`·변조 `E_DIGEST`) exit 1, 같은 gen 재빌드는 no-op exit 0(R-7 멱등) — 모두 core `StartedAt`·실행 이미지 불변 / `c0`에서 BASE→NEXT(압축 DB 위, r4→r5는 마이그레이션 없음) 성공 + NEXT 스키마(epoch 5·0010~0013 테이블·인덱스·1m/1h CAGG와 실시간 집계·0008/0009 열·압축 chunk 유지) → 낮은 gen `E_GEN` 거부 → M5 확인 ⓐ~ⓓ(ⓐ = NEXT 트리·정의 값·c0 시드 retire) / `c0`에서 FAULT(FAULT 트리) → 5분 안에 BASE digest + `failed`, 경보 없음, BASE 트리·정의 값 복원 → 정상 NEXT(NEXT 트리)로 재시도 `succeeded`(정의 값 = NEXT) |
 | `crash` | phase(`fetched`~`rolling_back`)마다 `systemctl kill -s KILL pureiron-updater`와 `Restart-VM -Type Reset -Force` 각 1회 → 10분 안에 수렴(결과·실행 이미지·편집 잠금 해제) |
-| `report` | nftables 외부 접속 카운터(`ext_out_v4`·`dns_out`·`ext_out_v6`·`ext_fwd`)의 **누적** 합 0 (`vm` 단계 기준값도 따로 0이어야 한다). 선언 장비 폴링 `field_fwd`는 판정에서 빼고 누적값만 증거로 남긴다. `results.json`의 `missing`은 35개 중 기록되지 않은 항목 |
+| `online` | `c0` 복원 → WSL 중앙 c0(`central.py up`) → VM CA 신뢰·`updater.env`·등록·현장 token·재시작 → ① HTTPS heartbeat `/fleet` online ② 중앙 게시 BASE g2 다운로드·적용 ③ 온라인 보고 current·last_attempt ④ control-web 중지 → 현장 정상·`/fleet` stale → 재기동 뒤 online. `--keep-central`이 아니면 중앙을 내린다 |
+| `report` | nftables 외부 접속 카운터(`ext_out_v4`·`dns_out`·`ext_out_v6`·`ext_fwd`)의 **누적** 합 0 (`vm` 단계 기준값도 따로 0이어야 한다). 선언 장비 폴링 `field_fwd`는 판정에서 빼고 누적값만 증거로 남긴다. online 구간 포함. `results.json`의 `missing`은 39개 중 기록되지 않은 항목 |
 
 거부 보고는 번들 sha256 12자로 찾는다(`reports/<started>-g<gen>-<sha12>.json`) — 커밋 전 거부는 서명을
 믿기 전이라 gen이 `unknown`이다. 낮은 gen 번들은 적용된 gen보다 **뒤에** 빌드한다 — 먼저 만든 번들은
@@ -158,4 +231,4 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
 
 ## 단위 테스트
 
-`tests/e2e/tests/` — phase 순서·상태 읽기·nft 규칙(현장 장비 `field_fwd` 규칙 위치·끝점 추출·외부 접속 판정)·seed ISO 왕복·PowerShell 인용·수렴 판정·release 쌍(BASE·NEXT 기록 대조 필수·crash 순서·항목 35개·c0/NEXT 스키마 집합 판정·전환기 경보·M5 확인 판정(트리·PATCH·absorb·재적용)·gen 배정)·store symlink 다시 연결·`ensure_image` 적재 조건·스테이징 진단 기록(`stage_for_window`). G1 `unit`에 포함된다.
+`tests/e2e/tests/` — phase 순서·상태 읽기·nft 규칙(현장 장비 `field_fwd` 규칙 위치·끝점 추출·외부 접속 판정)·seed ISO 왕복·PowerShell 인용·수렴 판정·release 쌍(BASE·NEXT 기록 대조 필수·crash 순서·항목 39개·단계 순서·c0/NEXT 스키마 집합 판정(같은 epoch 실측값, 지난 쌍 c0 교차)·전환기 경보·FAULT 트리 복원·M5 확인 판정(트리·PATCH·absorb·재적용)·gen 배정·NEXT/FAULT 트리 판정(로컬 실측 `fixtures/m4c-tree-db.json` — 같은 트리 재적용 no-op에서 ⓐ 실패, NEXT 트리에서 통과, 롤백·재시도 정의 값)·업그레이드/FAULT/재시도 배선(가짜 `apply`))·온라인 판정(`test_online.py` — 실측 `/fleet` 행으로 단계별 통과·교차 실패, CA 지문 표기, `central.py` 값·토큰을 출력에 내지 않음, 화면 비밀번호·현장 token이 명령 줄에 없고 stdin으로만 감 — `basic_auth_line`·`site_online`·`Vm.run(input=)`)·store symlink 다시 연결·`ensure_image` 적재 조건·스테이징 진단 기록(`stage_for_window`). G1 `unit`에 포함된다.

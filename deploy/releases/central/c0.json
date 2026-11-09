@@ -1,0 +1,21 @@
+{
+  "commit": "329ec2c0a3fecb18cd7f402e0085f3b3e4025036",
+  "images": {
+    "control-api": {
+      "config_digest": "sha256:e3f1ac3d6dd45a6c5697895bd93cee60f3ef99747aca9e7f6747de360403799e",
+      "tag": "pureiron/control-api:c0"
+    },
+    "control-web": {
+      "config_digest": "sha256:c2e17cf7006773d196c2e7bf2993999277dfc84383ad9a177e0fd482d1f3a04c",
+      "tag": "pureiron/control-web:c0"
+    }
+  },
+  "kind": "central",
+  "name": "c0",
+  "release": "c0",
+  "schema": {
+    "app_expected": 1,
+    "app_max_compatible": 2,
+    "epoch": 1
+  }
+}

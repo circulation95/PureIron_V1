@@ -52,12 +52,20 @@ class Vm:
         ]
 
     def run(
-        self, command: str, *, timeout_s: float = 600, check: bool = True
+        self,
+        command: str,
+        *,
+        timeout_s: float = 600,
+        check: bool = True,
+        input: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        """원격 셸 명령(`sudo`가 필요하면 명령에 직접 쓴다)."""
+        """원격 셸 명령(`sudo`가 필요하면 명령에 직접 쓴다). `input`은 원격 명령의 stdin으로만
+        넘긴다 — 비밀값(현장 token)을 명령 줄·파일에 남기지 않을 때 쓴다. 실패 메시지에는 명령과
+        stderr만 실린다."""
         result = subprocess.run(
             [_tool("ssh"), *self._opts(), f"{USER}@{self.ip}", command],
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL if input is None else None,
+            input=input,
             capture_output=True,
             text=True,
             encoding="utf-8",
