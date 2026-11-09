@@ -110,11 +110,26 @@ SWITCH = os.environ.get("PUREIRON_E2E_SWITCH", "pureiron-int")
 def vm_memory_gib(environ: Mapping[str, str]) -> int:
     """현장 VM 메모리(GiB) — `PUREIRON_E2E_VM_GIB`, 기본 3. M6-0 실측: 3 GiB에서 시나리오 16항목
     최저 여유 2.1 GB·OOM 0(`.omc/artifacts/m6/m6-0-report.md`). `hyperv.VmSpec` 기본값은 4
-    그대로다."""
-    return int(environ.get("PUREIRON_E2E_VM_GIB", "3"))
+    그대로다. import 시점이 아니라 `vm` 단계에서 읽으므로 잘못된 값이 `destroy`·`--help`를 막지
+    않는다."""
+    raw = environ.get("PUREIRON_E2E_VM_GIB", "3")
+    gib = int(raw) if raw.strip().isdecimal() else 0
+    if gib < 1:
+        raise E2EError(f"PUREIRON_E2E_VM_GIB must be an integer >= 1, got {raw!r}")
+    return gib
 
 
-VM_GIB = vm_memory_gib(os.environ)
+def site_vm_spec(site: Site, environ: Mapping[str, str]) -> hyperv.VmSpec:
+    """`vm` 단계가 만들 현장 VM — 이름·디스크·seed ISO는 `site`, 메모리는 `vm_memory_gib`."""
+    return hyperv.VmSpec(
+        site.vm_name,
+        site.vm_dir / "disk.vhdx",
+        site.vm_dir / "seed.iso",
+        SWITCH,
+        memory_gib=vm_memory_gib(environ),
+    )
+
+
 INSTALL_RELEASE = PAIR.releases[BASE]
 """설치 번들 manifest `release`(이미지는 싣지 않는다 — 실행 release는 g1 현장 번들이 정한다)."""
 WINDOW_LEAD_S = 150
@@ -253,14 +268,15 @@ def step_prepare(ctx: Context) -> None:
 
 
 def step_vm(ctx: Context) -> None:
-    vm_name, vm_dir = ctx.site.vm_name, ctx.site.vm_dir
+    spec = site_vm_spec(ctx.site, os.environ)
+    vm_name = spec.name
     if not hyperv.available():
         raise E2EError("Hyper-V not available for this user (run tests/e2e/infra/setup-host.ps1)")
     if not hyperv.switch_exists(SWITCH):
         raise E2EError(f"vSwitch {SWITCH} missing (run tests/e2e/infra/setup-host.ps1)")
     golden.build_golden(CLOUD_IMAGE, GOLDEN)
     pub = golden.ensure_ssh_key(paths.SSH_DIR).read_text(encoding="utf-8")
-    hyperv.remove(vm_name, vm_dir / "disk.vhdx")
+    hyperv.remove(vm_name, spec.disk)
     files = golden.seed_files(
         ctx.site.site_id,
         ctx.site.ip,
@@ -268,8 +284,7 @@ def step_vm(ctx: Context) -> None:
         golden.Network(),
         field=trees.field_endpoints(trees.FIXTURE),
     )
-    seed = golden.write_seed_iso(vm_dir / "seed.iso", files)
-    spec = hyperv.VmSpec(vm_name, vm_dir / "disk.vhdx", seed, SWITCH, memory_gib=VM_GIB)
+    golden.write_seed_iso(spec.seed_iso, files)
     hyperv.create_vm(spec, GOLDEN)
     buildhost.reclaim_host_memory()
     hyperv.start(vm_name)

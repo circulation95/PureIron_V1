@@ -1,6 +1,6 @@
 """e2e VM 재료(PD-24): golden VHDX, cloud-init NoCloud seed ISO, SSH 키.
 
-    uv run python tests/e2e/gates/harness/golden.py golden --image <cloudimg.img> \
+    uv run python tests/e2e/gates/harness/golden.py golden --image <cloudimg.img> \\
         --out <golden.vhdx>
 
 - golden: Ubuntu 24.04 클라우드 이미지(qcow2)를 WSL의 `qemu-img`로 64 GiB 동적 VHDX로 바꾸고

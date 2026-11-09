@@ -3,10 +3,10 @@
     uv run --no-sync python tests/e2e/gates/harness/bundles.py fault-release --work W
     uv run --no-sync python tests/e2e/gates/harness/bundles.py site --work W --out O --gen 2 \\
         --product 2026.10.3-fault1 --window-start 2026-10-05T00:00:00Z --window-end ...
-    uv run --no-sync python tests/e2e/gates/harness/bundles.py install --work W --out O \
+    uv run --no-sync python tests/e2e/gates/harness/bundles.py install --work W --out O \\
         --release 2026.10.2
     uv run --no-sync python tests/e2e/gates/harness/bundles.py m5-project --work W
-    uv run --no-sync python tests/e2e/gates/harness/bundles.py absorb --work W --draft D \
+    uv run --no-sync python tests/e2e/gates/harness/bundles.py absorb --work W --draft D \\
         --site-key E
 
 release 쌍(`BASE`·`NEXT`·`FAULT`)은 `release_pair.py`가 정한다 — 함수는 `ReleasePair`를 인자로
@@ -119,9 +119,14 @@ def relink(link: Path, target: Path) -> None:
     link.symlink_to(target, target_is_directory=target.is_dir())
 
 
+def fault_source(pair: ReleasePair) -> tuple[str, str, str]:
+    """FAULT 기록의 (이름, 달력 버전, 파생 원본) — FAULT는 BASE가 아니라 NEXT에서 파생한다."""
+    return pair.fault, pair.releases[pair.fault], pair.next
+
+
 def fault_release(work: Path, pair: ReleasePair) -> Path:
     """`pair.fault` 기록·image store(`pair.next` 파생)를 `work`에 만든다."""
-    fault_name, fault_version, fault_base = pair.fault, pair.releases[pair.fault], pair.next
+    fault_name, fault_version, fault_base = fault_source(pair)
     releases, store = work / "releases", work / "store"
     releases.mkdir(parents=True, exist_ok=True)
     store.mkdir(parents=True, exist_ok=True)

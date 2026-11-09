@@ -385,6 +385,7 @@ def test_release_pair_epoch_step_and_derived_fault() -> None:
         assert frozenset() == NEXT_TABLES == NEXT_INDEXES
     assert RELEASES[FAULT].startswith(RELEASES[NEXT] + "-")
     assert EPOCHS[FAULT] == EPOCHS[NEXT]
+    assert bundles.fault_source(PAIR) == (FAULT, RELEASES[FAULT], NEXT)
     assert RELEASES[BASE] == run.INSTALL_RELEASE
 
 

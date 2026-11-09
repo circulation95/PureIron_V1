@@ -12,9 +12,11 @@ from pathlib import Path
 import pytest
 import run
 from harness import buildhost, hyperv, judges, paths
-from harness.context import Context
+from harness.context import Context, E2EError
 from harness.release_pair import DEFAULT
 from harness.site import Site
+
+SCRIPT_HELP_TIMEOUT_S = 60
 
 M4_CLOSE_ITEMS = [
     "vm boot (cloud-init, internal-only switch)",
@@ -138,11 +140,7 @@ def two_sites(root: Path) -> tuple[Site, Site]:
     )
 
 
-def test_two_sites_keep_state_and_names_apart(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(paths, "E2E", tmp_path)
-    monkeypatch.setattr(paths, "BUNDLES", tmp_path / "bundles")
+def test_two_sites_keep_state_and_names_apart(tmp_path: Path) -> None:
     a, b = two_sites(tmp_path)
     ctx_a = Context(run_id="t", artifacts=str(tmp_path), site=a, pair=DEFAULT)
     ctx_b = Context(run_id="t", artifacts=str(tmp_path), site=b, pair=DEFAULT)
@@ -188,21 +186,45 @@ def test_run_keeps_one_site_a_on_the_old_state_file() -> None:
     assert run.SITE_A.vm_dir == paths.E2E / "vms" / "pureiron-site-a"
 
 
-def test_vm_memory_defaults_to_three_gib() -> None:
-    """이번 공용화의 유일한 의도된 동작 변경: 현장 VM 4 → 3 GiB(M6-0 실측). VmSpec 기본값은 4."""
-    assert run.vm_memory_gib({}) == 3
-    assert run.vm_memory_gib({"PUREIRON_E2E_VM_GIB": "4"}) == 4
-    spec = hyperv.VmSpec("x", Path("d.vhdx"), Path("s.iso"), "sw")
-    assert spec.memory_gib == 4
+def test_site_vm_gets_three_gib_unless_the_env_says_otherwise() -> None:
+    """이번 공용화의 유일한 의도된 동작 변경: 현장 VM 4 → 3 GiB(M6-0 실측). `vm` 단계가 만드는
+    VmSpec이 그 값을 받는다 — VmSpec 기본값은 4 그대로라 배선이 빠지면 4가 된다."""
+    spec = run.site_vm_spec(run.SITE_A, {})
+    assert spec.memory_gib == 3
+    assert run.site_vm_spec(run.SITE_A, {"PUREIRON_E2E_VM_GIB": "5"}).memory_gib == 5
+    vm_dir = paths.E2E / "vms" / "pureiron-site-a"
+    assert (spec.name, spec.disk, spec.seed_iso, spec.switch, spec.cpus) == (
+        "pureiron-site-a",
+        vm_dir / "disk.vhdx",
+        vm_dir / "seed.iso",
+        run.SWITCH,
+        2,
+    )
+    assert hyperv.VmSpec("x", Path("d.vhdx"), Path("s.iso"), "sw").memory_gib == 4
 
 
-@pytest.mark.parametrize("script", ["bundles.py", "central.py", "golden.py"])
+@pytest.mark.parametrize("raw", ["0", "-1", "3.5", "", "three"])
+def test_bad_vm_memory_fails_in_the_vm_step(raw: str) -> None:
+    """잘못된 `PUREIRON_E2E_VM_GIB`는 `vm` 단계에서 영어 E2EError로 멈춘다(import는 통과 —
+    `destroy`·`--help`를 막지 않는다)."""
+    with pytest.raises(E2EError, match="PUREIRON_E2E_VM_GIB must be an integer >= 1"):
+        run.site_vm_spec(run.SITE_A, {"PUREIRON_E2E_VM_GIB": raw})
+
+
+@pytest.mark.parametrize(
+    "script",
+    [buildhost.BUNDLES_PY, buildhost.CENTRAL_PY, "tests/e2e/gates/harness/golden.py"],
+)
 def test_wsl_scripts_run_as_files(script: str) -> None:
-    """WSL은 `python tests/e2e/gates/harness/<이름>.py`로 부른다(`buildhost`) — 패키지 밖에서
-    파일로 실행해도 import가 풀려야 한다(central.py가 bundles import의 경로 부수효과에 기대던
-    결함)."""
-    path = paths.REPO / "tests" / "e2e" / "gates" / "harness" / script
+    """WSL은 `buildhost.BUNDLES_PY`·`CENTRAL_PY`(저장소 기준 경로)를 파일로 부른다 — 그 경로에
+    파일이 있고, 패키지 밖에서 파일로 실행해도 import가 풀려야 한다(central.py가 bundles import의
+    경로 부수효과에 기대던 결함)."""
+    path = paths.REPO / script
     done = subprocess.run(
-        [sys.executable, str(path), "--help"], capture_output=True, text=True, check=False
+        [sys.executable, str(path), "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=SCRIPT_HELP_TIMEOUT_S,
     )
     assert done.returncode == 0, done.stderr[-800:]
