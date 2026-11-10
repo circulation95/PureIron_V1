@@ -12,16 +12,24 @@
   카운터에 잡히게 한다(경로가 없으면 패킷이 생기지 않아 0이 당연해진다). 선언된 현장 장비
   끝점(`field`)으로의 전달은 `field_fwd`로 따로 센다. golden은 프로젝트 트리를 모르므로 끝점은
   호출자가 넘긴다.
+- seed의 `dummy`(G2, 기본 꺼짐): VM 안에 가짜 장비 주소(fixture 장비 `10.0.0.5`)를 dummy
+  인터페이스로 붙인다(systemd-networkd, 재부팅 뒤에도 남는다). 시뮬레이터(`site.start_simulator`,
+  host network)가 그 주소의 modbus 포트에서 답한다. collector(compose bridge)가 그 주소로 보내는
+  패킷은 VM 자신의 주소라 forward가 아니라 input으로 들어온다 — `ext_out_v4`(output)·`ext_fwd`·
+  `field_fwd`(forward, eth0) 어느 카운터에도 잡히지 않는다. 시뮬레이터의 응답은 output으로 나가지만
+  목적지가 docker bridge(`172.16.0.0/12`)라 `ext_out_v4` 제외 대상이다.
 """
 
 from __future__ import annotations
 
 import argparse
 import io
+import ipaddress
 import shutil
 import stat
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -30,6 +38,36 @@ import pycdlib
 GOLDEN_SIZE_GIB = 64
 WSL_DISTRO = "Ubuntu"
 QEMU_IMG = "$HOME/m2d-tools/qemu-img"
+
+
+WSL_STARTED = "__pureiron_e2e_wsl_started__"
+"""`wsl()`이 스크립트 앞에서 stderr로 내는 표지 — 이것이 보이면 wsl.exe가 bash를 띄운 것이다."""
+WSL_INFRA_EXIT = 75
+"""WSL 스크립트가 "실행 환경 탓"(Docker 무응답·BASE image store 없음·git 사본 실패)으로 멈출 때 내는
+종료 코드(EX_TEMPFAIL, `bundles.INFRA_EXIT`와 같다)."""
+WSL_SERVICE_ERROR = "Error code: Wsl/"
+"""wsl.exe 자신의 오류 표지(예: `Wsl/Service/CreateInstance/.../0x8007274c`)."""
+WSL_TERMINATED = "instance has terminated"
+"""wsl.exe가 WSL VM이 도중에 죽었을 때 내는 문구(표지 뒤에도 나온다 — 리뷰 r2 L1)."""
+BASH_MAX_EXIT = 255
+"""bash(와 그 안의 스크립트)가 낼 수 있는 가장 큰 종료 코드 — 이보다 크거나 음수면 wsl.exe 자신의
+코드다(예: 4294967295 = 0xFFFFFFFF)."""
+
+
+class WslError(RuntimeError):
+    """wsl.exe **호출 자체**의 실패(`infra`): bash가 뜨지 않았거나, wsl.exe가 자기 오류를 냈거나,
+    스크립트가 `WSL_INFRA_EXIT`로 실행 환경 탓을 알렸다. `RuntimeError`를 잡던 호출자는 그대로
+    잡는다."""
+
+
+class WslScriptError(RuntimeError):
+    """WSL 안 스크립트가 0 아닌 코드로 끝났다(`product` — 호출된 빌드·번들 스크립트의 실패).
+    `WslError`의 하위 클래스가 아니다(분류가 갈린다). `RuntimeError`를 잡던 호출자는 그대로
+    잡는다."""
+
+    def __init__(self, message: str, returncode: int) -> None:
+        super().__init__(message)
+        self.returncode = returncode
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,9 +220,34 @@ def wsl_path(path: Path) -> str:
     return str(PurePosixPath("/mnt", drive, *resolved.parts[1:]))
 
 
-def wsl(script: str, *, timeout_s: float = 1800) -> str:
-    result = subprocess.run(
-        ["wsl", "-d", WSL_DISTRO, "--exec", "bash", "-c", script],
+def wsl_failure(returncode: int, stderr: str) -> RuntimeError | None:
+    """`wsl()` 결과의 실패 종류(성공이면 None). 표지가 없거나(bash가 뜨지 않음) wsl.exe 오류
+    표지·"instance has terminated"가 있거나, 종료 코드가 bash 범위(0~255) 밖이거나(wsl.exe 자신의
+    코드 — 스크립트 도중 WSL VM이 죽음), `WSL_INFRA_EXIT`면 `WslError`, 그 밖의 0 아닌 코드는
+    `WslScriptError`다. wsl.exe 자신의 메시지는 UTF-16일 수 있어 NUL을 지우고 본다."""
+    if returncode == 0:
+        return None
+    plain = stderr.replace("\x00", "")
+    started = WSL_STARTED in plain
+    text = plain.replace(WSL_STARTED + "\n", "").replace(WSL_STARTED, "").strip()
+    message = f"wsl failed ({returncode}): {text}"
+    wsl_exe = WSL_SERVICE_ERROR in plain or WSL_TERMINATED in plain
+    outside_bash = returncode < 0 or returncode > BASH_MAX_EXIT
+    if not started or wsl_exe or outside_bash or returncode == WSL_INFRA_EXIT:
+        return WslError(message)
+    return WslScriptError(f"wsl script failed ({returncode}): {text}", returncode)
+
+
+def wsl(
+    script: str,
+    *,
+    timeout_s: float = 1800,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> str:
+    """WSL bash로 `script`를 돌리고 stdout을 돌려준다. 실패 종류는 `wsl_failure`, 시간 초과는
+    `subprocess.TimeoutExpired`(그대로 전파). `runner`는 단위 시험이 바꿔 끼운다."""
+    result = runner(
+        ["wsl", "-d", WSL_DISTRO, "--exec", "bash", "-c", f"echo {WSL_STARTED} >&2; {script}"],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -192,8 +255,9 @@ def wsl(script: str, *, timeout_s: float = 1800) -> str:
         timeout=timeout_s,
         check=False,
     )
-    if result.returncode != 0:
-        raise RuntimeError(f"wsl failed ({result.returncode}): {result.stderr.strip()}")
+    failure = wsl_failure(result.returncode, result.stderr or "")
+    if failure is not None:
+        raise failure
     return result.stdout
 
 
@@ -204,12 +268,16 @@ def build_golden(image: Path, out: Path, size_gib: int = GOLDEN_SIZE_GIB) -> Pat
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp_out = out.with_suffix(".tmp.vhdx")
     tmp_out.unlink(missing_ok=True)
-    wsl(
-        "set -euo pipefail; work=$(mktemp -d); trap 'rm -rf \"$work\"' EXIT; "
-        f"{QEMU_IMG} convert -O raw '{wsl_path(image)}' \"$work/disk.raw\"; "
-        f'{QEMU_IMG} resize -f raw "$work/disk.raw" {size_gib}G; '
-        f"{QEMU_IMG} convert -O vhdx -o subformat=dynamic \"$work/disk.raw\" '{wsl_path(tmp_out)}'"
-    )
+    try:
+        wsl(
+            "set -euo pipefail; work=$(mktemp -d); trap 'rm -rf \"$work\"' EXIT; "
+            f"{QEMU_IMG} convert -O raw '{wsl_path(image)}' \"$work/disk.raw\"; "
+            f'{QEMU_IMG} resize -f raw "$work/disk.raw" {size_gib}G; '
+            f'{QEMU_IMG} convert -O vhdx -o subformat=dynamic "$work/disk.raw" '
+            f"'{wsl_path(tmp_out)}'"
+        )
+    except WslScriptError as exc:  # 클라우드 이미지 변환은 제품 코드가 아니다 — 실행 환경
+        raise WslError(f"golden image build failed: {exc}") from exc
     tmp_out.replace(out)
     out.chmod(stat.S_IREAD)  # golden은 읽기 전용(차분 디스크의 부모)
     return out
@@ -230,11 +298,45 @@ def ensure_ssh_key(directory: Path) -> Path:
     return key.with_suffix(".pub")
 
 
+DUMMY_FILES = """\
+  - path: /etc/systemd/network/10-e2e-dummy.netdev
+    permissions: "0644"
+    content: |
+      [NetDev]
+      Name={name}
+      Kind=dummy
+  - path: /etc/systemd/network/10-e2e-dummy.network
+    permissions: "0644"
+    content: |
+      [Match]
+      Name={name}
+      [Network]
+      Address={address}/32
+"""
+"""seed `write_files`에 더하는 dummy 인터페이스(systemd-networkd — 재부팅 뒤에도 남는다)."""
+DUMMY_IFACE = "e2edummy0"
+DUMMY_RUNCMD = "  - [networkctl, reload]\n"
+"""write_files는 networkd가 뜬 뒤에 쓰이므로 첫 부팅에서는 다시 읽게 한다(다음 부팅부터는 기동 때
+읽는다)."""
+
+
 def seed_files(
-    hostname: str, ip: str, ssh_pub: str, net: Network, field: tuple[Endpoint, ...] = ()
+    hostname: str,
+    ip: str,
+    ssh_pub: str,
+    net: Network,
+    field: tuple[Endpoint, ...] = (),
+    *,
+    dummy: str | None = None,
 ) -> dict[str, bytes]:
+    """`dummy`(IPv4 주소)를 주면 VM 안에 그 주소의 dummy 인터페이스를 둔다(G2 시뮬레이터). 기본은
+    없음 — M2d `run.py`의 seed는 바이트까지 그대로다."""
     nft = "".join(f"      {line}\n" for line in nft_audit(net.cidr, field).splitlines())
     user_data = USER_DATA.format(hostname=hostname, ssh_pub=ssh_pub.strip(), nft=nft.rstrip("\n"))
+    if dummy is not None:
+        address = str(ipaddress.IPv4Address(dummy))
+        files = DUMMY_FILES.format(name=DUMMY_IFACE, address=address)
+        user_data = user_data.replace("runcmd:\n", files + "runcmd:\n" + DUMMY_RUNCMD, 1)
     network = NETWORK_CONFIG.format(ip=ip, prefix=net.prefix, host_ip=net.host_ip)
     meta = f"instance-id: {hostname}\nlocal-hostname: {hostname}\n"
     return {

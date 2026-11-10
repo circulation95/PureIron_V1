@@ -834,13 +834,13 @@ def wiring_ctx(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Context:
 
 
 def test_upgrade_carries_the_next_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """H1 배선: 업그레이드 번들은 NEXT 트리(이 run의 `trees/r5`)를 싣는다 — 빠지면(fixture) #10이
-    VM에서 c0 DB를 본다."""
+    """H1 배선: 업그레이드 번들은 NEXT 트리(이 run·현장의 `site-a/trees/r5`)를 싣는다 — 빠지면
+    (fixture) #10이 VM에서 c0 DB를 본다."""
     ctx = wiring_ctx(tmp_path, monkeypatch)
     fake = FakeApply({"db": {**NEXT_DB, **TREE_STAGES["next_tree"]}})
     run.upgrade_next(ctx, 2, apply=fake)
     call = fake.calls[run.ITEM_UPGRADE]
-    tree = tmp_path / "bundles" / "t" / "trees" / NEXT
+    tree = tmp_path / "bundles" / "t" / "site-a" / "trees" / NEXT
     assert call["project_dir"] == golden.wsl_path(tree)
     assert (call["release"], call["expect"], call["prev"]) == (NEXT, "succeeded", BASE)
     assert trees.tree_expect(tree, PAIR).tree_tag_description == TREE_DESCRIPTIONS[NEXT]
@@ -855,7 +855,7 @@ def test_fault_and_retry_wiring(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     fake = FakeApply()
     gens = run.scenario_gens(2)
     run.fault_and_retry(ctx, gens, apply=fake)
-    tree_dir = tmp_path / "bundles" / "t" / "trees"
+    tree_dir = tmp_path / "bundles" / "t" / "site-a" / "trees"
 
     fault = fake.calls[run.ITEM_FAULT]
     assert (fault["gen"], fault["release"], fault["expect"]) == (gens["fault"], FAULT, "failed")

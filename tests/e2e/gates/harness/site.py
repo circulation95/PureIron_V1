@@ -34,7 +34,7 @@ from harness.judges import (
     metric,
     updater_state,
 )
-from harness.vm import Vm, VmError
+from harness.vm import REMOTE_ERRORS, Vm
 
 REMOTE = "/home/pureiron/e2e"
 SITE_SCRIPTS = ("crash_at.py", "probe.py", "site_api.py")
@@ -126,19 +126,75 @@ def seed_history(host: Vm) -> None:
     )
 
 
-def wait_ready(host: Vm, timeout_s: float) -> dict[str, object]:
-    deadline = time.monotonic() + timeout_s
+Probe = Callable[[Vm], dict[str, object]]
+
+
+def wait_ready(
+    host: Vm,
+    timeout_s: float,
+    *,
+    read: Probe = probe,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict[str, object]:
+    """ready가 될 때까지 probe를 다시 묻는다. probe 실패(ssh 255 `VmError`, 원격 명령 실패
+    `RemoteCommandError`, 시간 초과)는 부팅 중의 일시 실패로 치고 다시 묻는다."""
+    deadline = clock() + timeout_s
     snap: dict[str, object] = {}
-    while time.monotonic() < deadline:
+    while clock() < deadline:
         try:
-            snap = probe(host)
-        except (VmError, subprocess.TimeoutExpired):
-            time.sleep(5)
+            snap = read(host)
+        except (*REMOTE_ERRORS, subprocess.TimeoutExpired):
+            sleep(5)
             continue
         if judges.ready(snap):
             return snap
-        time.sleep(5)
+        sleep(5)
     return snap
+
+
+def install_runbook(
+    host: Vm, install: Path, g1: Path, *, site_id: str, runbook_fpr: str, runbook_bootstrap: str
+) -> float:
+    """설치 번들 runbook(2단계 메타데이터 추출·지문 대조 → `install.sh --offline-time-confirmed`)
+    → enroll → g1 apply → 서비스 시작. 걸린 초. 판정은 호출자가 한다."""
+    for bundle in (install, g1):
+        host.put(bundle, f"{INCOMING}/{bundle.name}")
+    remote_install = f"{INCOMING}/{install.name}"
+    meta = "manifest.json manifest.sig release-cert.json release-cert.sig keys/root.pub "
+    meta += "keys/root.pem bootstrap/bootstrap-verify.sh"
+    started = time.monotonic()
+    # runbook 2단계는 root 셸에서 친다(/root는 700, bootstrap-verify ⓪은 추출물이
+    # 실행 사용자 소유인지 본다).
+    out = host.run(
+        as_root(
+            "install -d -m 700 /root/pib-meta && cd /root/pib-meta && "
+            "tar --force-local --no-same-owner --no-same-permissions "
+            f"-xf {remote_install} {meta} && sha256sum bootstrap/bootstrap-verify.sh"
+        )
+    ).stdout
+    if not out.startswith(runbook_bootstrap):
+        raise E2EError(f"bootstrap-verify.sh sha256 mismatch: {out.strip()}")
+    host.run(
+        as_root(
+            "cd /root/pib-meta && bash bootstrap/bootstrap-verify.sh "
+            f"--root-fpr {runbook_fpr} --bundle {remote_install} "
+            "--dest /root/pureiron-install"
+        ),
+        timeout_s=900,
+    )
+    host.run(
+        f"sudo bash /root/pureiron-install/install/install.sh --bundle {remote_install} "
+        "--offline-time-confirmed",
+        timeout_s=1800,
+    )
+    host.run(
+        "echo PUREIRON_POLL_INTERVAL_S=10 | sudo tee -a /etc/pureiron/updater.env >/dev/null && "
+        f"sudo pureiron-site enroll --site {site_id}"
+    )
+    host.run(f"sudo pureiron-site apply {INCOMING}/{g1.name}", timeout_s=1800)
+    host.run("sudo systemctl start pureiron-updater")
+    return time.monotonic() - started
 
 
 # ---------------------------------------------------------------- 외부 접속 카운터
@@ -206,22 +262,31 @@ def stage(host: Vm, pib: Path, *, check: bool = True) -> subprocess.CompletedPro
     return result
 
 
-def converge(host: Vm, gen: int, timeout_s: float = CONVERGE_S) -> tuple[dict[str, object], float]:
-    """시도가 끝나(attempt 없음) `last_attempted_gen == gen`이고 ready가 될 때까지."""
-    started = time.monotonic()
+def converge(
+    host: Vm,
+    gen: int,
+    timeout_s: float = CONVERGE_S,
+    *,
+    read: Probe = probe,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> tuple[dict[str, object], float]:
+    """시도가 끝나(attempt 없음) `last_attempted_gen == gen`이고 ready가 될 때까지. probe 실패
+    (`VmError`·`RemoteCommandError`·시간 초과)는 재시작·롤백 중의 일시 실패로 치고 다시 묻는다."""
+    started = clock()
     snap: dict[str, object] = {}
-    while time.monotonic() - started < timeout_s:
+    while clock() - started < timeout_s:
         try:
-            snap = probe(host)
-        except (VmError, subprocess.TimeoutExpired):
-            time.sleep(5)
+            snap = read(host)
+        except (*REMOTE_ERRORS, subprocess.TimeoutExpired):
+            sleep(5)
             continue
         state = updater_state(snap)
         done = state.get("attempt") is None and state.get("last_attempted_gen") == gen
         if done and state.get("last_result") in ("succeeded", "failed") and judges.ready(snap):
-            return snap, time.monotonic() - started
-        time.sleep(5)
-    return snap, time.monotonic() - started
+            return snap, clock() - started
+        sleep(5)
+    return snap, clock() - started
 
 
 def report_for(host: Vm, pib: Path) -> dict[str, object]:
@@ -407,7 +472,7 @@ def site_patch(host: Vm) -> tuple[dict[str, object], dict[str, object]]:
             f"--tag-body {shlex.quote(json.dumps(PATCH_TAG_BODY))} --alarm {PATCH_ALARM} "
             f"--alarm-body {shlex.quote(json.dumps(PATCH_ALARM_BODY))}"
         )
-    except (VmError, ValueError) as exc:
+    except (*REMOTE_ERRORS, ValueError) as exc:
         return {"error": str(exc)[-TAIL_CHARS:]}, admin
     return out, admin
 
@@ -432,7 +497,7 @@ def site_online(ctx: Context, host: Vm, ca: Path, ca_sha256: str) -> dict[str, o
             f"install -o pureiron -m 0644 {STATE_DIR}/enrollment.json {ENROLLMENT_REMOTE}"
         )
     )
-    enrollment = paths.BUNDLES / ctx.run_id / "online" / "enrollment.json"
+    enrollment = ctx.work / "online" / "enrollment.json"
     host.get(ENROLLMENT_REMOTE, enrollment)
     registered = buildhost.central("register", "--enrollment", golden.wsl_path(enrollment))
     token = buildhost.site_token(ctx.site.site_id)
@@ -446,3 +511,90 @@ def site_online(ctx: Context, host: Vm, ca: Path, ca_sha256: str) -> dict[str, o
         "registered": registered,
         "updater_env": env.strip().splitlines(),
     }
+
+
+# ---------------------------------------------------------------- G2 시뮬레이터·실시간 값(M6-2)
+
+SIM_CONTAINER = "e2e-simulator"
+"""VM 안 modbus 시뮬레이터 컨테이너 — 제품 compose 프로젝트(`pureiron`) 밖이라 probe·Updater가
+보지 않는다(E3)."""
+SIM_PORT = 502
+SIM_REMOTE = f"{REMOTE}/simulator.tar"
+SIM_START_TIMEOUT_S = 600
+E2E_VIEWER = "e2e-viewer"
+VIEWER_PASSWORD = f"{REMOTE}/e2e-viewer.pw"
+"""VM에서 만든 e2e viewer 비밀번호(root 0600, 호스트로 나가지 않는다)."""
+LIVE_POLL_S = 10
+
+
+def start_simulator(host: Vm, tar: Path, image: str) -> None:
+    """시뮬레이터 이미지 tar를 VM에 적재하고 host network로 띄운다(`--restart unless-stopped` —
+    재부팅·체크포인트 복원 뒤에도 살아난다). 포트 502(< 1024)를 열어야 해서 root로 돈다(이미지 기본
+    사용자 10001은 host network에서 그 포트를 열 수 없다). 장비 주소는 seed의 dummy 인터페이스
+    (`golden.seed_files(dummy=…)`)가 VM에 붙인다."""
+    host.put(tar, SIM_REMOTE)
+    host.run(
+        as_root(
+            f"docker load -q -i {SIM_REMOTE} && rm -f {SIM_REMOTE} && "
+            f"{{ docker rm -f {SIM_CONTAINER} >/dev/null 2>&1 || true; }} && "
+            f"docker run -d --name {SIM_CONTAINER} --restart unless-stopped --network host "
+            f"--user 0:0 -e SIM_PORT={SIM_PORT} {image}"
+        ),
+        timeout_s=SIM_START_TIMEOUT_S,
+    )
+
+
+def add_viewer(host: Vm) -> dict[str, object]:
+    """e2e viewer(태그·장비 읽기 전용 계정, VM에서 만든 비밀번호)를 만든다. 결과 기록용 dict."""
+    created = host.run(
+        as_root(
+            "umask 077 && python3 -c 'import secrets; print(secrets.token_urlsafe(24))' "
+            f"> {VIEWER_PASSWORD} && cid={compose_core()} && "
+            f'docker exec -i "$cid" pureiron-core users add {E2E_VIEWER} --role viewer --json '
+            f"< {VIEWER_PASSWORD}"
+        ),
+        check=False,
+    )
+    return {
+        "rc": created.returncode,
+        "stdout": created.stdout[-TAIL_CHARS:],
+        "stderr": created.stderr[-TAIL_CHARS:],
+    }
+
+
+def live(host: Vm) -> dict[str, object]:
+    """web 경유 viewer 로그인 → `GET /tags`·`GET /devices`(`site/site_api.py live`)."""
+    return host.json(
+        f"sudo python3 {REMOTE}/site_api.py live --username {E2E_VIEWER} "
+        f"--password-file {VIEWER_PASSWORD}"
+    )
+
+
+def wait_live(
+    read: Callable[[], dict[str, object]],
+    judge: Callable[[dict[str, object]], dict[str, bool]],
+    timeout_s: float,
+    *,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+    started: float | None = None,
+) -> tuple[dict[str, object], dict[str, bool], float]:
+    """`judge`가 모두 참이 될 때까지 `read`(보통 `live(host)`)를 다시 읽는다. (마지막 응답, 판정,
+    `started`부터 걸린 초) — 시간이 다 되면 마지막 판정 그대로다. 읽기 실패(ssh·원격 명령·JSON)는
+    빈 응답으로 친다. `started`(같은 `clock` 기준 시각, 기본은 지금)를 주면 시간 제한을 그때부터
+    잰다(G2-1: c0부터 5분). 시간이 이미 지났어도 한 번은 읽는다."""
+    started = clock() if started is None else started
+    reply: dict[str, object] = {}
+    checks = judge(reply)
+    tried = False
+    while clock() - started < timeout_s or not tried:
+        tried = True
+        try:
+            reply = read()
+        except (*REMOTE_ERRORS, ValueError, subprocess.TimeoutExpired):
+            reply = {}
+        checks = judge(reply)
+        if all(checks.values()):
+            break
+        sleep(LIVE_POLL_S)
+    return reply, checks, round(clock() - started, 1)

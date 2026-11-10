@@ -1,4 +1,10 @@
-"""실행 상태(`Context`) — 결과 기록과 상태 파일 저장. 한 현장(`Site`)에 하나다."""
+"""실행 상태(`Context`) — 결과 기록과 상태 파일 저장. 한 현장(`Site`)에 하나다.
+
+예외는 둘로 가른다(G2 실패 분류 E8): `InfraError`는 실행 환경(preflight, ssh·WSL·Hyper-V 호출, 시간
+여유 부족) 탓이라 nightly가 1회 다시 돌리고, `E2EError`·단언 실패는 제품 결함(`product`)이라 다시
+돌리지 않는다. `InfraError`는 `E2EError`의 하위 클래스가 아니다 — `except E2EError`가 인프라 실패를
+제품 실패로 삼키지 않게.
+"""
 
 from __future__ import annotations
 
@@ -12,12 +18,18 @@ if TYPE_CHECKING:  # site.py가 이 모듈을 import한다
     from harness.release_pair import ReleasePair
     from harness.site import Site
 
+from harness import paths
+
 TAIL_CHARS = 800
 """결과에 남기는 출력 끝부분 길이."""
 
 
 class E2EError(RuntimeError):
     pass
+
+
+class InfraError(RuntimeError):
+    """실행 환경 실패(`infra`) — 제품 판정과 무관하다. 원인 예외는 `from`으로 남긴다."""
 
 
 def log(message: str) -> None:
@@ -36,6 +48,7 @@ class Context:
     digests: dict[str, dict[str, str]] = field(default_factory=dict[str, dict[str, str]])
     next_gen: int = 2
     current: str = ""
+    """지금 실행 중인 release. 비워 두면 `pair.base`(설치 g1)다."""
     results: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
     bundles: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
     nft_before: dict[str, int] = field(default_factory=dict[str, int])
@@ -53,6 +66,10 @@ class Context:
     """online 단계의 중앙 상태 요약(`central.py status` — 비밀값 없음: URL·CA 지문·토큰 경로)."""
     site: Site = field(kw_only=True)
     pair: ReleasePair = field(kw_only=True)
+
+    def __post_init__(self) -> None:
+        if not self.current:
+            self.current = self.pair.base
 
     def state(self) -> dict[str, object]:
         """상태 파일 내용 — `site`·`pair`를 뺀 필드, 선언 순서대로."""
@@ -75,12 +92,22 @@ class Context:
     def out(self) -> Path:
         return Path(self.artifacts)
 
+    @property
+    def work(self) -> Path:
+        """이 run·이 현장의 번들 작업 디렉터리(`<BUNDLES>/<run_id>/<site_id>`) — 현장 둘이 같은
+        `run_id`를 써도 번들·트리·m5·online 파일이 겹치지 않는다(M6-1 리뷰 L4)."""
+        return paths.BUNDLES / self.run_id / self.site.site_id
+
+    def log(self, message: str) -> None:
+        log(f"[{self.site.site_id}] {message}")
+
     def record(self, name: str, ok: bool, **detail: object) -> None:
         entry: dict[str, object] = {"name": name, "ok": ok, **detail}
         # 단계를 다시 돌리면(`run.py <step>`) 같은 항목은 마지막 결과로 바꾼다.
         self.results = [r for r in self.results if r["name"] != name] + [entry]
         self.save()
         print(
-            f"[{'PASS' if ok else 'FAIL'}] {name} {json.dumps(detail, ensure_ascii=False)}",
+            f"[{self.site.site_id}] [{'PASS' if ok else 'FAIL'}] {name} "
+            f"{json.dumps(detail, ensure_ascii=False)}",
             flush=True,
         )

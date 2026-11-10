@@ -9,7 +9,8 @@
 | 위치 | 내용 |
 |---|---|
 | `m2d/run.py` | M2d 시나리오 진입점(단계 순서·CLI·결과 항목 39개). 현장 `SITE_A`(site-a, 10.77.0.10) 하나 |
-| `gates/harness/` | 공용 하네스(M6-1, G2 nightly와 같이 쓴다): `release_pair`(`ReleasePair`·지금 쌍 `DEFAULT`), `site`(`Site`·원격 조작), `judges`(순수 판정), `trees`(트리 기대값), `context`(`Context`·상태 파일), `buildhost`(WSL 호출), `hyperv`·`golden`·`vm`, WSL 스크립트 `bundles.py`·`central.py` |
+| `gates/harness/` | 공용 하네스(M6-1, G2 nightly와 같이 쓴다): `release_pair`(`ReleasePair`·지금 쌍 `DEFAULT`·nightly 쌍 `nightly()`), `sites`(`SITE_A`·`SITE_B`·VM 준비), `site`(`Site`·원격 조작·시뮬레이터), `judges`(순수 판정), `trees`(트리 기대값·G2 100태그 트리), `context`(`Context`·상태 파일·`InfraError`), `buildhost`(WSL 호출·HEAD 빌드), `hyperv`·`golden`·`vm`, WSL 스크립트 `bundles.py`·`central.py` |
+| `gates/` (G2) | `nightly.py`(실행기), `pytest.ini`·`conftest.py`(G2 pytest 틀), `test_g2_install.py`(G2-1), `quarantine.yaml`, 하네스 `g2`(세션)·`failures`(분류)·`report`(junit·이력·status)·`flake`·`preflight`·`github` |
 | `site/` | VM에 복사하는 스크립트(`probe.py`·`crash_at.py`·`site_api.py`) |
 | `infra/setup-host.ps1` | 1회 호스트 준비 |
 | `tests/` | 단위 시험(G1 `unit`) |
@@ -215,6 +216,11 @@ false**(`last_result`는 `failed_manual`도 `failed`로 접는다) · `applied_g
 (reset이면 boot id 변경, 서비스 kill이면 `NRestarts` 증가) · service 대상이면 CLI 스테이징이 창 열림 전에 끝남
 (아니면 CLI가 phase를 직접 실행해 쉬는 서비스를 죽이는 거짓 통과가 된다).
 
+창 여유 flake(E10, M6-2a): CLI 스테이징이 창이 열린 뒤에 끝났지만(`margin_s <= 0`, `rc` 0) 그 밖의
+판정이 모두 참이면 그 건은 `infra`로 보고 1회 다시 한다(`judges.judge_window_flake`) — FAULT가 아니면
+crash 없이 `prev` release로 먼저 되돌리고(gen 하나), from_c0 건은 c0 복원 뒤 같은 gen으로. 첫 시도는
+결과의 `e10.first`에 남고 항목 이름·개수는 그대로다. 재시도도 같으면 실패로 남는다.
+
 crash 결과의 `stage`는 스테이징 진단 기록이다: `target`, 쓴 ssh 클라이언트 경로(`ssh`), 마지막 `apply`의 `rc`,
 시도 횟수 `tries`(exit 2 = 서비스 tick과 잠금 경쟁이면 2 s 뒤 다시, 최대 30회), 창까지 남은 초 `margin_s`(음수 = 창 뒤),
 시도별 `attempts`(`rc`·걸린 초 `s`·그때 감시자 ssh가 살아 있었는지 `watcher_alive`). `staged_before_window`가
@@ -240,6 +246,74 @@ seed에 넘긴다)로 가는 eth0 전달은 `ext_fwd` **앞** 규칙이 세고 `
 `plc-1` = 10.0.0.5:502)부터 생긴다(VM 1차 실측 `ext_fwd` 216). 정확히 선언된 host:port TCP만 빠지고 그 밖의
 eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 않는다.
 
+## G2 nightly (M6-2a)
+
+밤마다 PC가 master HEAD를 빌드해 현장 VM 2대에 설치하고 결과를 GitHub에 남긴다. 2a는 시나리오 G2-1
+하나와 수동 실행(`.github/workflows/nightly.yml`, `workflow_dispatch`)만 있다 — cron은 M6-2b.
+
+- 현장: site-a(10.77.0.10) = **BASE**(git 태그가 있는 최신 `deploy/releases/r*.json`), site-b
+  (10.77.0.11) = **NEXT**(HEAD 빌드 `n<sha7>`, 버전 `<BASE 다음 번호>-nightly.<sha7>`). NEXT는 WSL
+  `bundles.py nightly-release`가 HEAD git 사본에서 `build_images.sh`로 빌드하고 `LABEL
+  pureiron.nightly=<sha>` 파생을 얹어 WSL nightly 작업 디렉터리(`~/m2d-e2e/work-nightly/{releases,store}`
+  — `run.py`의 `work/`와 나눈다, BASE image store는 같은 실제 store를 가리킨다)에만 기록한다.
+  나누기 전에 `nightly-release`를 `work/`에서 돌린 적이 있다면 `~/m2d-e2e/work/store/n*`와 그 이미지
+  태그(`pureiron/*:n*`)는 이제 어느 정리도 보지 않는다 — 한 번 손으로 지운다(`rm -rf
+  ~/m2d-e2e/work/store/n*`, `docker image ls 'pureiron/*' | grep ' n'`).
+- 장비: 각 VM 안에 dummy 인터페이스 `10.0.0.5`(fixture 장비 주소)와 시뮬레이터 컨테이너
+  (`e2e-simulator`, host network, :502, 제품 compose 밖). g1 트리 = fixture 사본 + 시뮬레이터 태그
+  100개(`trees.g2_tree`).
+- G2-1(현장마다): 설치(ready·overlay2·classic) · 실행 이미지 == 그 현장 release digest · c0 뒤 5분 안에
+  100태그 전부 GOOD(`GET /tags`, viewer 로그인) · 장비 CONNECTED(`GET /devices`) · 부팅 이후 외부 접속
+  카운터 0. "5분 안에"는 각 현장 `bring_up`이 c0 직후부터 live를 읽어 증명한다(직렬 모드 포함 — 판정이
+  다른 현장 부팅 뒤에 시작해도 다시 읽지 않는다). 기록 `live_s`(c0부터 초)가 300보다 크면
+  `live_in_time` 거짓으로 실패다. collector(compose bridge) → `10.0.0.5`는 VM 자신의 주소라 input으로 들어와 `ext_out_v4`·
+  `ext_fwd`·`field_fwd` 어디에도 세지지 않고, 시뮬레이터 응답은 목적지가 docker bridge(172.16/12)라
+  제외 대상이다(`golden` 모듈 docstring).
+- 실패 분류(`harness/failures.py`): **호출 자체**의 실패 = `infra`(실패한 시험만 1회 다시) —
+  `InfraError`, ssh·scp 실패(종료 코드 255), wsl.exe 호출 실패(스크립트가 시작되지 않음·wsl.exe 오류·
+  스크립트가 알린 환경 탓 exit 75, bash 범위 0~255 밖의 종료 코드·"instance has terminated" = 도중에
+  WSL VM이 죽음), Hyper-V, 시간 초과. **호출된 제품 스크립트**의 실패 = `product`(다시
+  돌리지 않음) — 원격 명령의 0 아닌 종료(`install.sh`·`pureiron-site` 등, `RemoteCommandError`), WSL
+  빌드·번들 스크립트의 0 아닌 종료(`WslScriptError`), HEAD 빌드 실패, 단언 실패. junit `failure_class`
+  속성과 `summary.json`에 남는다. 원격 명령이 스스로 255로 끝나면 ssh 실패와 구분되지 않아 infra다.
+- 알림: product가 2회 연속이면 이슈(라벨 `g2-nightly`), **같은 시험이 2회 연속 infra**(재시도 뒤)여도
+  이슈(라벨 `g2-nightly-infra`) — 시간 초과로 드러난 제품 멈춤이 "error"로만 쌓이지 않게. pytest
+  전체가 시간 제한에 죽거나 크래시해 junit이 없으면 시험 id `pytest`(infra) 한 줄로 이력에 남으므로 이
+  경우도 이틀째에 이슈가 된다(`summary.json`의 `pytest_rc`, -1 = 시간 초과). 시간 초과였으면 그날은
+  다시 돌리지 않는다(멈춘 제품은 재시도로 낫지 않는다). 크래시면 전체를 1회 다시 돌린다.
+- 시간 예산: workflow `timeout-minutes: 120`을 넘기면 Actions가 job을 죽여 status·이력이 남지 않는다.
+  그래서 준비 10분 + run 90분(preflight 시작부터 첫 실행·복구·재시도 — pytest 시간 제한(첫 75분·재시도
+  30분)을 남은 시간으로 줄이고, 10분도 남지 않으면 재시도를 건너뛴다) + 뒷정리 15분(collect 명령당 60초
+  × 10·publish·cleanup)으로 나눈다(`nightly.py` 상수, 합이 120분 미만인지 시험이 본다).
+- preflight: foundation-ci 대기를 먼저 하고, WSL echo가 3번 모두 답하지 않으며 foundation-ci가 돌지
+  않는 것이 확인될 때만 WSL을 재시작한다(재시도 전 복구도 같다). Actions 안에서 foundation-ci 상태를
+  못 읽으면(`gh run list` 실패) infra로 멈춘다(로컬은 `warnings`에만). 메모리가 기준 미만이고 WSL이
+  답하면 WSL 페이지 캐시를 비우고 최대 120초(10초 간격) 다시 재서 판단한다(재시도 전 복구도 같다 —
+  WSL은 캐시를 Windows에 늦게 돌려준다). `--judge-only`는 회수하지 않고 `measure`에 vmmemWSL·WSL
+  페이지 캐시 크기와 "회수하면 통과할 수 있음" 메모를 남긴다.
+
+```powershell
+$env:PUREIRON_E2E_SWITCH = "pureiron-e2e"   # setup-host.ps1 -Switch 값
+uv run python tests/e2e/gates/nightly.py preflight --judge-only   # 판단만(조치 없음)
+uv run python tests/e2e/gates/nightly.py all --dry-run            # GitHub에 쓰지 않음(VM·결과 정리는 한다)
+uv run pytest -c tests/e2e/gates/pytest.ini tests/e2e/gates -m g2 --collect-only
+```
+
+결과: `C:\PureIron_e2e\results\g2-<run>\`(junit.xml·summary.json·preflight.json·publish.json·
+`<site>\`의 updater.json·메트릭·journal·compose 로그, 14일 뒤 preflight가 지운다). 번들
+`bundles\<run>\`은 run 끝에 지운다. 환경변수: `PUREIRON_G2_MIN_MEM_GB`(8)·`PUREIRON_G2_MIN_DISK_GB`
+(40)·`PUREIRON_G2_CI_WAIT_S`(1800)·`PUREIRON_G2_SERIAL=1`(VM 2대를 차례로). G2 시험은
+`gates/pytest.ini`로만 수집된다(G1 `unit`에는 수집 자체가 빠진다).
+
+`--dry-run`은 GitHub 쓰기(이력·status·이슈·임시 브랜치 삭제)만 출력으로 바꾼다 — `preflight`·`all
+--dry-run`도 남은 `pureiron-site-a`·`pureiron-site-b` VM(run.py의 site-a VM과 이름이 같다)과 14일 넘은
+결과는 **실제로 지운다**. `all`이 예상 밖 예외로 멈추면 시험 id `runner`(infra)를
+`runner-summary.json`에 남기고 exit 2다 — 그 run의 `summary.json`이 이미 있으면(collect·publish·
+cleanup에서 멈춤) 덮어쓰지 않고 그것으로 publish를 다시 시도한다(이력에 이미 들어간 run은 다시 쓰지
+않는다).
+
 ## 단위 테스트
 
-`tests/e2e/tests/` — 공용화 불변 조건(`test_harness_shared.py` — 항목 39개 이름·순서, `ReleasePair` 기본값 = 옛 상수, 현장 둘의 상태 파일·이름 분리, 롤백 5분 경계, VM 3 GiB)·phase 순서·상태 읽기·nft 규칙(현장 장비 `field_fwd` 규칙 위치·끝점 추출·외부 접속 판정)·seed ISO 왕복·PowerShell 인용·수렴 판정·release 쌍(BASE·NEXT 기록 대조 필수·crash 순서·항목 39개·단계 순서·c0/NEXT 스키마 집합 판정(같은 epoch 실측값, 지난 쌍 c0 교차)·전환기 경보·FAULT 트리 복원·M5 확인 판정(트리·PATCH·absorb·재적용)·gen 배정·NEXT/FAULT 트리 판정(로컬 실측 `fixtures/m4c-tree-db.json` — 같은 트리 재적용 no-op에서 ⓐ 실패, NEXT 트리에서 통과, 롤백·재시도 정의 값)·업그레이드/FAULT/재시도 배선(가짜 `apply`))·온라인 판정(`test_online.py` — 실측 `/fleet` 행으로 단계별 통과·교차 실패, CA 지문 표기, `central.py` 값·토큰을 출력에 내지 않음, 화면 비밀번호·현장 token이 명령 줄에 없고 stdin으로만 감 — `basic_auth_line`·`site_online`·`Vm.run(input=)`)·store symlink 다시 연결·`ensure_image` 적재 조건·스테이징 진단 기록(`stage_for_window`). G1 `unit`에 포함된다.
+`tests/e2e/tests/` — 공용화 불변 조건(`test_harness_shared.py` — 항목 39개 이름·순서, `ReleasePair` 기본값 = 옛 상수, 현장 둘의 상태 파일·이름 분리, 롤백 5분 경계, VM 3 GiB)·phase 순서·상태 읽기·nft 규칙(현장 장비 `field_fwd` 규칙 위치·끝점 추출·외부 접속 판정)·seed ISO 왕복·PowerShell 인용·수렴 판정·release 쌍(BASE·NEXT 기록 대조 필수·crash 순서·항목 39개·단계 순서·c0/NEXT 스키마 집합 판정(같은 epoch 실측값, 지난 쌍 c0 교차)·전환기 경보·FAULT 트리 복원·M5 확인 판정(트리·PATCH·absorb·재적용)·gen 배정·NEXT/FAULT 트리 판정(로컬 실측 `fixtures/m4c-tree-db.json` — 같은 트리 재적용 no-op에서 ⓐ 실패, NEXT 트리에서 통과, 롤백·재시도 정의 값)·업그레이드/FAULT/재시도 배선(가짜 `apply`))·온라인 판정(`test_online.py` — 실측 `/fleet` 행으로 단계별 통과·교차 실패, CA 지문 표기, `central.py` 값·토큰을 출력에 내지 않음, 화면 비밀번호·현장 token이 명령 줄에 없고 stdin으로만 감 — `basic_auth_line`·`site_online`·`Vm.run(input=)`)·store symlink 다시 연결·`ensure_image` 적재 조건·스테이징 진단 기록(`stage_for_window`)·G2(`test_harness_g2.py` — 현장별 디렉터리·seed 바이트 동일·
+`nft_mark` site id·E10 재시도, `test_nightly_pair.py`, `test_trees_g2.py`, `test_frame_g2.py`,
+`test_nightly_runner.py`, 실패 분류 `test_failure_split.py`). G1 `unit`에 포함된다.

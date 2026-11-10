@@ -537,3 +537,87 @@ def judge_outage(
         and sub(stale, "current").get("gen") == ONLINE_GEN,
         "back_online": back.get("connection") == "online" and seen_after(back, stale),
     }
+
+
+def judge_window_flake(checks: dict[str, bool], stage: dict[str, object]) -> bool:
+    """crash 건이 창 여유 부족 flake(E10, `infra`)인가: CLI 스테이징은 성공했지만(`rc` 0) 창이 열린
+    뒤에 끝났고(`margin_s <= 0`) 그 밖의 판정(제품 동작)은 모두 참이다. 다른 판정이 하나라도
+    거짓이면 제품 실패다 — 다시 하지 않는다. CLI 대상(`fetched`)은 창 판정이 없어 늘 거짓이다.
+    창 판정 자체가 거짓이어야 한다 — 기록된 `margin_s`는 반올림 값이라 실제 여유가 0~0.05초면
+    판정은 참인데 0.0으로 남는다(리뷰 L1)."""
+    margin = stage.get("margin_s")
+    if "staged_before_window" not in checks or not isinstance(margin, int | float):
+        return False
+    product = [ok for name, ok in checks.items() if name != "staged_before_window"]
+    late = checks["staged_before_window"] is False
+    return late and margin <= 0 and stage.get("rc") == 0 and all(product)
+
+
+# ---------------------------------------------------------------- G2-1 설치·100태그(M6-2)
+
+
+def judge_installed(snap: dict[str, object], want_digests: dict[str, str]) -> dict[str, bool]:
+    """설치 직후: `/readyz` 200, 실행 이미지 `.Id` == 기대 release config digest, overlay2 + classic
+    image store."""
+    docker = cast(dict[str, object], snap.get("docker") or {})
+    return {
+        "ready": ready(snap),
+        "images_match": running_digests(snap) == want_digests,
+        "overlay2": docker.get("driver") == "overlay2",
+        "classic_store": "containerd" not in json.dumps(docker.get("driver_status")),
+    }
+
+
+def api_rows(body: object, key: str) -> list[dict[str, object]]:
+    """`GET /tags`·`GET /devices` 본문의 `key` 행 목록(형식이 다르면 빈 목록)."""
+    rows = cast(dict[str, object], body).get(key) if isinstance(body, dict) else None
+    items = cast(list[object], rows) if isinstance(rows, list) else []
+    return [cast(dict[str, object], r) for r in items if isinstance(r, dict)]
+
+
+def tag_rows(body: object) -> list[dict[str, object]]:
+    return api_rows(body, "tags")
+
+
+def judge_tags_good(body: object, want_paths: frozenset[str]) -> dict[str, bool]:
+    """`want_paths`(G2 트리의 시뮬레이터 태그) 전부가 `GET /tags`에 있고 품질이 GOOD이며 값이
+    있다. 빈 기대 집합은 거짓이다 — 아무것도 확인하지 않는 통과가 되지 않게."""
+    quality = {str(r.get("path")): r for r in tag_rows(body)}
+    present = bool(want_paths) and want_paths <= quality.keys()
+    good = present and all(
+        quality[p].get("quality") == "GOOD" and quality[p].get("value") is not None
+        for p in want_paths
+    )
+    return {"tags_present": present, "tags_good": good}
+
+
+def tags_not_good(body: object, want_paths: frozenset[str]) -> list[str]:
+    """GOOD이 아니거나 없는 기대 태그(결과 기록용, 정렬)."""
+    quality = {str(r.get("path")): r.get("quality") for r in tag_rows(body)}
+    return sorted(p for p in want_paths if quality.get(p) != "GOOD")
+
+
+def judge_device_connected(body: object, device_id: str) -> dict[str, bool]:
+    """`GET /api/v1/devices`의 `device_id`가 core 판정 CONNECTED·collector health connected·무신호
+    아님(장비 상태는 태그가 아니다 — 정본은 이 API)."""
+    found = [r for r in api_rows(body, "devices") if r.get("device_id") == device_id]
+    device = found[0] if len(found) == 1 else {}
+    return {
+        "device_connected": device.get("state") == "CONNECTED"
+        and device.get("connected") is True
+        and device.get("silent") is False
+    }
+
+
+def judge_live(
+    out: dict[str, object], want_paths: frozenset[str], device_id: str
+) -> dict[str, bool]:
+    """`site_api.py live` 출력: `GET /tags`·`GET /devices`가 200이고 시뮬레이터 태그 전부 GOOD,
+    장비 연결."""
+    tags_status, tags = reply(out, "tags")
+    devices_status, devices = reply(out, "devices")
+    return {
+        "api_ok": tags_status == 200 and devices_status == 200,
+        **judge_tags_good(tags, want_paths),
+        **judge_device_connected(devices, device_id),
+    }
