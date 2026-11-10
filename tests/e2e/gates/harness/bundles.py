@@ -8,6 +8,9 @@
     uv run --no-sync python tests/e2e/gates/harness/bundles.py m5-project --work W
     uv run --no-sync python tests/e2e/gates/harness/bundles.py absorb --work W --draft D \\
         --site-key E
+    uv run --no-sync python tests/e2e/gates/harness/bundles.py nightly-release --work W \\
+        --src S --sha <40자> --name n1a2b3c4 --version 2026.11.2-nightly.1a2b3c4 --base r5 \\
+        --sim-out <simulator.tar>
 
 release 쌍(`BASE`·`NEXT`·`FAULT`)은 `release_pair.py`가 정한다 — 함수는 `ReleasePair`를 인자로
 받고, CLI는 `release_pair.DEFAULT`(M4 마감: r4→r5, fault r5f)를 쓴다.
@@ -38,6 +41,16 @@ release 쌍(`BASE`·`NEXT`·`FAULT`)은 `release_pair.py`가 정한다 — 함�
 스크립트로 실행되므로(WSL) `tests/e2e/gates`를 `sys.path`에 넣고 `harness` 패키지로 import한다.
 - `install`: `fetch_debs.sh` → `build_updater.sh` → `build_install_bundle.py`(실빌드, 네트워크
   필요). 설치 번들은 이미지를 싣지 않는다 — `--release`는 manifest `release`·파일 이름에만 쓰인다.
+- `nightly-release`(G2 nightly NEXT, D7·D8): `--src`(HEAD를 checkout한 git 사본 — 빌드
+  스크립트가 커밋을 읽는다)에서 `build_images.sh`로 core·collector·web·simulator를
+  `<name>-src` 태그로 빌드하고, app 이미지는 `FROM <name>-src` + `LABEL pureiron.nightly=<sha>`
+  파생으로 `<name>` 태그를 만든다(제품 Dockerfile·빌드 스크립트는 그대로 — 라벨이 config에 들어가
+  코드 변경이 없는 날에도 BASE와 digest가 다르다). 기록은 `W/releases/<name>.json`, 이미지는
+  `W/store/<name>/`(site-db는 HEAD lock이 BASE와 같으면 BASE tar를 가리킨다)에만 둔다 — 저장소
+  `deploy/releases`·실제 image store는 건드리지 않는다. 시뮬레이터 tar는 `--sim-out`(G2가 VM에
+  복사한다). nightly 기록·이미지는 최근 `NIGHTLY_KEEP`개만 남긴다. HEAD 빌드가 실패하면 exit 0으로
+  `{"ok": false, ...}`를 낸다(제품 실패, D7) — 빌드 뒤 Docker가 응답하지 않으면 exit 1(인프라
+  실패)이다.
 """
 
 from __future__ import annotations
@@ -55,9 +68,10 @@ from typing import cast
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "deploy" / "build"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from images import config_digest_from_tar, config_digest_of_image, image_store
+from images import config_digest_from_tar, config_digest_of_image, image_store, read_lock
 
 from harness.release_pair import DEFAULT, ReleasePair
+from pureiron_core.platform.migrate import load_catalog
 from pureiron_project import canonical
 from pureiron_project.project import load_project
 
@@ -72,6 +86,17 @@ FROM pureiron/collector:{base}
 ENTRYPOINT ["sleep", "infinity"]
 CMD []
 """
+
+
+NIGHTLY_DOCKERFILE = """\
+FROM pureiron/{svc}:{source}
+LABEL pureiron.nightly={sha}
+"""
+NIGHTLY_BUILD = (*APP_SERVICES, "simulator")
+NIGHTLY_KEEP = 3
+"""WSL에 남기는 nightly 기록·이미지 수(디스크, 상위 계획 R8)."""
+BUILD_TAIL_CHARS = 4000
+DOCKER_INFO_TIMEOUT_S = 60
 
 
 def _run(*cmd: str, cwd: Path = ROOT) -> None:
@@ -119,6 +144,16 @@ def relink(link: Path, target: Path) -> None:
     link.symlink_to(target, target_is_directory=target.is_dir())
 
 
+def reset_records(releases: Path) -> None:
+    """`releases`를 저장소 release 기록 전부의 사본으로 새로 맞춘다 — 이전 쌍의 사본·파생 기록이
+    남지 않게, `compat_app_min`이 저장소와 같게 나오게."""
+    releases.mkdir(parents=True, exist_ok=True)
+    for old in releases.glob("*.json"):
+        old.unlink()
+    for record_path in sorted((ROOT / "deploy" / "releases").glob("*.json")):
+        shutil.copy2(record_path, releases / record_path.name)
+
+
 def fault_source(pair: ReleasePair) -> tuple[str, str, str]:
     """FAULT 기록의 (이름, 달력 버전, 파생 원본) — FAULT는 BASE가 아니라 NEXT에서 파생한다."""
     return pair.fault, pair.releases[pair.fault], pair.next
@@ -136,11 +171,7 @@ def fault_release(work: Path, pair: ReleasePair) -> Path:
             raise SystemExit(f"deploy/releases/{name}.json missing (release_record.py {name})")
         if not (real_store / name).is_dir():
             raise SystemExit(f"image store {real_store / name} missing")
-    # 이전 쌍(r0→r1 등)의 사본·파생 기록이 남지 않게 기록 디렉터리를 저장소와 맞춘다.
-    for old in releases.glob("*.json"):
-        old.unlink()
-    for record_path in sorted((ROOT / "deploy" / "releases").glob("*.json")):
-        shutil.copy2(record_path, releases / record_path.name)
+    reset_records(releases)
     for name in (pair.base, pair.next):
         relink(store / name, real_store / name)
     base = json.loads((releases / f"{fault_base}.json").read_text(encoding="utf-8"))
@@ -188,6 +219,116 @@ def fault_release(work: Path, pair: ReleasePair) -> Path:
     path = releases / f"{fault_name}.json"
     path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return path
+
+
+def nightly_prune(names: dict[str, float], current: str, keep: int = NIGHTLY_KEEP) -> list[str]:
+    """지울 nightly 이름: `names`(이름 → store 디렉터리 mtime) 가운데 `current`와 그 밖의 최근
+    `keep - 1`개를 뺀 나머지(오래된 순)."""
+    others = sorted((n for n in names if n != current), key=lambda n: names[n], reverse=True)
+    return sorted(others[max(keep - 1, 0) :], key=lambda n: names[n])
+
+
+def _docker_ok() -> bool:
+    try:
+        done = subprocess.run(
+            ("docker", "info"), capture_output=True, timeout=DOCKER_INFO_TIMEOUT_S, check=False
+        )
+    except subprocess.TimeoutExpired:
+        return False
+    return done.returncode == 0
+
+
+def _save(tag: str, tar: Path) -> dict[str, str]:
+    _run("docker", "save", "-o", str(tar), tag)
+    return {"tag": tag, "config_digest": config_digest_from_tar(tar)}
+
+
+def nightly_images(
+    store: Path, real_store: Path, src: Path, *, name: str, sha: str, base_record: dict[str, object]
+) -> dict[str, dict[str, str]]:
+    """`<name>-src`에서 라벨 파생 → `store/<name>/<svc>.tar`·config digest. site-db는 HEAD lock의
+    upstream이 BASE 기록과 같으면 BASE tar를 가리키고 기록 값을 그대로 쓴다."""
+    target = store / name
+    target.mkdir(parents=True, exist_ok=True)
+    images: dict[str, dict[str, str]] = {}
+    for svc in APP_SERVICES:
+        dockerfile = NIGHTLY_DOCKERFILE.format(svc=svc, source=f"{name}-src", sha=sha)
+        tag = f"pureiron/{svc}:{name}"
+        subprocess.run(
+            ("docker", "build", "-q", "-t", tag, "-"), input=dockerfile, text=True, check=True
+        )
+        images[svc] = _save(tag, target / f"{svc}.tar")
+    lock = read_lock(src / "deploy" / "releases" / "site-db.lock")
+    upstream = f"{lock['upstream']}@{lock['digest']}"
+    base_images = cast(dict[str, dict[str, str]], base_record["images"])
+    base_db = base_images["site-db"]
+    if base_db.get("upstream") == upstream:
+        relink(target / "site-db.tar", real_store / str(base_record["name"]) / "site-db.tar")
+        images["site-db"] = dict(base_db)
+    else:
+        images["site-db"] = {
+            **_save(f"pureiron/site-db:{lock['version']}", target / "site-db.tar"),
+            "upstream": upstream,
+        }
+    return images
+
+
+def nightly_release(
+    work: Path, src: Path, *, sha: str, name: str, version: str, base: str, sim_out: Path
+) -> dict[str, object]:
+    """HEAD(`src`) 빌드 → 라벨 파생 → `W/releases/<name>.json`·`W/store/<name>/`·시뮬레이터 tar.
+    빌드 실패는 `{"ok": false}`(제품 실패), 그 뒤 Docker 무응답은 SystemExit(인프라 실패)."""
+    head = subprocess.run(
+        ("git", "-C", str(src), "rev-parse", "HEAD"), capture_output=True, text=True, check=True
+    ).stdout.strip()
+    if head != sha:
+        raise SystemExit(f"{src} is at {head}, not {sha}")
+    build = subprocess.run(
+        ("bash", "deploy/build/build_images.sh", *NIGHTLY_BUILD),
+        cwd=src,
+        env={**os.environ, "PUREIRON_RELEASE": f"{name}-src"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if build.returncode != 0:
+        if not _docker_ok():
+            raise SystemExit("docker is not responding after the HEAD build failed")
+        tail = (build.stdout + build.stderr)[-BUILD_TAIL_CHARS:]
+        return {"ok": False, "stage": "build", "rc": build.returncode, "tail": tail}
+    releases, store, real_store = work / "releases", work / "store", image_store()
+    base_path = ROOT / "deploy" / "releases" / f"{base}.json"
+    if not base_path.is_file() or not (real_store / base).is_dir():
+        raise SystemExit(f"BASE {base}: record or image store {real_store / base} missing")
+    reset_records(releases)
+    store.mkdir(parents=True, exist_ok=True)
+    relink(store / base, real_store / base)
+    base_record = cast(dict[str, object], json.loads(base_path.read_text(encoding="utf-8")))
+    images = nightly_images(store, real_store, src, name=name, sha=sha, base_record=base_record)
+    catalog = load_catalog(src / "services" / "core" / "migrations")
+    record = {
+        "name": name,
+        "release": name,
+        "version": version,
+        "commit": sha,
+        "images": images,
+        "schema": {
+            "epoch": catalog.app_expected,
+            "app_expected": catalog.app_expected,
+            "app_max_compatible": catalog.app_max_compatible,
+        },
+    }
+    path = releases / f"{name}.json"
+    path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    sim_out.parent.mkdir(parents=True, exist_ok=True)
+    _run("docker", "save", "-o", str(sim_out), f"pureiron/simulator:{name}-src")
+    nightly = {d.name: d.stat().st_mtime for d in store.glob("n*") if d.is_dir()}
+    for old in nightly_prune(nightly, name):
+        shutil.rmtree(store / old)
+        for svc in NIGHTLY_BUILD:
+            for tag in (f"pureiron/{svc}:{old}", f"pureiron/{svc}:{old}-src"):
+                subprocess.run(("docker", "image", "rm", tag), capture_output=True, check=False)
+    return {"ok": True, "name": name, "record": record, "simulator_tar": str(sim_out)}
 
 
 def site(
@@ -362,6 +503,14 @@ def main(argv: list[str] | None = None) -> int:
     install_cmd.add_argument("--work", type=Path, required=True)
     install_cmd.add_argument("--out", type=Path, required=True)
     install_cmd.add_argument("--release", required=True)
+    nightly_cmd = sub.add_parser("nightly-release")
+    nightly_cmd.add_argument("--work", type=Path, required=True)
+    nightly_cmd.add_argument("--src", type=Path, required=True)
+    nightly_cmd.add_argument("--sha", required=True)
+    nightly_cmd.add_argument("--name", required=True)
+    nightly_cmd.add_argument("--version", required=True)
+    nightly_cmd.add_argument("--base", required=True)
+    nightly_cmd.add_argument("--sim-out", type=Path, required=True)
     args = parser.parse_args(argv)
     os.chdir(ROOT)
     if args.command == "fault-release":
@@ -383,6 +532,17 @@ def main(argv: list[str] | None = None) -> int:
         print(m5_project(args.work))
     elif args.command == "absorb":
         print(json.dumps(absorb(args.work, args.draft, args.site_key, args.site)))
+    elif args.command == "nightly-release":
+        result = nightly_release(
+            args.work,
+            args.src,
+            sha=args.sha,
+            name=args.name,
+            version=args.version,
+            base=args.base,
+            sim_out=args.sim_out,
+        )
+        print(json.dumps(result, sort_keys=True))
     else:
         print(install(args.work, args.out, args.release))
     return 0

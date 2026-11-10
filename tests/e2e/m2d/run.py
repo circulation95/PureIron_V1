@@ -61,7 +61,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -221,19 +220,8 @@ def step_prepare(ctx: Context) -> None:
         judges.check_record(PAIR, name, record)
         ctx.digests[name] = judges.digests_of(record)
     log("prepare: install bundle (fetch_debs, build_updater, build_install_bundle)")
-    out = ctx.work
-    buildhost.wsl(
-        f"{buildhost.bundles_py('install')} "
-        f"--out '{golden.wsl_path(out)}' --release {INSTALL_RELEASE}",
-        timeout_s=3600,
-    )
-    pib = out / f"pureiron-install-{INSTALL_RELEASE}.pib"
-    runbook = pib.with_name(pib.stem + ".runbook.txt").read_text(encoding="utf-8")
-    fpr = re.search(r"root 지문[^:]*:\s*([0-9a-f]{64})", runbook)
-    boot = re.search(r"bootstrap-verify\.sh sha256:\s*([0-9a-f]{64})", runbook)
-    if fpr is None or boot is None:
-        raise E2EError(f"runbook values not found in {pib.name}.runbook.txt")
-    ctx.install_pib, ctx.runbook_fpr, ctx.runbook_bootstrap = str(pib), fpr[1], boot[1]
+    pib, fpr, boot = buildhost.install_bundle(ctx.work, INSTALL_RELEASE)
+    ctx.install_pib, ctx.runbook_fpr, ctx.runbook_bootstrap = str(pib), fpr, boot
     ctx.bundles.append({"kind": "install", "file": pib.name, "size_bytes": pib.stat().st_size})
     log(f"prepare: g1 ({BASE}) site bundle")
     buildhost.build_site_bundle(ctx, 1, BASE, datetime.now(UTC) - timedelta(days=1))

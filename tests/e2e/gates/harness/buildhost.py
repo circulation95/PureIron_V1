@@ -9,6 +9,7 @@ WSL 쪽 스크립트는 저장소 사본(`paths.WSL_HOME`/repo)에서
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import subprocess
 import time
@@ -18,13 +19,28 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from harness import bundles, golden, judges, paths
+from harness.context import E2EError
 
 if TYPE_CHECKING:
     from harness.context import Context
+    from harness.release_pair import ReleasePair
 
 BUNDLES_PY = "tests/e2e/gates/harness/bundles.py"
 CENTRAL_PY = "tests/e2e/gates/harness/central.py"
 ONLINE_TIMEOUT_S = 180
+INSTALL_TIMEOUT_S = 3600
+NIGHTLY_TIMEOUT_S = 3600
+"""HEAD 이미지 빌드(core·collector·web·simulator, BuildKit 캐시 있음) + 라벨 파생 + 저장."""
+GIT_TIMEOUT_S = 120
+NIGHTLY_SRC = f"{paths.WSL_HOME}/nightly-src"
+"""WSL의 HEAD git 사본 — 빌드 스크립트가 커밋을 읽으므로 rsync 사본(.git 없음)이 아니라
+clone이다."""
+RUNBOOK_FPR = re.compile(r"root 지문[^:]*:\s*([0-9a-f]{64})")
+RUNBOOK_BOOTSTRAP = re.compile(r"bootstrap-verify\.sh sha256:\s*([0-9a-f]{64})")
+
+
+class HeadBuildError(E2EError):
+    """HEAD가 빌드되지 않는다 — 제품 결함(`product`, D7)이다."""
 
 
 def wsl(script: str, *, timeout_s: float = 3600) -> str:
@@ -77,6 +93,64 @@ def reclaim_host_memory() -> None:
 def bundles_py(command: str) -> str:
     """WSL `bundles.py <command> --work …` 명령 줄(인자는 `command` 뒤에 이어 붙인다)."""
     return f"uv run --no-sync python {BUNDLES_PY} {command} --work {paths.WSL_HOME}/work"
+
+
+def install_bundle(out: Path, release: str) -> tuple[Path, str, str]:
+    """설치 번들 실빌드(`bundles.py install`, 이미지는 싣지 않는다 — `release`는 manifest·파일
+    이름에만). (번들, runbook root 지문, bootstrap-verify.sh sha256)."""
+    wsl(
+        f"{bundles_py('install')} --out '{golden.wsl_path(out)}' --release {release}",
+        timeout_s=INSTALL_TIMEOUT_S,
+    )
+    pib = out / f"pureiron-install-{release}.pib"
+    runbook = pib.with_name(pib.stem + ".runbook.txt").read_text(encoding="utf-8")
+    fpr, boot = RUNBOOK_FPR.search(runbook), RUNBOOK_BOOTSTRAP.search(runbook)
+    if fpr is None or boot is None:
+        raise E2EError(f"runbook values not found in {pib.name}.runbook.txt")
+    return pib, fpr[1], boot[1]
+
+
+def git_bundle(path: Path) -> None:
+    """저장소 HEAD를 git bundle 파일로(Orca worktree처럼 WSL git이 gitdir을 못 읽어도 clone할 수
+    있게)."""
+    subprocess.run(
+        ["git", "-C", str(paths.REPO), "bundle", "create", str(path), "HEAD"],
+        capture_output=True,
+        check=True,
+        timeout=GIT_TIMEOUT_S,
+    )
+
+
+def nightly_release(
+    out: Path,
+    pair: ReleasePair,
+    head_sha: str,
+    *,
+    run_wsl: Callable[..., str] | None = None,
+    make_bundle: Callable[[Path], None] = git_bundle,
+) -> dict[str, object]:
+    """HEAD를 WSL에서 빌드해 NEXT(`pair.next`) 기록을 만든다(`bundles.py nightly-release`).
+    시뮬레이터 tar는 `out/simulator.tar`. NEXT 기록(JSON)을 돌려준다. 빌드 실패는
+    `HeadBuildError`(제품), WSL 호출 실패는 `golden.WslError`(인프라)다."""
+    out.mkdir(parents=True, exist_ok=True)
+    head = out / "head.bundle"
+    make_bundle(head)
+    script = (
+        f"rm -rf {NIGHTLY_SRC} && git clone -q '{golden.wsl_path(head)}' {NIGHTLY_SRC} && "
+        f"git -C {NIGHTLY_SRC} checkout -q {head_sha} && "
+        f"{bundles_py('nightly-release')} --src {NIGHTLY_SRC} --sha {head_sha} "
+        f"--name {pair.next} --version {pair.releases[pair.next]} --base {pair.base} "
+        f"--sim-out '{golden.wsl_path(out / 'simulator.tar')}'"
+    )
+    try:
+        raw = (run_wsl or wsl)(script, timeout_s=NIGHTLY_TIMEOUT_S)
+    finally:
+        head.unlink(missing_ok=True)
+    result = cast(dict[str, object], json.loads(raw.strip().splitlines()[-1]))
+    if result.get("ok") is not True:
+        tail = str(result.get("tail") or "")[-800:]
+        raise HeadBuildError(f"HEAD {head_sha[:7]} build failed (rc {result.get('rc')}): {tail}")
+    return cast(dict[str, object], result["record"])
 
 
 def build_site_bundle(

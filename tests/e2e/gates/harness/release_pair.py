@@ -26,8 +26,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import re
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
+from typing import cast
+
+from harness.context import E2EError
 
 
 @dataclass(frozen=True)
@@ -113,3 +117,71 @@ DEFAULT = ReleasePair(
     tree_descriptions={"r5": "1라인 온도 설정값 (r5)", "r5f": "1라인 온도 설정값 (r5f)"},
 )
 """지금 쌍(M4 마감): r4(epoch 5)→r5(epoch 5, 현장 마이그레이션 없음), fault r5f."""
+
+
+NIGHTLY_SUFFIX = "nightly"
+RELEASE_NAME = re.compile(r"^r(\d+)$")
+CALENDAR = re.compile(r"^(\d{4})\.(\d{1,2})\.(\d+)$")
+HEAD_SHA = re.compile(r"^[0-9a-f]{40}$")
+
+
+def latest_tagged(records: Mapping[str, Mapping[str, object]], tags: Collection[str]) -> str:
+    """git 태그가 붙은 `r<N>` release 기록 가운데 N이 가장 큰 이름(nightly BASE, D8)."""
+    found = [
+        (int(match[1]), name)
+        for name in records
+        if (match := RELEASE_NAME.fullmatch(name)) is not None and name in tags
+    ]
+    if not found:
+        raise E2EError("no tagged r<N> release record (deploy/releases/r*.json + git tag)")
+    return max(found)[1]
+
+
+def nightly_version(base_version: str, head_sha: str) -> str:
+    """`<BASE 다음 번호>-nightly.<sha7>` — 달력 버전의 마지막 번호만 하나 올린다. 접미사가 있는
+    버전은 fleet `$defs/release` 패턴을 통과하고 `compat_app_min`(정식 release만 고른다)에 끼지
+    않는다(`2026.11.1-fault1` 선례)."""
+    match = CALENDAR.fullmatch(base_version)
+    if match is None:
+        raise E2EError(f"base version {base_version!r} is not YYYY.M.N")
+    year, month, number = match.groups()
+    return f"{year}.{int(month)}.{int(number) + 1}-{NIGHTLY_SUFFIX}.{head_sha[:7]}"
+
+
+def nightly(
+    records: Mapping[str, Mapping[str, object]],
+    tags: Collection[str],
+    head_sha: str,
+    next_epoch: int,
+) -> ReleasePair:
+    """nightly 쌍(D8·E4): BASE = 태그가 있는 최신 `r<N>` 기록, NEXT = `n<sha7>`(HEAD 빌드,
+    `bundles.py nightly-release`가 WSL 작업 디렉터리에만 기록한다). FAULT는 아직 없다(M6-3) — 빈
+    이름이다. 스키마·트리 기대값은 비운다: G2-1은 스키마 판정을 하지 않는다(E5, 구조는 D9에서
+    바꾼다). `records`는 이름 → release 기록(JSON), `next_epoch`는 HEAD migration의 epoch다."""
+    if HEAD_SHA.fullmatch(head_sha) is None:
+        raise E2EError(f"head sha must be 40 lowercase hex digits, got {head_sha!r}")
+    base = latest_tagged(records, tags)
+    record = records[base]
+    schema = record.get("schema")
+    epoch = cast(Mapping[str, object], schema).get("epoch") if isinstance(schema, Mapping) else None
+    if not isinstance(epoch, int):
+        raise E2EError(f"{base}: release record has no schema.epoch")
+    nxt = f"n{head_sha[:7]}"
+    return ReleasePair(
+        base=base,
+        next=nxt,
+        fault="",
+        releases={
+            base: str(record.get("version")),
+            nxt: nightly_version(str(record.get("version")), head_sha),
+        },
+        epochs={base: epoch, nxt: next_epoch},
+        caggs=frozenset(),
+        base_columns=frozenset(),
+        base_tables=frozenset(),
+        base_indexes=frozenset(),
+        next_tables=frozenset(),
+        next_indexes=frozenset(),
+        tree_tag="",
+        tree_descriptions={},
+    )
