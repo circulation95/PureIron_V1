@@ -537,3 +537,15 @@ def judge_outage(
         and sub(stale, "current").get("gen") == ONLINE_GEN,
         "back_online": back.get("connection") == "online" and seen_after(back, stale),
     }
+
+
+def judge_window_flake(checks: dict[str, bool], stage: dict[str, object]) -> bool:
+    """crash 건이 창 여유 부족 flake(E10, `infra`)인가: CLI 스테이징은 성공했지만(`rc` 0) 창이 열린
+    뒤에 끝났고(`margin_s <= 0`) 그 밖의 판정(제품 동작)은 모두 참이다. 다른 판정이 하나라도
+    거짓이면 제품 실패다 — 다시 하지 않는다. CLI 대상(`fetched`)은 창 판정이 없어 늘 거짓이다."""
+    margin = stage.get("margin_s")
+    if "staged_before_window" not in checks or not isinstance(margin, int | float):
+        return False
+    product = [ok for name, ok in checks.items() if name != "staged_before_window"]
+    return margin <= 0 and stage.get("rc") == 0 and all(product)
+

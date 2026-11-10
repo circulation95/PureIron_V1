@@ -66,7 +66,7 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -74,7 +74,7 @@ from typing import cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "gates"))
 
-from harness import buildhost, golden, hyperv, judges, paths, site, trees
+from harness import buildhost, golden, hyperv, judges, paths, site, sites, trees
 from harness.context import TAIL_CHARS, Context, E2EError, log
 from harness.judges import (
     FAULT_CODE,
@@ -90,44 +90,17 @@ from harness.judges import (
     updater_state,
 )
 from harness.release_pair import DEFAULT, ReleasePair
-from harness.site import INCOMING, REMOTE, SITE_SCRIPTS, Site
+from harness.site import INCOMING, REMOTE
+from harness.sites import CLOUD_IMAGE, GOLDEN, SITE_A, SWITCH, site_vm_spec, vm_memory_gib
 from harness.vm import Vm
 
 PAIR = DEFAULT
 BASE, NEXT, FAULT = PAIR.base, PAIR.next, PAIR.fault
-GOLDEN = paths.E2E / "golden" / "ubuntu-24.04-64g.vhdx"
-CLOUD_IMAGE = paths.E2E / "images" / "ubuntu-24.04-server-cloudimg-amd64.img"
-SITE_A = Site(
-    site_id="site-a",
-    vm_name="pureiron-site-a",
-    ip="10.77.0.10",
-    state_file=paths.E2E / "state.json",
-)
-# setup-host.ps1 -Switch 와 같은 이름(기본 pureiron-int).
-SWITCH = os.environ.get("PUREIRON_E2E_SWITCH", "pureiron-int")
-
-
-def vm_memory_gib(environ: Mapping[str, str]) -> int:
-    """현장 VM 메모리(GiB) — `PUREIRON_E2E_VM_GIB`, 기본 3. M6-0 실측: 3 GiB에서 시나리오 16항목
-    최저 여유 2.1 GB·OOM 0(`.omc/artifacts/m6/m6-0-report.md`). `hyperv.VmSpec` 기본값은 4
-    그대로다. import 시점이 아니라 `vm` 단계에서 읽으므로 잘못된 값이 `destroy`·`--help`를 막지
-    않는다."""
-    raw = environ.get("PUREIRON_E2E_VM_GIB", "3")
-    gib = int(raw) if raw.strip().isdecimal() else 0
-    if gib < 1:
-        raise E2EError(f"PUREIRON_E2E_VM_GIB must be an integer >= 1, got {raw!r}")
-    return gib
-
-
-def site_vm_spec(site: Site, environ: Mapping[str, str]) -> hyperv.VmSpec:
-    """`vm` 단계가 만들 현장 VM — 이름·디스크·seed ISO는 `site`, 메모리는 `vm_memory_gib`."""
-    return hyperv.VmSpec(
-        site.vm_name,
-        site.vm_dir / "disk.vhdx",
-        site.vm_dir / "seed.iso",
-        SWITCH,
-        memory_gib=vm_memory_gib(environ),
-    )
+__all__ = ["CLOUD_IMAGE", "GOLDEN", "SITE_A", "SWITCH", "site_vm_spec", "vm_memory_gib"]
+"""현장 정의·VM 준비는 `harness.sites`로 옮겼다 — 시험·도구가 쓰던 `run.<이름>`은 그대로 둔다."""
+OTHER_SITE = "site-x"
+"""거부 시험("reject site")의 다른 현장 id — G2의 실제 현장(site-a·site-b)과 겹치지 않는다(M6-1
+리뷰 L4)."""
 
 
 INSTALL_RELEASE = PAIR.releases[BASE]
@@ -248,7 +221,7 @@ def step_prepare(ctx: Context) -> None:
         judges.check_record(PAIR, name, record)
         ctx.digests[name] = judges.digests_of(record)
     log("prepare: install bundle (fetch_debs, build_updater, build_install_bundle)")
-    out = paths.BUNDLES / ctx.run_id
+    out = ctx.work
     buildhost.wsl(
         f"{buildhost.bundles_py('install')} "
         f"--out '{golden.wsl_path(out)}' --release {INSTALL_RELEASE}",
@@ -269,14 +242,9 @@ def step_prepare(ctx: Context) -> None:
 
 def step_vm(ctx: Context) -> None:
     spec = site_vm_spec(ctx.site, os.environ)
-    vm_name = spec.name
-    if not hyperv.available():
-        raise E2EError("Hyper-V not available for this user (run tests/e2e/infra/setup-host.ps1)")
-    if not hyperv.switch_exists(SWITCH):
-        raise E2EError(f"vSwitch {SWITCH} missing (run tests/e2e/infra/setup-host.ps1)")
+    sites.check_host()
     golden.build_golden(CLOUD_IMAGE, GOLDEN)
     pub = golden.ensure_ssh_key(paths.SSH_DIR).read_text(encoding="utf-8")
-    hyperv.remove(vm_name, spec.disk)
     files = golden.seed_files(
         ctx.site.site_id,
         ctx.site.ip,
@@ -284,16 +252,8 @@ def step_vm(ctx: Context) -> None:
         golden.Network(),
         field=trees.field_endpoints(trees.FIXTURE),
     )
-    golden.write_seed_iso(spec.seed_iso, files)
-    hyperv.create_vm(spec, GOLDEN)
-    buildhost.reclaim_host_memory()
-    hyperv.start(vm_name)
+    waited = sites.boot_vm(ctx.site, spec, files)
     host = ctx.site.host()
-    waited = host.wait_ssh(timeout_s=900)
-    host.run("cloud-init status --wait >/dev/null; test -f /var/lib/e2e-ready", timeout_s=900)
-    host.run(f"mkdir -p {REMOTE} {INCOMING}")
-    for script in SITE_SCRIPTS:
-        host.put(paths.REPO / "tests" / "e2e" / "site" / script, f"{REMOTE}/{script}")
     ctx.nft_before = site.nft_counters(host)
     ctx.nft_last = dict(ctx.nft_before)
     ctx.nft_total = dict.fromkeys(ctx.nft_before, 0)
@@ -312,48 +272,17 @@ def step_install(ctx: Context) -> None:
     host = ctx.site.host()
     install = Path(ctx.install_pib)
     g1 = buildhost.site_bundle(ctx, 1, BASE)
-    for bundle in (install, g1):
-        host.put(bundle, f"{INCOMING}/{bundle.name}")
-    remote_install = f"{INCOMING}/{install.name}"
-    meta = "manifest.json manifest.sig release-cert.json release-cert.sig keys/root.pub "
-    meta += "keys/root.pem bootstrap/bootstrap-verify.sh"
-    started = time.monotonic()
-    # runbook 2단계는 root 셸에서 친다(/root는 700, bootstrap-verify ⓪은 추출물이
-    # 실행 사용자 소유인지 본다).
-    out = host.run(
-        site.as_root(
-            "install -d -m 700 /root/pib-meta && cd /root/pib-meta && "
-            "tar --force-local --no-same-owner --no-same-permissions "
-            f"-xf {remote_install} {meta} && sha256sum bootstrap/bootstrap-verify.sh"
-        )
-    ).stdout
-    if not out.startswith(ctx.runbook_bootstrap):
-        raise E2EError(f"bootstrap-verify.sh sha256 mismatch: {out.strip()}")
-    host.run(
-        site.as_root(
-            "cd /root/pib-meta && bash bootstrap/bootstrap-verify.sh "
-            f"--root-fpr {ctx.runbook_fpr} --bundle {remote_install} "
-            "--dest /root/pureiron-install"
-        ),
-        timeout_s=900,
+    install_s = site.install_runbook(
+        host,
+        install,
+        g1,
+        site_id=ctx.site.site_id,
+        runbook_fpr=ctx.runbook_fpr,
+        runbook_bootstrap=ctx.runbook_bootstrap,
     )
-    host.run(
-        f"sudo bash /root/pureiron-install/install/install.sh --bundle {remote_install} "
-        "--offline-time-confirmed",
-        timeout_s=1800,
-    )
-    host.run(
-        "echo PUREIRON_POLL_INTERVAL_S=10 | sudo tee -a /etc/pureiron/updater.env >/dev/null && "
-        f"sudo pureiron-site enroll --site {ctx.site.site_id}"
-    )
-    host.run(f"sudo pureiron-site apply {INCOMING}/{g1.name}", timeout_s=1800)
-    host.run("sudo systemctl start pureiron-updater")
-    install_s = time.monotonic() - started
     snap = site.wait_ready(host, 300)
-    docker = cast(dict[str, object], snap.get("docker") or {})
-    classic = "containerd" not in json.dumps(docker.get("driver_status"))
-    digests_ok = judges.running_digests(snap) == ctx.digests[BASE]
-    installed = judges.ready(snap) and digests_ok and docker.get("driver") == "overlay2" and classic
+    seen = judges.judge_installed(snap, ctx.digests[BASE])
+    installed = all(seen.values())
     c0: dict[str, object] = {}
     if installed:  # 이력 시드 → c0 기반(BASE epoch + 압축 chunk 이력) 확인
         site.seed_history(host)
@@ -365,10 +294,10 @@ def step_install(ctx: Context) -> None:
         ITEM_INSTALL,
         ok,
         install_s=round(install_s, 1),
-        storage_driver=docker.get("driver"),
-        classic_store=classic,
+        storage_driver=cast(dict[str, object], snap.get("docker") or {}).get("driver"),
+        classic_store=seen["classic_store"],
         release=BASE,
-        images_match=digests_ok,
+        images_match=seen["images_match"],
         readyz=cast(dict[str, object], snap.get("readyz") or {}).get("status"),
         c0_checks=c0_checks,
         c0_db=c0,
@@ -470,7 +399,7 @@ def reapply_absorbed(ctx: Context, host: Vm, gen: int, want_rev: int) -> None:
     if export.returncode != 0:
         ctx.record(ITEM_ABSORB, False, **note)
         return
-    local = paths.BUNDLES / ctx.run_id / "m5"
+    local = ctx.work / "m5"
     draft, enrollment = local / "draft.tar", local / "enrollment.json"
     host.get(site.DRAFT_REMOTE, draft)
     host.get(site.ENROLLMENT_REMOTE, enrollment)
@@ -523,11 +452,12 @@ def step_scenarios(ctx: Context) -> None:
     gens = scenario_gens(ctx.next_gen)
     gen = gens["upgrade"]
     # 거부 코드(VM 수동 1회): 다른 현장, 변조 — c0(applied g1 = BASE) 위에서
-    other = paths.BUNDLES / ctx.run_id / f"pureiron-site-b-g{gen}.pib"
+    other = ctx.work / f"pureiron-{OTHER_SITE}-g{gen}.pib"
     buildhost.wsl(
         f"{buildhost.bundles_py('site')} "
         f"--out '{golden.wsl_path(other.parent)}' --gen {gen} --product {PAIR.releases[NEXT]} "
-        "--window-start 2026-01-01T00:00:00Z --window-end 2027-01-01T00:00:00Z --site site-b"
+        "--window-start 2026-01-01T00:00:00Z --window-end 2027-01-01T00:00:00Z "
+        f"--site {OTHER_SITE}"
     )
     # 같은 gen(1) 재빌드(NEXT) — 내용이 달라도 gen 규칙상 멱등 no-op(R-7).
     same = buildhost.build_site_bundle(ctx, 1, NEXT, datetime.now(UTC) - timedelta(days=1))
@@ -637,7 +567,11 @@ def fault_and_retry(
 # ---------------------------------------------------------------- crash 주입
 
 
-def crash_once(ctx: Context, case: CrashCase, *, gen: int) -> None:
+def crash_once(
+    ctx: Context, case: CrashCase, *, gen: int, note: dict[str, object] | None = None
+) -> dict[str, object] | None:
+    """`case`를 한 번 주입하고 `case.name`으로 기록한다(`note`는 결과에 함께 남길 값). 창 여유 부족
+    flake(E10, `judges.judge_window_flake`)면 그 시도의 증거를, 아니면 None을 돌려준다."""
     host = ctx.site.host()
     phase, mode, release = case.phase, case.mode, case.release
     expect = "failed" if release == FAULT else "succeeded"
@@ -712,22 +646,92 @@ def crash_once(ctx: Context, case: CrashCase, *, gen: int) -> None:
         stage=stage_info,
         alarm=updater_state(snap).get("alarm"),
         logs=report.get("logs") if not all(checks.values()) else None,
+        **(note or {}),
     )
     ctx.site.host().run(f"sudo rm -f {INCOMING}/{pib.name}", check=False)
+    if judges.judge_window_flake(checks, stage_info):
+        return {"gen": gen, "checks": checks, "stage": stage_info}
+    return None
 
 
-def step_crash(ctx: Context) -> None:
+CrashOnce = Callable[..., dict[str, object] | None]
+"""`crash_once`와 같은 호출 모양 — 재시도 배선 단위 시험이 가짜로 바꿔 끼운다."""
+Settle = Callable[[Context, int, str], None]
+
+
+def settle_release(ctx: Context, gen: int, release: str) -> None:
+    """crash 없이 g`gen` `release` 번들을 적용해 그 release로 돌려놓는다(E10 재시도 준비 — 결과
+    항목을 남기지 않는다). 수렴하지 않으면 멈춘다."""
+    host = ctx.site.host()
+    pib = buildhost.build_site_bundle(ctx, gen, release, datetime.now(UTC) - timedelta(minutes=5))
+    site.stage(host, pib, check=False)
+    snap, _ = site.converge(host, gen)
+    state = updater_state(snap)
+    if state.get("last_result") != "succeeded" or (
+        judges.running_digests(snap) != ctx.digests[release]
+    ):
+        raise E2EError(f"settle g{gen} {release} failed: {state.get('last_result')}")
+    host.run(f"sudo rm -f {INCOMING}/{pib.name}", check=False)
+
+
+def retry_window_flake(
+    ctx: Context,
+    case: CrashCase,
+    flake: dict[str, object],
+    *,
+    c0_gen: int,
+    gen: int,
+    crash: CrashOnce,
+    settle: Settle,
+    restore: Callable[[Context], None],
+) -> int:
+    """E10: 스테이징이 창 뒤에 끝났지만(`margin_s <= 0`) 제품 판정은 모두 참이었던 crash 건을
+    `infra`로 남기고 1회 다시 한다. 창은 번들에 서명되므로 다시 빌드한다. 같은 출발 상태가 되게
+    from_c0 건은 c0로 복원해 같은 gen으로, FAULT가 아닌 건은 `case.prev`로 먼저 되돌린 뒤(gen 하나
+    소비) 다음 gen으로 한다(FAULT는 이미 `case.prev`로 롤백돼 있다). 재시도도 같으면 그 결과
+    (실패)가 남는다 — 두 번 다시 하지 않는다. 다음 gen을 돌려준다."""
+    note: dict[str, object] = {"e10": {"class": "infra", "first": flake}}
+    ctx.log(f"crash: {case.name} staged after the window opened (infra) - retrying once")
+    if case.from_c0:
+        restore(ctx)
+        crash(ctx, case, gen=c0_gen, note=note)
+        return gen
+    if case.release != FAULT:
+        settle(ctx, gen, case.prev)
+        gen += 1
+    crash(ctx, case, gen=gen, note=note)
+    return gen + 1
+
+
+def step_crash(
+    ctx: Context,
+    *,
+    crash: CrashOnce = crash_once,
+    settle: Settle = settle_release,
+    restore: Callable[[Context], None] = site.restore_c0,
+) -> None:
     # migrating은 c0(BASE epoch)로 복원해 같은 gen으로 두 번, 나머지는 하나씩 gen을 올린다.
     c0_gen = ctx.next_gen
     gen = c0_gen + 1
     plan = crash_plan(PAIR)
     for case in plan:
         if case.from_c0:
-            site.restore_c0(ctx)
-            crash_once(ctx, case, gen=c0_gen)
+            restore(ctx)
+            flake = crash(ctx, case, gen=c0_gen)
         else:
-            crash_once(ctx, case, gen=gen)
+            flake = crash(ctx, case, gen=gen)
             gen += 1
+        if flake is not None:
+            gen = retry_window_flake(
+                ctx,
+                case,
+                flake,
+                c0_gen=c0_gen,
+                gen=gen,
+                crash=crash,
+                settle=settle,
+                restore=restore,
+            )
     last = plan[-1]
     ctx.next_gen, ctx.current = gen, last.prev if last.release == FAULT else last.release
     ctx.save()
@@ -816,7 +820,7 @@ def step_online(ctx: Context) -> None:
     buildhost.sync_repo()  # 부분 재실행(`run.py online`)도 지금 트리의 central.py·c0 기록을 쓰게
     site.restore_c0(ctx)
     host = ctx.site.host()
-    out = paths.BUNDLES / ctx.run_id / "online"
+    out = ctx.work / "online"
     status = buildhost.central("up", "--ca-out", golden.wsl_path(out / "central-root.crt"))
     ctx.central = status
     ctx.save()

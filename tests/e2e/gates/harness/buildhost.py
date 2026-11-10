@@ -85,7 +85,7 @@ def build_site_bundle(
     """`ctx.site`의 g`gen` 번들(`release`)을 만든다. `project_dir`(WSL 경로)가 없으면 fixture
     `acme` 트리를 싣는다."""
     site = ctx.site.site_id
-    out = paths.BUNDLES / ctx.run_id
+    out = ctx.work
     start = window_open_at.strftime("%Y-%m-%dT%H:%M:%SZ")
     end = (window_open_at + timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
     project = f" --project-dir '{project_dir}'" if project_dir else ""
@@ -106,14 +106,14 @@ def build_site_bundle(
 
 
 def site_bundle(ctx: Context, gen: int, release: str) -> Path:
-    return paths.BUNDLES / ctx.run_id / f"pureiron-{ctx.site.site_id}-g{gen}-{release}.pib"
+    return ctx.work / f"pureiron-{ctx.site.site_id}-g{gen}-{release}.pib"
 
 
 def release_tree(ctx: Context, release: str) -> Path:
     """NEXT·FAULT 번들 트리(`bundles.release_tree`)를 이 run의 번들 디렉터리에 새로 만든다(Windows
     호스트). 번들은 WSL이 이 디렉터리(`golden.wsl_path`)를 읽어 싣고, 판정 기대값(`tree_expect`)도
     같은 디렉터리에서 읽는다 — 실은 트리와 기대값이 어긋나지 않는다."""
-    return bundles.release_tree(paths.BUNDLES / ctx.run_id / "trees" / release, release, ctx.pair)
+    return bundles.release_tree(ctx.work / "trees" / release, release, ctx.pair)
 
 
 def central(command: str, *args: str) -> dict[str, object]:

@@ -12,12 +12,19 @@
   카운터에 잡히게 한다(경로가 없으면 패킷이 생기지 않아 0이 당연해진다). 선언된 현장 장비
   끝점(`field`)으로의 전달은 `field_fwd`로 따로 센다. golden은 프로젝트 트리를 모르므로 끝점은
   호출자가 넘긴다.
+- seed의 `dummy`(G2, 기본 꺼짐): VM 안에 가짜 장비 주소(fixture 장비 `10.0.0.5`)를 dummy
+  인터페이스로 붙인다(systemd-networkd, 재부팅 뒤에도 남는다). 시뮬레이터(`site.start_simulator`,
+  host network)가 그 주소의 modbus 포트에서 답한다. collector(compose bridge)가 그 주소로 보내는
+  패킷은 VM 자신의 주소라 forward가 아니라 input으로 들어온다 — `ext_out_v4`(output)·`ext_fwd`·
+  `field_fwd`(forward, eth0) 어느 카운터에도 잡히지 않는다. 시뮬레이터의 응답은 output으로 나가지만
+  목적지가 docker bridge(`172.16.0.0/12`)라 `ext_out_v4` 제외 대상이다.
 """
 
 from __future__ import annotations
 
 import argparse
 import io
+import ipaddress
 import shutil
 import stat
 import subprocess
@@ -30,6 +37,10 @@ import pycdlib
 GOLDEN_SIZE_GIB = 64
 WSL_DISTRO = "Ubuntu"
 QEMU_IMG = "$HOME/m2d-tools/qemu-img"
+
+
+class WslError(RuntimeError):
+    """WSL 호출 실패(종료 코드 ≠ 0). `RuntimeError`를 잡던 호출자는 그대로 잡는다."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,7 +204,7 @@ def wsl(script: str, *, timeout_s: float = 1800) -> str:
         check=False,
     )
     if result.returncode != 0:
-        raise RuntimeError(f"wsl failed ({result.returncode}): {result.stderr.strip()}")
+        raise WslError(f"wsl failed ({result.returncode}): {result.stderr.strip()}")
     return result.stdout
 
 
@@ -230,11 +241,45 @@ def ensure_ssh_key(directory: Path) -> Path:
     return key.with_suffix(".pub")
 
 
+DUMMY_FILES = """\
+  - path: /etc/systemd/network/10-e2e-dummy.netdev
+    permissions: "0644"
+    content: |
+      [NetDev]
+      Name={name}
+      Kind=dummy
+  - path: /etc/systemd/network/10-e2e-dummy.network
+    permissions: "0644"
+    content: |
+      [Match]
+      Name={name}
+      [Network]
+      Address={address}/32
+"""
+"""seed `write_files`에 더하는 dummy 인터페이스(systemd-networkd — 재부팅 뒤에도 남는다)."""
+DUMMY_IFACE = "e2edummy0"
+DUMMY_RUNCMD = "  - [networkctl, reload]\n"
+"""write_files는 networkd가 뜬 뒤에 쓰이므로 첫 부팅에서는 다시 읽게 한다(다음 부팅부터는 기동 때
+읽는다)."""
+
+
 def seed_files(
-    hostname: str, ip: str, ssh_pub: str, net: Network, field: tuple[Endpoint, ...] = ()
+    hostname: str,
+    ip: str,
+    ssh_pub: str,
+    net: Network,
+    field: tuple[Endpoint, ...] = (),
+    *,
+    dummy: str | None = None,
 ) -> dict[str, bytes]:
+    """`dummy`(IPv4 주소)를 주면 VM 안에 그 주소의 dummy 인터페이스를 둔다(G2 시뮬레이터). 기본은
+    없음 — M2d `run.py`의 seed는 바이트까지 그대로다."""
     nft = "".join(f"      {line}\n" for line in nft_audit(net.cidr, field).splitlines())
     user_data = USER_DATA.format(hostname=hostname, ssh_pub=ssh_pub.strip(), nft=nft.rstrip("\n"))
+    if dummy is not None:
+        address = str(ipaddress.IPv4Address(dummy))
+        files = DUMMY_FILES.format(name=DUMMY_IFACE, address=address)
+        user_data = user_data.replace("runcmd:\n", files + "runcmd:\n" + DUMMY_RUNCMD, 1)
     network = NETWORK_CONFIG.format(ip=ip, prefix=net.prefix, host_ip=net.host_ip)
     meta = f"instance-id: {hostname}\nlocal-hostname: {hostname}\n"
     return {

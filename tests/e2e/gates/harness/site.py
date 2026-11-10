@@ -141,6 +141,50 @@ def wait_ready(host: Vm, timeout_s: float) -> dict[str, object]:
     return snap
 
 
+def install_runbook(
+    host: Vm, install: Path, g1: Path, *, site_id: str, runbook_fpr: str, runbook_bootstrap: str
+) -> float:
+    """설치 번들 runbook(2단계 메타데이터 추출·지문 대조 → `install.sh --offline-time-confirmed`)
+    → enroll → g1 apply → 서비스 시작. 걸린 초. 판정은 호출자가 한다."""
+    for bundle in (install, g1):
+        host.put(bundle, f"{INCOMING}/{bundle.name}")
+    remote_install = f"{INCOMING}/{install.name}"
+    meta = "manifest.json manifest.sig release-cert.json release-cert.sig keys/root.pub "
+    meta += "keys/root.pem bootstrap/bootstrap-verify.sh"
+    started = time.monotonic()
+    # runbook 2단계는 root 셸에서 친다(/root는 700, bootstrap-verify ⓪은 추출물이
+    # 실행 사용자 소유인지 본다).
+    out = host.run(
+        as_root(
+            "install -d -m 700 /root/pib-meta && cd /root/pib-meta && "
+            "tar --force-local --no-same-owner --no-same-permissions "
+            f"-xf {remote_install} {meta} && sha256sum bootstrap/bootstrap-verify.sh"
+        )
+    ).stdout
+    if not out.startswith(runbook_bootstrap):
+        raise E2EError(f"bootstrap-verify.sh sha256 mismatch: {out.strip()}")
+    host.run(
+        as_root(
+            "cd /root/pib-meta && bash bootstrap/bootstrap-verify.sh "
+            f"--root-fpr {runbook_fpr} --bundle {remote_install} "
+            "--dest /root/pureiron-install"
+        ),
+        timeout_s=900,
+    )
+    host.run(
+        f"sudo bash /root/pureiron-install/install/install.sh --bundle {remote_install} "
+        "--offline-time-confirmed",
+        timeout_s=1800,
+    )
+    host.run(
+        "echo PUREIRON_POLL_INTERVAL_S=10 | sudo tee -a /etc/pureiron/updater.env >/dev/null && "
+        f"sudo pureiron-site enroll --site {site_id}"
+    )
+    host.run(f"sudo pureiron-site apply {INCOMING}/{g1.name}", timeout_s=1800)
+    host.run("sudo systemctl start pureiron-updater")
+    return time.monotonic() - started
+
+
 # ---------------------------------------------------------------- 외부 접속 카운터
 
 
@@ -432,7 +476,7 @@ def site_online(ctx: Context, host: Vm, ca: Path, ca_sha256: str) -> dict[str, o
             f"install -o pureiron -m 0644 {STATE_DIR}/enrollment.json {ENROLLMENT_REMOTE}"
         )
     )
-    enrollment = paths.BUNDLES / ctx.run_id / "online" / "enrollment.json"
+    enrollment = ctx.work / "online" / "enrollment.json"
     host.get(ENROLLMENT_REMOTE, enrollment)
     registered = buildhost.central("register", "--enrollment", golden.wsl_path(enrollment))
     token = buildhost.site_token(ctx.site.site_id)
