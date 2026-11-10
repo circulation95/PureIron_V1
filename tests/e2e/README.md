@@ -9,7 +9,8 @@
 | 위치 | 내용 |
 |---|---|
 | `m2d/run.py` | M2d 시나리오 진입점(단계 순서·CLI·결과 항목 39개). 현장 `SITE_A`(site-a, 10.77.0.10) 하나 |
-| `gates/harness/` | 공용 하네스(M6-1, G2 nightly와 같이 쓴다): `release_pair`(`ReleasePair`·지금 쌍 `DEFAULT`), `site`(`Site`·원격 조작), `judges`(순수 판정), `trees`(트리 기대값), `context`(`Context`·상태 파일), `buildhost`(WSL 호출), `hyperv`·`golden`·`vm`, WSL 스크립트 `bundles.py`·`central.py` |
+| `gates/harness/` | 공용 하네스(M6-1, G2 nightly와 같이 쓴다): `release_pair`(`ReleasePair`·지금 쌍 `DEFAULT`·nightly 쌍 `nightly()`), `sites`(`SITE_A`·`SITE_B`·VM 준비), `site`(`Site`·원격 조작·시뮬레이터), `judges`(순수 판정), `trees`(트리 기대값·G2 100태그 트리), `context`(`Context`·상태 파일·`InfraError`), `buildhost`(WSL 호출·HEAD 빌드), `hyperv`·`golden`·`vm`, WSL 스크립트 `bundles.py`·`central.py` |
+| `gates/` (G2) | `nightly.py`(실행기), `pytest.ini`·`conftest.py`(G2 pytest 틀), `test_g2_install.py`(G2-1), `quarantine.yaml`, 하네스 `g2`(세션)·`failures`(분류)·`report`(junit·이력·status)·`flake`·`preflight`·`github` |
 | `site/` | VM에 복사하는 스크립트(`probe.py`·`crash_at.py`·`site_api.py`) |
 | `infra/setup-host.ps1` | 1회 호스트 준비 |
 | `tests/` | 단위 시험(G1 `unit`) |
@@ -215,6 +216,11 @@ false**(`last_result`는 `failed_manual`도 `failed`로 접는다) · `applied_g
 (reset이면 boot id 변경, 서비스 kill이면 `NRestarts` 증가) · service 대상이면 CLI 스테이징이 창 열림 전에 끝남
 (아니면 CLI가 phase를 직접 실행해 쉬는 서비스를 죽이는 거짓 통과가 된다).
 
+창 여유 flake(E10, M6-2a): CLI 스테이징이 창이 열린 뒤에 끝났지만(`margin_s <= 0`, `rc` 0) 그 밖의
+판정이 모두 참이면 그 건은 `infra`로 보고 1회 다시 한다(`judges.judge_window_flake`) — FAULT가 아니면
+crash 없이 `prev` release로 먼저 되돌리고(gen 하나), from_c0 건은 c0 복원 뒤 같은 gen으로. 첫 시도는
+결과의 `e10.first`에 남고 항목 이름·개수는 그대로다. 재시도도 같으면 실패로 남는다.
+
 crash 결과의 `stage`는 스테이징 진단 기록이다: `target`, 쓴 ssh 클라이언트 경로(`ssh`), 마지막 `apply`의 `rc`,
 시도 횟수 `tries`(exit 2 = 서비스 tick과 잠금 경쟁이면 2 s 뒤 다시, 최대 30회), 창까지 남은 초 `margin_s`(음수 = 창 뒤),
 시도별 `attempts`(`rc`·걸린 초 `s`·그때 감시자 ssh가 살아 있었는지 `watcher_alive`). `staged_before_window`가
@@ -240,6 +246,41 @@ seed에 넘긴다)로 가는 eth0 전달은 `ext_fwd` **앞** 규칙이 세고 `
 `plc-1` = 10.0.0.5:502)부터 생긴다(VM 1차 실측 `ext_fwd` 216). 정확히 선언된 host:port TCP만 빠지고 그 밖의
 eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 않는다.
 
+## G2 nightly (M6-2a)
+
+밤마다 PC가 master HEAD를 빌드해 현장 VM 2대에 설치하고 결과를 GitHub에 남긴다. 2a는 시나리오 G2-1
+하나와 수동 실행(`.github/workflows/nightly.yml`, `workflow_dispatch`)만 있다 — cron은 M6-2b.
+
+- 현장: site-a(10.77.0.10) = **BASE**(git 태그가 있는 최신 `deploy/releases/r*.json`), site-b
+  (10.77.0.11) = **NEXT**(HEAD 빌드 `n<sha7>`, 버전 `<BASE 다음 번호>-nightly.<sha7>`). NEXT는 WSL
+  `bundles.py nightly-release`가 HEAD git 사본에서 `build_images.sh`로 빌드하고 `LABEL
+  pureiron.nightly=<sha>` 파생을 얹어 WSL 작업 디렉터리(`~/m2d-e2e/work/{releases,store}`)에만 기록한다.
+- 장비: 각 VM 안에 dummy 인터페이스 `10.0.0.5`(fixture 장비 주소)와 시뮬레이터 컨테이너
+  (`e2e-simulator`, host network, :502, 제품 compose 밖). g1 트리 = fixture 사본 + 시뮬레이터 태그
+  100개(`trees.g2_tree`).
+- G2-1(현장마다): 설치(ready·overlay2·classic) · 실행 이미지 == 그 현장 release digest · c0 뒤 5분 안에
+  100태그 전부 GOOD(`GET /tags`, viewer 로그인) · 장비 CONNECTED(`GET /devices`) · 부팅 이후 외부 접속
+  카운터 0. collector(compose bridge) → `10.0.0.5`는 VM 자신의 주소라 input으로 들어와 `ext_out_v4`·
+  `ext_fwd`·`field_fwd` 어디에도 세지지 않고, 시뮬레이터 응답은 목적지가 docker bridge(172.16/12)라
+  제외 대상이다(`golden` 모듈 docstring).
+- 실패 분류: `InfraError`·ssh·WSL·Hyper-V·시간 초과 = `infra`(실패한 시험만 1회 다시), 그 밖(HEAD
+  빌드 실패 포함) = `product`(다시 돌리지 않음). junit `failure_class` 속성과 `summary.json`에 남는다.
+
+```powershell
+$env:PUREIRON_E2E_SWITCH = "pureiron-e2e"   # setup-host.ps1 -Switch 값
+uv run python tests/e2e/gates/nightly.py preflight --judge-only   # 판단만(조치 없음)
+uv run python tests/e2e/gates/nightly.py all --dry-run            # GitHub에 쓰지 않음
+uv run pytest -c tests/e2e/gates/pytest.ini tests/e2e/gates -m g2 --collect-only
+```
+
+결과: `C:\PureIron_e2e\results\g2-<run>\`(junit.xml·summary.json·preflight.json·publish.json·
+`<site>\`의 updater.json·메트릭·journal·compose 로그, 14일 뒤 preflight가 지운다). 번들
+`bundles\<run>\`은 run 끝에 지운다. 환경변수: `PUREIRON_G2_MIN_MEM_GB`(8)·`PUREIRON_G2_MIN_DISK_GB`
+(40)·`PUREIRON_G2_CI_WAIT_S`(1800)·`PUREIRON_G2_SERIAL=1`(VM 2대를 차례로). G2 시험은
+`gates/pytest.ini`로만 수집된다(G1 `unit`에는 수집 자체가 빠진다).
+
 ## 단위 테스트
 
-`tests/e2e/tests/` — 공용화 불변 조건(`test_harness_shared.py` — 항목 39개 이름·순서, `ReleasePair` 기본값 = 옛 상수, 현장 둘의 상태 파일·이름 분리, 롤백 5분 경계, VM 3 GiB)·phase 순서·상태 읽기·nft 규칙(현장 장비 `field_fwd` 규칙 위치·끝점 추출·외부 접속 판정)·seed ISO 왕복·PowerShell 인용·수렴 판정·release 쌍(BASE·NEXT 기록 대조 필수·crash 순서·항목 39개·단계 순서·c0/NEXT 스키마 집합 판정(같은 epoch 실측값, 지난 쌍 c0 교차)·전환기 경보·FAULT 트리 복원·M5 확인 판정(트리·PATCH·absorb·재적용)·gen 배정·NEXT/FAULT 트리 판정(로컬 실측 `fixtures/m4c-tree-db.json` — 같은 트리 재적용 no-op에서 ⓐ 실패, NEXT 트리에서 통과, 롤백·재시도 정의 값)·업그레이드/FAULT/재시도 배선(가짜 `apply`))·온라인 판정(`test_online.py` — 실측 `/fleet` 행으로 단계별 통과·교차 실패, CA 지문 표기, `central.py` 값·토큰을 출력에 내지 않음, 화면 비밀번호·현장 token이 명령 줄에 없고 stdin으로만 감 — `basic_auth_line`·`site_online`·`Vm.run(input=)`)·store symlink 다시 연결·`ensure_image` 적재 조건·스테이징 진단 기록(`stage_for_window`). G1 `unit`에 포함된다.
+`tests/e2e/tests/` — 공용화 불변 조건(`test_harness_shared.py` — 항목 39개 이름·순서, `ReleasePair` 기본값 = 옛 상수, 현장 둘의 상태 파일·이름 분리, 롤백 5분 경계, VM 3 GiB)·phase 순서·상태 읽기·nft 규칙(현장 장비 `field_fwd` 규칙 위치·끝점 추출·외부 접속 판정)·seed ISO 왕복·PowerShell 인용·수렴 판정·release 쌍(BASE·NEXT 기록 대조 필수·crash 순서·항목 39개·단계 순서·c0/NEXT 스키마 집합 판정(같은 epoch 실측값, 지난 쌍 c0 교차)·전환기 경보·FAULT 트리 복원·M5 확인 판정(트리·PATCH·absorb·재적용)·gen 배정·NEXT/FAULT 트리 판정(로컬 실측 `fixtures/m4c-tree-db.json` — 같은 트리 재적용 no-op에서 ⓐ 실패, NEXT 트리에서 통과, 롤백·재시도 정의 값)·업그레이드/FAULT/재시도 배선(가짜 `apply`))·온라인 판정(`test_online.py` — 실측 `/fleet` 행으로 단계별 통과·교차 실패, CA 지문 표기, `central.py` 값·토큰을 출력에 내지 않음, 화면 비밀번호·현장 token이 명령 줄에 없고 stdin으로만 감 — `basic_auth_line`·`site_online`·`Vm.run(input=)`)·store symlink 다시 연결·`ensure_image` 적재 조건·스테이징 진단 기록(`stage_for_window`)·G2(`test_harness_g2.py` — 현장별 디렉터리·seed 바이트 동일·
+`nft_mark` site id·E10 재시도, `test_nightly_pair.py`, `test_trees_g2.py`, `test_g2_frame.py`,
+`test_nightly_runner.py`). G1 `unit`에 포함된다.
