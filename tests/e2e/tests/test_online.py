@@ -8,6 +8,7 @@ c0를 띄우고, VM Updater와 같은 형식의 서명 heartbeat·보고를 보�
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import stat
@@ -16,11 +17,21 @@ import sys
 from pathlib import Path
 from typing import cast
 
-import central
 import pytest
 import run
-import vm
-from release_pair import BASE, RELEASES
+from harness import buildhost, central, judges, paths, site, vm
+from harness.context import Context
+from harness.release_pair import DEFAULT as PAIR
+
+BASE, RELEASES = PAIR.base, PAIR.releases
+SITE = run.SITE_A.site_id
+
+
+def tmp_ctx(tmp_path: Path) -> Context:
+    """run.py의 site-a 문맥 — 상태 파일만 `tmp_path`로(실제 state.json 보호)."""
+    site_a = dataclasses.replace(run.SITE_A, state_file=tmp_path / "state.json")
+    return Context(run_id="t", artifacts=str(tmp_path), site=site_a, pair=PAIR)
+
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 MEASURED = cast(
@@ -36,7 +47,7 @@ CA_SHA256 = (
 
 
 def row(stage: str) -> dict[str, object]:
-    found = run.fleet_row(MEASURED[stage])
+    found = judges.fleet_row(MEASURED[stage], SITE)
     assert found, stage
     return found
 
@@ -58,19 +69,19 @@ ALL_ROWS = {
 
 def test_measured_rows_are_the_pair_base_and_online_gen() -> None:
     assert RELEASES[BASE] == "2026.11.0"
-    assert run.ONLINE_GEN == 2
-    assert run.sub(PUBLISHED, "desired").get("product_version") == RELEASES[BASE]
+    assert judges.ONLINE_GEN == 2
+    assert judges.sub(PUBLISHED, "desired").get("product_version") == RELEASES[BASE]
     assert MEASURED["stale_direct"]["via"] == "control-api"
     assert MEASURED["online_g1"]["via"] == "caddy"
 
 
 def test_fleet_row_needs_exactly_one_site_row() -> None:
-    assert run.fleet_row(MEASURED["online_g1"])["connection"] == "online"
-    assert run.fleet_row({"status": 404, "body": {"detail": "unknown site"}}) == {}
+    assert judges.fleet_row(MEASURED["online_g1"], SITE)["connection"] == "online"
+    assert judges.fleet_row({"status": 404, "body": {"detail": "unknown site"}}, SITE) == {}
     body = cast(list[object], MEASURED["online_g1"]["body"])
-    assert run.fleet_row({"status": 200, "body": body * 2}) == {}
+    assert judges.fleet_row({"status": 200, "body": body * 2}, SITE) == {}
     other = [{**cast(dict[str, object], body[0]), "site": "site-b"}]
-    assert run.fleet_row({"status": 200, "body": other}) == {}
+    assert judges.fleet_row({"status": 200, "body": other}, SITE) == {}
 
 
 # ---------------------------------------------------------------- ① HTTPS heartbeat
@@ -78,12 +89,14 @@ def test_fleet_row_needs_exactly_one_site_row() -> None:
 
 def poll(r: dict[str, object], **over: object) -> dict[str, bool]:
     kwargs: dict[str, object] = {"ca_sha256": CA_SHA256, "vm_ca_sha256": CA_SHA256}
-    kwargs |= {"site_id": run.SITE, **over}
-    return run.judge_online_poll(
+    kwargs |= {"site_id": SITE, **over}
+    return judges.judge_online_poll(
         r,
         ca_sha256=str(kwargs["ca_sha256"]),
         vm_ca_sha256=str(kwargs["vm_ca_sha256"]),
         site_id=kwargs["site_id"],
+        want_site=SITE,
+        pair=PAIR,
     )
 
 
@@ -128,7 +141,7 @@ REPORT_CLEARED: dict[str, object] = {
 HEARTBEAT_REFILLED: dict[str, object] = {
     **REPORT_CLEARED,
     "last_heartbeat_seq": 3,
-    "current": {**run.sub(ONLINE_G1, "current"), "reported_at": "2026-11-08T21:03:17Z"},
+    "current": {**judges.sub(ONLINE_G1, "current"), "reported_at": "2026-11-08T21:03:17Z"},
 }
 """이어서 다음 heartbeat(seq 3, poll 10 s)가 manifest의 product·project_version으로 다시 채운 행."""
 
@@ -155,17 +168,16 @@ def test_online_poll_waits_past_the_report_cleared_row(
     def no_sleep(seconds: float) -> None:
         del seconds
 
-    monkeypatch.setattr(run, "central", fake_central)
-    monkeypatch.setattr(run.time, "sleep", no_sleep)
-    monkeypatch.setattr(run, "STATE_FILE", tmp_path / "state.json")  # 실제 state.json 보호
-    ctx = run.Context(run_id="t", artifacts=str(tmp_path))
+    monkeypatch.setattr(buildhost, "central", fake_central)
+    monkeypatch.setattr(buildhost.time, "sleep", no_sleep)
+    ctx = tmp_ctx(tmp_path)
     setup: dict[str, object] = {
         "ca_sha256": CA_SHA256,
         "vm_ca_sha256": CA_SHA256,
-        "registered": {"site_id": run.SITE},
+        "registered": {"site_id": SITE},
     }
     run.online_poll(ctx, setup)
-    assert asked == [("fleet", "--site", run.SITE)] * 2
+    assert asked == [("fleet", "--site", SITE)] * 2
     (result,) = ctx.results
     assert result["name"] == run.ITEM_ONLINE_POLL
     assert result["ok"] is True
@@ -180,9 +192,9 @@ def test_online_poll_waits_on_row_checks_only() -> None:
 
 def test_ca_fingerprint_matches_openssl_and_python() -> None:
     line = f"sha256 Fingerprint={CA_SHA256}\n"
-    assert run.ca_fingerprint(line) == CA_SHA256
-    assert run.ca_fingerprint(line.lower()) == CA_SHA256
-    assert run.ca_fingerprint("") == ""
+    assert judges.ca_fingerprint(line) == CA_SHA256
+    assert judges.ca_fingerprint(line.lower()) == CA_SHA256
+    assert judges.ca_fingerprint("") == ""
     # 중앙 쪽 지문(central.py, DER SHA-256)이 openssl과 같은 표기여야 VM 값과 비교된다
     assert central.fingerprint(CA_PEM) == CA_SHA256
 
@@ -191,18 +203,22 @@ def test_ca_fingerprint_matches_openssl_and_python() -> None:
 
 
 def test_online_published_needs_201_and_desired_gen() -> None:
-    assert all(run.judge_online_published(PUT, PUBLISHED).values())
-    failing = {k for k, ok in run.judge_online_published(PUT, REGISTERED).items() if not ok}
+    assert all(judges.judge_online_published(PUT, PUBLISHED, PAIR).values())
+    failing = {
+        k for k, ok in judges.judge_online_published(PUT, REGISTERED, PAIR).items() if not ok
+    }
     assert failing == {"desired_gen", "desired_product"}
     conflict: dict[str, object] = {"status": 409, "body": {"detail": "generation 2 <= published 2"}}
-    assert not run.judge_online_published(conflict, PUBLISHED)["put_201"]
+    assert not judges.judge_online_published(conflict, PUBLISHED, PAIR)["put_201"]
     # desired는 g2인데 게시 수위가 다르면(다른 gen이 이미 게시됨) 실패 — 15분 실측 PR이 gen 3
-    assert not run.judge_online_published(PUT, {**PUBLISHED, "max_published_gen": 3})["desired_gen"]
+    assert not judges.judge_online_published(PUT, {**PUBLISHED, "max_published_gen": 3}, PAIR)[
+        "desired_gen"
+    ]
 
 
 def test_online_report_passes_after_report_and_back_online() -> None:
-    assert all(run.judge_online_report(REPORTED).values())
-    assert all(run.judge_online_report(BACK).values())
+    assert all(judges.judge_online_report(REPORTED, PAIR).values())
+    assert all(judges.judge_online_report(BACK, PAIR).values())
 
 
 @pytest.mark.parametrize(
@@ -217,19 +233,19 @@ def test_online_report_passes_after_report_and_back_online() -> None:
     ],
 )
 def test_online_report_fails_on_other_stages(stage: str, failing: set[str]) -> None:
-    checks = run.judge_online_report(ALL_ROWS[stage])
+    checks = judges.judge_online_report(ALL_ROWS[stage], PAIR)
     assert {k for k, ok in checks.items() if not ok} == failing
 
 
 def test_online_report_needs_online_source_and_success() -> None:
-    attempt = run.sub(REPORTED, "last_attempt")
+    attempt = judges.sub(REPORTED, "last_attempt")
     offline = {**REPORTED, "last_attempt": {**attempt, "source": "offline"}}
-    assert not run.judge_online_report(offline)["attempt_source"]
+    assert not judges.judge_online_report(offline, PAIR)["attempt_source"]
     failed = {**REPORTED, "last_attempt": {**attempt, "result": "failed"}}
-    assert not run.judge_online_report(failed)["last_attempt"]
-    current = run.sub(REPORTED, "current")
+    assert not judges.judge_online_report(failed, PAIR)["last_attempt"]
+    current = judges.sub(REPORTED, "current")
     imported = {**REPORTED, "current": {**current, "source": "offline"}}
-    assert not run.judge_online_report(imported)["current_source"]
+    assert not judges.judge_online_report(imported, PAIR)["current_source"]
 
 
 # ---------------------------------------------------------------- ④ 중앙 중지
@@ -263,7 +279,7 @@ def outage(**over: object) -> dict[str, bool]:
         "core_started": (STARTED, STARTED),
         **over,
     }
-    return run.judge_outage(
+    return judges.judge_outage(
         cast(dict[str, object], args["during"]),
         want_digests=WANT,
         stale=cast(dict[str, object], args["stale"]),
@@ -331,10 +347,10 @@ def test_seen_after_compares_times_not_strings() -> None:
     b: dict[str, object] = {
         "last_seen": "2026-11-08T15:50:42Z"
     }  # 소수점 없는 표기가 문자열로는 앞에 온다
-    assert run.seen_after(b, a)
-    assert not run.seen_after(a, b)
-    assert not run.seen_after({"last_seen": None}, a)
-    assert not run.seen_after(b, {"last_seen": "not a time"})
+    assert judges.seen_after(b, a)
+    assert not judges.seen_after(a, b)
+    assert not judges.seen_after({"last_seen": None}, a)
+    assert not judges.seen_after(b, {"last_seen": "not a time"})
 
 
 # ---------------------------------------------------------------- central.py(WSL 헬퍼)
@@ -350,8 +366,8 @@ def test_central_values_follow_d9() -> None:
         env["PUREIRON_CENTRAL_DEFAULT_SNI"],
     ) == ("10.77.0.1",) * 3
     assert env["PUREIRON_CENTRAL_HTTPS_PORT"] == "28443"
-    assert env["PUREIRON_CONTROL_POLL_S"] == str(run.CENTRAL_POLL_S)
-    assert central.BASE_URL == run.CENTRAL_URL
+    assert env["PUREIRON_CONTROL_POLL_S"] == str(site.CENTRAL_POLL_S)
+    assert central.BASE_URL == site.CENTRAL_URL
     assert env["PUREIRON_CENTRAL_SECRETS_DIR"] == str(central.SECRETS)
     # 비밀 디렉터리는 저장소·artifacts 밖(홈 아래)
     assert not central.SECRETS.is_relative_to(central.ROOT)
@@ -447,7 +463,7 @@ class FakeVm:
         if "openssl x509" in command:
             out = f"sha256 Fingerprint={CA_SHA256}\n"
         elif "grep -E" in command:
-            out = f"PUREIRON_CONTROL_API={run.CENTRAL_URL}\nPUREIRON_POLL_INTERVAL_S=10\n"
+            out = f"PUREIRON_CONTROL_API={site.CENTRAL_URL}\nPUREIRON_POLL_INTERVAL_S=10\n"
         return subprocess.CompletedProcess[str](command, 0, out, "")
 
 
@@ -457,23 +473,23 @@ def test_site_online_passes_the_site_token_by_stdin_only(
     """L2: 현장 token은 `pureiron-site secret set`의 stdin으로만 간다 — 어느 원격 명령 줄에도,
     결과 기록에도 없다(변이 M26: token을 `secret set` 인자로)."""
     token = "site-token-must-stay-off-the-command-line"
-    monkeypatch.setattr(run, "BUNDLES", tmp_path)
+    monkeypatch.setattr(paths, "BUNDLES", tmp_path)
 
     def fake_central(command: str, *args: str) -> dict[str, object]:
         del command, args
-        return {"site_id": run.SITE, "next_seq": 1}
+        return {"site_id": SITE, "next_seq": 1}
 
     def fake_wsl(script: str, *, timeout_s: float = 3600) -> str:
         del script, timeout_s
         return token + "\n"
 
-    monkeypatch.setattr(run, "central", fake_central)
-    monkeypatch.setattr(run, "wsl", fake_wsl)
-    ctx = run.Context(run_id="t", artifacts=str(tmp_path))
+    monkeypatch.setattr(buildhost, "central", fake_central)
+    monkeypatch.setattr(buildhost, "wsl", fake_wsl)
+    ctx = tmp_ctx(tmp_path)
     host = FakeVm()
     ca = tmp_path / "central-root.crt"
     ca.write_text(CA_PEM, encoding="ascii")
-    setup = run.site_online(ctx, cast(run.Vm, host), ca, CA_SHA256)
+    setup = site.site_online(ctx, cast(vm.Vm, host), ca, CA_SHA256)
     assert all(token not in command for command, _ in host.runs)
     fed = [(command, given) for command, given in host.runs if given is not None]
     assert fed == [("sudo pureiron-site secret set control_api_token", token + "\n")]
@@ -511,18 +527,17 @@ def test_online_guarded_survives_a_hung_central_down(
 ) -> None:
     """`online_guarded` finally의 `central down`이 시간 초과(`TimeoutExpired`)여도 report로
     넘어간다 — 온라인 항목 실패 기록은 그대로 남는다."""
-    monkeypatch.setattr(run, "STATE_FILE", tmp_path / "state.json")  # 실제 state.json 보호
-    ctx = run.Context(run_id="t", artifacts=str(tmp_path))
+    ctx = tmp_ctx(tmp_path)
 
-    def broken_online(c: run.Context) -> None:
+    def broken_online(c: Context) -> None:
         del c
-        raise run.VmError("ssh exited 255")
+        raise vm.VmError("ssh exited 255")
 
     def hung_central(command: str, *args: str) -> dict[str, object]:
         raise subprocess.TimeoutExpired(["central.py", command, *args], 3600)
 
     monkeypatch.setattr(run, "step_online", broken_online)
-    monkeypatch.setattr(run, "central", hung_central)
+    monkeypatch.setattr(buildhost, "central", hung_central)
     run.online_guarded(ctx, keep_central=False)
     by_name = {r["name"]: r for r in ctx.results}
     assert all(by_name[name]["ok"] is False for name in run.ONLINE_ITEMS)

@@ -4,6 +4,16 @@
 돌려 plan M2 종료 조건을 확인한다. 단위·통합 테스트(fake 세계, compose)가 다루지 못하는 것 —
 폐쇄망 부트스트랩, classic image store, systemd 재시작, 전원 리셋, 실제 마이그레이션·롤백 시간 — 이 대상이다.
 
+## 파일 위치
+
+| 위치 | 내용 |
+|---|---|
+| `m2d/run.py` | M2d 시나리오 진입점(단계 순서·CLI·결과 항목 39개). 현장 `SITE_A`(site-a, 10.77.0.10) 하나 |
+| `gates/harness/` | 공용 하네스(M6-1, G2 nightly와 같이 쓴다): `release_pair`(`ReleasePair`·지금 쌍 `DEFAULT`), `site`(`Site`·원격 조작), `judges`(순수 판정), `trees`(트리 기대값), `context`(`Context`·상태 파일), `buildhost`(WSL 호출), `hyperv`·`golden`·`vm`, WSL 스크립트 `bundles.py`·`central.py` |
+| `site/` | VM에 복사하는 스크립트(`probe.py`·`crash_at.py`·`site_api.py`) |
+| `infra/setup-host.ps1` | 1회 호스트 준비 |
+| `tests/` | 단위 시험(G1 `unit`) |
+
 ## 1회 준비 (사용자, 관리자 PowerShell)
 
 ```powershell
@@ -17,7 +27,7 @@ powershell -ExecutionPolicy Bypass -File tests\e2e\infra\setup-host.ps1
   다른 곳으로 전달하지 않는다 — VM은 인터넷에 닿지 않는다.
 - C: 여유: golden 2.1 GB + VM 차분 디스크 수 GB + 번들(회당 약 0.74 GB × 실행 수). 작업 디렉터리는
   `C:\PureIron_e2e`(`PUREIRON_E2E_ROOT`).
-- 메모리: VM 4 GiB + 체크포인트 복원. WSL VM(번들 빌드·Docker Desktop)이 페이지 캐시를 늦게 돌려줘
+- 메모리: VM 3 GiB(`PUREIRON_E2E_VM_GIB`, 기본 3 — M6-0 실측 최저 여유 2.1 GB·OOM 0) + 체크포인트 복원. WSL VM(번들 빌드·Docker Desktop)이 페이지 캐시를 늦게 돌려줘
   복원이 `0x8007000E`로 실패할 수 있어, 하네스는 VM 시작·복원·리셋 전에 WSL 캐시를 비운다(`wsl -u root`).
 - 한국어 등 지역화된 Windows: Hyper-V 통합 서비스 이름이 번역되므로 하네스는 서비스 ID로 고른다.
 
@@ -30,8 +40,9 @@ image store(`~/pureiron/images`, `PUREIRON_IMAGE_STORE`)의 BASE·NEXT tar(`<이
 
 ## release 쌍
 
-실측할 release 쌍은 `m2d/release_pair.py` 한 곳에 있다 — 설치 g1 = `BASE`, 업그레이드 `BASE`→`NEXT`,
-헬스 실패 롤백 `FAULT`(`NEXT` 파생), 기대 epoch `EPOCHS`. 결과 항목 39개(`run.expected_items()`) 이름도
+실측할 release 쌍은 `gates/harness/release_pair.py`의 `ReleasePair`(지금 쌍 `DEFAULT`) 한 곳에 있다 — 설치
+g1 = `base`(`BASE`), 업그레이드 `BASE`→`NEXT`, 헬스 실패 롤백 `FAULT`(`NEXT` 파생), 기대 epoch `epochs`. 판정
+함수는 쌍을 인자로 받는다. 결과 항목 39개(`run.expected_items()`) 이름도
 여기서 나온다(S4까지 30개, M5 마감에서 M5 확인 4개 + 전환기 경보 해제 1개를 더했고, M4 마감에서 경보 해제
 자리를 "롤백 뒤 재시도"로 바꾸고 온라인 4개를 더했다).
 
@@ -50,12 +61,12 @@ image store(`~/pureiron/images`, `PUREIRON_IMAGE_STORE`)의 BASE·NEXT tar(`<이
 `r3→r4 … epoch-4`·`r4 schema`·`r4' health failure → rollback (transition, E_DEFINITIONS_LEFT)`·`to r3`·
 `r4 tree bundle after transition rollback → succeeded, alarm cleared`).
 
-스키마 판정은 이름 집합으로 비교한다(`release_pair.py`의 `CAGGS`·`BASE_COLUMNS`·`BASE_TABLES`·`BASE_INDEXES`·
-`NEXT_TABLES`, probe `db`의 `caggs`·`realtime_caggs`·`tables`·`indexes`·`columns`). c0는 BASE epoch 산출물이
+스키마 판정은 이름 집합으로 비교한다(`ReleasePair`의 `caggs`·`base_columns`·`base_tables`·`base_indexes`·
+`next_tables`, probe `db`의 `caggs`·`realtime_caggs`·`tables`·`indexes`·`columns`). c0는 BASE epoch 산출물이
 있어야 하고, 업그레이드 뒤에도 BASE 산출물이 남아야 한다. NEXT가 epoch를 올리는 쌍이면 c0에 NEXT 테이블이
-없고(`next_absent`) 업그레이드 뒤 생겨야 한다(`next_tables`). **M4 마감 r4→r5는 같은 epoch라 `NEXT_TABLES`·
-`NEXT_INDEXES`가 빈 집합이고 두 판정을 뺐다**(빈 집합 검사는 늘 참이라 아무것도 확인하지 않는 항목이 남는다).
-0013 `project_files`는 BASE_TABLES로 옮겼다. 쌍을 바꿀 때는 새 NEXT epoch의 migration SQL을 읽고 이
+없고(`next_absent`) 업그레이드 뒤 생겨야 한다(`next_tables`). **M4 마감 r4→r5는 같은 epoch라 `next_tables`·
+`next_indexes`가 빈 집합이고 두 판정을 뺐다**(빈 집합 검사는 늘 참이라 아무것도 확인하지 않는 항목이 남는다).
+0013 `project_files`는 `base_tables`로 옮겼다. 쌍을 바꿀 때는 새 NEXT epoch의 migration SQL을 읽고 이
 집합들을 함께 바꾼다(지난 NEXT 산출물은 BASE로 옮긴다).
 
 ### M4 마감에서 바뀐 판정
@@ -68,8 +79,8 @@ image store(`~/pureiron/images`, `PUREIRON_IMAGE_STORE`)의 BASE·NEXT tar(`<이
   (`changed=False`)으로 건너뛰므로, 업그레이드가 fixture를 실으면 정의를 다시 쓰지 않아 c0 시드 장비·태그가
   남고 ⓐ가 실패한다(로컬 실측 — `fixtures/m4c-tree-db.json` `next_same_tree` = c0). 그래서 NEXT 번들
   (업그레이드·재시도)은 **NEXT 트리**, FAULT 번들은 **FAULT 트리**를 싣는다 — fixture 사본에서 태그
-  `line1/temp_sp`(`release_pair.TREE_TAG`, ⓑ PATCH 대상과 겹치지 않음)의 description만 `… (r5)`·`… (r5f)`로
-  바꾼 것(`bundles.release_tree`, `run.py`가 run 번들 디렉터리 `trees/<release>`에 만들고 WSL 경로로 넘긴다).
+  `line1/temp_sp`(`ReleasePair.tree_tag`, ⓑ PATCH 대상과 겹치지 않음)의 description만 `… (r5)`·`… (r5f)`로
+  바꾼 것(`bundles.release_tree`, `buildhost.release_tree`가 run 번들 디렉터리 `trees/<release>`에 만들고 WSL 경로로 넘긴다).
   `judge_tree`는 트리 기대값에 더해 c0 시드 retire(`seed_retired`)와 그 태그의 DB 정의 값(`definition`)을 본다 —
   같은 epoch에서 늘 참인 항목이 되지 않게. crash·온라인 ②·ⓒ·ⓓ 번들은 fixture 경로 그대로다(트리를 판정하지
   않거나 fixture 기준 판정).
@@ -113,7 +124,7 @@ image store(`~/pureiron/images`, `PUREIRON_IMAGE_STORE`)의 BASE·NEXT tar(`<이
 `report`의 외부 접속 판정이 이 구간까지 누적한다 — VM → `10.77.0.1`은 내부 전용 망이라 `ext_out_v4` 제외
 대상(`golden.OUT_RULES`의 `{cidr}`)이고 IP 직접 접속이라 DNS 질의가 없다(F6). 새 규칙을 더하지 않는다.
 
-1. **중앙**: `m2d/central.py up`(WSL, 저장소 사본에서) — `deploy/central` compose를 프로젝트
+1. **중앙**: `gates/harness/central.py up`(WSL, 저장소 사본에서) — `deploy/central` compose를 프로젝트
    `pureiron-e2e-central`·release `c0`(이미지 config digest = `deploy/releases/central/c0.json`, 없으면 image
    store `central/c0/*.tar`에서 적재)로 **새로** 띄운다(볼륨째 내리고 다시). 바인드·인증서 이름·SNI
    `10.77.0.1`, HTTPS 28443, `PUREIRON_CONTROL_POLL_S=10`. `migrate up`(기동 때 자동 실행 안 함) → CLI로
@@ -231,4 +242,4 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
 
 ## 단위 테스트
 
-`tests/e2e/tests/` — phase 순서·상태 읽기·nft 규칙(현장 장비 `field_fwd` 규칙 위치·끝점 추출·외부 접속 판정)·seed ISO 왕복·PowerShell 인용·수렴 판정·release 쌍(BASE·NEXT 기록 대조 필수·crash 순서·항목 39개·단계 순서·c0/NEXT 스키마 집합 판정(같은 epoch 실측값, 지난 쌍 c0 교차)·전환기 경보·FAULT 트리 복원·M5 확인 판정(트리·PATCH·absorb·재적용)·gen 배정·NEXT/FAULT 트리 판정(로컬 실측 `fixtures/m4c-tree-db.json` — 같은 트리 재적용 no-op에서 ⓐ 실패, NEXT 트리에서 통과, 롤백·재시도 정의 값)·업그레이드/FAULT/재시도 배선(가짜 `apply`))·온라인 판정(`test_online.py` — 실측 `/fleet` 행으로 단계별 통과·교차 실패, CA 지문 표기, `central.py` 값·토큰을 출력에 내지 않음, 화면 비밀번호·현장 token이 명령 줄에 없고 stdin으로만 감 — `basic_auth_line`·`site_online`·`Vm.run(input=)`)·store symlink 다시 연결·`ensure_image` 적재 조건·스테이징 진단 기록(`stage_for_window`). G1 `unit`에 포함된다.
+`tests/e2e/tests/` — 공용화 불변 조건(`test_harness_shared.py` — 항목 39개 이름·순서, `ReleasePair` 기본값 = 옛 상수, 현장 둘의 상태 파일·이름 분리, 롤백 5분 경계, VM 3 GiB)·phase 순서·상태 읽기·nft 규칙(현장 장비 `field_fwd` 규칙 위치·끝점 추출·외부 접속 판정)·seed ISO 왕복·PowerShell 인용·수렴 판정·release 쌍(BASE·NEXT 기록 대조 필수·crash 순서·항목 39개·단계 순서·c0/NEXT 스키마 집합 판정(같은 epoch 실측값, 지난 쌍 c0 교차)·전환기 경보·FAULT 트리 복원·M5 확인 판정(트리·PATCH·absorb·재적용)·gen 배정·NEXT/FAULT 트리 판정(로컬 실측 `fixtures/m4c-tree-db.json` — 같은 트리 재적용 no-op에서 ⓐ 실패, NEXT 트리에서 통과, 롤백·재시도 정의 값)·업그레이드/FAULT/재시도 배선(가짜 `apply`))·온라인 판정(`test_online.py` — 실측 `/fleet` 행으로 단계별 통과·교차 실패, CA 지문 표기, `central.py` 값·토큰을 출력에 내지 않음, 화면 비밀번호·현장 token이 명령 줄에 없고 stdin으로만 감 — `basic_auth_line`·`site_online`·`Vm.run(input=)`)·store symlink 다시 연결·`ensure_image` 적재 조건·스테이징 진단 기록(`stage_for_window`). G1 `unit`에 포함된다.

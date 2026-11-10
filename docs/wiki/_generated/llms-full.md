@@ -1116,7 +1116,7 @@ python scripts/wiki.py check
 
 > **시점 스냅샷 (`docs/wiki/reports/`)** — 이 문서는 불변 계약이 아니라 각 실측 run 시점의 **결과 기록**이다. 하네스·제품이 그 뒤에 바뀌었을 수 있으므로, 여기 적힌 수치를 근거로 결론을 쓰기 전에 해당 run의 `results.json`이나 새 실측으로 다시 확인한다. 새 실측을 하면 절을 더하고 `last_verified`를 갱신한다. 하네스 구성·판정의 정본은 [`tests/e2e/README.md`](../../../tests/e2e/README.md), 계약 쪽 요약은 [data-contracts](../sot/data-contracts.md)의 M2d VM 절이다.
 
-M2d 하네스(`tests/e2e`, PD-24)를 release 쌍(`tests/e2e/m2d/release_pair.py`)마다 한 번씩 `run.py all`로 돌린 결과다. 항목은 S4까지 30개, M5 마감 35개, M4 마감부터 39개(`run.expected_items()`)이고, 결과 파일은 `artifacts/e2e/m2d-<run>/results.json`·`bundle-metrics.json`(gitignore)이다.
+M2d 하네스(`tests/e2e`, PD-24)를 release 쌍(`tests/e2e/gates/harness/release_pair.py`)마다 한 번씩 `run.py all`로 돌린 결과다. 항목은 S4까지 30개, M5 마감 35개, M4 마감부터 39개(`run.expected_items()`)이고, 결과 파일은 `artifacts/e2e/m2d-<run>/results.json`·`bundle-metrics.json`(gitignore)이다.
 
 ## M2 r0→r1 (run `20261005T055523Z`, 30/30 PASS)
 

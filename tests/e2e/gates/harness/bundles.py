@@ -1,13 +1,16 @@
 """M2d 번들 재료(빌드 호스트 = WSL runner, 서명 키는 `~/pureiron/keys/test`).
 
-    uv run --no-sync python tests/e2e/m2d/bundles.py fault-release --work W
-    uv run --no-sync python tests/e2e/m2d/bundles.py site --work W --out O --gen 2 \\
+    uv run --no-sync python tests/e2e/gates/harness/bundles.py fault-release --work W
+    uv run --no-sync python tests/e2e/gates/harness/bundles.py site --work W --out O --gen 2 \\
         --product 2026.10.3-fault1 --window-start 2026-10-05T00:00:00Z --window-end ...
-    uv run --no-sync python tests/e2e/m2d/bundles.py install --work W --out O --release 2026.10.2
-    uv run --no-sync python tests/e2e/m2d/bundles.py m5-project --work W
-    uv run --no-sync python tests/e2e/m2d/bundles.py absorb --work W --draft D --site-key E
+    uv run --no-sync python tests/e2e/gates/harness/bundles.py install --work W --out O \\
+        --release 2026.10.2
+    uv run --no-sync python tests/e2e/gates/harness/bundles.py m5-project --work W
+    uv run --no-sync python tests/e2e/gates/harness/bundles.py absorb --work W --draft D \\
+        --site-key E
 
-release 쌍(`BASE`·`NEXT`·`FAULT`)은 `release_pair.py`가 정한다(M4 마감: r4→r5, fault r5f).
+release 쌍(`BASE`·`NEXT`·`FAULT`)은 `release_pair.py`가 정한다 — 함수는 `ReleasePair`를 인자로
+받고, CLI는 `release_pair.DEFAULT`(M4 마감: r4→r5, fault r5f)를 쓴다.
 
 - `fault-release`: `FAULT`(r5', `2026.11.1-fault1`) — `NEXT` 이미지 그대로에 collector만 세션을 맺지
   않는 파생 이미지(`sleep`). core는 healthy라 `up --wait`는 통과하고 `/readyz`(collector 세션)가
@@ -23,14 +26,16 @@ release 쌍(`BASE`·`NEXT`·`FAULT`)은 `release_pair.py`가 정한다(M4 마감
   "아직 absorb하지 않은 고객 repo". fixture는 `absorbs: {site-a: 3}`라 그대로 쓰면 VM의 현장
   site_rev(PATCH 2번 = 2)가 3 이하여서 드래프트 게이트가 통과하고(ⓒ가 `E_DRAFT`를 못 본다) absorb는
   리비전 퇴행(2 < 3) 충돌이 된다(ⓓ). 그 밖의 파일은 fixture와 바이트까지 같다.
-- `release_tree`(함수 — `run.py`가 Windows 호스트에서 run 번들 디렉터리에 만들고 WSL 경로로
+- `release_tree`(함수 — `m2d/run.py`가 Windows 호스트에서 run 번들 디렉터리에 만들고 WSL 경로로
   `site --project-dir`에 넘긴다): NEXT·FAULT 번들 트리 = fixture 사본에서 태그
-  `release_pair.TREE_TAG`의 description만 `TREE_DESCRIPTIONS[release]`로 바꾼 것. c0(fixture)와
+  `ReleasePair.tree_tag`의 description만 `tree_descriptions[release]`로 바꾼 것. c0(fixture)와
   다른 트리라 업그레이드·FAULT·재시도가 정의를 실제로 다시 쓴다(같은 트리는 core no-op).
 - `absorb`(ⓓ): `W/m5/repo`를 `W/m5/absorbed`로 새로 복사하고 `pureiron-project absorb`(VM이
   서명한 draft.tar + VM `enrollment.json`) → `pureiron-project gate --draft`를 차례로 실행한다. 각
   종료 코드와 출력을 JSON 한 줄로 내고 판정은 `run.py`가 한다(실패해도 exit 0 — 결과에 증거를
   남기려고).
+
+스크립트로 실행되므로(WSL) `tests/e2e/gates`를 `sys.path`에 넣고 `harness` 패키지로 import한다.
 - `install`: `fetch_debs.sh` → `build_updater.sh` → `build_install_bundle.py`(실빌드, 네트워크
   필요). 설치 번들은 이미지를 싣지 않는다 — `--release`는 manifest `release`·파일 이름에만 쓰인다.
 """
@@ -47,19 +52,19 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "deploy" / "build"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "deploy" / "build"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from images import config_digest_from_tar, config_digest_of_image, image_store
-from release_pair import BASE, FAULT, NEXT, RELEASES, TREE_DESCRIPTIONS, TREE_TAG
 
+from harness.release_pair import DEFAULT, ReleasePair
 from pureiron_project import canonical
 from pureiron_project.project import load_project
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[4]
 FIXTURE = ROOT / "packages" / "project-tools" / "fixtures" / "acme"
 
 KEYS = Path.home() / "pureiron" / "keys" / "test"
-FAULT_NAME, FAULT_VERSION, FAULT_BASE = FAULT, RELEASES[FAULT], NEXT
 APP_SERVICES = ("core", "collector", "web")
 FAULT_DOCKERFILE = """\
 FROM pureiron/collector:{base}
@@ -114,12 +119,19 @@ def relink(link: Path, target: Path) -> None:
     link.symlink_to(target, target_is_directory=target.is_dir())
 
 
-def fault_release(work: Path) -> Path:
+def fault_source(pair: ReleasePair) -> tuple[str, str, str]:
+    """FAULT 기록의 (이름, 달력 버전, 파생 원본) — FAULT는 BASE가 아니라 NEXT에서 파생한다."""
+    return pair.fault, pair.releases[pair.fault], pair.next
+
+
+def fault_release(work: Path, pair: ReleasePair) -> Path:
+    """`pair.fault` 기록·image store(`pair.next` 파생)를 `work`에 만든다."""
+    fault_name, fault_version, fault_base = fault_source(pair)
     releases, store = work / "releases", work / "store"
     releases.mkdir(parents=True, exist_ok=True)
     store.mkdir(parents=True, exist_ok=True)
     real_store = image_store()
-    for name in (BASE, NEXT):
+    for name in (pair.base, pair.next):
         if not (ROOT / "deploy" / "releases" / f"{name}.json").is_file():
             raise SystemExit(f"deploy/releases/{name}.json missing (release_record.py {name})")
         if not (real_store / name).is_dir():
@@ -129,51 +141,51 @@ def fault_release(work: Path) -> Path:
         old.unlink()
     for record_path in sorted((ROOT / "deploy" / "releases").glob("*.json")):
         shutil.copy2(record_path, releases / record_path.name)
-    for name in (BASE, NEXT):
+    for name in (pair.base, pair.next):
         relink(store / name, real_store / name)
-    base = json.loads((releases / f"{FAULT_BASE}.json").read_text(encoding="utf-8"))
+    base = json.loads((releases / f"{fault_base}.json").read_text(encoding="utf-8"))
     base_images = cast(dict[str, dict[str, str]], base["images"])
-    fault_store = store / FAULT_NAME
+    fault_store = store / fault_name
     fault_store.mkdir(exist_ok=True)
 
     build_dir = work / "fault-collector"
     build_dir.mkdir(exist_ok=True)
-    (build_dir / "Dockerfile").write_text(FAULT_DOCKERFILE.format(base=FAULT_BASE), "utf-8")
+    (build_dir / "Dockerfile").write_text(FAULT_DOCKERFILE.format(base=fault_base), "utf-8")
     # digest 계산용 임시 tar는 docker build context(build_dir) 밖에 둔다.
     scratch = work / "digest-scratch"
     for svc in APP_SERVICES:
         ensure_image(
-            f"pureiron/{svc}:{FAULT_BASE}",
-            real_store / FAULT_BASE / f"{svc}.tar",
+            f"pureiron/{svc}:{fault_base}",
+            real_store / fault_base / f"{svc}.tar",
             base_images[svc]["config_digest"],
             digest_of=lambda tag: local_digest(tag, scratch),
             load=lambda tar: _run("docker", "load", "-q", "-i", str(tar)),
         )
-    _run("docker", "build", "-q", "-t", f"pureiron/collector:{FAULT_NAME}", str(build_dir))
+    _run("docker", "build", "-q", "-t", f"pureiron/collector:{fault_name}", str(build_dir))
     images: dict[str, dict[str, str]] = {}
     for svc in APP_SERVICES:
-        tag = f"pureiron/{svc}:{FAULT_NAME}"
+        tag = f"pureiron/{svc}:{fault_name}"
         if svc != "collector":
-            _run("docker", "tag", f"pureiron/{svc}:{FAULT_BASE}", tag)
+            _run("docker", "tag", f"pureiron/{svc}:{fault_base}", tag)
         tar = fault_store / f"{svc}.tar"
         _run("docker", "save", "-o", str(tar), tag)
         images[svc] = {"tag": tag, "config_digest": config_digest_from_tar(tar)}
-        # core·web은 FAULT_BASE 이미지 그대로여야 한다(collector만 파생) — 롤백 판정이
+        # core·web은 fault_base 이미지 그대로여야 한다(collector만 파생) — 롤백 판정이
         # 이 digest를 쓴다.
         want = base_images[svc]["config_digest"]
         if svc != "collector" and images[svc]["config_digest"] != want:
             raise SystemExit(f"{tag}: config digest {images[svc]['config_digest']} != {want}")
-    relink(fault_store / "site-db.tar", real_store / FAULT_BASE / "site-db.tar")
+    relink(fault_store / "site-db.tar", real_store / fault_base / "site-db.tar")
     images["site-db"] = base_images["site-db"]
     record = {
-        "name": FAULT_NAME,
-        "release": FAULT_NAME,
-        "version": FAULT_VERSION,
+        "name": fault_name,
+        "release": fault_name,
+        "version": fault_version,
         "commit": base["commit"],
         "images": images,
         "schema": base["schema"],
     }
-    path = releases / f"{FAULT_NAME}.json"
+    path = releases / f"{fault_name}.json"
     path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return path
 
@@ -246,9 +258,9 @@ def m5_project(work: Path) -> Path:
     return unabsorbed_copy(FIXTURE, work / "m5" / "repo")
 
 
-def release_tree(dest: Path, release: str, source: Path = FIXTURE) -> Path:
-    """`source` 트리를 `dest`에 새로 복사하고 태그 `TREE_TAG`의 `description`만
-    `TREE_DESCRIPTIONS[release]`로 바꾼다(그 태그 파일을 정규형으로 다시 쓴다). 결과가 유효한
+def release_tree(dest: Path, release: str, pair: ReleasePair, source: Path = FIXTURE) -> Path:
+    """`source` 트리를 `dest`에 새로 복사하고 태그 `pair.tree_tag`의 `description`만
+    `pair.tree_descriptions[release]`로 바꾼다(그 태그 파일을 정규형으로 다시 쓴다). 결과가 유효한
     프로젝트가 아니거나 태그가 정확히 하나가 아니면 멈춘다."""
     if dest.exists():
         shutil.rmtree(dest)
@@ -257,11 +269,11 @@ def release_tree(dest: Path, release: str, source: Path = FIXTURE) -> Path:
     for path in sorted((dest / "tags").glob("*.yaml")):
         items = cast(list[dict[str, canonical.Json]], canonical.load(path.read_text("utf-8")))
         for item in items:
-            if item.get("path") == TREE_TAG:
-                item["description"] = TREE_DESCRIPTIONS[release]
+            if item.get("path") == pair.tree_tag:
+                item["description"] = pair.tree_descriptions[release]
                 found.append((path, items))
     if len(found) != 1:
-        raise SystemExit(f"{source}: tag {TREE_TAG} found {len(found)} times (want 1)")
+        raise SystemExit(f"{source}: tag {pair.tree_tag} found {len(found)} times (want 1)")
     path, items = found[0]
     path.write_text(canonical.dump(cast(canonical.Json, items)), encoding="utf-8", newline="\n")
     project = load_project(dest)
@@ -353,7 +365,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     os.chdir(ROOT)
     if args.command == "fault-release":
-        print(fault_release(args.work))
+        print(fault_release(args.work, DEFAULT))
     elif args.command == "site":
         print(
             site(

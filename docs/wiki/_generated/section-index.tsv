@@ -87,7 +87,7 @@ report-mvp-gap	docs/wiki/reports/mvp-gap.md	다음-구현-우선순위-issue-후
 report-mvp-gap	docs/wiki/reports/mvp-gap.md	다음-후보-backlog-잔여만	80	8	902	h2	다음 후보 backlog (잔여만)
 report-mvp-gap	docs/wiki/reports/mvp-gap.md	v1에서-유지되는-제외-backlog-낮춤	88	9	456	h2	v1에서 유지되는 제외 (backlog 낮춤)
 report-mvp-gap	docs/wiki/reports/mvp-gap.md	검증	97	8	147	h2	검증
-report-vm-e2e-runs	docs/wiki/reports/vm-e2e-runs.md	hyper-v-vm-실측-기록	22	166	30017	h1	Hyper-V VM 실측 기록
+report-vm-e2e-runs	docs/wiki/reports/vm-e2e-runs.md	hyper-v-vm-실측-기록	22	166	30027	h1	Hyper-V VM 실측 기록
 report-vm-e2e-runs	docs/wiki/reports/vm-e2e-runs.md	m2-r0r1-run-20261005t055523z-3030-pass	28	13	2044	h2	M2 r0→r1 (run `20261005T055523Z`, 30/30 PASS)
 report-vm-e2e-runs	docs/wiki/reports/vm-e2e-runs.md	s3-r1r2-run-20261009t231040z-3030-pass-missing-0-2026-10-10	41	10	1124	h2	S3 r1→r2 (run `20261009T231040Z`, 30/30 PASS, missing 0, 2026-10-10)
 report-vm-e2e-runs	docs/wiki/reports/vm-e2e-runs.md	s4-r2r3-run-20261017t132857z-3030-pass-missing-0-2026-10-17	51	11	1973	h2	S4 r2→r3 (run `20261017T132857Z`, 30/30 PASS, missing 0, 2026-10-17)

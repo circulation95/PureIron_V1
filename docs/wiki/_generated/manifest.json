@@ -95,25 +95,25 @@
     },
     {
       "audience": "both",
-      "bytes": 30521,
+      "bytes": 30567,
       "id": "report-vm-e2e-runs",
       "last_verified": "2026-11-09",
       "path": "docs/wiki/reports/vm-e2e-runs.md",
       "section_count": 6,
-      "sha256": "65dba542d7d1845bb3e623cafe66da578f19f265c102e569aa87f377001c0038",
+      "sha256": "ffa2163c68833a1135396ddd817ed7152922f22eafa998f84bab67bbc987630d",
       "source_globs": [],
       "sources": [
         "tests/e2e/README.md",
         "tests/e2e/m2d/run.py",
-        "tests/e2e/m2d/release_pair.py",
+        "tests/e2e/gates/harness/release_pair.py",
         "deploy/releases/r1.json",
         "deploy/releases/r2.json",
         "deploy/releases/r3.json",
         "deploy/releases/r4.json",
         "deploy/releases/r5.json",
-        "tests/e2e/m2d/central.py",
-        "tests/e2e/infra/vm.py",
-        "tests/e2e/infra/golden.py"
+        "tests/e2e/gates/harness/central.py",
+        "tests/e2e/gates/harness/vm.py",
+        "tests/e2e/gates/harness/golden.py"
       ],
       "status": "canonical",
       "title": "Hyper-V VM 실측 기록 — release 쌍별 M2d 하네스 결과"

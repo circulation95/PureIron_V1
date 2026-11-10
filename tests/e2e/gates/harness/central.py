@@ -1,13 +1,13 @@
 """M4 마감 VM 온라인 단계의 중앙(c0) — WSL에서 `deploy/central` compose를 띄우고 다룬다.
 
-    uv run --no-sync python tests/e2e/m2d/central.py up [--ca-out PATH]
-    uv run --no-sync python tests/e2e/m2d/central.py register --enrollment PATH
-    uv run --no-sync python tests/e2e/m2d/central.py site-token --site site-a   # 원문(파이프 전용)
-    uv run --no-sync python tests/e2e/m2d/central.py put --site site-a --gen 2 --pib PATH
-    uv run --no-sync python tests/e2e/m2d/central.py fleet [--site site-a] [--direct]
-    uv run --no-sync python tests/e2e/m2d/central.py stop-web | start-web | status | down
+    uv run --no-sync python tests/e2e/gates/harness/central.py up [--ca-out PATH]
+    uv run --no-sync python tests/e2e/gates/harness/central.py register --enrollment PATH
+    uv run --no-sync python tests/e2e/gates/harness/central.py site-token --site site-a  # 원문
+    uv run --no-sync python tests/e2e/gates/harness/central.py put --site site-a --gen 2 --pib PATH
+    uv run --no-sync python tests/e2e/gates/harness/central.py fleet [--site site-a] [--direct]
+    uv run --no-sync python tests/e2e/gates/harness/central.py stop-web | start-web | status | down
 
-`run.py online`(Windows 호스트)이 `golden.wsl`로 부른다. 운영 절차(deploy/central/README.md)를
+`m2d/run.py online`(Windows 호스트)이 `golden.wsl`로 부른다. 운영 절차(deploy/central/README.md)를
 그대로 밟는다: **`up`은 항상 새로 시작한다**(같은 compose 프로젝트를 볼륨째 내리고) → 비밀 파일
 → `run --rm control-api migrate up`(기동 때 자동 실행하지 않는다) → CLI로 admin·ci·viewer 토큰
 발급 → `up -d --wait` → Caddy 루트 CA 내보내기·SHA-256 지문 → 그 CA로 검증하는 HTTPS `healthz`
@@ -48,10 +48,14 @@ import urllib.request
 from pathlib import Path
 from typing import BinaryIO, cast
 
-from bundles import ensure_image, local_digest
+sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "deploy" / "build"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from images import image_store
 
-ROOT = Path(__file__).resolve().parents[3]
+from harness.bundles import ensure_image, local_digest
+
+ROOT = Path(__file__).resolve().parents[4]
 COMPOSE_FILE = ROOT / "deploy" / "central" / "compose.yml"
 RECORD_DIR = ROOT / "deploy" / "releases" / "central"
 PROJECT = "pureiron-e2e-central"
