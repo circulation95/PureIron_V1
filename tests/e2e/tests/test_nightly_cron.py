@@ -3,14 +3,18 @@ infra(A3), 시작하지 못한 실행(preflight에서 멈춤)의 집계(L8·G2).
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import NoReturn
 
 import nightly
 import pytest
-from harness import schedule
+import run
+from harness import failures, golden, hyperv, schedule, sites
+from harness.context import Context, InfraError
 from harness.github import DryRun
+from harness.release_pair import DEFAULT
 
 SHA = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d"
 TODAY = date(2026, 11, 10)
@@ -123,3 +127,35 @@ def test_on_time_cron_and_manual_runs_reach_the_body(
         now=lambda: now,
     )
     assert (code, called) == (0, ["20261111T090000Z"])
+
+
+# ---------------------------------------------------------------- Hyper-V 호스트 점검(A3)
+
+
+@pytest.mark.parametrize(("available", "switch"), [(False, True), (True, False)])
+def test_host_check_failure_is_infra(
+    monkeypatch: pytest.MonkeyPatch, available: bool, switch: bool
+) -> None:
+    """Hyper-V 권한 없음·vSwitch 없음은 PC 설정 문제다 — product로 가면 제품 실패로 기록되고
+    이틀이면 product 이슈가 열린다."""
+    monkeypatch.setattr(hyperv, "available", lambda: available)
+    monkeypatch.setattr(hyperv, "switch_exists", lambda name: switch)
+    with pytest.raises(InfraError, match=r"setup-host\.ps1") as raised:
+        sites.check_host()
+    assert failures.classify(raised.value) == "infra"
+
+
+def test_run_py_vm_step_still_stops_at_a_host_check_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`run.py`의 흐름은 그대로다 — `step_vm`은 이 예외를 잡지 않고 멈추며(golden·VM으로 가지
+    않는다) 결과 항목도 남기지 않는다. 바뀐 것은 예외 종류(`E2EError` → `InfraError`, 둘 다
+    `RuntimeError`)뿐이다."""
+    monkeypatch.setattr(hyperv, "available", lambda: False)
+    monkeypatch.setattr(golden, "build_golden", refuse)
+    site_a = dataclasses.replace(run.SITE_A, state_file=tmp_path / "state.json")
+    ctx = Context(run_id="t", artifacts=str(tmp_path), site=site_a, pair=DEFAULT)
+    with pytest.raises(RuntimeError, match="Hyper-V not available") as raised:
+        run.step_vm(ctx)
+    assert isinstance(raised.value, InfraError)
+    assert ctx.results == []

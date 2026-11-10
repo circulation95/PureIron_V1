@@ -11,7 +11,7 @@ import os
 from collections.abc import Mapping
 
 from harness import buildhost, golden, hyperv, paths
-from harness.context import E2EError
+from harness.context import E2EError, InfraError
 from harness.site import INCOMING, REMOTE, SITE_SCRIPTS, Site
 
 GOLDEN = paths.E2E / "golden" / "ubuntu-24.04-64g.vhdx"
@@ -58,10 +58,13 @@ def site_vm_spec(site: Site, environ: Mapping[str, str]) -> hyperv.VmSpec:
 
 
 def check_host() -> None:
+    """Hyper-V 권한·vSwitch 점검. 실패는 PC 설정 문제라 `InfraError`다(G2 분류 infra — 제품
+    실패로 기록되거나 product 이슈를 열지 않게, M6-2b A3). `run.py`는 이 예외를 잡지 않는다(그대로
+    멈춘다)."""
     if not hyperv.available():
-        raise E2EError("Hyper-V not available for this user (run tests/e2e/infra/setup-host.ps1)")
+        raise InfraError("Hyper-V not available for this user (run tests/e2e/infra/setup-host.ps1)")
     if not hyperv.switch_exists(SWITCH):
-        raise E2EError(f"vSwitch {SWITCH} missing (run tests/e2e/infra/setup-host.ps1)")
+        raise InfraError(f"vSwitch {SWITCH} missing (run tests/e2e/infra/setup-host.ps1)")
 
 
 def boot_vm(site: Site, spec: hyperv.VmSpec, files: dict[str, bytes]) -> float:
