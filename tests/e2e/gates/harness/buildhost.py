@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from harness import bundles, golden, judges, paths
-from harness.context import E2EError
+from harness.context import E2EError, InfraError
 
 if TYPE_CHECKING:
     from harness.context import Context
@@ -113,12 +113,15 @@ def install_bundle(out: Path, release: str) -> tuple[Path, str, str]:
 def git_bundle(path: Path) -> None:
     """저장소 HEAD를 git bundle 파일로(Orca worktree처럼 WSL git이 gitdir을 못 읽어도 clone할 수
     있게)."""
-    subprocess.run(
-        ["git", "-C", str(paths.REPO), "bundle", "create", str(path), "HEAD"],
-        capture_output=True,
-        check=True,
-        timeout=GIT_TIMEOUT_S,
-    )
+    try:
+        subprocess.run(
+            ["git", "-C", str(paths.REPO), "bundle", "create", str(path), "HEAD"],
+            capture_output=True,
+            check=True,
+            timeout=GIT_TIMEOUT_S,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise InfraError(f"git bundle failed: {exc.stderr!r}") from exc
 
 
 def nightly_release(
