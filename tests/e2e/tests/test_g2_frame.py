@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from typing import Any, cast
 
 import pytest
 from harness import buildhost, failures, g2, paths
@@ -13,6 +14,8 @@ from harness.golden import WslError
 from harness.hyperv import HyperVError
 from harness.release_pair import nightly
 from harness.vm import VmError
+
+from pureiron_project import canonical
 
 COLLECT_TIMEOUT_S = 120
 SHA = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d"
@@ -79,3 +82,29 @@ def test_g2_tests_are_collected_only_with_the_gates_config() -> None:
     root_run = collect("-c", "pyproject.toml", "-p", "no:cacheprovider", gates)
     assert "test_g2_install" not in root_run
     assert "no tests collected" in root_run
+
+
+def workflow(name: str) -> dict[str, Any]:
+    text = (paths.REPO / ".github" / "workflows" / name).read_text(encoding="utf-8")
+    return cast(dict[str, Any], canonical.load(text, name))
+
+
+def test_nightly_workflow_is_manual_only_on_the_e2e_runner() -> None:
+    """E1: 2a에는 cron이 없다(workflow_dispatch만). runner·시간·동시 실행·권한·action 고정."""
+    flow = workflow("nightly.yml")
+    assert list(flow["on"]) == ["workflow_dispatch"]
+    assert set(flow["on"]["workflow_dispatch"]["inputs"]) == {"ref", "suite"}
+    job = flow["jobs"]["g2"]
+    assert job["runs-on"] == ["self-hosted", "e2e"]
+    assert job["timeout-minutes"] == 120
+    assert flow["concurrency"] == {"group": "g2-nightly", "cancel-in-progress": False}
+    assert flow["permissions"] == {"contents": "write", "statuses": "write", "issues": "write"}
+    assert job["defaults"]["run"]["shell"] == "powershell"
+    uses = [step["uses"] for step in job["steps"] if "uses" in step]
+    ci = (paths.REPO / ".github" / "workflows" / "foundation-ci.yml").read_text(encoding="utf-8")
+    for action in uses:
+        assert "@" in action
+        assert len(action.split("@")[1]) == 40  # commit sha 고정
+        assert action in ci  # foundation-ci와 같은 고정 값
+    runs = [str(step.get("run", "")) for step in job["steps"]]
+    assert any("tests/e2e/gates/nightly.py all" in run for run in runs)

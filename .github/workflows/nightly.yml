@@ -1,0 +1,62 @@
+# G2 nightly(M6-2a): 개발 PC(Windows self-hosted runner `e2e`)가 ref를 빌드해 현장 VM 2대(Hyper-V)에
+# 설치하고 G2-1을 판정한 뒤 결과를 GitHub에 남긴다(e2e-history·commit status g2/nightly·이슈).
+# 본체는 tests/e2e/gates/nightly.py all 하나다 — 로컬에서 같은 명령으로 돈다.
+# 수동 실행(workflow_dispatch)만 있다. cron은 Actions 리허설 뒤 M6-2b에서 켠다.
+name: nightly
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "빌드·시험할 브랜치·태그·커밋(기본 master)"
+        required: false
+        default: master
+      suite:
+        description: "시나리오 묶음(지금은 g2 하나)"
+        required: false
+        default: g2
+        type: choice
+        options: [g2]
+
+concurrency:
+  # VM·포트·WSL을 하나만 쓴다 — 동시에 돌지 않게 줄 세우고, 도는 것을 취소하지 않는다.
+  group: g2-nightly
+  cancel-in-progress: false
+
+permissions:
+  contents: write # e2e-history 브랜치에 history.jsonl 커밋
+  statuses: write # commit status g2/nightly
+  issues: write # product 2연속 실패 이슈
+
+env:
+  PYTHONUTF8: "1"
+  UV_VERSION: "0.10.12"
+
+jobs:
+  g2:
+    runs-on: [self-hosted, e2e]
+    timeout-minutes: 120
+    defaults:
+      run:
+        # Windows runner — Windows PowerShell 5.1(로그온 세션, M6-0 ①).
+        shell: powershell
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          # BASE = git 태그가 있는 최신 r*(release_pair.nightly) — 태그까지 받는다.
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - name: nightly (${{ inputs.suite }})
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # setup-host.ps1 -Switch로 만든 내부 전용 vSwitch(리포지토리 변수, 기본 pureiron-int).
+          PUREIRON_E2E_SWITCH: ${{ vars.PUREIRON_E2E_SWITCH || 'pureiron-int' }}
+        run: |
+          uv sync --all-packages --locked
+          if (-not $?) { exit 1 }
+          uv run python tests/e2e/gates/nightly.py all
+          exit $LASTEXITCODE
