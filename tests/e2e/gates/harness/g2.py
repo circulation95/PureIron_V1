@@ -108,6 +108,17 @@ class SiteRun:
     """부팅·설치 단계의 측정값(ssh 대기·설치 초·viewer 생성 결과 — 비밀값 없음)."""
     c0_at: float | None = None
     """체크포인트 c0를 만든 시각(`time.monotonic`) — G2-1 "c0 뒤 5분"의 기준(M6-2a 리뷰 L3)."""
+    live: LiveWatch | None = None
+    """c0 직후부터 `bring_up` 안에서 지켜본 live 결과(`watch_live`) — 판정(`check_install`)이 다른
+    현장 부팅 뒤에 늦게 시작해도 "c0 뒤 5분 안에"를 증명한다(리뷰 r2 L3, 직렬 모드 포함)."""
+
+
+@dataclass(frozen=True)
+class LiveWatch:
+    reply: dict[str, object]
+    checks: dict[str, bool]
+    seconds: float
+    """c0부터 판정이 모두 참이 될 때까지(못 되면 마지막으로 읽은 때까지) 걸린 초."""
 
 
 @dataclass
@@ -214,6 +225,29 @@ def bring_up(run: SiteRun, session: Session, ssh_pub: str) -> None:
     hyperv.checkpoint(ctx.site.vm_name, "c0")
     run.c0_at = time.monotonic()
     ctx.save()
+    run.live = watch_live(run)
+
+
+def watch_live(
+    run: SiteRun,
+    *,
+    live: Callable[[Vm], dict[str, object]] = site.live,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> LiveWatch:
+    """c0(`run.c0_at`)부터 `LIVE_TIMEOUT_S` 안에 100태그 전부 GOOD·장비 connected가 되는지 지켜보고
+    돌려준다. `bring_up`이 c0 직후에 불러 `run.live`에 남긴다."""
+    host = run.ctx.site.host()
+    want = trees.g2_tag_paths()
+    reply, checks, seconds = site.wait_live(
+        lambda: live(host),
+        lambda got: judges.judge_live(got, want, trees.SIM_DEVICE),
+        LIVE_TIMEOUT_S,
+        clock=clock,
+        sleep=sleep,
+        started=run.c0_at,
+    )
+    return LiveWatch(reply, checks, seconds)
 
 
 def _guarded(run: SiteRun, session: Session, ssh_pub: str, up: BringUp = bring_up) -> None:
@@ -265,8 +299,10 @@ def check_install(
 ) -> dict[str, bool]:
     """G2-1 한 현장: 설치(ready·실행 이미지 == 그 현장 release digest·overlay2·classic) → c0 뒤
     5분 안에 100태그 전부 GOOD·장비 connected → 부팅 이후 외부 접속 0. 판정을 기록하고 돌려준다.
-    부팅·설치가 실패했으면 그 예외를 다시 던진다. VM 조작(`probe`·`live`·`mark`)과 시계는 단위
-    시험이 가짜로 바꾼다."""
+    "5분 안에"는 `bring_up`이 c0 직후부터 지켜본 결과(`run.live`)로 판정하고(`live_in_time`: c0부터
+    `LIVE_TIMEOUT_S` 이내), 그것이 없을 때만 지금부터 지켜본다(그때 c0 + 300초가 이미 지났으면
+    `live_in_time`이 거짓). 부팅·설치가 실패했으면 그 예외를 다시 던진다. VM 조작(`probe`·`live`·
+    `mark`)과 시계는 단위 시험이 가짜로 바꾼다."""
     run = session.sites[site_id]
     if run.error is not None:
         raise run.error
@@ -275,15 +311,10 @@ def check_install(
     snap = probe(host)
     checks = judges.judge_installed(snap, ctx.digests[run.release])
     want = trees.g2_tag_paths()
-    out, live_checks, live_s = site.wait_live(
-        lambda: live(host),
-        lambda reply: judges.judge_live(reply, want, trees.SIM_DEVICE),
-        LIVE_TIMEOUT_S,
-        clock=clock,
-        sleep=sleep,
-        started=run.c0_at,
-    )
-    checks |= live_checks
+    watch = run.live or watch_live(run, live=live, clock=clock, sleep=sleep)
+    out, live_s = watch.reply, watch.seconds
+    checks |= watch.checks
+    checks["live_in_time"] = live_s <= LIVE_TIMEOUT_S
     mark(ctx, host)
     checks["no_external"] = judges.no_external(ctx.nft_total)
     tags_body = judges.reply(out, "tags")[1]

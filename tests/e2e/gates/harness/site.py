@@ -126,18 +126,30 @@ def seed_history(host: Vm) -> None:
     )
 
 
-def wait_ready(host: Vm, timeout_s: float) -> dict[str, object]:
-    deadline = time.monotonic() + timeout_s
+Probe = Callable[[Vm], dict[str, object]]
+
+
+def wait_ready(
+    host: Vm,
+    timeout_s: float,
+    *,
+    read: Probe = probe,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict[str, object]:
+    """ready가 될 때까지 probe를 다시 묻는다. probe 실패(ssh 255 `VmError`, 원격 명령 실패
+    `RemoteCommandError`, 시간 초과)는 부팅 중의 일시 실패로 치고 다시 묻는다."""
+    deadline = clock() + timeout_s
     snap: dict[str, object] = {}
-    while time.monotonic() < deadline:
+    while clock() < deadline:
         try:
-            snap = probe(host)
+            snap = read(host)
         except (*REMOTE_ERRORS, subprocess.TimeoutExpired):
-            time.sleep(5)
+            sleep(5)
             continue
         if judges.ready(snap):
             return snap
-        time.sleep(5)
+        sleep(5)
     return snap
 
 
@@ -250,22 +262,31 @@ def stage(host: Vm, pib: Path, *, check: bool = True) -> subprocess.CompletedPro
     return result
 
 
-def converge(host: Vm, gen: int, timeout_s: float = CONVERGE_S) -> tuple[dict[str, object], float]:
-    """시도가 끝나(attempt 없음) `last_attempted_gen == gen`이고 ready가 될 때까지."""
-    started = time.monotonic()
+def converge(
+    host: Vm,
+    gen: int,
+    timeout_s: float = CONVERGE_S,
+    *,
+    read: Probe = probe,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> tuple[dict[str, object], float]:
+    """시도가 끝나(attempt 없음) `last_attempted_gen == gen`이고 ready가 될 때까지. probe 실패
+    (`VmError`·`RemoteCommandError`·시간 초과)는 재시작·롤백 중의 일시 실패로 치고 다시 묻는다."""
+    started = clock()
     snap: dict[str, object] = {}
-    while time.monotonic() - started < timeout_s:
+    while clock() - started < timeout_s:
         try:
-            snap = probe(host)
+            snap = read(host)
         except (*REMOTE_ERRORS, subprocess.TimeoutExpired):
-            time.sleep(5)
+            sleep(5)
             continue
         state = updater_state(snap)
         done = state.get("attempt") is None and state.get("last_attempted_gen") == gen
         if done and state.get("last_result") in ("succeeded", "failed") and judges.ready(snap):
-            return snap, time.monotonic() - started
-        time.sleep(5)
-    return snap, time.monotonic() - started
+            return snap, clock() - started
+        sleep(5)
+    return snap, clock() - started
 
 
 def report_for(host: Vm, pib: Path) -> dict[str, object]:

@@ -47,6 +47,11 @@ WSL_INFRA_EXIT = 75
 종료 코드(EX_TEMPFAIL, `bundles.INFRA_EXIT`와 같다)."""
 WSL_SERVICE_ERROR = "Error code: Wsl/"
 """wsl.exe 자신의 오류 표지(예: `Wsl/Service/CreateInstance/.../0x8007274c`)."""
+WSL_TERMINATED = "instance has terminated"
+"""wsl.exe가 WSL VM이 도중에 죽었을 때 내는 문구(표지 뒤에도 나온다 — 리뷰 r2 L1)."""
+BASH_MAX_EXIT = 255
+"""bash(와 그 안의 스크립트)가 낼 수 있는 가장 큰 종료 코드 — 이보다 크거나 음수면 wsl.exe 자신의
+코드다(예: 4294967295 = 0xFFFFFFFF)."""
 
 
 class WslError(RuntimeError):
@@ -217,15 +222,18 @@ def wsl_path(path: Path) -> str:
 
 def wsl_failure(returncode: int, stderr: str) -> RuntimeError | None:
     """`wsl()` 결과의 실패 종류(성공이면 None). 표지가 없거나(bash가 뜨지 않음) wsl.exe 오류
-    표지가 있거나 `WSL_INFRA_EXIT`면 `WslError`, 그 밖의 0 아닌 코드는 `WslScriptError`다.
-    wsl.exe 자신의 메시지는 UTF-16일 수 있어 NUL을 지우고 본다."""
+    표지·"instance has terminated"가 있거나, 종료 코드가 bash 범위(0~255) 밖이거나(wsl.exe 자신의
+    코드 — 스크립트 도중 WSL VM이 죽음), `WSL_INFRA_EXIT`면 `WslError`, 그 밖의 0 아닌 코드는
+    `WslScriptError`다. wsl.exe 자신의 메시지는 UTF-16일 수 있어 NUL을 지우고 본다."""
     if returncode == 0:
         return None
     plain = stderr.replace("\x00", "")
     started = WSL_STARTED in plain
     text = plain.replace(WSL_STARTED + "\n", "").replace(WSL_STARTED, "").strip()
     message = f"wsl failed ({returncode}): {text}"
-    if not started or WSL_SERVICE_ERROR in plain or returncode == WSL_INFRA_EXIT:
+    wsl_exe = WSL_SERVICE_ERROR in plain or WSL_TERMINATED in plain
+    outside_bash = returncode < 0 or returncode > BASH_MAX_EXIT
+    if not started or wsl_exe or outside_bash or returncode == WSL_INFRA_EXIT:
         return WslError(message)
     return WslScriptError(f"wsl script failed ({returncode}): {text}", returncode)
 

@@ -336,7 +336,8 @@ def test_check_install_expects_all_100_simulator_tags(tmp_path: Path) -> None:
 
 def test_live_deadline_counts_from_c0(tmp_path: Path) -> None:
     """L3: "c0 뒤 5분" — 앞 현장 판정이 시간을 쓴 만큼 뒤 현장의 기다림이 줄어든다(c0 + 300초가
-    마감). 마감이 지났어도 한 번은 읽는다."""
+    마감). 마감이 지났어도 한 번은 읽지만, 그 값이 GOOD이어도 5분 안이 증명되지 않았으므로
+    통과하지 않는다(R2-L3 `live_in_time`)."""
     session = g2_session(tmp_path)
     # c0 = 0초, 판정 시작 = 290초: 첫 읽기(290)는 BAD, 다음 확인(305)에서 멈춘다(300초를 새로 받지
     # 않는다)
@@ -344,9 +345,62 @@ def test_live_deadline_counts_from_c0(tmp_path: Path) -> None:
     assert (checks["tags_good"], len(reads)) == (False, 1)
     record = {r["name"]: r for r in session.sites["site-b"].ctx.results}[g2.ITEM_G2_1]
     assert record["live_s"] == 305.0
-    # 마감(300) 뒤에 시작해도 한 번은 읽는다
+    # 마감(300) 뒤에 시작해도 한 번은 읽는다 — 다만 5분 안이 아니므로 G2-1은 실패다
     checks, reads = check(session, "site-a", live_reply(), [400.0, 400.0, 400.0])
-    assert (all(checks.values()), len(reads)) == (True, 1)
+    assert (checks["tags_good"], checks["live_in_time"], len(reads)) == (True, False, 1)
+    record = {r["name"]: r for r in session.sites["site-a"].ctx.results}[g2.ITEM_G2_1]
+    assert (record["ok"], record["live_s"]) == (False, 400.0)
+
+
+def test_check_install_judges_the_watch_started_right_after_c0(tmp_path: Path) -> None:
+    """R2-L3: `bring_up`이 c0 직후부터 지켜본 결과(`run.live`)로 판정한다 — 판정이 늦게(다른 현장
+    부팅 뒤, 직렬 모드) 시작해도 live를 다시 읽지 않고 "c0부터 120초에 모두 GOOD"을 기록한다."""
+    session = g2_session(tmp_path)
+    want = trees.g2_tag_paths()
+    good = live_reply()
+    session.sites["site-a"].live = g2.LiveWatch(
+        good, judges.judge_live(good, want, trees.SIM_DEVICE), 120.0
+    )
+    checks = g2.check_install(
+        session,
+        "site-a",
+        probe=installed,
+        live=lambda _: pytest.fail("the bring-up watch already proved it"),
+        mark=lambda ctx, host: None,
+        clock=lambda: pytest.fail("no new clock reads"),
+        sleep=lambda _: None,
+    )
+    assert all(checks.values()), checks
+    record = {r["name"]: r for r in session.sites["site-a"].ctx.results}[g2.ITEM_G2_1]
+    assert (record["ok"], record["live_s"]) == (True, 120.0)
+    # 지켜본 결과가 BAD로 끝났으면 실패다
+    bad = live_reply(bad=SIM_PATHS[9])
+    session.sites["site-b"].live = g2.LiveWatch(
+        bad, judges.judge_live(bad, want, trees.SIM_DEVICE), 301.0
+    )
+    checks = g2.check_install(
+        session,
+        "site-b",
+        probe=installed,
+        live=lambda _: pytest.fail("no re-read"),
+        mark=lambda ctx, host: None,
+    )
+    assert (checks["tags_good"], checks["live_in_time"]) == (False, False)
+
+
+def test_watch_live_polls_from_c0_until_all_good(tmp_path: Path) -> None:
+    """R2-L3: `watch_live`는 c0부터 잰다 — c0 = 100초, 110초에 BAD, 130초에 GOOD이면 30초다."""
+    session = g2_session(tmp_path)
+    run_a = session.sites["site-a"]
+    run_a.c0_at = 100.0
+    replies = [live_reply(bad=SIM_PATHS[0]), live_reply()]
+    ticks = iter([110.0, 130.0, 130.0])
+    watch = g2.watch_live(
+        run_a, live=lambda _: replies.pop(0), clock=lambda: next(ticks), sleep=lambda _: None
+    )
+    assert replies == []
+    assert all(watch.checks.values())
+    assert watch.seconds == 30.0
 
 
 def session_for_bring_up(tmp_path: Path) -> g2.Session:

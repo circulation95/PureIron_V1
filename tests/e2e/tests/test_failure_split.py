@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import dataclasses
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
@@ -77,6 +78,12 @@ def test_remote_success_is_not_a_failure() -> None:
         (1, f"{STARTED}\nError code: Wsl/Service/0x8007274c"),
         # 스크립트가 실행 환경 탓을 알림(bundles.INFRA_EXIT)
         (golden.WSL_INFRA_EXIT, f"{STARTED}\ndocker is not responding after the HEAD build failed"),
+        # R2-L1: 스크립트 도중 WSL VM이 죽음 — bash는 0~255만 내므로 그 밖의 코드는 wsl.exe 것이다
+        (4294967295, f"{STARTED}\nbuilding core...\n"),
+        (256, f"{STARTED}\n"),
+        (-1, f"{STARTED}\n"),
+        # 표지 뒤 wsl.exe의 "instance has terminated" 문구(rc는 bash 범위)
+        (1, f"{STARTED}\nThe Windows Subsystem for Linux instance has terminated."),
     ],
 )
 def test_wsl_call_failure_is_infra(rc: int, stderr: str) -> None:
@@ -273,3 +280,149 @@ def test_site_patch_still_records_a_failed_remote_patch() -> None:
     out, admin = site.site_patch(cast(Vm, PatchVm()))
     assert admin["rc"] == 0
     assert "409 conflict" in str(out["error"])
+
+
+# ---------------------------------------------------------------- 리뷰 r2(M1·L2)
+
+READY: dict[str, object] = {
+    "readyz": {"status": 200},
+    "updater": {"attempt": None, "last_attempted_gen": 2, "last_result": "succeeded"},
+}
+PROBE_FAILURES: list[Exception] = [
+    vm.RemoteCommandError("ssh `sudo python3 probe.py` exited 1: core restarting", 1),
+    vm.VmError("ssh `sudo python3 probe.py` exited 255: Connection reset"),
+    subprocess.TimeoutExpired("ssh", 30),
+]
+
+
+class FlakyProbe:
+    """처음 몇 번은 정해 둔 예외, 그다음은 준비된 snap(재시작·부팅 중 probe가 잠깐 실패)."""
+
+    def __init__(self, failures: list[Exception]) -> None:
+        self.failures = list(failures)
+        self.calls = 0
+
+    def __call__(self, host: Vm) -> dict[str, object]:
+        self.calls += 1
+        if self.failures:
+            raise self.failures.pop(0)
+        return READY
+
+
+class Ticks:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def clock(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+@pytest.mark.parametrize("failure", PROBE_FAILURES, ids=["remote", "ssh255", "timeout"])
+def test_wait_ready_retries_a_failing_probe(failure: Exception) -> None:
+    """R2-M1: 원격 명령 실패(`RemoteCommandError`, H1 뒤 product 쪽 예외)도 부팅 중의 일시 실패로
+    치고 다시 묻는다 — 되돌려지면 run.py 설치·복원이 probe 한 번 실패로 무너진다(리뷰 변이 B)."""
+    probe = FlakyProbe([failure, failure])
+    ticks = Ticks()
+    snap = site.wait_ready(
+        Vm("10.77.0.11", Path("e2e_key")), 300, read=probe, clock=ticks.clock, sleep=ticks.sleep
+    )
+    assert snap == READY
+    assert probe.calls == 3
+
+
+@pytest.mark.parametrize("failure", PROBE_FAILURES, ids=["remote", "ssh255", "timeout"])
+def test_converge_retries_a_failing_probe(failure: Exception) -> None:
+    """R2-M1: apply 뒤 수렴 대기도 같다(리뷰 변이 A — run.py의 모든 시나리오가 쓴다)."""
+    probe = FlakyProbe([failure])
+    ticks = Ticks()
+    snap, waited = site.converge(
+        Vm("10.77.0.11", Path("e2e_key")), 2, 600, read=probe, clock=ticks.clock, sleep=ticks.sleep
+    )
+    assert snap == READY
+    assert (probe.calls, waited) == (2, 5.0)
+
+
+def test_wait_ready_gives_up_at_the_timeout() -> None:
+    ticks = Ticks()
+    snap = site.wait_ready(
+        Vm("10.77.0.11", Path("e2e_key")),
+        12,
+        read=FlakyProbe(PROBE_FAILURES * 5),
+        clock=ticks.clock,
+        sleep=ticks.sleep,
+    )
+    assert snap == {}
+
+
+def no_call(src: Path, name: str) -> subprocess.CompletedProcess[str]:
+    pytest.fail(f"build must not run: {src} {name}")
+
+
+def no_docker() -> bool:
+    pytest.fail("docker is only checked after a failed build")
+
+
+def release(
+    tmp_path: Path,
+    *,
+    head: str = SHA,
+    build_head: Callable[[Path, str], subprocess.CompletedProcess[str]] = no_call,
+    docker_ok: Callable[[], bool] = no_docker,
+    store: Path | None = None,
+    records: Path | None = None,
+) -> dict[str, object]:
+    return bundles.nightly_release(
+        tmp_path / "work-nightly",
+        tmp_path / "n1a2b3c4-src",
+        sha=SHA,
+        name="n1a2b3c4",
+        version="2026.11.1+n1a2b3c4",
+        base="r5",
+        sim_out=tmp_path / "sim.tar",
+        git_head=lambda src: head,
+        build_head=build_head,
+        docker_ok=docker_ok,
+        store_root=lambda: store or tmp_path / "no-store",
+        records=records or tmp_path / "no-records",
+    )
+
+
+def test_nightly_release_copy_at_the_wrong_commit_is_infra_exit(tmp_path: Path) -> None:
+    """R2-L2: `nightly-release`의 실행 환경 탓 3길이 `INFRA_EXIT`(75)로 끝난다 — exit 1이면 Windows
+    쪽이 product로 읽고 재시도하지 않는다(리뷰 변이 E). ① 사본이 다른 커밋."""
+    with pytest.raises(SystemExit) as raised:
+        release(tmp_path, head="f" * 40)
+    assert raised.value.code == bundles.INFRA_EXIT
+
+
+def test_nightly_release_build_failure_is_infra_only_when_docker_is_down(tmp_path: Path) -> None:
+    """② 빌드 실패 뒤 Docker 무응답은 infra(75), Docker가 살아 있으면 제품 실패(`ok: false`)."""
+
+    def failed_build(src: Path, name: str) -> subprocess.CompletedProcess[str]:
+        return done(2, "build_images.sh: core failed to compile")
+
+    with pytest.raises(SystemExit) as raised:
+        release(tmp_path, build_head=failed_build, docker_ok=lambda: False)
+    assert raised.value.code == bundles.INFRA_EXIT
+    result = release(tmp_path, build_head=failed_build, docker_ok=lambda: True)
+    assert (result["ok"], result["stage"], result["rc"]) == (False, "build", 2)
+
+
+@pytest.mark.parametrize("missing", ["record", "store"])
+def test_nightly_release_without_the_base_record_or_store_is_infra_exit(
+    tmp_path: Path, missing: str
+) -> None:
+    """③ BASE 기록이나 실제 image store가 없으면 infra(75)."""
+    records, store = tmp_path / "releases", tmp_path / "store"
+    records.mkdir()
+    store.mkdir()
+    if missing != "record":
+        (records / "r5.json").write_text("{}", encoding="utf-8")
+    if missing != "store":
+        (store / "r5").mkdir()
+    with pytest.raises(SystemExit) as raised:
+        release(tmp_path, build_head=lambda src, name: done(0), store=store, records=records)
+    assert raised.value.code == bundles.INFRA_EXIT

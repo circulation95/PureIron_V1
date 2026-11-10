@@ -282,18 +282,14 @@ def nightly_images(
     return images
 
 
-def nightly_release(
-    work: Path, src: Path, *, sha: str, name: str, version: str, base: str, sim_out: Path
-) -> dict[str, object]:
-    """HEAD(`src`) 빌드 → 라벨 파생 → `W/releases/<name>.json`·`W/store/<name>/`·시뮬레이터 tar.
-    빌드 실패는 `{"ok": false}`(제품 실패), 사본 커밋 불일치·빌드 뒤 Docker 무응답·BASE 기록/store
-    없음은 `INFRA_EXIT`(인프라 실패), 빌드가 성공한 뒤의 다른 예외는 exit 1(제품 실패)이다."""
-    head = subprocess.run(
+def _git_head(src: Path) -> str:
+    return subprocess.run(
         ("git", "-C", str(src), "rev-parse", "HEAD"), capture_output=True, text=True, check=True
     ).stdout.strip()
-    if head != sha:
-        raise infra_exit(f"{src} is at {head}, not {sha}")
-    build = subprocess.run(
+
+
+def _build_head(src: Path, name: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
         ("bash", "deploy/build/build_images.sh", *NIGHTLY_BUILD),
         cwd=src,
         env={**os.environ, "PUREIRON_RELEASE": f"{name}-src"},
@@ -301,13 +297,38 @@ def nightly_release(
         text=True,
         check=False,
     )
+
+
+def nightly_release(
+    work: Path,
+    src: Path,
+    *,
+    sha: str,
+    name: str,
+    version: str,
+    base: str,
+    sim_out: Path,
+    git_head: Callable[[Path], str] = _git_head,
+    build_head: Callable[[Path, str], subprocess.CompletedProcess[str]] = _build_head,
+    docker_ok: Callable[[], bool] = _docker_ok,
+    store_root: Callable[[], Path] = image_store,
+    records: Path = ROOT / "deploy" / "releases",
+) -> dict[str, object]:
+    """HEAD(`src`) 빌드 → 라벨 파생 → `W/releases/<name>.json`·`W/store/<name>/`·시뮬레이터 tar.
+    빌드 실패는 `{"ok": false}`(제품 실패), 사본 커밋 불일치·빌드 뒤 Docker 무응답·BASE 기록/store
+    없음은 `INFRA_EXIT`(인프라 실패), 빌드가 성공한 뒤의 다른 예외는 exit 1(제품 실패)이다.
+    `git_head`·`build_head`·`docker_ok`·`store_root`·`records`는 단위 시험이 바꿔 끼운다."""
+    head = git_head(src)
+    if head != sha:
+        raise infra_exit(f"{src} is at {head}, not {sha}")
+    build = build_head(src, name)
     if build.returncode != 0:
-        if not _docker_ok():
+        if not docker_ok():
             raise infra_exit("docker is not responding after the HEAD build failed")
         tail = (build.stdout + build.stderr)[-BUILD_TAIL_CHARS:]
         return {"ok": False, "stage": "build", "rc": build.returncode, "tail": tail}
-    releases, store, real_store = work / "releases", work / "store", image_store()
-    base_path = ROOT / "deploy" / "releases" / f"{base}.json"
+    releases, store, real_store = work / "releases", work / "store", store_root()
+    base_path = records / f"{base}.json"
     if not base_path.is_file() or not (real_store / base).is_dir():
         raise infra_exit(f"BASE {base}: record or image store {real_store / base} missing")
     reset_records(releases)
