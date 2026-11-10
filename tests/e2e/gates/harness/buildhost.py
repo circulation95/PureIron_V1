@@ -32,6 +32,7 @@ INSTALL_TIMEOUT_S = 3600
 NIGHTLY_TIMEOUT_S = 3600
 """HEAD 이미지 빌드(core·collector·web·simulator, BuildKit 캐시 있음) + 라벨 파생 + 저장."""
 GIT_TIMEOUT_S = 120
+RECLAIM_TIMEOUT_S = 120
 WORK = f"{paths.WSL_HOME}/work"
 """`run.py`의 WSL 번들 작업 디렉터리(`bundles.py --work`)."""
 NIGHTLY_WORK = f"{paths.WSL_HOME}/work-nightly"
@@ -83,23 +84,27 @@ def sync_repo(run_wsl: Callable[..., str] = golden.wsl) -> None:
 def reclaim_host_memory() -> None:
     """WSL(번들 빌드·Docker Desktop)의 페이지 캐시를 비워 VM 시작·복원에 쓸 호스트 메모리를
     돌려받는다. WSL VM은 캐시를 Windows에 늦게 돌려줘 4 GiB VM 복원이 0x8007000E로
-    실패했다(첫 실측)."""
-    subprocess.run(
-        [
-            "wsl",
-            "-d",
-            golden.WSL_DISTRO,
-            "-u",
-            "root",
-            "--exec",
-            "sh",
-            "-c",
-            "sync; echo 3 > /proc/sys/vm/drop_caches; echo 1 > /proc/sys/vm/compact_memory",
-        ],
-        capture_output=True,
-        timeout=120,
-        check=False,
-    )
+    실패했다(첫 실측). 최선 노력이다 — WSL 호출 실패·시간 초과도 예외 없이 넘긴다(효과는 부른 쪽이
+    메모리를 다시 재서 본다, `preflight.reclaim_memory`)."""
+    try:
+        subprocess.run(
+            [
+                "wsl",
+                "-d",
+                golden.WSL_DISTRO,
+                "-u",
+                "root",
+                "--exec",
+                "sh",
+                "-c",
+                "sync; echo 3 > /proc/sys/vm/drop_caches; echo 1 > /proc/sys/vm/compact_memory",
+            ],
+            capture_output=True,
+            timeout=RECLAIM_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return
 
 
 def bundles_py(command: str, work: str = WORK) -> str:

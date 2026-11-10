@@ -312,6 +312,179 @@ def test_preflight_gives_up_and_skips_cleanup_when_ci_keeps_running() -> None:
     assert outcome.problems == ["2 foundation-ci run(s) still in progress"]
 
 
+class FakeHost:
+    """WSL 캐시 회수 시험용 가짜 호스트: `mem_now`는 `readings`를 차례로(마지막 값은 반복) 내고,
+    `sleep`은 가짜 시계를 앞으로 민다."""
+
+    def __init__(self, readings: list[float | None]) -> None:
+        self.readings = readings
+        self.now = 0.0
+        self.reclaimed = 0
+        self.sleeps: list[float] = []
+
+    def mem_now(self) -> float | None:
+        return self.readings.pop(0) if len(self.readings) > 1 else self.readings[0]
+
+    def reclaim(self) -> None:
+        self.reclaimed += 1
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+    def clock(self) -> float:
+        return self.now
+
+
+def test_preflight_reclaims_wsl_cache_then_passes() -> None:
+    """r3(a): 메모리가 기준 미만이면 CI 대기 뒤 WSL 캐시를 비우고 다시 재서, 기준을 넘으면 통과한다
+    (VM 실측 4.6 GB → 회수 뒤 약 1분). 조치에 회수 전·후 GB가 남는다."""
+    seen = [measure(mem_gb=4.6, ci_running=1), measure(mem_gb=4.6)]
+    host = FakeHost([5.1, 6.3, 8.2])
+    cleaned: list[str] = []
+
+    def cleanup() -> list[str]:
+        cleaned.append("x")
+        return ["removed vm pureiron-site-a"]
+
+    outcome = preflight.run(
+        preflight.Limits(),
+        measure_now=lambda: seen.pop(0),
+        cleanup=cleanup,
+        sleep=host.sleep,
+        clock=host.clock,
+        reclaim=host.reclaim,
+        mem_now=host.mem_now,
+    )
+    assert outcome.ok
+    assert outcome.measure.mem_gb == 8.2
+    assert host.reclaimed == 1
+    assert host.sleeps == [preflight.CI_POLL_S, preflight.RECLAIM_POLL_S, preflight.RECLAIM_POLL_S]
+    assert outcome.actions == [
+        "waiting for 1 foundation-ci run(s)",
+        "reclaimed WSL page cache: windows available memory 4.6 -> 8.2 GB "
+        "(need 8.0 GB, waited 20s)",
+        "removed vm pureiron-site-a",
+    ]
+    assert cleaned == ["x"]
+
+
+def test_preflight_stops_as_infra_when_reclaim_never_reaches_the_limit() -> None:
+    """r3(b): RECLAIM_WAIT_S 동안 기준을 넘지 못하면 지금처럼 infra(정리 없음)."""
+    host = FakeHost([6.3])
+    outcome = preflight.run(
+        preflight.Limits(),
+        measure_now=lambda: measure(mem_gb=4.6),
+        cleanup=lambda: pytest.fail("cleanup must not run on a failed preflight"),
+        sleep=host.sleep,
+        clock=host.clock,
+        reclaim=host.reclaim,
+        mem_now=host.mem_now,
+    )
+    assert outcome.problems == ["windows available memory 6.3 GB < 8.0 GB"]
+    assert host.reclaimed == 1
+    assert sum(host.sleeps) == preflight.RECLAIM_WAIT_S
+    assert outcome.actions == [
+        "reclaimed WSL page cache: windows available memory 4.6 -> 6.3 GB "
+        f"(need 8.0 GB, waited {preflight.RECLAIM_WAIT_S}s)"
+    ]
+
+
+def test_preflight_does_not_reclaim_when_wsl_does_not_answer() -> None:
+    """r3(c): WSL이 답하지 않으면(CI가 돌아 재시작도 못 함) 회수를 시도하지 않는다."""
+    clock = iter([0.0, 0.0, 2000.0])
+    outcome = preflight.run(
+        preflight.Limits(),
+        measure_now=lambda: measure(mem_gb=4.6, wsl_ok=False, ci_running=1),
+        recover=lambda: pytest.fail("WSL must not restart while foundation-ci runs"),
+        wsl_alive=lambda: False,
+        sleep=lambda _: None,
+        clock=lambda: next(clock),
+        reclaim=lambda: pytest.fail("no reclaim while WSL does not answer"),
+        mem_now=lambda: pytest.fail("no re-measure without a reclaim"),
+    )
+    assert "windows available memory 4.6 GB < 8.0 GB" in outcome.problems
+    assert "WSL is not responding" in outcome.problems
+    assert not any(a.startswith("reclaimed") for a in outcome.actions)
+
+
+def test_preflight_does_not_reclaim_when_memory_is_enough() -> None:
+    outcome = preflight.run(
+        preflight.Limits(),
+        measure_now=measure,
+        sleep=lambda _: None,
+        clock=lambda: 0.0,
+        reclaim=lambda: pytest.fail("memory is enough: no reclaim"),
+        mem_now=lambda: pytest.fail("memory is enough: no re-measure"),
+    )
+    assert (outcome.ok, outcome.actions) == (True, [])
+
+
+def test_judge_only_never_reclaims_but_hints_at_wsl_memory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """r3(d): 판단만 하는 모드는 회수하지 않는다(호출 0) — 대신 WSL 쪽 수치와 "회수하면 달라질 수
+    있음" 메모를 warnings에 남긴다."""
+    calls: list[str] = []
+
+    def reclaim() -> None:
+        calls.append("reclaim")
+
+    def mem_now() -> float:
+        calls.append("mem")
+        return 9.9
+
+    monkeypatch.setattr(preflight.buildhost, "reclaim_host_memory", reclaim)
+    monkeypatch.setattr(preflight, "windows_mem_gb", mem_now)
+    short = measure(mem_gb=4.6, wsl_vmmem_gb=7.5, wsl_cache_gb=6.1)
+    outcome = preflight.judge_only(preflight.Limits(), lambda: short)
+    assert calls == []
+    assert (outcome.ok, outcome.actions) == (False, [])
+    assert outcome.problems == ["windows available memory 4.6 GB < 8.0 GB"]
+    assert outcome.warnings == [
+        "windows available memory 4.6 GB < 8.0 GB, but WSL holds 7.5 GB (vmmemWSL, page cache "
+        "6.1 GB): judge-only does not reclaim it - a full preflight reclaims it first and may pass"
+    ]
+    measured = cast(dict[str, object], outcome.as_dict()["measure"])
+    assert (measured["wsl_vmmem_gb"], measured["wsl_cache_gb"]) == (7.5, 6.1)
+    assert preflight.judge_only(preflight.Limits(), measure).warnings == []
+    dead = measure(mem_gb=4.6, wsl_ok=False)
+    assert preflight.judge_only(preflight.Limits(), lambda: dead).warnings == []
+
+
+def test_preflight_default_reclaim_goes_through_buildhost(monkeypatch: pytest.MonkeyPatch) -> None:
+    """기본 회수·재측정은 `buildhost.reclaim_host_memory`·`windows_mem_gb`를 모듈 속성으로 부른다
+    (실행기의 기본 경로가 site 시작 전 회수와 같은 함수를 쓴다)."""
+    calls: list[str] = []
+
+    def reclaim() -> None:
+        calls.append("reclaim")
+
+    def mem_now() -> float:
+        calls.append("mem")
+        return 9.0
+
+    monkeypatch.setattr(preflight.buildhost, "reclaim_host_memory", reclaim)
+    monkeypatch.setattr(preflight, "windows_mem_gb", mem_now)
+    outcome = preflight.run(
+        preflight.Limits(),
+        measure_now=lambda: measure(mem_gb=4.6),
+        sleep=lambda _: None,
+        clock=lambda: 0.0,
+    )
+    assert outcome.ok
+    assert calls == ["reclaim", "mem"]
+
+
+def test_meminfo_cache_is_buffers_plus_cached() -> None:
+    meminfo = (
+        "MemTotal: 16000000 kB\nBuffers:  1048576 kB\nCached:   5242880 kB\nSwapCached: 0 kB\n"
+    )
+    assert preflight.meminfo_cache_gb(meminfo) == 6.0
+    assert preflight.meminfo_cache_gb("MemTotal: 16000000 kB\nCached: 5242880 kB\n") is None
+    assert preflight.meminfo_cache_gb("") is None
+
+
 def test_judge_only_takes_no_action() -> None:
     outcome = preflight.judge_only(preflight.Limits(), lambda: measure(wsl_ok=False))
     assert (outcome.ok, outcome.actions) == (False, [])
@@ -568,6 +741,9 @@ def test_recover_checks_ci_before_restarting_wsl() -> None:
             sleep=lambda _: None,
             remove=remove,
             reclaim=lambda: None,
+            mem_now=lambda: 9.7,
+            min_mem_gb=8.0,
+            clock=lambda: 0.0,
         )
 
     ready, actions = recover((1, True))
@@ -577,7 +753,7 @@ def test_recover_checks_ci_before_restarting_wsl() -> None:
     assert ready
     assert restarted == ["x"]
     assert actions[0] == "wsl not responding: restart"
-    assert actions[-1] == "reclaimed host memory"
+    assert actions[-1].startswith("reclaimed WSL page cache: windows available memory 9.7 -> 9.7")
 
 
 def test_recover_keeps_a_responding_wsl() -> None:
@@ -588,9 +764,52 @@ def test_recover_keeps_a_responding_wsl() -> None:
         sleep=lambda _: None,
         remove=lambda: ["pureiron-site-b"],
         reclaim=lambda: None,
+        mem_now=lambda: 9.7,
+        min_mem_gb=8.0,
+        clock=lambda: 0.0,
     )
     assert ready
-    assert actions == ["removed vm pureiron-site-b", "reclaimed host memory"]
+    assert actions == [
+        "removed vm pureiron-site-b",
+        "reclaimed WSL page cache: windows available memory 9.7 -> 9.7 GB (need 8.0 GB, waited 0s)",
+    ]
+
+
+def test_recover_uses_the_preflight_reclaim_and_skips_the_retry_when_memory_stays_short() -> None:
+    """r3: 재시도 전 복구도 preflight와 같은 회수(캐시 비우기 → 최대 RECLAIM_WAIT_S 다시 재기)를
+    쓰고, 끝내 기준 미만이면 재시도하지 않는다(preflight가 멈출 상태와 같다)."""
+    host = FakeHost([4.6, 5.0, 8.4])
+    ready, actions = nightly.recover(
+        ci=lambda: (0, True),
+        alive=lambda: True,
+        restart=lambda: pytest.fail("no restart"),
+        sleep=host.sleep,
+        remove=list,
+        reclaim=host.reclaim,
+        mem_now=host.mem_now,
+        min_mem_gb=8.0,
+        clock=host.clock,
+    )
+    assert ready
+    assert host.reclaimed == 1
+    assert actions == [
+        "reclaimed WSL page cache: windows available memory 4.6 -> 8.4 GB (need 8.0 GB, waited 10s)"
+    ]
+    short = FakeHost([4.6, 6.3])
+    ready, actions = nightly.recover(
+        ci=lambda: (0, True),
+        alive=lambda: True,
+        restart=lambda: pytest.fail("no restart"),
+        sleep=short.sleep,
+        remove=list,
+        reclaim=short.reclaim,
+        mem_now=short.mem_now,
+        min_mem_gb=8.0,
+        clock=short.clock,
+    )
+    assert not ready
+    assert short.reclaimed == 1
+    assert actions[-1] == "windows available memory 6.3 GB < 8.0 GB: no retry"
 
 
 def test_ci_status_failure_blocks_only_inside_github_actions() -> None:

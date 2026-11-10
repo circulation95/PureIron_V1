@@ -169,16 +169,27 @@ def recover(
     sleep: Callable[[float], None] = time.sleep,
     remove: Callable[[], list[str]] = lambda: preflight.remove_vms(list(G2_SITES)),
     reclaim: Callable[[], None] = buildhost.reclaim_host_memory,
+    mem_now: Callable[[], float | None] = preflight.windows_mem_gb,
+    min_mem_gb: float | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> tuple[bool, list[str]]:
     """infra 재시도 전 복구: WSL이 끝내 답하지 않으면 foundation-ci가 돌지 않을 때만 재시작
     (`preflight.revive_wsl` — CI가 돌거나 상태를 모르면 재시작하지 않고 재시도도 하지 않는다), 남은
-    G2 VM 삭제, WSL 페이지 캐시 반환."""
+    G2 VM 삭제, WSL 페이지 캐시 반환(`preflight.reclaim_memory` — preflight와 같은 회수·대기).
+    회수 뒤에도 Windows 가용 메모리가 기준(`min_mem_gb`, 기본 `PUREIRON_G2_MIN_MEM_GB`) 미만이면
+    preflight가 멈출 상태와 같으므로 재시도하지 않는다."""
     ready, actions = preflight.revive_wsl(ci, alive=alive, restart=restart, sleep=sleep)
     if not ready:
         return False, actions
     actions += [f"removed vm {name}" for name in remove()]
-    reclaim()
-    return True, [*actions, "reclaimed host memory"]
+    need = preflight.Limits.from_env(os.environ).min_mem_gb if min_mem_gb is None else min_mem_gb
+    mem_gb, freed = preflight.reclaim_memory(
+        need, mem_now(), mem_now=mem_now, reclaim=reclaim, sleep=sleep, clock=clock
+    )
+    actions += freed
+    if mem_gb is None or mem_gb < need:
+        return False, [*actions, f"windows available memory {mem_gb} GB < {need} GB: no retry"]
+    return True, actions
 
 
 def step_run(

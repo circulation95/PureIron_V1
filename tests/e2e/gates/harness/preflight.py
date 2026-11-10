@@ -11,8 +11,12 @@ foundation-ci 상태를 읽지 못하는 것(`gh run list` 실패)도 어긴 것
 답하지 않으면 `WSL_ECHO_TRIES`번까지 다시 묻고, 그래도 무응답이며 foundation-ci가 돌지 않는 것이
 확인될 때만 `docker desktop stop` → `wsl --shutdown` → `docker desktop start` 뒤 다시 잰다(같은 PC의
 g1 job은 메모리가 빠듯할 때 WSL을 느리게 만든다 — 느린 것을 죽은 것으로 보고 살아 있는 job을 끊지
-않게). CI가 돌거나 상태를 모르면 재시작하지 않고 `infra`로 멈춘다. 남은 e2e VM, 14일 넘은 결과,
-7일 넘은 임시 브랜치를 지운다.
+않게). CI가 돌거나 상태를 모르면 재시작하지 않고 `infra`로 멈춘다. 그 뒤 메모리가 기준 미만이고
+WSL이 답하면 WSL 페이지 캐시를 비우고(`buildhost.reclaim_host_memory`) 최대 `RECLAIM_WAIT_S` 동안
+`RECLAIM_POLL_S`마다 다시 잰다 — WSL은 캐시를 Windows에 늦게 돌려준다(VM 실측: vmmemWSL 7.5 GB·
+가용 4.6 GB가 회수 뒤 약 1분에 3.5 GB·6.3 GB). 끝까지 기준 미만이면 `infra`. 판단만 하는 모드는
+회수하지 않고, 대신 WSL 쪽 수치(vmmemWSL 크기·WSL 페이지 캐시)와 "회수하면 달라질 수 있음" 메모를
+남긴다. 남은 e2e VM, 14일 넘은 결과, 7일 넘은 임시 브랜치를 지운다.
 """
 
 from __future__ import annotations
@@ -22,12 +26,12 @@ import shutil
 import subprocess
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
-from harness import golden, hyperv
+from harness import buildhost, golden, hyperv
 from harness.context import E2EError
 from harness.github import TEMP_BRANCH_PREFIX, GitHub, GitHubError
 from harness.site import Site
@@ -41,6 +45,10 @@ DOCKER_TIMEOUT_S = 60
 PS_TIMEOUT_S = 60
 DESKTOP_TIMEOUT_S = 300
 CI_POLL_S = 60
+RECLAIM_WAIT_S = 120
+"""WSL 페이지 캐시를 비운 뒤 Windows 가용 메모리가 기준을 넘기를 기다리는 최대 시간(실측 약 1분)."""
+RECLAIM_POLL_S = 10
+WSL_MEMINFO_TIMEOUT_S = 30
 RESULTS_KEEP_DAYS = 14
 BRANCH_KEEP_DAYS = 7
 CI_UNAVAILABLE_NOTE = "foundation-ci status unavailable (gh run list failed)"
@@ -90,6 +98,11 @@ class Measure:
     notes: tuple[str, ...] = field(default=())
     ci_known: bool = True
     """foundation-ci 상태를 읽었는가(`gh run list` 성공 + JSON) — 거짓이면 `ci_running`은 0이다."""
+    wsl_vmmem_gb: float | None = None
+    """Windows에서 본 WSL VM(`vmmemWSL` 작업 집합) 크기 — 판단에는 쓰지 않는다(회수 여지 참고)."""
+    wsl_cache_gb: float | None = None
+    """WSL 안의 페이지 캐시(`/proc/meminfo` Buffers + Cached) — 회수하면 Windows로 돌아올 수
+    있는 몫."""
 
 
 def judge(measure: Measure, limits: Limits) -> list[str]:
@@ -147,6 +160,43 @@ def windows_mem_gb() -> float | None:
     )
     raw = done.stdout.strip() if done is not None and done.returncode == 0 else ""
     return round(int(raw) * 1024 / GIB, 1) if raw.isdecimal() else None
+
+
+def wsl_vmmem_gb() -> float | None:
+    """`vmmemWSL` 프로세스의 작업 집합(GB). 프로세스가 없거나 못 읽으면 None."""
+    done = _quiet(
+        [
+            "powershell",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "(Get-Process -Name vmmemWSL -ErrorAction SilentlyContinue"
+            " | Measure-Object -Property WorkingSet64 -Sum).Sum",
+        ],
+        PS_TIMEOUT_S,
+    )
+    raw = done.stdout.strip() if done is not None and done.returncode == 0 else ""
+    return round(int(raw) / GIB, 1) if raw.isdecimal() and int(raw) > 0 else None
+
+
+def meminfo_cache_gb(meminfo: str) -> float | None:
+    """`/proc/meminfo` 본문의 Buffers + Cached(GB). 둘 중 하나라도 없으면 None."""
+    kib: dict[str, int] = {}
+    for line in meminfo.splitlines():
+        name, _, rest = line.partition(":")
+        value = rest.split()
+        if name in ("Buffers", "Cached") and value and value[0].isdecimal():
+            kib[name] = int(value[0])
+    if len(kib) != 2:
+        return None
+    return round(sum(kib.values()) * 1024 / GIB, 1)
+
+
+def wsl_cache_gb() -> float | None:
+    done = _quiet(
+        ["wsl", "-d", golden.WSL_DISTRO, "--exec", "cat", "/proc/meminfo"], WSL_MEMINFO_TIMEOUT_S
+    )
+    return meminfo_cache_gb(done.stdout) if done is not None and done.returncode == 0 else None
 
 
 def disk_gb(path: Path) -> float | None:
@@ -213,14 +263,34 @@ def ci_running(run: Runner = _quiet) -> tuple[int, str | None]:
 
 def measure(e2e_root: Path) -> Measure:
     ci, note = ci_running()
+    alive = wsl_ok()
     return Measure(
         mem_gb=windows_mem_gb(),
         disk_gb=disk_gb(e2e_root),
-        wsl_ok=wsl_ok(),
+        wsl_ok=alive,
         docker_ok=docker_ok(),
         ci_running=ci,
         notes=() if note is None else (note,),
         ci_known=note is None,
+        wsl_vmmem_gb=wsl_vmmem_gb(),
+        wsl_cache_gb=wsl_cache_gb() if alive else None,
+    )
+
+
+def mem_short(measure: Measure, limits: Limits) -> bool:
+    """Windows 가용 메모리가 기준 미만인가(재지 못한 값도 미만으로 친다 — `judge`와 같다)."""
+    return measure.mem_gb is None or measure.mem_gb < limits.min_mem_gb
+
+
+def reclaim_hint(measure: Measure, limits: Limits) -> str | None:
+    """판단만 하는 모드의 메모: 메모리가 모자라도 WSL이 답하면 조치 있는 preflight는 먼저
+    회수한다."""
+    if not mem_short(measure, limits) or not measure.wsl_ok:
+        return None
+    return (
+        f"windows available memory {measure.mem_gb} GB < {limits.min_mem_gb} GB, but WSL holds "
+        f"{measure.wsl_vmmem_gb} GB (vmmemWSL, page cache {measure.wsl_cache_gb} GB): judge-only "
+        "does not reclaim it - a full preflight reclaims it first and may pass"
     )
 
 
@@ -273,6 +343,33 @@ def revive_wsl(
     if not ci_known:
         return False, ["wsl not responding, foundation-ci status unknown: no restart"]
     return True, ["wsl not responding: restart", *restart()]
+
+
+def reclaim_memory(
+    min_gb: float,
+    before: float | None,
+    *,
+    mem_now: Callable[[], float | None] | None = None,
+    reclaim: Callable[[], None] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> tuple[float | None, list[str]]:
+    """WSL 페이지 캐시를 비우고(`reclaim`) Windows 가용 메모리가 `min_gb` 이상이 될 때까지 최대
+    `RECLAIM_WAIT_S` 동안 `RECLAIM_POLL_S`마다 다시 잰다. (마지막 측정값, 조치 — 회수 전·후 GB).
+    `mem_now`·`reclaim`을 주지 않으면 `windows_mem_gb`·`buildhost.reclaim_host_memory`를 부를 때
+    모듈 속성으로 찾는다(단위 시험이 바꿔 끼운다)."""
+    (reclaim or buildhost.reclaim_host_memory)()
+    read = mem_now or windows_mem_gb
+    started = clock()
+    after = read()
+    while (after is None or after < min_gb) and clock() - started < RECLAIM_WAIT_S:
+        sleep(RECLAIM_POLL_S)
+        after = read()
+    waited = round(clock() - started)
+    return after, [
+        f"reclaimed WSL page cache: windows available memory {before} -> {after} GB "
+        f"(need {min_gb} GB, waited {waited}s)"
+    ]
 
 
 def remove_vms(site_list: list[Site]) -> list[str]:
@@ -344,9 +441,12 @@ def run(
     cleanup: Callable[[], list[str]] | None = None,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
+    reclaim: Callable[[], None] | None = None,
+    mem_now: Callable[[], float | None] | None = None,
 ) -> Outcome:
     """조치가 있는 preflight: foundation-ci가 돌면 최대 `limits.ci_wait_s` 기다리고, 그 뒤에도 WSL이
-    답하지 않으면 `revive_wsl`(CI가 없을 때만 재시작) 뒤 다시 재고, 통과하면 정리(`cleanup`)한다."""
+    답하지 않으면 `revive_wsl`(CI가 없을 때만 재시작) 뒤 다시 재고, 메모리가 모자라면(WSL이 답할
+    때만) `reclaim_memory`로 WSL 캐시를 돌려받으며 다시 재고, 통과하면 정리(`cleanup`)한다."""
     actions: list[str] = []
     seen = measure_now()
     started = clock()
@@ -366,6 +466,17 @@ def run(
         )
         actions += revived
         seen = measure_now()
+    if seen.wsl_ok and mem_short(seen, limits):
+        mem_gb, freed = reclaim_memory(
+            limits.min_mem_gb,
+            seen.mem_gb,
+            mem_now=mem_now,
+            reclaim=reclaim,
+            sleep=sleep,
+            clock=clock,
+        )
+        actions += freed
+        seen = replace(seen, mem_gb=mem_gb)
     problems = judge(seen, limits)
     if not problems and cleanup is not None:
         actions += cleanup()
@@ -373,8 +484,12 @@ def run(
 
 
 def judge_only(limits: Limits, measure_now: Callable[[], Measure]) -> Outcome:
-    """측정·판단만 한다(복구·대기·정리 없음)."""
+    """측정·판단만 한다(복구·대기·회수·정리 없음). 메모리가 모자라도 WSL이 답하면 "회수하면 달라질
+    수 있음" 메모(`reclaim_hint`)를 `warnings`에 남긴다."""
     seen = measure_now()
+    hint = reclaim_hint(seen, limits)
+    if hint is not None:
+        seen = replace(seen, notes=(*seen.notes, hint))
     return Outcome(seen, limits, judge(seen, limits), [])
 
 

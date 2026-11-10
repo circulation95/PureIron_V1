@@ -287,7 +287,10 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
   × 10·publish·cleanup)으로 나눈다(`nightly.py` 상수, 합이 120분 미만인지 시험이 본다).
 - preflight: foundation-ci 대기를 먼저 하고, WSL echo가 3번 모두 답하지 않으며 foundation-ci가 돌지
   않는 것이 확인될 때만 WSL을 재시작한다(재시도 전 복구도 같다). Actions 안에서 foundation-ci 상태를
-  못 읽으면(`gh run list` 실패) infra로 멈춘다(로컬은 `warnings`에만).
+  못 읽으면(`gh run list` 실패) infra로 멈춘다(로컬은 `warnings`에만). 메모리가 기준 미만이고 WSL이
+  답하면 WSL 페이지 캐시를 비우고 최대 120초(10초 간격) 다시 재서 판단한다(재시도 전 복구도 같다 —
+  WSL은 캐시를 Windows에 늦게 돌려준다). `--judge-only`는 회수하지 않고 `measure`에 vmmemWSL·WSL
+  페이지 캐시 크기와 "회수하면 통과할 수 있음" 메모를 남긴다.
 
 ```powershell
 $env:PUREIRON_E2E_SWITCH = "pureiron-e2e"   # setup-host.ps1 -Switch 값
