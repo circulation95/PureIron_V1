@@ -49,8 +49,8 @@ release 쌍(`BASE`·`NEXT`·`FAULT`)은 `release_pair.py`가 정한다 — 함�
   `W/store/<name>/`(site-db는 HEAD lock이 BASE와 같으면 BASE tar를 가리킨다)에만 둔다 — 저장소
   `deploy/releases`·실제 image store는 건드리지 않는다. 시뮬레이터 tar는 `--sim-out`(G2가 VM에
   복사한다). nightly 기록·이미지는 최근 `NIGHTLY_KEEP`개만 남긴다. HEAD 빌드가 실패하면 exit 0으로
-  `{"ok": false, ...}`를 낸다(제품 실패, D7) — 빌드 뒤 Docker가 응답하지 않으면 exit 1(인프라
-  실패)이다.
+  `{"ok": false, ...}`를 낸다(제품 실패, D7) — 빌드 뒤 Docker가 응답하지 않으면 `INFRA_EXIT`(75,
+  인프라 실패)이다. 그 밖의 0 아닌 종료(빌드가 성공한 뒤의 예외 포함)는 제품 스크립트 실패다.
 """
 
 from __future__ import annotations
@@ -97,6 +97,15 @@ NIGHTLY_KEEP = 3
 """WSL에 남기는 nightly 기록·이미지 수(디스크, 상위 계획 R8)."""
 BUILD_TAIL_CHARS = 4000
 DOCKER_INFO_TIMEOUT_S = 60
+INFRA_EXIT = 75
+"""실행 환경 탓으로 멈출 때의 종료 코드(EX_TEMPFAIL) — Windows 쪽 `golden.wsl`이 `WslError`(infra)로
+바꾼다(`golden.WSL_INFRA_EXIT`와 같다). 그 밖의 0 아닌 종료는 제품 스크립트 실패(product)다."""
+
+
+def infra_exit(message: str) -> SystemExit:
+    """`raise infra_exit(...)` — 메시지를 stderr에 쓰고 `INFRA_EXIT`로 끝내는 SystemExit."""
+    print(message, file=sys.stderr, flush=True)
+    return SystemExit(INFRA_EXIT)
 
 
 def _run(*cmd: str, cwd: Path = ROOT) -> None:
@@ -277,12 +286,13 @@ def nightly_release(
     work: Path, src: Path, *, sha: str, name: str, version: str, base: str, sim_out: Path
 ) -> dict[str, object]:
     """HEAD(`src`) 빌드 → 라벨 파생 → `W/releases/<name>.json`·`W/store/<name>/`·시뮬레이터 tar.
-    빌드 실패는 `{"ok": false}`(제품 실패), 그 뒤 Docker 무응답은 SystemExit(인프라 실패)."""
+    빌드 실패는 `{"ok": false}`(제품 실패), 사본 커밋 불일치·빌드 뒤 Docker 무응답·BASE 기록/store
+    없음은 `INFRA_EXIT`(인프라 실패), 빌드가 성공한 뒤의 다른 예외는 exit 1(제품 실패)이다."""
     head = subprocess.run(
         ("git", "-C", str(src), "rev-parse", "HEAD"), capture_output=True, text=True, check=True
     ).stdout.strip()
     if head != sha:
-        raise SystemExit(f"{src} is at {head}, not {sha}")
+        raise infra_exit(f"{src} is at {head}, not {sha}")
     build = subprocess.run(
         ("bash", "deploy/build/build_images.sh", *NIGHTLY_BUILD),
         cwd=src,
@@ -293,13 +303,13 @@ def nightly_release(
     )
     if build.returncode != 0:
         if not _docker_ok():
-            raise SystemExit("docker is not responding after the HEAD build failed")
+            raise infra_exit("docker is not responding after the HEAD build failed")
         tail = (build.stdout + build.stderr)[-BUILD_TAIL_CHARS:]
         return {"ok": False, "stage": "build", "rc": build.returncode, "tail": tail}
     releases, store, real_store = work / "releases", work / "store", image_store()
     base_path = ROOT / "deploy" / "releases" / f"{base}.json"
     if not base_path.is_file() or not (real_store / base).is_dir():
-        raise SystemExit(f"BASE {base}: record or image store {real_store / base} missing")
+        raise infra_exit(f"BASE {base}: record or image store {real_store / base} missing")
     reset_records(releases)
     store.mkdir(parents=True, exist_ok=True)
     relink(store / base, real_store / base)

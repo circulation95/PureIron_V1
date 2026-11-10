@@ -34,7 +34,7 @@ from harness.judges import (
     metric,
     updater_state,
 )
-from harness.vm import Vm, VmError
+from harness.vm import REMOTE_ERRORS, Vm
 
 REMOTE = "/home/pureiron/e2e"
 SITE_SCRIPTS = ("crash_at.py", "probe.py", "site_api.py")
@@ -132,7 +132,7 @@ def wait_ready(host: Vm, timeout_s: float) -> dict[str, object]:
     while time.monotonic() < deadline:
         try:
             snap = probe(host)
-        except (VmError, subprocess.TimeoutExpired):
+        except (*REMOTE_ERRORS, subprocess.TimeoutExpired):
             time.sleep(5)
             continue
         if judges.ready(snap):
@@ -257,7 +257,7 @@ def converge(host: Vm, gen: int, timeout_s: float = CONVERGE_S) -> tuple[dict[st
     while time.monotonic() - started < timeout_s:
         try:
             snap = probe(host)
-        except (VmError, subprocess.TimeoutExpired):
+        except (*REMOTE_ERRORS, subprocess.TimeoutExpired):
             time.sleep(5)
             continue
         state = updater_state(snap)
@@ -451,7 +451,7 @@ def site_patch(host: Vm) -> tuple[dict[str, object], dict[str, object]]:
             f"--tag-body {shlex.quote(json.dumps(PATCH_TAG_BODY))} --alarm {PATCH_ALARM} "
             f"--alarm-body {shlex.quote(json.dumps(PATCH_ALARM_BODY))}"
         )
-    except (VmError, ValueError) as exc:
+    except (*REMOTE_ERRORS, ValueError) as exc:
         return {"error": str(exc)[-TAIL_CHARS:]}, admin
     return out, admin
 
@@ -556,16 +556,21 @@ def wait_live(
     *,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
+    started: float | None = None,
 ) -> tuple[dict[str, object], dict[str, bool], float]:
     """`judge`가 모두 참이 될 때까지 `read`(보통 `live(host)`)를 다시 읽는다. (마지막 응답, 판정,
-    걸린 초) — 시간이 다 되면 마지막 판정 그대로다. 읽기 실패(ssh·JSON)는 빈 응답으로 친다."""
-    started = clock()
+    `started`부터 걸린 초) — 시간이 다 되면 마지막 판정 그대로다. 읽기 실패(ssh·원격 명령·JSON)는
+    빈 응답으로 친다. `started`(같은 `clock` 기준 시각, 기본은 지금)를 주면 시간 제한을 그때부터
+    잰다(G2-1: c0부터 5분). 시간이 이미 지났어도 한 번은 읽는다."""
+    started = clock() if started is None else started
     reply: dict[str, object] = {}
     checks = judge(reply)
-    while clock() - started < timeout_s:
+    tried = False
+    while clock() - started < timeout_s or not tried:
+        tried = True
         try:
             reply = read()
-        except (VmError, ValueError, subprocess.TimeoutExpired):
+        except (*REMOTE_ERRORS, ValueError, subprocess.TimeoutExpired):
             reply = {}
         checks = judge(reply)
         if all(checks.values()):

@@ -29,6 +29,7 @@ import shutil
 import stat
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -39,8 +40,29 @@ WSL_DISTRO = "Ubuntu"
 QEMU_IMG = "$HOME/m2d-tools/qemu-img"
 
 
+WSL_STARTED = "__pureiron_e2e_wsl_started__"
+"""`wsl()`이 스크립트 앞에서 stderr로 내는 표지 — 이것이 보이면 wsl.exe가 bash를 띄운 것이다."""
+WSL_INFRA_EXIT = 75
+"""WSL 스크립트가 "실행 환경 탓"(Docker 무응답·BASE image store 없음·git 사본 실패)으로 멈출 때 내는
+종료 코드(EX_TEMPFAIL, `bundles.INFRA_EXIT`와 같다)."""
+WSL_SERVICE_ERROR = "Error code: Wsl/"
+"""wsl.exe 자신의 오류 표지(예: `Wsl/Service/CreateInstance/.../0x8007274c`)."""
+
+
 class WslError(RuntimeError):
-    """WSL 호출 실패(종료 코드 ≠ 0). `RuntimeError`를 잡던 호출자는 그대로 잡는다."""
+    """wsl.exe **호출 자체**의 실패(`infra`): bash가 뜨지 않았거나, wsl.exe가 자기 오류를 냈거나,
+    스크립트가 `WSL_INFRA_EXIT`로 실행 환경 탓을 알렸다. `RuntimeError`를 잡던 호출자는 그대로
+    잡는다."""
+
+
+class WslScriptError(RuntimeError):
+    """WSL 안 스크립트가 0 아닌 코드로 끝났다(`product` — 호출된 빌드·번들 스크립트의 실패).
+    `WslError`의 하위 클래스가 아니다(분류가 갈린다). `RuntimeError`를 잡던 호출자는 그대로
+    잡는다."""
+
+    def __init__(self, message: str, returncode: int) -> None:
+        super().__init__(message)
+        self.returncode = returncode
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,9 +215,31 @@ def wsl_path(path: Path) -> str:
     return str(PurePosixPath("/mnt", drive, *resolved.parts[1:]))
 
 
-def wsl(script: str, *, timeout_s: float = 1800) -> str:
-    result = subprocess.run(
-        ["wsl", "-d", WSL_DISTRO, "--exec", "bash", "-c", script],
+def wsl_failure(returncode: int, stderr: str) -> RuntimeError | None:
+    """`wsl()` 결과의 실패 종류(성공이면 None). 표지가 없거나(bash가 뜨지 않음) wsl.exe 오류
+    표지가 있거나 `WSL_INFRA_EXIT`면 `WslError`, 그 밖의 0 아닌 코드는 `WslScriptError`다.
+    wsl.exe 자신의 메시지는 UTF-16일 수 있어 NUL을 지우고 본다."""
+    if returncode == 0:
+        return None
+    plain = stderr.replace("\x00", "")
+    started = WSL_STARTED in plain
+    text = plain.replace(WSL_STARTED + "\n", "").replace(WSL_STARTED, "").strip()
+    message = f"wsl failed ({returncode}): {text}"
+    if not started or WSL_SERVICE_ERROR in plain or returncode == WSL_INFRA_EXIT:
+        return WslError(message)
+    return WslScriptError(f"wsl script failed ({returncode}): {text}", returncode)
+
+
+def wsl(
+    script: str,
+    *,
+    timeout_s: float = 1800,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> str:
+    """WSL bash로 `script`를 돌리고 stdout을 돌려준다. 실패 종류는 `wsl_failure`, 시간 초과는
+    `subprocess.TimeoutExpired`(그대로 전파). `runner`는 단위 시험이 바꿔 끼운다."""
+    result = runner(
+        ["wsl", "-d", WSL_DISTRO, "--exec", "bash", "-c", f"echo {WSL_STARTED} >&2; {script}"],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -203,8 +247,9 @@ def wsl(script: str, *, timeout_s: float = 1800) -> str:
         timeout=timeout_s,
         check=False,
     )
-    if result.returncode != 0:
-        raise WslError(f"wsl failed ({result.returncode}): {result.stderr.strip()}")
+    failure = wsl_failure(result.returncode, result.stderr or "")
+    if failure is not None:
+        raise failure
     return result.stdout
 
 
@@ -215,12 +260,16 @@ def build_golden(image: Path, out: Path, size_gib: int = GOLDEN_SIZE_GIB) -> Pat
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp_out = out.with_suffix(".tmp.vhdx")
     tmp_out.unlink(missing_ok=True)
-    wsl(
-        "set -euo pipefail; work=$(mktemp -d); trap 'rm -rf \"$work\"' EXIT; "
-        f"{QEMU_IMG} convert -O raw '{wsl_path(image)}' \"$work/disk.raw\"; "
-        f'{QEMU_IMG} resize -f raw "$work/disk.raw" {size_gib}G; '
-        f"{QEMU_IMG} convert -O vhdx -o subformat=dynamic \"$work/disk.raw\" '{wsl_path(tmp_out)}'"
-    )
+    try:
+        wsl(
+            "set -euo pipefail; work=$(mktemp -d); trap 'rm -rf \"$work\"' EXIT; "
+            f"{QEMU_IMG} convert -O raw '{wsl_path(image)}' \"$work/disk.raw\"; "
+            f'{QEMU_IMG} resize -f raw "$work/disk.raw" {size_gib}G; '
+            f'{QEMU_IMG} convert -O vhdx -o subformat=dynamic "$work/disk.raw" '
+            f"'{wsl_path(tmp_out)}'"
+        )
+    except WslScriptError as exc:  # 클라우드 이미지 변환은 제품 코드가 아니다 — 실행 환경
+        raise WslError(f"golden image build failed: {exc}") from exc
     tmp_out.replace(out)
     out.chmod(stat.S_IREAD)  # golden은 읽기 전용(차분 디스크의 부모)
     return out

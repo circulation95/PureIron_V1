@@ -32,6 +32,12 @@ INSTALL_TIMEOUT_S = 3600
 NIGHTLY_TIMEOUT_S = 3600
 """HEAD 이미지 빌드(core·collector·web·simulator, BuildKit 캐시 있음) + 라벨 파생 + 저장."""
 GIT_TIMEOUT_S = 120
+WORK = f"{paths.WSL_HOME}/work"
+"""`run.py`의 WSL 번들 작업 디렉터리(`bundles.py --work`)."""
+NIGHTLY_WORK = f"{paths.WSL_HOME}/work-nightly"
+"""G2 nightly의 WSL 번들 작업 디렉터리 — `run.py`의 `WORK/releases`(FAULT 기록 `r5f.json`)를
+nightly가 다시 맞추지 않게 나눈다(M6-2a 리뷰 L6). BASE image store는 둘 다 같은 실제 store를
+가리킨다."""
 NIGHTLY_SRC = f"{paths.WSL_HOME}/nightly-src"
 """WSL의 HEAD git 사본 — 빌드 스크립트가 커밋을 읽으므로 rsync 사본(.git 없음)이 아니라
 clone이다."""
@@ -57,15 +63,21 @@ def wsl(script: str, *, timeout_s: float = 3600) -> str:
     return golden.wsl(prologue + script, timeout_s=timeout_s)
 
 
-def sync_repo() -> None:
-    golden.wsl(
-        f"set -euo pipefail; export PATH=$HOME/.local/bin:$PATH; mkdir -p {paths.WSL_HOME}/repo; "
-        f"rsync -a --delete --exclude .git --exclude .venv --exclude node_modules "
-        f"--exclude __pycache__ --exclude artifacts '{golden.wsl_path(paths.REPO)}/' "
-        f"{paths.WSL_HOME}/repo/; "
-        f"cd {paths.WSL_HOME}/repo && uv sync --all-packages --locked -q",
-        timeout_s=1800,
-    )
+def sync_repo(run_wsl: Callable[..., str] = golden.wsl) -> None:
+    """Windows 저장소 → WSL 사본(rsync) + `uv sync`. 사본 동기화는 제품 스크립트가 아니라서 스크립트
+    실패도 `InfraError`다(같은 lock은 workflow의 `uv sync --locked`가 먼저 검사한다)."""
+    try:
+        run_wsl(
+            f"set -euo pipefail; export PATH=$HOME/.local/bin:$PATH; "
+            f"mkdir -p {paths.WSL_HOME}/repo; "
+            f"rsync -a --delete --exclude .git --exclude .venv --exclude node_modules "
+            f"--exclude __pycache__ --exclude artifacts '{golden.wsl_path(paths.REPO)}/' "
+            f"{paths.WSL_HOME}/repo/; "
+            f"cd {paths.WSL_HOME}/repo && uv sync --all-packages --locked -q",
+            timeout_s=1800,
+        )
+    except golden.WslScriptError as exc:
+        raise InfraError(f"WSL repo sync failed: {exc}") from exc
 
 
 def reclaim_host_memory() -> None:
@@ -90,16 +102,16 @@ def reclaim_host_memory() -> None:
     )
 
 
-def bundles_py(command: str) -> str:
+def bundles_py(command: str, work: str = WORK) -> str:
     """WSL `bundles.py <command> --work …` 명령 줄(인자는 `command` 뒤에 이어 붙인다)."""
-    return f"uv run --no-sync python {BUNDLES_PY} {command} --work {paths.WSL_HOME}/work"
+    return f"uv run --no-sync python {BUNDLES_PY} {command} --work {work}"
 
 
-def install_bundle(out: Path, release: str) -> tuple[Path, str, str]:
+def install_bundle(out: Path, release: str, *, work: str = WORK) -> tuple[Path, str, str]:
     """설치 번들 실빌드(`bundles.py install`, 이미지는 싣지 않는다 — `release`는 manifest·파일
     이름에만). (번들, runbook root 지문, bootstrap-verify.sh sha256)."""
     wsl(
-        f"{bundles_py('install')} --out '{golden.wsl_path(out)}' --release {release}",
+        f"{bundles_py('install', work)} --out '{golden.wsl_path(out)}' --release {release}",
         timeout_s=INSTALL_TIMEOUT_S,
     )
     pib = out / f"pureiron-install-{release}.pib"
@@ -131,17 +143,19 @@ def nightly_release(
     *,
     run_wsl: Callable[..., str] | None = None,
     make_bundle: Callable[[Path], None] = git_bundle,
+    work: str = NIGHTLY_WORK,
 ) -> dict[str, object]:
     """HEAD를 WSL에서 빌드해 NEXT(`pair.next`) 기록을 만든다(`bundles.py nightly-release`).
     시뮬레이터 tar는 `out/simulator.tar`. NEXT 기록(JSON)을 돌려준다. 빌드 실패는
-    `HeadBuildError`(제품), WSL 호출 실패는 `golden.WslError`(인프라)다."""
+    `HeadBuildError`(제품), 빌드가 성공한 뒤의 스크립트 실패는 `golden.WslScriptError`(제품),
+    WSL 호출 실패·git 사본 실패(`WSL_INFRA_EXIT`)는 `golden.WslError`(인프라)다."""
     out.mkdir(parents=True, exist_ok=True)
     head = out / "head.bundle"
     make_bundle(head)
     script = (
-        f"rm -rf {NIGHTLY_SRC} && git clone -q '{golden.wsl_path(head)}' {NIGHTLY_SRC} && "
-        f"git -C {NIGHTLY_SRC} checkout -q {head_sha} && "
-        f"{bundles_py('nightly-release')} --src {NIGHTLY_SRC} --sha {head_sha} "
+        f"{{ rm -rf {NIGHTLY_SRC} && git clone -q '{golden.wsl_path(head)}' {NIGHTLY_SRC} && "
+        f"git -C {NIGHTLY_SRC} checkout -q {head_sha}; }} || exit {golden.WSL_INFRA_EXIT}; "
+        f"{bundles_py('nightly-release', work)} --src {NIGHTLY_SRC} --sha {head_sha} "
         f"--name {pair.next} --version {pair.releases[pair.next]} --base {pair.base} "
         f"--sim-out '{golden.wsl_path(out / 'simulator.tar')}'"
     )
@@ -157,17 +171,23 @@ def nightly_release(
 
 
 def build_site_bundle(
-    ctx: Context, gen: int, release: str, window_open_at: datetime, project_dir: str | None = None
+    ctx: Context,
+    gen: int,
+    release: str,
+    window_open_at: datetime,
+    project_dir: str | None = None,
+    *,
+    work: str = WORK,
 ) -> Path:
     """`ctx.site`의 g`gen` 번들(`release`)을 만든다. `project_dir`(WSL 경로)가 없으면 fixture
-    `acme` 트리를 싣는다."""
+    `acme` 트리를 싣는다. `work`는 WSL 기록·store 디렉터리(G2는 `NIGHTLY_WORK`)."""
     site = ctx.site.site_id
     out = ctx.work
     start = window_open_at.strftime("%Y-%m-%dT%H:%M:%SZ")
     end = (window_open_at + timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
     project = f" --project-dir '{project_dir}'" if project_dir else ""
     wsl(
-        f"{bundles_py('site')} "
+        f"{bundles_py('site', work)} "
         f"--out '{golden.wsl_path(out)}' --gen {gen} --product {ctx.pair.releases[release]} "
         f"--window-start {start} --window-end {end} --site {site}{project}"
     )
