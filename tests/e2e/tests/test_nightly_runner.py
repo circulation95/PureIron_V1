@@ -7,6 +7,7 @@ import dataclasses
 import json
 import os
 import subprocess
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import cast
@@ -327,19 +328,30 @@ def test_stale_entries_are_older_than_the_keep_window() -> None:
 
 
 class FakePytest:
-    """pytest 실행 대신 정해 둔 junit을 차례로 쓴다."""
+    """pytest 실행 대신 정해 둔 junit을 차례로 쓴다(None이면 junit 없음). `codes`는 호출마다 돌려줄
+    종료 코드(기본 0, `nightly.PYTEST_TIMED_OUT` = 시간 초과), `on_call`은 호출마다 부른다(가짜
+    시계를 움직인다)."""
 
-    def __init__(self, *outputs: str | None) -> None:
+    def __init__(
+        self,
+        *outputs: str | None,
+        codes: tuple[int, ...] = (),
+        on_call: Callable[[], None] = lambda: None,
+    ) -> None:
         self.outputs = list(outputs)
+        self.codes = list(codes)
+        self.on_call = on_call
         self.calls: list[tuple[str, list[str]]] = []
+        self.timeouts: list[float] = []
 
     def __call__(self, junit_path: Path, targets: list[str], timeout_s: float) -> int:
-        del timeout_s
         self.calls.append((junit_path.name, targets))
+        self.timeouts.append(timeout_s)
+        self.on_call()
         text = self.outputs.pop(0)
         if text is not None:
             junit_path.write_text(text, encoding="utf-8")
-        return 0
+        return self.codes.pop(0) if self.codes else 0
 
 
 def run_once(tmp_path: Path, fake: FakePytest) -> tuple[dict[str, object], list[str]]:
@@ -672,11 +684,15 @@ def test_runner_failure_is_reported_as_infra_and_exits_2(tmp_path: Path) -> None
         out_dir=lambda run_id: tmp_path / run_id,
     )
     assert code == 2
-    summary = json.loads((tmp_path / "20261110T180000Z" / "summary.json").read_text("utf-8"))
+    out = tmp_path / "20261110T180000Z"
+    summary = json.loads((out / "runner-summary.json").read_text("utf-8"))
     assert summary["verdict"] == "infra"
     assert [t["test_id"] for t in summary["tests"]] == ["runner"]
     assert "hyperv remove failed" in summary["runner_error"]
     assert ("status", (SHA, "error", "g2/nightly")) in gh.calls
+    assert not (out / "summary.json").exists()
+    published = json.loads((out / "publish.json").read_text("utf-8"))
+    assert published["published_summary"] == "runner-summary.json"
 
 
 def test_runner_failure_survives_a_failing_publish(tmp_path: Path) -> None:
@@ -720,3 +736,201 @@ def test_prune_results_keeps_14_days_and_only_touches_g2_runs(tmp_path: Path) ->
         "m2d-old",
     ]
     assert preflight.prune_results(tmp_path / "missing", now) == []
+
+
+# ---------------------------------------------------------------- 리뷰 r2(H1·L4)
+
+DAY1, DAY2 = "20261109T180000Z", "20261110T180000Z"
+
+
+def timed_out_run(tmp_path: Path, run_id: str) -> tuple[dict[str, object], FakePytest, list[str]]:
+    """pytest가 시간 제한에 죽어 junit을 남기지 못한 날(제품이 멈춤)."""
+    fake = FakePytest(None, codes=(nightly.PYTEST_TIMED_OUT,))
+    recovered: list[str] = []
+
+    def recover() -> tuple[bool, list[str]]:
+        recovered.append("x")
+        return True, []
+
+    summary = nightly.step_run(
+        run_id,
+        SHA,
+        tmp_path / run_id,
+        run_pytest=fake,
+        recover_env=recover,
+        today=TODAY,
+        quarantine=[],
+    )
+    return summary, fake, recovered
+
+
+def test_pytest_timeout_without_junit_is_one_infra_line_and_is_not_retried(
+    tmp_path: Path,
+) -> None:
+    """R2-H1: junit이 없어도 이력에 남을 시험 id `pytest`(infra) 한 줄이 생긴다. 시간 초과였으면
+    다시 돌리지 않는다(멈춘 제품은 재시도로 낫지 않고 120분 예산에도 들지 않는다)."""
+    summary, fake, recovered = timed_out_run(tmp_path, DAY1)
+    assert len(fake.calls) == 1
+    assert recovered == []
+    assert summary["verdict"] == "infra"
+    assert [(t["test_id"], t["failure_class"]) for t in report.test_rows(summary)] == [
+        ("pytest", "infra")
+    ]
+    assert summary["pytest_rc"] == {"first": nightly.PYTEST_TIMED_OUT}
+    retry = cast(dict[str, object], summary["retry"])
+    assert retry["done"] is False
+    assert "timed out" in str(retry["skipped"])
+    assert len(report.history_lines(summary)) == 1
+
+
+def test_two_days_of_pytest_timeouts_open_an_infra_issue(tmp_path: Path) -> None:
+    """R2-H1: junit 없는 실행이 이틀 이어지면 `g2-nightly-infra` 이슈가 열린다(이전에는 이력이
+    0줄이라 영영 열리지 않았다)."""
+    day1, _, _ = timed_out_run(tmp_path, DAY1)
+    gh = FakeGitHub()
+    first = nightly.step_publish(day1, gh, TODAY)
+    assert (first["history_lines"], first["infra_issue"]) == (1, None)
+    ((_, _, appended),) = gh.appends
+    day2, _, _ = timed_out_run(tmp_path, DAY2)
+    gh = FakeGitHub(history=appended)
+    second = nightly.step_publish(day2, gh, TODAY)
+    assert second["infra_issue"] == "created"
+    assert ("issue", (report.INFRA_ISSUE_TITLE, "g2-nightly-infra")) in gh.calls
+    assert ("status", (SHA, "error", "g2/nightly")) in gh.calls
+    body = nightly.infra_issue_body(day2, ["pytest"])
+    assert '"first": -1' in body
+
+
+def test_crash_without_junit_reruns_everything_and_still_leaves_a_line(tmp_path: Path) -> None:
+    """크래시(시간 초과가 아닌 0 아닌 종료, junit 없음)는 전체를 1회 다시 돌리고, 그래도 결과가
+    없으면 `pytest` 한 줄이다."""
+    fake = FakePytest(None, None, codes=(3, 3))
+    summary, recovered = run_once(tmp_path, fake)
+    assert fake.calls == [
+        ("junit.xml", ["tests/e2e/gates"]),
+        ("junit-retry.xml", ["tests/e2e/gates"]),
+    ]
+    assert recovered == ["x"]
+    assert [t["test_id"] for t in report.test_rows(summary)] == ["pytest"]
+    assert summary["pytest_rc"] == {"first": 3, "retry": 3}
+    assert cast(dict[str, object], summary["retry"])["done"] is True
+
+
+class Clock:
+    def __init__(self, now: float) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def test_deadline_shortens_pytest_and_skips_a_retry_that_cannot_finish(tmp_path: Path) -> None:
+    """R2-H1 시간 예산: pytest 시간 제한은 남은 시간으로 줄고, 재시도할 시간이
+    `RETRY_MIN_S`보다 적으면 복구도 재시도도 하지 않는다."""
+    clock = Clock(20 * 60)
+    deadline = 80 * 60
+
+    def first_run_takes_55_minutes() -> None:
+        clock.now += 55 * 60
+
+    fake = FakePytest(
+        junit(case(NAME_A), case(NAME_B, "error", "infra")), on_call=first_run_takes_55_minutes
+    )
+    summary = nightly.step_run(
+        "R1",
+        SHA,
+        tmp_path,
+        run_pytest=fake,
+        recover_env=lambda: pytest.fail("no time left: must not recover"),
+        today=TODAY,
+        quarantine=[],
+        deadline=deadline,
+        clock=clock,
+    )
+    assert fake.timeouts == [60 * 60]  # min(75분, 80 - 20분)
+    assert summary["verdict"] == "infra"
+    assert "left before the workflow timeout" in str(
+        cast(dict[str, object], summary["retry"])["skipped"]
+    )
+
+
+def test_retry_timeout_is_capped_by_the_time_left(tmp_path: Path) -> None:
+    clock = Clock(0.0)
+
+    def tick() -> None:
+        clock.now += 70 * 60
+
+    fake = FakePytest(
+        junit(case(NAME_A), case(NAME_B, "error", "infra")), junit(case(NAME_B)), on_call=tick
+    )
+    summary = nightly.step_run(
+        "R1",
+        SHA,
+        tmp_path,
+        run_pytest=fake,
+        recover_env=lambda: (True, []),
+        today=TODAY,
+        quarantine=[],
+        deadline=nightly.RUN_BUDGET_S,
+        clock=clock,
+    )
+    assert fake.timeouts == [nightly.PYTEST_TIMEOUT_S, nightly.RUN_BUDGET_S - 70 * 60]
+    assert summary["verdict"] == "passed"
+
+
+def test_time_budget_fits_the_workflow_timeout() -> None:
+    """R2-H1: workflow `timeout-minutes`를 넘기면 Actions가 job을 죽여 status·이력이 남지 않는다 —
+    준비(checkout·uv sync) + run 예산(preflight·첫 실행·복구·재시도, 실행 중 남은 시간으로 자른다)
+    + 뒷정리(collect 최악·publish·cleanup)가 120분보다 작아야 한다."""
+    workflow = (nightly.paths.REPO / ".github" / "workflows" / "nightly.yml").read_text("utf-8")
+    assert f"timeout-minutes: {nightly.WORKFLOW_TIMEOUT_S // 60}\n" in workflow
+    total = nightly.SETUP_RESERVE_S + nightly.RUN_BUDGET_S + nightly.TAIL_RESERVE_S
+    assert total < nightly.WORKFLOW_TIMEOUT_S
+    collect_worst = len(nightly.G2_SITES) * len(nightly.REMOTE_LOGS) * nightly.COLLECT_TIMEOUT_S
+    assert collect_worst + nightly.PUBLISH_RESERVE_S <= nightly.TAIL_RESERVE_S
+    assert nightly.RETRY_MIN_S < nightly.RETRY_TIMEOUT_S < nightly.PYTEST_TIMEOUT_S
+    assert nightly.PYTEST_TIMEOUT_S < nightly.RUN_BUDGET_S
+
+
+def test_publish_does_not_append_the_same_run_twice() -> None:
+    """R2-L4: publish를 다시 시도해도(runner 보호) 이력 줄은 한 번만 들어간다."""
+    failing = summary_of(DAY2, (CASE_B, "failed", "product"))
+    already = "".join(line + "\n" for line in report.history_lines(failing))
+    gh = FakeGitHub(history=already)
+    out = nightly.step_publish(failing, gh, TODAY)
+    assert out["history_lines"] == 0
+    assert gh.appends == []
+    assert ("status", (SHA, "failure", "g2/nightly")) in gh.calls
+
+
+def test_runner_failure_keeps_the_real_summary_and_publishes_it(tmp_path: Path) -> None:
+    """R2-L4: run 뒤(collect·publish·cleanup)에서 멈춰도 그날의 실제 결과(product 실패)를
+    덮어쓰지 않고 그것으로 publish를 다시 시도한다 — product 줄이 이력에서 빠지지 않게."""
+    gh = FakeGitHub()
+    real = summary_of(DAY2, (CASE_B, "failed", "product"))
+
+    def body(run_id: str, sha: str, today: date, out: Path, client: object) -> int:
+        nightly.write_json(out / "summary.json", real)
+        raise RuntimeError("gh: status call failed")
+
+    code = nightly.step_all(
+        False,
+        body=body,
+        github=lambda dry_run: gh,
+        head=lambda: SHA,
+        run_id=DAY2,
+        today=TODAY,
+        out_dir=lambda run_id: tmp_path / run_id,
+    )
+    assert code == 2
+    out = tmp_path / DAY2
+    assert json.loads((out / "summary.json").read_text("utf-8")) == real
+    assert json.loads((out / "runner-summary.json").read_text("utf-8"))["tests"][0]["test_id"] == (
+        "runner"
+    )
+    ((_, _, appended),) = gh.appends
+    assert [json.loads(line)["class"] for line in appended.splitlines()] == ["product"]
+    assert ("status", (SHA, "failure", "g2/nightly")) in gh.calls
+    published = json.loads((out / "publish.json").read_text("utf-8"))
+    assert published["published_summary"] == "summary.json"
+    assert "status call failed" in str(published["runner_error"])

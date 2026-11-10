@@ -11,7 +11,9 @@
 - `preflight`(`harness.preflight`): 메모리·디스크·WSL·Docker·foundation-ci 판단, 복구·정리.
 - `run`: `pytest -c tests/e2e/gates/pytest.ini -m g2 --junitxml …/junit.xml` → 분류
   (`harness.report`) → 실패가 모두 `infra`면 복구(WSL·남은 VM·호스트 메모리) 뒤 실패한 시험만 1회
-  다시(`junit-retry.xml`) → `summary.json`. `product`는 다시 돌리지 않는다.
+  다시(`junit-retry.xml`) → `summary.json`. `product`는 다시 돌리지 않는다. pytest가 결과(junit)를
+  남기지 못하면 시험 id `pytest`(infra) 한 줄로 남긴다 — 시간 초과였으면 다시 돌리지 않고(멈춘
+  제품은 재시도로 낫지 않는다), 크래시였으면 전체를 1회 다시 돌린다.
 - `collect`: VM마다 `updater.json`·메트릭·`journalctl -u pureiron-updater`·compose 로그를
   `<결과>/<site>/`로(실패해도 계속).
 - `publish`: `e2e-history` 브랜치 `history.jsonl`에 줄 추가, commit status `g2/nightly`, product
@@ -20,8 +22,14 @@
   초과)이 "error"로만 쌓이지 않게. `--dry-run`이면 무엇을 보낼지 출력만 한다.
 - `cleanup`: 이 run의 번들 디렉터리를 지우고 VM을 끈다(다음 preflight가 VM을 지운다).
 
-`all`이 예상 밖 예외로 멈추면 시험 id `runner`(infra) 하나로 summary를 남기고 publish를 시도한 뒤
-exit 2로 끝난다. run id는 `20261110T180000Z` 형식만 받는다.
+`all`이 예상 밖 예외로 멈추면 시험 id `runner`(infra) 하나로 `runner-summary.json`을 남기고
+publish를 시도한 뒤 exit 2로 끝난다 — 그 run의 `summary.json`이 이미 있으면 덮어쓰지 않고 그것으로
+publish를 다시 시도한다. run id는 `20261110T180000Z` 형식만 받는다.
+
+시간 예산: `all`은 workflow `timeout-minutes`(120분) 안에 끝나야 status·이력이 남는다. preflight
+시작부터 `RUN_BUDGET_S` 안에 첫 실행·복구·재시도를 끝내고(pytest 시간 제한을 남은 시간으로
+줄이고, 남은 시간이 `RETRY_MIN_S`보다 짧으면 재시도를 건너뛴다), collect·publish·cleanup은
+`TAIL_RESERVE_S` 안에 든다.
 
 결과는 `<PUREIRON_E2E_ROOT>/results/g2-<run>/`(junit.xml·summary.json·preflight.json·publish.json·
 <site>/). 종료 코드: 0 통과, 1 product, 2 infra.
@@ -40,6 +48,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import asdict
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -54,9 +63,27 @@ GATES = Path(__file__).resolve().parent
 GATES_REL = GATES.relative_to(paths.REPO).as_posix()
 INI = GATES / "pytest.ini"
 QUARANTINE = GATES / "quarantine.yaml"
+WORKFLOW_TIMEOUT_S = 120 * 60
+"""`nightly.yml` `timeout-minutes` — 넘기면 Actions가 job을 죽여 status·이력·publish.json이 하나도
+남지 않는다(리뷰 r2 H1)."""
+SETUP_RESERVE_S = 10 * 60
+"""nightly.py 앞의 checkout·`uv sync`."""
+COLLECT_TIMEOUT_S = 60
+"""collect의 원격 명령 하나 — 현장 2개, 명령 5개, 60초씩이면 최대 10분."""
+PUBLISH_RESERVE_S = 5 * 60
+"""publish(gh 호출)·cleanup(번들 삭제·VM 끄기)."""
+TAIL_RESERVE_S = 15 * 60
+"""run 뒤 collect·publish·cleanup에 남겨 두는 시간."""
+RUN_BUDGET_S = 90 * 60
+"""preflight 시작부터 첫 실행·복구·재시도가 끝나야 하는 시간."""
 PYTEST_TIMEOUT_S = 75 * 60
 RETRY_TIMEOUT_S = 30 * 60
-COLLECT_TIMEOUT_S = 120
+RETRY_MIN_S = 10 * 60
+"""재시도에 이만큼도 남지 않으면 건너뛴다(끝내지 못할 재시도로 예산만 쓰지 않게)."""
+PYTEST_TIMED_OUT = -1
+"""`run_pytest`가 시간 초과일 때 돌려주는 값."""
+PYTEST_TEST = "pytest"
+"""pytest가 결과(junit)를 남기지 못한 실행의 시험 id(infra)."""
 EXIT = {report.PASSED: 0, PRODUCT: 1, INFRA: 2}
 G2_SITES: tuple[Site, ...] = tuple(s for s, _ in g2.SITE_ROLES)
 REMOTE_LOGS = {
@@ -120,7 +147,7 @@ def make_pytest(run_id: str, sha: str) -> RunPytest:
                 check=False,
             ).returncode
         except subprocess.TimeoutExpired:
-            return -1
+            return PYTEST_TIMED_OUT
 
     return run_pytest
 
@@ -164,26 +191,44 @@ def step_run(
     today: date,
     quarantine: list[flake.Quarantine] | None = None,
     warnings: list[str] | None = None,
+    deadline: float | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> dict[str, object]:
+    """첫 실행 → (infra 실패만) 복구 뒤 1회 재시도 → `summary.json`. `deadline`(`clock` 기준)을 주면
+    pytest 시간 제한을 남은 시간으로 줄이고, 재시도할 시간이 `RETRY_MIN_S`보다 적으면 건너뛴다.
+    결과가 하나도 없으면(junit 없음) 시험 id `pytest`(infra) 한 줄 — 이력에 남아야 같은 실패가
+    이틀 이어질 때 infra 이슈가 열린다(리뷰 r2 H1)."""
     out.mkdir(parents=True, exist_ok=True)
     entries = flake.load_quarantine(QUARANTINE) if quarantine is None else quarantine
     active, expired = flake.split_expired(entries, today)
-    run_pytest(out / "junit.xml", [GATES_REL], PYTEST_TIMEOUT_S)
+
+    def left(cap: float) -> float:
+        return cap if deadline is None else max(0.0, min(cap, deadline - clock()))
+
+    codes = {"first": run_pytest(out / "junit.xml", [GATES_REL], left(PYTEST_TIMEOUT_S))}
     first = read_results(out / "junit.xml")
     targets = [f"{GATES_REL}/{t}" for t in report.retry_targets(first, active)]
-    if not first:  # pytest가 결과를 못 남김(시간 초과·크래시) — infra로 보고 전체를 다시
-        targets = [GATES_REL]
     retry: dict[str, object] = {"targets": targets, "done": False}
+    if not first and codes["first"] == PYTEST_TIMED_OUT:
+        retry["skipped"] = "pytest timed out without results (a hang does not heal on retry)"
+    elif not first:  # 크래시 — 결과가 없으니 전체를 다시
+        retry["targets"] = targets = [GATES_REL]
     results = first
-    if targets:
+    if targets and left(RETRY_TIMEOUT_S) < RETRY_MIN_S:
+        retry["skipped"] = f"less than {RETRY_MIN_S}s left before the workflow timeout"
+    elif targets:
         ready, retry["recovery"] = recover_env()
-        if ready:
-            run_pytest(out / "junit-retry.xml", targets, RETRY_TIMEOUT_S)
+        if not ready:
+            retry["skipped"] = "environment not recovered (see recovery)"
+        elif left(RETRY_TIMEOUT_S) < RETRY_MIN_S:
+            retry["skipped"] = f"less than {RETRY_MIN_S}s left after recovery"
+        else:
+            codes["retry"] = run_pytest(out / "junit-retry.xml", targets, left(RETRY_TIMEOUT_S))
             again = read_results(out / "junit-retry.xml")
             results = report.merge_retry(first, again) if first else again
             retry["done"] = True
-        else:
-            retry["skipped"] = "environment not recovered (see recovery)"
+    if not results:
+        results = [report.TestResult(PYTEST_TEST, report.FAILED, INFRA, 0.0)]
     summary = report.summary(
         run_id=run_id,
         date=today.isoformat(),
@@ -192,6 +237,7 @@ def step_run(
         quarantined=active,
         extra={
             "retry": retry,
+            "pytest_rc": codes,
             "quarantine_expired": [{**asdict(e), "added": e.added.isoformat()} for e in expired],
             "warnings": list(warnings or []),
         },
@@ -291,6 +337,9 @@ def infra_issue_body(summary: dict[str, object], tests: list[str]) -> str:
             "environment may be broken, or the product may hang (a timeout is classified as "
             "infra) or a remote step may exit 255. Check the junit and logs.",
             "",
+            f"pytest exit codes: `{json.dumps(summary.get('pytest_rc'))}` "
+            f"({PYTEST_TIMED_OUT} = timed out; test `{PYTEST_TEST}` = no junit at all)",
+            "",
             f"Results: `results/g2-{summary.get('run')}` on the e2e runner.",
         ]
     )
@@ -310,6 +359,8 @@ def step_publish(summary: dict[str, object], gh: GitHub, today: date) -> dict[st
     lines = report.history_lines(summary)
     old = report.parse_history(gh.read_file(HISTORY_BRANCH, HISTORY_FILE) or "")
     verdict, sha = str(summary["verdict"]), str(summary["product_sha"])
+    if any(row.get("run") == summary["run"] for row in old):
+        lines = []  # 이 run은 이미 이력에 있다(publish 재시도) — 줄을 두 번 쓰지 않는다
     if lines:
         gh.append_file(
             HISTORY_BRANCH,
@@ -382,7 +433,9 @@ AllBody = Callable[[str, str, date, Path, GitHub], int]
 
 
 def run_all(run_id: str, sha: str, today: date, out: Path, gh: GitHub) -> int:
-    """preflight → run → collect → publish → cleanup."""
+    """preflight → run → collect → publish → cleanup. preflight 시작부터 `RUN_BUDGET_S` 안에 run을
+    끝낸다(`step_run(deadline=)`)."""
+    deadline = time.monotonic() + RUN_BUDGET_S
     limits = preflight.Limits.from_env(os.environ)
     outcome = preflight.run(
         limits,
@@ -400,6 +453,7 @@ def run_all(run_id: str, sha: str, today: date, out: Path, gh: GitHub) -> int:
                 run_pytest=make_pytest(run_id, sha),
                 today=today,
                 warnings=outcome.warnings,
+                deadline=deadline,
             )
             step_collect(run_id)
         else:
@@ -437,17 +491,37 @@ def step_all(
         return body(run_id, sha, today, out, gh)
     except Exception as exc:
         log(f"nightly runner failed: {exc!r}")
-        summary = runner_summary(run_id, sha, today, exc)
-        write_json(out / "summary.json", summary)
+        runner = runner_summary(run_id, sha, today, exc)
+        write_json(out / "runner-summary.json", runner)
+        # 그 run의 실제 결과가 이미 있으면(예: publish·cleanup에서 멈춤) 덮어쓰지 않고 그것을 낸다
+        # (리뷰 r2 L4) — 이미 이력에 들어갔으면 step_publish가 줄을 다시 쓰지 않는다.
+        real = read_summary(out / "summary.json", run_id)
+        summary = runner if real is None else real
         published: dict[str, object] = {"error": "not published (no GitHub client or sha)"}
         if gh is not None and sha != UNKNOWN_SHA:
             try:
                 published = step_publish(summary, gh, today)
             except Exception as publish_exc:
                 published = {"error": f"publish failed: {publish_exc!r}"[-TAIL_CHARS:]}
+        published["runner_error"] = runner["runner_error"]
+        published["published_summary"] = "runner-summary.json" if real is None else "summary.json"
         write_json(out / "publish.json", published)
         say({"run": run_id, "verdict": summary["verdict"], "publish": published})
         return EXIT[INFRA]
+
+
+def read_summary(path: Path, run_id: str) -> dict[str, object] | None:
+    """이 run의 `summary.json`(없거나, 깨졌거나, 다른 run이면 None)."""
+    try:
+        data: object = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    summary = cast(dict[str, object], data)
+    if summary.get("run") != run_id or summary.get("verdict") not in EXIT:
+        return None
+    return summary
 
 
 def step_preflight(*, judge_only: bool, dry_run: bool) -> int:
