@@ -2,6 +2,7 @@
 
     python3 site_api.py patch --username e2e-admin --password-file PW \\
         --tag line1/temp --tag-body '{"record": {...}}' --alarm temp-high --alarm-body '{...}'
+    python3 site_api.py live --username e2e-viewer --password-file PW
 
 브라우저와 같은 경로·헤더로 부른다 — web(nginx, `http://127.0.0.1`) 경유, 비안전 메서드마다
 `Origin: http://127.0.0.1`(요청 `Host`와 같은 host:port)·`Sec-Fetch-Site: same-origin`, 로그인
@@ -11,6 +12,10 @@
 
 출력: `project_before`·`project_after`(`GET /api/v1/project`), `login`·`tag`·`alarm`(HTTP 상태와
 본문) — 판정은 하네스(`run.judge_patch`)가 한다. 표준 라이브러리만 쓴다.
+
+`live`(G2-1): viewer로 로그인해 `GET /api/v1/tags`(태그 현재값·품질)·`GET /api/v1/devices`(장비
+통신 상태 — 태그가 아니다)를 읽고 로그아웃한다. 출력 `login`·`tags`·`devices`(HTTP 상태와 본문),
+판정은 하네스(`judges.judge_tags_good`·`judge_device_connected`)가 한다.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any, cast
@@ -67,18 +73,27 @@ def session_of(set_cookies: list[str]) -> str | None:
     return None if morsel is None else morsel.value
 
 
-def patch(args: argparse.Namespace) -> dict[str, Any]:
+Call = Callable[..., tuple[int, Any, list[str]]]
+
+
+def login(args: argparse.Namespace, call: Call) -> tuple[dict[str, Any], str | None]:
+    """한 번 로그인한다(실패가 쌓이면 throttle). (출력용 dict, 세션 쿠키 또는 None)."""
     password = Path(args.password_file).read_text(encoding="utf-8").splitlines()[0]
-    out: dict[str, Any] = {"project_before": call("GET", "/api/v1/project")[:2]}
     status, body, set_cookies = call(
         "POST", "/api/v1/auth/login", {"username": args.username, "password": password}
     )
     token = session_of(set_cookies)
-    # 토큰은 출력하지 않는다(로그에 남는 결과 파일)
+    # 토큰·비밀번호는 출력하지 않는다(로그에 남는 결과 파일)
     user: Any = cast(dict[str, Any], body).get("user") if isinstance(body, dict) else body
-    out["login"] = [status, {"user": user}]
-    out["session_cookie"] = token is not None
-    if status == 200 and token is not None:
+    out: dict[str, Any] = {"login": [status, {"user": user}], "session_cookie": token is not None}
+    return out, token if status == 200 else None
+
+
+def patch(args: argparse.Namespace, call: Call = call) -> dict[str, Any]:
+    out: dict[str, Any] = {"project_before": call("GET", "/api/v1/project")[:2]}
+    logged_in, token = login(args, call)
+    out |= logged_in
+    if token is not None:
         tag = urllib.parse.quote(args.tag, safe="/")
         tag_body = json.loads(args.tag_body)
         out["tag"] = call("PATCH", f"/api/v1/project/tags/{tag}", tag_body, token)[:2]
@@ -87,6 +102,15 @@ def patch(args: argparse.Namespace) -> dict[str, Any]:
         )[:2]
         out["logout"] = call("POST", "/api/v1/auth/logout", None, token)[0]
     out["project_after"] = call("GET", "/api/v1/project")[:2]
+    return out
+
+
+def live(args: argparse.Namespace, call: Call = call) -> dict[str, Any]:
+    out, token = login(args, call)
+    if token is not None:
+        out["tags"] = call("GET", "/api/v1/tags", None, token)[:2]
+        out["devices"] = call("GET", "/api/v1/devices", None, token)[:2]
+        out["logout"] = call("POST", "/api/v1/auth/logout", None, token)[0]
     return out
 
 
@@ -100,8 +124,12 @@ def main() -> int:
     cmd.add_argument("--tag-body", required=True)
     cmd.add_argument("--alarm", required=True)
     cmd.add_argument("--alarm-body", required=True)
+    live_cmd = sub.add_parser("live")
+    live_cmd.add_argument("--username", required=True)
+    live_cmd.add_argument("--password-file", required=True)
     args = parser.parse_args()
-    print(json.dumps(patch(args), sort_keys=True, ensure_ascii=False))
+    out = patch(args) if args.command == "patch" else live(args)
+    print(json.dumps(out, sort_keys=True, ensure_ascii=False))
     return 0
 
 

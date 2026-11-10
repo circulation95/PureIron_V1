@@ -490,3 +490,85 @@ def site_online(ctx: Context, host: Vm, ca: Path, ca_sha256: str) -> dict[str, o
         "registered": registered,
         "updater_env": env.strip().splitlines(),
     }
+
+
+# ---------------------------------------------------------------- G2 시뮬레이터·실시간 값(M6-2)
+
+SIM_CONTAINER = "e2e-simulator"
+"""VM 안 modbus 시뮬레이터 컨테이너 — 제품 compose 프로젝트(`pureiron`) 밖이라 probe·Updater가
+보지 않는다(E3)."""
+SIM_PORT = 502
+SIM_REMOTE = f"{REMOTE}/simulator.tar"
+SIM_START_TIMEOUT_S = 600
+E2E_VIEWER = "e2e-viewer"
+VIEWER_PASSWORD = f"{REMOTE}/e2e-viewer.pw"
+"""VM에서 만든 e2e viewer 비밀번호(root 0600, 호스트로 나가지 않는다)."""
+LIVE_POLL_S = 10
+
+
+def start_simulator(host: Vm, tar: Path, image: str) -> None:
+    """시뮬레이터 이미지 tar를 VM에 적재하고 host network로 띄운다(`--restart unless-stopped` —
+    재부팅·체크포인트 복원 뒤에도 살아난다). 포트 502(< 1024)를 열어야 해서 root로 돈다(이미지 기본
+    사용자 10001은 host network에서 그 포트를 열 수 없다). 장비 주소는 seed의 dummy 인터페이스
+    (`golden.seed_files(dummy=…)`)가 VM에 붙인다."""
+    host.put(tar, SIM_REMOTE)
+    host.run(
+        as_root(
+            f"docker load -q -i {SIM_REMOTE} && rm -f {SIM_REMOTE} && "
+            f"{{ docker rm -f {SIM_CONTAINER} >/dev/null 2>&1 || true; }} && "
+            f"docker run -d --name {SIM_CONTAINER} --restart unless-stopped --network host "
+            f"--user 0:0 -e SIM_PORT={SIM_PORT} {image}"
+        ),
+        timeout_s=SIM_START_TIMEOUT_S,
+    )
+
+
+def add_viewer(host: Vm) -> dict[str, object]:
+    """e2e viewer(태그·장비 읽기 전용 계정, VM에서 만든 비밀번호)를 만든다. 결과 기록용 dict."""
+    created = host.run(
+        as_root(
+            "umask 077 && python3 -c 'import secrets; print(secrets.token_urlsafe(24))' "
+            f"> {VIEWER_PASSWORD} && cid={compose_core()} && "
+            f'docker exec -i "$cid" pureiron-core users add {E2E_VIEWER} --role viewer --json '
+            f"< {VIEWER_PASSWORD}"
+        ),
+        check=False,
+    )
+    return {
+        "rc": created.returncode,
+        "stdout": created.stdout[-TAIL_CHARS:],
+        "stderr": created.stderr[-TAIL_CHARS:],
+    }
+
+
+def live(host: Vm) -> dict[str, object]:
+    """web 경유 viewer 로그인 → `GET /tags`·`GET /devices`(`site/site_api.py live`)."""
+    return host.json(
+        f"sudo python3 {REMOTE}/site_api.py live --username {E2E_VIEWER} "
+        f"--password-file {VIEWER_PASSWORD}"
+    )
+
+
+def wait_live(
+    read: Callable[[], dict[str, object]],
+    judge: Callable[[dict[str, object]], dict[str, bool]],
+    timeout_s: float,
+    *,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> tuple[dict[str, object], dict[str, bool], float]:
+    """`judge`가 모두 참이 될 때까지 `read`(보통 `live(host)`)를 다시 읽는다. (마지막 응답, 판정,
+    걸린 초) — 시간이 다 되면 마지막 판정 그대로다. 읽기 실패(ssh·JSON)는 빈 응답으로 친다."""
+    started = clock()
+    reply: dict[str, object] = {}
+    checks = judge(reply)
+    while clock() - started < timeout_s:
+        try:
+            reply = read()
+        except (VmError, ValueError, subprocess.TimeoutExpired):
+            reply = {}
+        checks = judge(reply)
+        if all(checks.values()):
+            break
+        sleep(LIVE_POLL_S)
+    return reply, checks, round(clock() - started, 1)
