@@ -256,22 +256,35 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
   `bundles.py nightly-release`가 HEAD git 사본에서 `build_images.sh`로 빌드하고 `LABEL
   pureiron.nightly=<sha>` 파생을 얹어 WSL nightly 작업 디렉터리(`~/m2d-e2e/work-nightly/{releases,store}`
   — `run.py`의 `work/`와 나눈다, BASE image store는 같은 실제 store를 가리킨다)에만 기록한다.
+  나누기 전에 `nightly-release`를 `work/`에서 돌린 적이 있다면 `~/m2d-e2e/work/store/n*`와 그 이미지
+  태그(`pureiron/*:n*`)는 이제 어느 정리도 보지 않는다 — 한 번 손으로 지운다(`rm -rf
+  ~/m2d-e2e/work/store/n*`, `docker image ls 'pureiron/*' | grep ' n'`).
 - 장비: 각 VM 안에 dummy 인터페이스 `10.0.0.5`(fixture 장비 주소)와 시뮬레이터 컨테이너
   (`e2e-simulator`, host network, :502, 제품 compose 밖). g1 트리 = fixture 사본 + 시뮬레이터 태그
   100개(`trees.g2_tree`).
 - G2-1(현장마다): 설치(ready·overlay2·classic) · 실행 이미지 == 그 현장 release digest · c0 뒤 5분 안에
   100태그 전부 GOOD(`GET /tags`, viewer 로그인) · 장비 CONNECTED(`GET /devices`) · 부팅 이후 외부 접속
-  카운터 0. collector(compose bridge) → `10.0.0.5`는 VM 자신의 주소라 input으로 들어와 `ext_out_v4`·
+  카운터 0. "5분 안에"는 각 현장 `bring_up`이 c0 직후부터 live를 읽어 증명한다(직렬 모드 포함 — 판정이
+  다른 현장 부팅 뒤에 시작해도 다시 읽지 않는다). 기록 `live_s`(c0부터 초)가 300보다 크면
+  `live_in_time` 거짓으로 실패다. collector(compose bridge) → `10.0.0.5`는 VM 자신의 주소라 input으로 들어와 `ext_out_v4`·
   `ext_fwd`·`field_fwd` 어디에도 세지지 않고, 시뮬레이터 응답은 목적지가 docker bridge(172.16/12)라
   제외 대상이다(`golden` 모듈 docstring).
 - 실패 분류(`harness/failures.py`): **호출 자체**의 실패 = `infra`(실패한 시험만 1회 다시) —
   `InfraError`, ssh·scp 실패(종료 코드 255), wsl.exe 호출 실패(스크립트가 시작되지 않음·wsl.exe 오류·
-  스크립트가 알린 환경 탓 exit 75), Hyper-V, 시간 초과. **호출된 제품 스크립트**의 실패 = `product`(다시
+  스크립트가 알린 환경 탓 exit 75, bash 범위 0~255 밖의 종료 코드·"instance has terminated" = 도중에
+  WSL VM이 죽음), Hyper-V, 시간 초과. **호출된 제품 스크립트**의 실패 = `product`(다시
   돌리지 않음) — 원격 명령의 0 아닌 종료(`install.sh`·`pureiron-site` 등, `RemoteCommandError`), WSL
   빌드·번들 스크립트의 0 아닌 종료(`WslScriptError`), HEAD 빌드 실패, 단언 실패. junit `failure_class`
   속성과 `summary.json`에 남는다. 원격 명령이 스스로 255로 끝나면 ssh 실패와 구분되지 않아 infra다.
 - 알림: product가 2회 연속이면 이슈(라벨 `g2-nightly`), **같은 시험이 2회 연속 infra**(재시도 뒤)여도
-  이슈(라벨 `g2-nightly-infra`) — 시간 초과로 드러난 제품 멈춤이 "error"로만 쌓이지 않게.
+  이슈(라벨 `g2-nightly-infra`) — 시간 초과로 드러난 제품 멈춤이 "error"로만 쌓이지 않게. pytest
+  전체가 시간 제한에 죽거나 크래시해 junit이 없으면 시험 id `pytest`(infra) 한 줄로 이력에 남으므로 이
+  경우도 이틀째에 이슈가 된다(`summary.json`의 `pytest_rc`, -1 = 시간 초과). 시간 초과였으면 그날은
+  다시 돌리지 않는다(멈춘 제품은 재시도로 낫지 않는다). 크래시면 전체를 1회 다시 돌린다.
+- 시간 예산: workflow `timeout-minutes: 120`을 넘기면 Actions가 job을 죽여 status·이력이 남지 않는다.
+  그래서 준비 10분 + run 90분(preflight 시작부터 첫 실행·복구·재시도 — pytest 시간 제한(첫 75분·재시도
+  30분)을 남은 시간으로 줄이고, 10분도 남지 않으면 재시도를 건너뛴다) + 뒷정리 15분(collect 명령당 60초
+  × 10·publish·cleanup)으로 나눈다(`nightly.py` 상수, 합이 120분 미만인지 시험이 본다).
 - preflight: foundation-ci 대기를 먼저 하고, WSL echo가 3번 모두 답하지 않으며 foundation-ci가 돌지
   않는 것이 확인될 때만 WSL을 재시작한다(재시도 전 복구도 같다). Actions 안에서 foundation-ci 상태를
   못 읽으면(`gh run list` 실패) infra로 멈춘다(로컬은 `warnings`에만).
@@ -291,7 +304,10 @@ uv run pytest -c tests/e2e/gates/pytest.ini tests/e2e/gates -m g2 --collect-only
 
 `--dry-run`은 GitHub 쓰기(이력·status·이슈·임시 브랜치 삭제)만 출력으로 바꾼다 — `preflight`·`all
 --dry-run`도 남은 `pureiron-site-a`·`pureiron-site-b` VM(run.py의 site-a VM과 이름이 같다)과 14일 넘은
-결과는 **실제로 지운다**. `all`이 예상 밖 예외로 멈추면 시험 id `runner`(infra)로 남기고 exit 2다.
+결과는 **실제로 지운다**. `all`이 예상 밖 예외로 멈추면 시험 id `runner`(infra)를
+`runner-summary.json`에 남기고 exit 2다 — 그 run의 `summary.json`이 이미 있으면(collect·publish·
+cleanup에서 멈춤) 덮어쓰지 않고 그것으로 publish를 다시 시도한다(이력에 이미 들어간 run은 다시 쓰지
+않는다).
 
 ## 단위 테스트
 
