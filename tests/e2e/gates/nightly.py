@@ -264,8 +264,9 @@ def step_run(
 def preflight_summary(
     run_id: str, sha: str, today: date, outcome: preflight.Outcome
 ) -> dict[str, object]:
-    """preflight에서 멈춘 실행 — 시험 대신 `preflight` 한 줄(infra)로 남긴다."""
-    failed = report.TestResult("preflight", report.FAILED, INFRA, 0.0)
+    """preflight에서 멈춘 실행 — 시험 대신 `preflight` 한 줄(infra)로 남긴다. 이력·status는 남고
+    이슈·flake 비율에서는 빠진다(`report.not_started`)."""
+    failed = report.TestResult(report.PREFLIGHT_TEST, report.FAILED, INFRA, 0.0)
     return report.summary(
         run_id=run_id,
         date=today.isoformat(),

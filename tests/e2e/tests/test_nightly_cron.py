@@ -4,6 +4,7 @@ infra(A3), 시작하지 못한 실행(preflight에서 멈춤)의 집계(L8·G2).
 from __future__ import annotations
 
 import dataclasses
+import json
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import NoReturn
@@ -11,7 +12,7 @@ from typing import NoReturn
 import nightly
 import pytest
 import run
-from harness import failures, golden, hyperv, schedule, sites
+from harness import failures, flake, golden, hyperv, preflight, report, schedule, sites
 from harness.context import Context, InfraError
 from harness.github import DryRun
 from harness.release_pair import DEFAULT
@@ -139,7 +140,11 @@ def test_host_check_failure_is_infra(
     """Hyper-V 권한 없음·vSwitch 없음은 PC 설정 문제다 — product로 가면 제품 실패로 기록되고
     이틀이면 product 이슈가 열린다."""
     monkeypatch.setattr(hyperv, "available", lambda: available)
-    monkeypatch.setattr(hyperv, "switch_exists", lambda name: switch)
+
+    def switch_exists(name: str) -> bool:
+        return switch and name == sites.SWITCH
+
+    monkeypatch.setattr(hyperv, "switch_exists", switch_exists)
     with pytest.raises(InfraError, match=r"setup-host\.ps1") as raised:
         sites.check_host()
     assert failures.classify(raised.value) == "infra"
@@ -159,3 +164,132 @@ def test_run_py_vm_step_still_stops_at_a_host_check_failure(
         run.step_vm(ctx)
     assert isinstance(raised.value, InfraError)
     assert ctx.results == []
+
+
+# ---------------------------------------------------------------- 시작하지 못한 실행(A4·A5)
+
+CASE = "test_g2_install.py::test_g2_1_install_and_100_tags_good[site-b]"
+SHA_B = "b" * 40
+
+
+def line(
+    run: str, test_id: str, outcome: str = "fail", klass: str | None = "infra", sha: str = SHA
+) -> dict[str, object]:
+    """history.jsonl 한 줄(`report.history_lines` 형식)."""
+    return {
+        "date": "2026-11-09",
+        "run": run,
+        "product_sha": sha,
+        "test_id": test_id,
+        "outcome": outcome,
+        "class": klass if outcome == "fail" else None,
+        "seconds": 1.0,
+    }
+
+
+def stopped(run: str, sha: str = SHA) -> dict[str, object]:
+    """preflight에서 멈춘 실행의 줄."""
+    return line(run, report.PREFLIGHT_TEST, sha=sha)
+
+
+def product(run: str, sha: str = SHA) -> dict[str, object]:
+    return line(run, CASE, klass="product", sha=sha)
+
+
+def test_only_a_run_with_nothing_but_the_preflight_line_did_not_start() -> None:
+    assert report.not_started([stopped("r1")])
+    assert not report.not_started([line("r1", "runner")])  # 실행기가 시작한 뒤 멈춤
+    assert not report.not_started([line("r1", "pytest")])  # pytest가 junit 없이 죽음
+    assert not report.not_started([line("r1", CASE)])
+    assert not report.not_started([stopped("r1"), line("r1", CASE, "pass")])
+    assert not report.not_started([])
+
+
+def test_flake_rate_leaves_runs_that_did_not_start_out_of_both_counts() -> None:
+    """L8: 커밋이 없는 밤의 "어제 통과·오늘 preflight 멈춤"은 흔들림이 아니다. 분자에서만 빼면
+    2/4 = 0.5, 분모에서만 빼면 3/3 = 1.0이 된다."""
+    history = [
+        line("r1", CASE, "pass"),
+        product("r2"),
+        stopped("r3"),
+        line("r4", CASE, "pass", sha=SHA_B),
+    ]
+    assert flake.flake_rate(history, TODAY) == round(2 / 3, 3)
+    assert flake.flake_rate([line("r1", CASE, "pass"), stopped("r2")], TODAY) == 0.0
+    # 시작한 뒤 깨진 실행(runner·pytest)은 그대로 실패로 센다
+    assert flake.flake_rate([line("r1", CASE, "pass"), line("r2", "runner")], TODAY) == 1.0
+
+
+def test_product_issue_skips_a_night_that_did_not_start() -> None:
+    """★G2: product → preflight 멈춤 → product는 2연속이다."""
+    assert report.needs_issue([product("r1"), stopped("r2"), product("r3")])
+    assert report.needs_issue([product("r1"), stopped("r2"), stopped("r3"), product("r4")])
+    # 시작한 뒤 깨진 실행은 건너뛰지 않는다
+    assert not report.needs_issue([product("r1"), line("r2", "runner"), product("r3")])
+    assert not report.needs_issue([product("r1"), line("r2", "pytest"), product("r3")])
+    # preflight에서 멈춘 밤 자신은 이슈를 열지 않는다
+    assert not report.needs_issue([product("r1"), product("r2"), stopped("r3")])
+
+
+def test_repeated_infra_never_counts_nights_that_did_not_start() -> None:
+    """★G2: preflight에서 멈춘 밤은 infra 이슈 사유가 아니고, 최근 두 실행을 고를 때 건너뛴다.
+    시험 id `runner`·`pytest`는 지금처럼 이틀이면 이슈다."""
+    assert report.repeated_infra([stopped("r1"), stopped("r2")]) == []
+    assert report.repeated_infra([line("r1", "pytest"), stopped("r2"), line("r3", "pytest")]) == [
+        "pytest"
+    ]
+    assert report.repeated_infra([line("r1", "runner"), line("r2", "runner")]) == ["runner"]
+    assert report.repeated_infra([line("r1", CASE), line("r2", CASE), stopped("r3")]) == []
+
+
+class History:
+    """`step_publish`가 읽는 이력과 쓰기 호출만 흉내 낸다."""
+
+    def __init__(self, rows: list[dict[str, object]]) -> None:
+        self.text = "".join(json.dumps(r) + "\n" for r in rows)
+        self.calls: list[str] = []
+
+    def read_file(self, branch: str, path: str) -> str | None:
+        return self.text or None
+
+    def append_file(self, branch: str, path: str, text: str, message: str) -> None:
+        self.calls.append("append")
+
+    def set_status(self, sha: str, state: str, context: str, description: str) -> None:
+        self.calls.append(f"status {state}")
+
+    def open_issue(self, label: str) -> int | None:
+        return 7
+
+    def create_issue(self, title: str, body: str, label: str) -> None:
+        self.calls.append(f"issue {label}")
+
+    def comment_issue(self, number: int, body: str) -> None:
+        self.calls.append(f"comment #{number}")
+
+    def temp_branches(self, prefix: str) -> list[tuple[str, datetime]]:
+        return []
+
+    def delete_branch(self, name: str) -> None:
+        self.calls.append(f"delete {name}")
+
+
+@pytest.mark.parametrize(
+    "before",
+    [
+        [stopped("20261109T180000Z")],  # 이틀 연속 preflight 멈춤
+        [line("20261108T180000Z", CASE), line("20261109T180000Z", CASE)],  # infra 이슈가 열린 뒤
+    ],
+)
+def test_a_night_stopped_at_preflight_leaves_a_line_and_an_error_status_but_no_issue(
+    before: list[dict[str, object]],
+) -> None:
+    gh = History(before)
+    measure = preflight.Measure(
+        mem_gb=2.0, disk_gb=100.0, wsl_ok=True, docker_ok=True, ci_running=0
+    )
+    outcome = preflight.Outcome(measure, preflight.Limits(), ["memory 2.0 GB < 8.0 GB"], [])
+    summary = nightly.preflight_summary("20261110T180000Z", SHA, TODAY, outcome)
+    out = nightly.step_publish(summary, gh, TODAY)
+    assert gh.calls == ["append", "status error"]
+    assert (out["issue"], out["infra_issue"]) == (None, None)

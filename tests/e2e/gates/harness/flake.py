@@ -3,7 +3,8 @@
 - flake 비율: 최근 `WINDOW_DAYS`일 이력에서 같은 `product_sha`에 통과한 실행과 실패한
   실행이 모두 있는 실행 수 / 전체 실행 수. 실행 하나는 시험이 하나라도 실패하면 실패다. 같은
   커밋이 통과도 실패도 했다면 그 실패는 제품이 아니라 흔들림이다 — 다른 커밋끼리는 비교하지
-  않는다.
+  않는다. 시작하지 못한 실행(`report.not_started` — preflight에서 멈춤)은 분모·분자 모두에서
+  뺀다(리뷰 L8 — 커밋이 없는 밤의 "어제 통과·오늘 preflight 멈춤"은 흔들림이 아니다).
 - `quarantine.yaml`: `{quarantine: [{test_id, issue, added}]}`. 항목은 이슈 링크가 있어야 하고
   `added`(`"YYYY-MM-DD"`, YAML 날짜가 아닌 문자열)부터 `QUARANTINE_DAYS`일이 지나면 만료돼 효력이
   없다(nightly가 summary에 만료 목록을 남긴다).
@@ -16,6 +17,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 
+from harness import report
 from harness.context import E2EError
 from pureiron_project import canonical
 
@@ -28,8 +30,14 @@ def flake_rate(
     history: Iterable[Mapping[str, object]], today: date, window_days: int = WINDOW_DAYS
 ) -> float:
     since = today - timedelta(days=window_days)
+    started = [
+        row
+        for rows in report.by_run(history).values()
+        if not report.not_started(rows)
+        for row in rows
+    ]
     runs: dict[str, tuple[str, bool]] = {}
-    for row in history:
+    for row in started:
         try:
             day = date.fromisoformat(str(row.get("date")))
         except ValueError:
