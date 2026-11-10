@@ -13,7 +13,10 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
+import re
 import subprocess
+import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -23,6 +26,7 @@ from harness import buildhost, golden, hyperv, judges, paths, release_pair, site
 from harness.context import Context, E2EError, InfraError
 from harness.release_pair import ReleasePair
 from harness.site import Site
+from harness.vm import Vm
 from pureiron_core.platform.migrate import load_catalog
 
 RESULTS = paths.E2E / "results"
@@ -43,8 +47,23 @@ def site_release(pair: ReleasePair, site_id: str) -> str:
     return pair.base if role == "base" else pair.next
 
 
+RUN_ID = re.compile(r"\d{8}T\d{6}Z")
+"""run id 형식(`new_run_id`) — 사람이 CLI·환경변수로 넣는 값이 경로를 벗어나지 않게(리뷰 L7)."""
+
+
+def check_run_id(run_id: str) -> str:
+    if RUN_ID.fullmatch(run_id) is None:
+        raise E2EError(f"run id must look like 20261110T180000Z, got {run_id!r}")
+    return run_id
+
+
 def results_dir(run_id: str) -> Path:
-    return RESULTS / f"g2-{run_id}"
+    return RESULTS / f"g2-{check_run_id(run_id)}"
+
+
+def bundles_dir(run_id: str) -> Path:
+    """이 run의 번들 디렉터리(`<BUNDLES>/<run>`) — 현장별 하위 디렉터리는 `Context.work`."""
+    return paths.BUNDLES / check_run_id(run_id)
 
 
 def new_run_id() -> str:
@@ -87,6 +106,8 @@ class SiteRun:
     error: BaseException | None = None
     evidence: dict[str, object] = field(default_factory=dict[str, object])
     """부팅·설치 단계의 측정값(ssh 대기·설치 초·viewer 생성 결과 — 비밀값 없음)."""
+    c0_at: float | None = None
+    """체크포인트 c0를 만든 시각(`time.monotonic`) — G2-1 "c0 뒤 5분"의 기준(M6-2a 리뷰 L3)."""
 
 
 @dataclass
@@ -106,7 +127,7 @@ class Session:
 def prepare(run_id: str, sha: str) -> Session:
     """WSL 동기화 → HEAD 빌드(NEXT 기록·시뮬레이터 tar) → 설치 번들 → 100태그 트리 → 현장별 g1
     번들. HEAD 빌드 실패는 `HeadBuildError`(제품)로 멈춘다."""
-    out = paths.BUNDLES / run_id
+    out = bundles_dir(run_id)
     pair = repo_pair(sha)
     buildhost.sync_repo()
     next_record = buildhost.nightly_release(out / "nightly", pair, sha)
@@ -119,7 +140,9 @@ def prepare(run_id: str, sha: str) -> Session:
         pair.base: judges.digests_of(base_record),
         pair.next: judges.digests_of(next_record),
     }
-    pib, fpr, boot = buildhost.install_bundle(out / "install", pair.releases[pair.base])
+    pib, fpr, boot = buildhost.install_bundle(
+        out / "install", pair.releases[pair.base], work=buildhost.NIGHTLY_WORK
+    )
     tree = trees.g2_tree(out / "tree")
     runs: dict[str, SiteRun] = {}
     for base_site, _ in SITE_ROLES:
@@ -138,10 +161,18 @@ def prepare(run_id: str, sha: str) -> Session:
         )
         ctx.log(f"g1 {release} bundle (G2 tree)")
         buildhost.build_site_bundle(
-            ctx, 1, release, datetime.now(UTC) - timedelta(days=1), golden.wsl_path(tree)
+            ctx,
+            1,
+            release,
+            datetime.now(UTC) - timedelta(days=1),
+            golden.wsl_path(tree),
+            work=buildhost.NIGHTLY_WORK,
         )
         runs[base_site.site_id] = SiteRun(ctx, release)
     return Session(run_id, sha, pair, tree, out / "nightly" / "simulator.tar", runs)
+
+
+BringUp = Callable[["SiteRun", "Session", str], None]
 
 
 def bring_up(run: SiteRun, session: Session, ssh_pub: str) -> None:
@@ -181,54 +212,79 @@ def bring_up(run: SiteRun, session: Session, ssh_pub: str) -> None:
     site.nft_mark(ctx, host)
     ctx.nft_c0 = dict(ctx.nft_last)
     hyperv.checkpoint(ctx.site.vm_name, "c0")
+    run.c0_at = time.monotonic()
     ctx.save()
 
 
-def _guarded(run: SiteRun, session: Session, ssh_pub: str) -> None:
+def _guarded(run: SiteRun, session: Session, ssh_pub: str, up: BringUp = bring_up) -> None:
     """한 현장의 실패가 다른 현장을 멈추지 않게 예외를 그 현장의 결과로 둔다(그 현장 시험이 다시
     던진다)."""
     try:
-        bring_up(run, session, ssh_pub)
+        up(run, session, ssh_pub)
     except Exception as exc:
         run.ctx.log(f"bring-up failed: {exc!r}")
         run.error = exc
 
 
-def bring_up_all(session: Session, environ: dict[str, str] | None = None) -> None:
-    """두 현장을 스레드로 동시에 올린다. `PUREIRON_G2_SERIAL=1`이면 차례로(메모리가 모자랄 때,
-    R1)."""
+def host_key() -> str:
+    """Hyper-V 호스트 점검 → golden VHDX → e2e SSH 공개키."""
     sites.check_host()
     golden.build_golden(sites.CLOUD_IMAGE, sites.GOLDEN)
-    pub = golden.ensure_ssh_key(paths.SSH_DIR).read_text(encoding="utf-8")
+    return golden.ensure_ssh_key(paths.SSH_DIR).read_text(encoding="utf-8")
+
+
+def bring_up_all(
+    session: Session,
+    environ: dict[str, str] | None = None,
+    *,
+    up: BringUp = bring_up,
+    prepare_host: Callable[[], str] = host_key,
+) -> None:
+    """두 현장을 스레드로 동시에 올린다. `PUREIRON_G2_SERIAL=1`이면 차례로(메모리가 모자랄 때,
+    R1)."""
+    pub = prepare_host()
     runs = list(session.sites.values())
     if (environ if environ is not None else dict(os.environ)).get("PUREIRON_G2_SERIAL") == "1":
         for run in runs:
-            _guarded(run, session, pub)
+            _guarded(run, session, pub, up)
         return
     with ThreadPoolExecutor(max_workers=len(runs)) as pool:
-        for future in [pool.submit(_guarded, run, session, pub) for run in runs]:
+        for future in [pool.submit(_guarded, run, session, pub, up) for run in runs]:
             future.result()
 
 
-def check_install(session: Session, site_id: str) -> dict[str, bool]:
-    """G2-1 한 현장: 설치(ready·실행 이미지 == 그 현장 release digest·overlay2·classic) → 5분 안에
-    100태그 전부 GOOD·장비 connected → 부팅 이후 외부 접속 0. 판정을 기록하고 돌려준다. 부팅·설치가
-    실패했으면 그 예외를 다시 던진다."""
+def check_install(
+    session: Session,
+    site_id: str,
+    *,
+    probe: Callable[[Vm], dict[str, object]] = site.probe,
+    live: Callable[[Vm], dict[str, object]] = site.live,
+    mark: Callable[[Context, Vm], None] = site.nft_mark,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict[str, bool]:
+    """G2-1 한 현장: 설치(ready·실행 이미지 == 그 현장 release digest·overlay2·classic) → c0 뒤
+    5분 안에 100태그 전부 GOOD·장비 connected → 부팅 이후 외부 접속 0. 판정을 기록하고 돌려준다.
+    부팅·설치가 실패했으면 그 예외를 다시 던진다. VM 조작(`probe`·`live`·`mark`)과 시계는 단위
+    시험이 가짜로 바꾼다."""
     run = session.sites[site_id]
     if run.error is not None:
         raise run.error
     ctx = run.ctx
     host = ctx.site.host()
-    snap = site.probe(host)
+    snap = probe(host)
     checks = judges.judge_installed(snap, ctx.digests[run.release])
     want = trees.g2_tag_paths()
-    out, live, live_s = site.wait_live(
-        lambda: site.live(host),
+    out, live_checks, live_s = site.wait_live(
+        lambda: live(host),
         lambda reply: judges.judge_live(reply, want, trees.SIM_DEVICE),
         LIVE_TIMEOUT_S,
+        clock=clock,
+        sleep=sleep,
+        started=run.c0_at,
     )
-    checks |= live
-    site.nft_mark(ctx, host)
+    checks |= live_checks
+    mark(ctx, host)
     checks["no_external"] = judges.no_external(ctx.nft_total)
     tags_body = judges.reply(out, "tags")[1]
     ctx.record(

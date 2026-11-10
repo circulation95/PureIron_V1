@@ -3,11 +3,16 @@
 판단 기준(`Limits`, 환경변수로 덮어쓸 수 있다 — 리허설에서 일부러 infra 실패를 낼 때):
 Windows 가용 메모리 ≥ `PUREIRON_G2_MIN_MEM_GB`(8), C: 여유 ≥ `PUREIRON_G2_MIN_DISK_GB`(40),
 WSL이 응답(시간 제한 있는 echo), WSL Docker 동작, 진행 중인 foundation-ci 없음(최대
-`PUREIRON_G2_CI_WAIT_S` 1800초 기다린다). 하나라도 어기면 `infra`로 멈춘다.
+`PUREIRON_G2_CI_WAIT_S` 1800초 기다린다). GitHub Actions 안(`GITHUB_ACTIONS=true`)에서는
+foundation-ci 상태를 읽지 못하는 것(`gh run list` 실패)도 어긴 것으로 친다 — 그 확인이 꺼진 채로
+도는 것을 조용히 넘기지 않게(로컬에서는 메모만 남긴다). 하나라도 어기면 `infra`로 멈춘다.
 
-조치(판단만 하는 모드에서는 하지 않는다): WSL이 응답하지 않으면 `docker desktop stop` →
-`wsl --shutdown` → `docker desktop start` 뒤 1회 다시 잰다(조치를 기록한다 — 응답할 때는 재시작하지
-않는다, 돌고 있는 g1 job을 끊지 않게). 남은 e2e VM, 14일 넘은 결과, 7일 넘은 임시 브랜치를 지운다.
+조치(판단만 하는 모드에서는 하지 않는다): **foundation-ci 대기를 먼저** 한다. 그 뒤에도 WSL echo가
+답하지 않으면 `WSL_ECHO_TRIES`번까지 다시 묻고, 그래도 무응답이며 foundation-ci가 돌지 않는 것이
+확인될 때만 `docker desktop stop` → `wsl --shutdown` → `docker desktop start` 뒤 다시 잰다(같은 PC의
+g1 job은 메모리가 빠듯할 때 WSL을 느리게 만든다 — 느린 것을 죽은 것으로 보고 살아 있는 job을 끊지
+않게). CI가 돌거나 상태를 모르면 재시작하지 않고 `infra`로 멈춘다. 남은 e2e VM, 14일 넘은 결과,
+7일 넘은 임시 브랜치를 지운다.
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import cast
 
 from harness import golden, hyperv
 from harness.context import E2EError
@@ -28,12 +34,20 @@ from harness.site import Site
 
 GIB = 1024**3
 WSL_ECHO_TIMEOUT_S = 30
+WSL_ECHO_TRIES = 3
+"""WSL 재시작 전에 echo를 물어보는 횟수(처음 측정 포함)."""
+WSL_ECHO_PAUSE_S = 15
 DOCKER_TIMEOUT_S = 60
 PS_TIMEOUT_S = 60
 DESKTOP_TIMEOUT_S = 300
 CI_POLL_S = 60
 RESULTS_KEEP_DAYS = 14
 BRANCH_KEEP_DAYS = 7
+CI_UNAVAILABLE_NOTE = "foundation-ci status unavailable (gh run list failed)"
+CI_UNKNOWN_PROBLEM = (
+    "foundation-ci status unavailable in GitHub Actions (gh run list failed - "
+    "check the workflow permission actions: read)"
+)
 
 
 @dataclass(frozen=True)
@@ -41,6 +55,8 @@ class Limits:
     min_mem_gb: float = 8.0
     min_disk_gb: float = 40.0
     ci_wait_s: float = 1800.0
+    require_ci_status: bool = False
+    """foundation-ci 상태를 못 읽으면 어긴 것으로 친다(GitHub Actions 안, `GITHUB_ACTIONS=true`)."""
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str]) -> Limits:
@@ -60,6 +76,7 @@ class Limits:
             min_mem_gb=number("PUREIRON_G2_MIN_MEM_GB", cls.min_mem_gb),
             min_disk_gb=number("PUREIRON_G2_MIN_DISK_GB", cls.min_disk_gb),
             ci_wait_s=number("PUREIRON_G2_CI_WAIT_S", cls.ci_wait_s),
+            require_ci_status=environ.get("GITHUB_ACTIONS") == "true",
         )
 
 
@@ -71,6 +88,8 @@ class Measure:
     docker_ok: bool
     ci_running: int
     notes: tuple[str, ...] = field(default=())
+    ci_known: bool = True
+    """foundation-ci 상태를 읽었는가(`gh run list` 성공 + JSON) — 거짓이면 `ci_running`은 0이다."""
 
 
 def judge(measure: Measure, limits: Limits) -> list[str]:
@@ -86,6 +105,8 @@ def judge(measure: Measure, limits: Limits) -> list[str]:
         problems.append("docker (WSL) is not responding")
     if measure.ci_running:
         problems.append(f"{measure.ci_running} foundation-ci run(s) still in progress")
+    if not measure.ci_known and limits.require_ci_status:
+        problems.append(CI_UNKNOWN_PROBLEM)
     return problems
 
 
@@ -158,12 +179,15 @@ def docker_ok() -> bool:
     return done is not None and done.returncode == 0 and bool(done.stdout.strip())
 
 
-def ci_running() -> tuple[int, str | None]:
-    """진행 중·대기 중인 foundation-ci run 수. gh로 못 읽으면 (0, 이유) — 그것만으로 멈추지
-    않는다."""
+Runner = Callable[[list[str], float], subprocess.CompletedProcess[str] | None]
+
+
+def ci_running(run: Runner = _quiet) -> tuple[int, str | None]:
+    """진행 중·대기 중인 foundation-ci run 수. gh로 못 읽으면(실패·JSON 아님) (0, 이유) — 판단은
+    `judge`가 `Limits.require_ci_status`로 한다."""
     count = 0
     for status in ("in_progress", "queued"):
-        done = _quiet(
+        done = run(
             [
                 "gh",
                 "run",
@@ -178,8 +202,12 @@ def ci_running() -> tuple[int, str | None]:
             PS_TIMEOUT_S,
         )
         if done is None or done.returncode != 0:
-            return 0, "foundation-ci status unavailable (gh run list failed)"
-        count += len(json.loads(done.stdout or "[]"))
+            return 0, CI_UNAVAILABLE_NOTE
+        try:
+            runs: object = json.loads(done.stdout or "[]")
+        except ValueError:
+            return 0, "foundation-ci status unavailable (gh run list output is not JSON)"
+        count += len(cast(list[object], runs)) if isinstance(runs, list) else 0
     return count, None
 
 
@@ -192,6 +220,7 @@ def measure(e2e_root: Path) -> Measure:
         docker_ok=docker_ok(),
         ci_running=ci,
         notes=() if note is None else (note,),
+        ci_known=note is None,
     )
 
 
@@ -211,6 +240,41 @@ def recover_wsl() -> list[str]:
     return actions
 
 
+def wsl_answers(
+    alive: Callable[[], bool], sleep: Callable[[float], None], tries: int = WSL_ECHO_TRIES
+) -> bool:
+    """WSL echo를 `tries`번까지 묻는다(사이에 `WSL_ECHO_PAUSE_S` 쉰다)."""
+    for attempt in range(tries):
+        if attempt:
+            sleep(WSL_ECHO_PAUSE_S)
+        if alive():
+            return True
+    return False
+
+
+def revive_wsl(
+    ci: Callable[[], tuple[int, bool]],
+    *,
+    alive: Callable[[], bool],
+    restart: Callable[[], list[str]],
+    sleep: Callable[[float], None],
+    tries: int = WSL_ECHO_TRIES,
+) -> tuple[bool, list[str]]:
+    """WSL이 끝내 답하지 않을 때만, 그리고 foundation-ci가 돌지 않는 것이 확인될 때만(`ci`: 진행
+    중 run 수, 상태를 읽었는가) 재시작한다. (WSL을 쓸 수 있다고 보는가, 조치) — 재시작했으면
+    참(다음 측정·실행이 확인한다), CI 때문에 재시작하지 않았으면 거짓."""
+    if wsl_answers(alive, sleep, tries):
+        return True, []
+    ci_running, ci_known = ci()
+    if ci_running:
+        return False, [
+            f"wsl not responding, {ci_running} foundation-ci run(s) in progress: no restart"
+        ]
+    if not ci_known:
+        return False, ["wsl not responding, foundation-ci status unknown: no restart"]
+    return True, ["wsl not responding: restart", *restart()]
+
+
 def remove_vms(site_list: list[Site]) -> list[str]:
     removed: list[str] = []
     for one in site_list:
@@ -221,6 +285,8 @@ def remove_vms(site_list: list[Site]) -> list[str]:
 
 
 def prune_results(results: Path, now: float) -> list[str]:
+    """`results` 바로 아래 `g2-*` 디렉터리 가운데 `RESULTS_KEEP_DAYS`일보다 오래된 것을 지운다(다른
+    이름·파일은 건드리지 않는다)."""
     if not results.is_dir():
         return []
     entries = {d.name: d.stat().st_mtime for d in results.glob("g2-*") if d.is_dir()}
@@ -253,9 +319,15 @@ class Outcome:
     def ok(self) -> bool:
         return not self.problems
 
+    @property
+    def warnings(self) -> list[str]:
+        """판정을 막지는 않았지만 눈에 띄게 남길 측정 메모(예: foundation-ci 상태를 못 읽음)."""
+        return list(self.measure.notes)
+
     def as_dict(self) -> dict[str, object]:
         return {
             "ok": self.ok,
+            "warnings": self.warnings,
             "measure": asdict(self.measure),
             "limits": asdict(self.limits),
             "problems": self.problems,
@@ -268,21 +340,31 @@ def run(
     *,
     measure_now: Callable[[], Measure],
     recover: Callable[[], list[str]] = recover_wsl,
+    wsl_alive: Callable[[], bool] = wsl_ok,
     cleanup: Callable[[], list[str]] | None = None,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
 ) -> Outcome:
-    """조치가 있는 preflight: WSL 무응답이면 복구 뒤 1회 다시 재고, foundation-ci가 돌면 최대
-    `limits.ci_wait_s` 기다리고, 통과하면 정리(`cleanup`)한다."""
+    """조치가 있는 preflight: foundation-ci가 돌면 최대 `limits.ci_wait_s` 기다리고, 그 뒤에도 WSL이
+    답하지 않으면 `revive_wsl`(CI가 없을 때만 재시작) 뒤 다시 재고, 통과하면 정리(`cleanup`)한다."""
     actions: list[str] = []
     seen = measure_now()
-    if not seen.wsl_ok:
-        actions += ["wsl not responding: restart", *recover()]
-        seen = measure_now()
     started = clock()
     while seen.ci_running and clock() - started < limits.ci_wait_s:
         actions.append(f"waiting for {seen.ci_running} foundation-ci run(s)")
         sleep(CI_POLL_S)
+        seen = measure_now()
+    if not seen.wsl_ok:
+        # 측정이 이미 1번 물었다 — 남은 횟수만 더 묻는다.
+        last = seen
+        _, revived = revive_wsl(
+            lambda: (last.ci_running, last.ci_known),
+            alive=wsl_alive,
+            restart=recover,
+            sleep=sleep,
+            tries=WSL_ECHO_TRIES - 1,
+        )
+        actions += revived
         seen = measure_now()
     problems = judge(seen, limits)
     if not problems and cleanup is not None:

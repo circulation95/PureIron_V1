@@ -12,9 +12,9 @@ from typing import cast
 
 import pytest
 import run
-from harness import buildhost, golden, judges, paths, site, sites
+from harness import buildhost, g2, golden, judges, paths, site, sites, trees, vm
 from harness.context import Context, E2EError, InfraError
-from harness.release_pair import DEFAULT
+from harness.release_pair import DEFAULT, nightly
 from harness.vm import Vm
 
 MASTER_SEED_SHA256 = {
@@ -151,6 +151,8 @@ PRODUCT_OK = {"result": True, "images_match": True, "hit": True, "rows_kept": Tr
         (False, -3.0, 0, {**PRODUCT_OK, "images_match": False}, False),
         (False, -3.0, 1, PRODUCT_OK, False),
         (True, 12.0, 0, PRODUCT_OK, False),
+        # L1 경계: 실제 여유 0 < m < 0.05초는 판정이 참인데 반올림해 0.0으로 남는다 — 통과한 건
+        (True, 0.0, 0, PRODUCT_OK, False),
     ],
 )
 def test_window_flake_needs_late_staging_and_all_product_checks(
@@ -246,3 +248,139 @@ def test_window_flake_on_fault_retries_without_settling(tmp_path: Path) -> None:
     retried = [c for c in crash.calls if c[0] == "crash kill @ rolling_back"]
     assert [(gen, noted) for _, gen, noted in retried] == [(25, False), (26, True)]
     assert settled == []
+
+
+# ---------------------------------------------------------------- 리뷰 r1 M3·L3(현장 격리·배선)
+
+
+SIM_PATHS = sorted(trees.g2_tag_paths())
+NEXT_DIGESTS = {"core": "sha256:n1", "collector": "sha256:n2", "web": "sha256:n3"}
+
+
+def g2_session(tmp_path: Path) -> g2.Session:
+    pair = nightly({"r5": {"version": "2026.11.1", "schema": {"epoch": 5}}}, {"r5"}, "a" * 40, 5)
+    runs: dict[str, g2.SiteRun] = {}
+    for base, _ in g2.SITE_ROLES:
+        release = g2.site_release(pair, base.site_id)
+        one = dataclasses.replace(base, state_file=tmp_path / base.site_id / "state.json")
+        ctx = Context(
+            run_id="20261110T180000Z",
+            artifacts=str(tmp_path / base.site_id),
+            digests={release: NEXT_DIGESTS},
+            current=release,
+            site=one,
+            pair=pair,
+        )
+        ctx.nft_total = dict.fromkeys(judges.AUDIT_COUNTERS, 0)
+        runs[base.site_id] = g2.SiteRun(ctx, release, c0_at=0.0)
+    return g2.Session("20261110T180000Z", "a" * 40, pair, tmp_path, tmp_path / "sim.tar", runs)
+
+
+def installed(_: Vm) -> dict[str, object]:
+    return {
+        "readyz": {"status": 200},
+        "containers": {svc: {"image_id": d, "running": True} for svc, d in NEXT_DIGESTS.items()},
+        "docker": {"driver": "overlay2", "driver_status": [["Backing Filesystem", "extfs"]]},
+    }
+
+
+def live_reply(bad: str | None = None) -> dict[str, object]:
+    tags = [{"path": p, "quality": "BAD" if p == bad else "GOOD", "value": 1.0} for p in SIM_PATHS]
+    device = {
+        "device_id": trees.SIM_DEVICE,
+        "state": "CONNECTED",
+        "connected": True,
+        "silent": False,
+    }
+    return {"tags": [200, {"tags": tags}], "devices": [200, {"devices": [device]}]}
+
+
+def check(
+    session: g2.Session,
+    site_id: str,
+    reply: dict[str, object],
+    clock: list[float],
+) -> tuple[dict[str, bool], list[str]]:
+    reads: list[str] = []
+
+    def live(_: Vm) -> dict[str, object]:
+        reads.append("live")
+        return reply
+
+    ticks = iter(clock)
+    checks = g2.check_install(
+        session,
+        site_id,
+        probe=installed,
+        live=live,
+        mark=lambda ctx, host: None,
+        clock=lambda: next(ticks),
+        sleep=lambda _: None,
+    )
+    return checks, reads
+
+
+def test_check_install_expects_all_100_simulator_tags(tmp_path: Path) -> None:
+    """M3-2: 배선(`want = trees.g2_tag_paths()`) — 기대 태그를 일부만 넘기면 100개 중 하나가 BAD여도
+    통과한다(리뷰 변이 M10)."""
+    session = g2_session(tmp_path)
+    good, _ = check(session, "site-b", live_reply(), [5.0, 5.0, 5.0])
+    assert all(good.values()), good
+    for bad in (SIM_PATHS[0], SIM_PATHS[57], SIM_PATHS[-1]):
+        checks, _ = check(session, "site-b", live_reply(bad=bad), [5.0, 5.0, 301.0, 301.0])
+        assert checks["tags_good"] is False
+    record = {r["name"]: r for r in session.sites["site-b"].ctx.results}[g2.ITEM_G2_1]
+    assert record["ok"] is False
+    assert record["tags_not_good"] == [SIM_PATHS[-1]]
+
+
+def test_live_deadline_counts_from_c0(tmp_path: Path) -> None:
+    """L3: "c0 뒤 5분" — 앞 현장 판정이 시간을 쓴 만큼 뒤 현장의 기다림이 줄어든다(c0 + 300초가
+    마감). 마감이 지났어도 한 번은 읽는다."""
+    session = g2_session(tmp_path)
+    # c0 = 0초, 판정 시작 = 290초: 첫 읽기(290)는 BAD, 다음 확인(305)에서 멈춘다(300초를 새로 받지
+    # 않는다)
+    checks, reads = check(session, "site-b", live_reply(bad=SIM_PATHS[3]), [290.0, 305.0, 305.0])
+    assert (checks["tags_good"], len(reads)) == (False, 1)
+    record = {r["name"]: r for r in session.sites["site-b"].ctx.results}[g2.ITEM_G2_1]
+    assert record["live_s"] == 305.0
+    # 마감(300) 뒤에 시작해도 한 번은 읽는다
+    checks, reads = check(session, "site-a", live_reply(), [400.0, 400.0, 400.0])
+    assert (all(checks.values()), len(reads)) == (True, 1)
+
+
+def session_for_bring_up(tmp_path: Path) -> g2.Session:
+    session = g2_session(tmp_path)
+    for one in session.sites.values():
+        one.c0_at = None
+    return session
+
+
+@pytest.mark.parametrize("serial", ["1", "0"])
+def test_one_site_failure_is_kept_for_its_test_and_does_not_stop_the_other(
+    tmp_path: Path, serial: str
+) -> None:
+    """M3-1: 현장 하나의 부팅·설치 예외를 삼키지 않는다 — 그 현장의 결과(`SiteRun.error`)로 두고 그
+    현장 시험(`check_install`)이 같은 예외를 다시 던진다. 다른 현장은 끝까지 간다(리뷰 변이 M5)."""
+    session = session_for_bring_up(tmp_path)
+    boom = vm.RemoteCommandError("ssh `sudo bash install.sh` exited 1: broken", 1)
+    done: list[str] = []
+
+    def up(one: g2.SiteRun, s: g2.Session, pub: str) -> None:
+        assert pub == "ssh-ed25519 AAAA test"
+        if one.ctx.site.site_id == "site-a":
+            raise boom
+        done.append(one.ctx.site.site_id)
+
+    g2.bring_up_all(
+        session,
+        {"PUREIRON_G2_SERIAL": serial},
+        up=up,
+        prepare_host=lambda: "ssh-ed25519 AAAA test",
+    )
+    assert session.sites["site-a"].error is boom
+    assert session.sites["site-b"].error is None
+    assert done == ["site-b"]
+    with pytest.raises(vm.RemoteCommandError) as raised:
+        g2.check_install(session, "site-a", probe=lambda _: pytest.fail("must not probe"))
+    assert raised.value is boom

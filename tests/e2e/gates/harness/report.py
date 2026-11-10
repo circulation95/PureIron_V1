@@ -1,5 +1,6 @@
 """nightly 결과 정리(M6-2 E8·E9) — junit → 시험별 결과·분류, 실행 판정, infra 재시도 대상, summary,
-`e2e-history` 이력 줄, commit status 값, product 연속 실패 이슈 판단. 모두 순수 함수다.
+`e2e-history` 이력 줄, commit status 값, product 연속 실패 이슈 판단, 같은 시험의 infra 연속 실패
+판단(안전망 — 재시도로도 낫지 않는 infra는 사람에게 알린다). 모두 순수 함수다.
 
 실행 판정: 격리(quarantine)되지 않은 실패가 없으면 `passed`, 하나라도 `product`면
 `product`, 실패가 모두 `infra`면 `infra`(그때만 실패한 시험을 1회 다시 돌린다). junit에 분류
@@ -26,6 +27,8 @@ STATUS_STATE = {PASSED: "success", PRODUCT: "failure", INFRA: "error"}
 """실행 판정 → commit status `state`(infra는 제품 판정이 아니라 `error`)."""
 ISSUE_LABEL = "g2-nightly"
 ISSUE_TITLE = "G2 nightly: product failure in 2 consecutive runs"
+INFRA_ISSUE_LABEL = "g2-nightly-infra"
+INFRA_ISSUE_TITLE = "G2 nightly: the same test failed as infra in 2 consecutive runs"
 DESCRIPTION_CHARS = 140
 
 
@@ -152,6 +155,22 @@ def needs_issue(history: Iterable[Mapping[str, object]]) -> bool:
         runs[run] = runs.get(run, False) or product_fail
     latest = sorted(runs)[-2:]
     return len(latest) == 2 and all(runs[r] for r in latest)
+
+
+def repeated_infra(history: Iterable[Mapping[str, object]]) -> list[str]:
+    """가장 최근 실행 두 개(run id 순) 모두에서 infra로 실패한 시험 id(정렬). infra는 재시도 뒤의
+    결과이므로, 여기 남는 것은 재시도로도 낫지 않은 실행 환경 문제이거나 infra로 분류된 제품
+    문제(시간 초과로 드러난 멈춤, 원격 명령 종료 코드 255)다."""
+    runs: dict[str, set[str]] = {}
+    for row in history:
+        failed = row.get("outcome") == "fail" and row.get("class") == INFRA
+        tests = runs.setdefault(str(row.get("run")), set())
+        if failed:
+            tests.add(str(row.get("test_id")))
+    latest = sorted(runs)[-2:]
+    if len(latest) != 2:
+        return []
+    return sorted(runs[latest[0]] & runs[latest[1]])
 
 
 def status_description(summary_: Mapping[str, object]) -> str:

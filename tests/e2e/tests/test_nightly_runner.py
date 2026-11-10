@@ -5,8 +5,11 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
+import subprocess
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import cast
 
 import nightly
 import pytest
@@ -208,32 +211,92 @@ def test_preflight_limits_come_from_the_environment() -> None:
         preflight.Limits.from_env({"PUREIRON_G2_MIN_DISK_GB": "lots"})
 
 
-def test_preflight_restarts_wsl_once_and_waits_for_ci() -> None:
-    seen = [measure(wsl_ok=False), measure(ci_running=1), measure(ci_running=1), measure()]
+def test_preflight_waits_for_ci_before_restarting_wsl() -> None:
+    """M2: CI 대기가 WSL 재시작 판단보다 먼저다. CI가 끝난 뒤에도 echo가 끝내 답하지 않을 때만
+    재시작한다."""
+    seen = [
+        measure(wsl_ok=False, ci_running=1),
+        measure(wsl_ok=False, ci_running=1),
+        measure(wsl_ok=False),
+        measure(),
+    ]
     clock = iter([0.0, 0.0, 60.0, 120.0])
     cleaned: list[str] = []
+    echoes: list[str] = []
 
     def cleanup() -> list[str]:
         cleaned.append("x")
         return ["removed vm pureiron-site-a"]
 
+    def alive() -> bool:
+        echoes.append("echo")
+        return False
+
     outcome = preflight.run(
         preflight.Limits(),
         measure_now=lambda: seen.pop(0),
         recover=lambda: ["wsl --shutdown -> 0"],
+        wsl_alive=alive,
         cleanup=cleanup,
         sleep=lambda _: None,
         clock=lambda: next(clock),
     )
     assert outcome.ok
     assert outcome.actions == [
+        "waiting for 1 foundation-ci run(s)",
+        "waiting for 1 foundation-ci run(s)",
         "wsl not responding: restart",
         "wsl --shutdown -> 0",
-        "waiting for 1 foundation-ci run(s)",
-        "waiting for 1 foundation-ci run(s)",
         "removed vm pureiron-site-a",
     ]
+    assert len(echoes) == preflight.WSL_ECHO_TRIES - 1  # 측정이 1번, 재시작 전에 더 묻는다
     assert cleaned == ["x"]
+
+
+def test_preflight_never_restarts_wsl_while_ci_runs() -> None:
+    """M2: CI 대기가 끝나도 CI가 돌면 재시작하지 않고 infra로 멈춘다."""
+    clock = iter([0.0, 0.0, 2000.0])
+    outcome = preflight.run(
+        preflight.Limits(),
+        measure_now=lambda: measure(wsl_ok=False, ci_running=1),
+        recover=lambda: pytest.fail("WSL must not restart while foundation-ci runs"),
+        wsl_alive=lambda: False,
+        cleanup=lambda: pytest.fail("cleanup must not run on a failed preflight"),
+        sleep=lambda _: None,
+        clock=lambda: next(clock),
+    )
+    assert not outcome.ok
+    assert "1 foundation-ci run(s) still in progress" in outcome.problems
+    assert "wsl not responding, 1 foundation-ci run(s) in progress: no restart" in outcome.actions
+
+
+def test_preflight_does_not_restart_wsl_when_ci_status_is_unknown() -> None:
+    outcome = preflight.run(
+        preflight.Limits(),
+        measure_now=lambda: measure(wsl_ok=False, ci_known=False),
+        recover=lambda: pytest.fail("WSL must not restart without knowing foundation-ci"),
+        wsl_alive=lambda: False,
+        sleep=lambda _: None,
+        clock=lambda: 0.0,
+    )
+    assert "wsl not responding, foundation-ci status unknown: no restart" in outcome.actions
+    assert outcome.problems == ["WSL is not responding"]
+
+
+def test_preflight_keeps_wsl_when_a_retried_echo_answers() -> None:
+    """M2(c): 30초 echo 한 번의 무응답은 "느림"일 수 있다 — 다시 물어 답하면 재시작하지 않는다."""
+    answers = iter([False, True])
+    seen = [measure(wsl_ok=False), measure()]
+    outcome = preflight.run(
+        preflight.Limits(),
+        measure_now=lambda: seen.pop(0),
+        recover=lambda: pytest.fail("WSL answered on a retry: no restart"),
+        wsl_alive=lambda: next(answers),
+        sleep=lambda _: None,
+        clock=lambda: 0.0,
+    )
+    assert outcome.ok
+    assert outcome.actions == []
 
 
 def test_preflight_gives_up_and_skips_cleanup_when_ci_keeps_running() -> None:
@@ -282,9 +345,9 @@ class FakePytest:
 def run_once(tmp_path: Path, fake: FakePytest) -> tuple[dict[str, object], list[str]]:
     recovered: list[str] = []
 
-    def recover() -> list[str]:
+    def recover() -> tuple[bool, list[str]]:
         recovered.append("x")
-        return ["reclaimed host memory"]
+        return True, ["reclaimed host memory"]
 
     summary = nightly.step_run(
         "R1", SHA, tmp_path, run_pytest=fake, recover_env=recover, today=TODAY, quarantine=[]
@@ -402,3 +465,258 @@ def test_dry_run_prints_writes_instead_of_sending(capsys: pytest.CaptureFixture[
     assert [w["dry_run"] for w in gh.writes] == ["append_file", "set_status", "create_issue"]
     assert out["issue"] == "created"
     assert '"dry_run": "set_status"' in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------- 리뷰 r1(H1·M1·M2·L2·L7·L9·N5·M3)
+
+
+def previous_infra_run(test_id: str = CASE_B) -> str:
+    return json.dumps({**rows("20261109T180000Z", "fail", "infra"), "test_id": test_id}) + "\n"
+
+
+def test_repeated_infra_needs_the_same_test_in_the_last_two_runs() -> None:
+    def row(run: str, test_id: str, outcome: str = "fail", klass: str | None = "infra"):
+        return {**rows(run, outcome, klass), "test_id": test_id}
+
+    assert report.repeated_infra([row("r1", CASE_B), row("r2", CASE_B)]) == [CASE_B]
+    assert report.repeated_infra([row("r1", CASE_A), row("r2", CASE_B)]) == []
+    assert report.repeated_infra([row("r1", CASE_B), row("r2", CASE_B, "fail", "product")]) == []
+    assert report.repeated_infra([row("r1", CASE_B), row("r2", CASE_B, "pass", None)]) == []
+    assert report.repeated_infra([row("r2", CASE_B)]) == []
+    # 더 오래된 실행은 보지 않는다
+    assert (
+        report.repeated_infra(
+            [row("r1", CASE_B), row("r2", CASE_A, "pass", None), row("r3", CASE_B)]
+        )
+        == []
+    )
+
+
+def test_second_infra_failure_of_the_same_test_opens_an_infra_issue() -> None:
+    """H1-3 안전망: 재시도 뒤에도 같은 시험이 infra로 2연속이면 사람에게 알린다(제품 멈춤·시간
+    초과가 "error"로만 쌓이지 않게). 이슈는 product 이슈와 라벨이 다르다."""
+    failing = summary_of("20261110T180000Z", (CASE_B, "failed", "infra"))
+    gh = FakeGitHub(history=previous_infra_run())
+    out = nightly.step_publish(failing, gh, TODAY)
+    assert out["infra_issue"] == "created"
+    assert out["issue"] is None
+    assert ("issue", (report.INFRA_ISSUE_TITLE, "g2-nightly-infra")) in gh.calls
+    assert report.INFRA_ISSUE_LABEL != report.ISSUE_LABEL
+    assert ("status", (SHA, "error", "g2/nightly")) in gh.calls
+    gh = FakeGitHub(history=previous_infra_run(), open_issue=9)
+    assert nightly.step_publish(failing, gh, TODAY)["infra_issue"] == "commented #9"
+    # 다른 시험이었으면 열지 않는다
+    gh = FakeGitHub(history=previous_infra_run(CASE_A))
+    assert nightly.step_publish(failing, gh, TODAY)["infra_issue"] is None
+
+
+def test_infra_issue_body_names_the_tests_and_the_hang_possibility() -> None:
+    body = nightly.infra_issue_body(summary_of("R2", (CASE_B, "failed", "infra")), [CASE_B])
+    assert CASE_B in body
+    assert "timeout" in body
+
+
+def test_retry_is_skipped_when_the_environment_cannot_be_recovered(tmp_path: Path) -> None:
+    """M2(d): 재시도 전 복구가 CI 때문에 WSL을 살리지 못하면 다시 돌리지 않고 infra로 남는다."""
+    fake = FakePytest(junit(case(NAME_A), case(NAME_B, "error", "infra")))
+    summary = nightly.step_run(
+        "R1",
+        SHA,
+        tmp_path,
+        run_pytest=fake,
+        recover_env=lambda: (False, ["wsl not responding, 1 foundation-ci run(s) in progress"]),
+        today=TODAY,
+        quarantine=[],
+    )
+    assert len(fake.calls) == 1
+    assert summary["verdict"] == "infra"
+    retry = cast(dict[str, object], summary["retry"])
+    assert retry["done"] is False
+    assert "skipped" in retry
+
+
+def test_recover_checks_ci_before_restarting_wsl() -> None:
+    """M2(d): nightly.recover도 WSL 재시작 전에 foundation-ci를 본다."""
+    restarted: list[str] = []
+    removed: list[str] = []
+
+    def restart() -> list[str]:
+        restarted.append("x")
+        return ["wsl --shutdown -> 0"]
+
+    def remove() -> list[str]:
+        removed.append("x")
+        return []
+
+    def recover(ci: tuple[int, bool]) -> tuple[bool, list[str]]:
+        return nightly.recover(
+            ci=lambda: ci,
+            alive=lambda: False,
+            restart=restart,
+            sleep=lambda _: None,
+            remove=remove,
+            reclaim=lambda: None,
+        )
+
+    ready, actions = recover((1, True))
+    assert (ready, restarted, removed) == (False, [], [])
+    assert actions == ["wsl not responding, 1 foundation-ci run(s) in progress: no restart"]
+    ready, actions = recover((0, True))
+    assert ready
+    assert restarted == ["x"]
+    assert actions[0] == "wsl not responding: restart"
+    assert actions[-1] == "reclaimed host memory"
+
+
+def test_recover_keeps_a_responding_wsl() -> None:
+    ready, actions = nightly.recover(
+        ci=lambda: pytest.fail("CI is only asked when WSL does not answer"),
+        alive=lambda: True,
+        restart=lambda: pytest.fail("no restart"),
+        sleep=lambda _: None,
+        remove=lambda: ["pureiron-site-b"],
+        reclaim=lambda: None,
+    )
+    assert ready
+    assert actions == ["removed vm pureiron-site-b", "reclaimed host memory"]
+
+
+def test_ci_status_failure_blocks_only_inside_github_actions() -> None:
+    """M1: Actions 안에서 gh run list가 실패하면 조용히 지나가지 않는다(로컬은 메모만)."""
+    unknown = measure(ci_known=False, notes=(preflight.CI_UNAVAILABLE_NOTE,))
+    actions = preflight.Limits.from_env({"GITHUB_ACTIONS": "true"})
+    assert actions.require_ci_status
+    assert preflight.judge(unknown, actions) == [preflight.CI_UNKNOWN_PROBLEM]
+    assert preflight.judge(unknown, preflight.Limits.from_env({})) == []
+    outcome = preflight.judge_only(preflight.Limits(), lambda: unknown)
+    assert outcome.as_dict()["warnings"] == [preflight.CI_UNAVAILABLE_NOTE]
+
+
+def test_preflight_warnings_reach_the_summary_and_the_actions_log(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = FakePytest(junit(case(NAME_A), case(NAME_B)))
+    summary = nightly.step_run(
+        "R1",
+        SHA,
+        tmp_path,
+        run_pytest=fake,
+        today=TODAY,
+        quarantine=[],
+        warnings=[preflight.CI_UNAVAILABLE_NOTE],
+    )
+    assert summary["warnings"] == [preflight.CI_UNAVAILABLE_NOTE]
+    nightly.announce([preflight.CI_UNAVAILABLE_NOTE], {"GITHUB_ACTIONS": "true"})
+    assert f"::warning::{preflight.CI_UNAVAILABLE_NOTE}" in capsys.readouterr().out
+
+
+def gh_runs(*outputs: tuple[int, str]):
+    replies = list(outputs)
+
+    def run(cmd: list[str], timeout_s: float) -> subprocess.CompletedProcess[str]:
+        del timeout_s
+        code, out = replies.pop(0)
+        return subprocess.CompletedProcess[str](cmd, code, out, "")
+
+    return run
+
+
+def test_ci_running_counts_runs_and_notes_unreadable_output() -> None:
+    """N5: gh 출력이 JSON이 아니어도 preflight 전체가 예외로 끝나지 않는다."""
+    assert preflight.ci_running(gh_runs((0, '[{"databaseId": 1}]'), (0, "[]"))) == (1, None)
+    count, note = preflight.ci_running(gh_runs((0, "<html>rate limited</html>")))
+    assert count == 0
+    assert note is not None
+    assert "not JSON" in note
+    assert preflight.ci_running(gh_runs((1, ""))) == (0, preflight.CI_UNAVAILABLE_NOTE)
+
+
+def test_pytest_children_do_not_get_the_github_token() -> None:
+    """L9: VM·WSL을 부르는 G2 pytest 프로세스 트리에는 토큰을 넘기지 않는다."""
+    env = nightly.pytest_env(
+        "R1", SHA, {"GH_TOKEN": "t1", "github_token": "t2", "PATH": "x", "PUREIRON_E2E_SWITCH": "s"}
+    )
+    assert env == {
+        "PATH": "x",
+        "PUREIRON_E2E_SWITCH": "s",
+        "PUREIRON_G2_RUN": "R1",
+        "PUREIRON_G2_SHA": SHA,
+    }
+
+
+@pytest.mark.parametrize("bad", ["..", "../results", "", "20261110T180000Z/..", "2026-11-10"])
+def test_run_ids_that_could_leave_the_run_directory_are_refused(bad: str) -> None:
+    """L7: `cleanup --run ..`이 E2E 루트를 지우지 않는다."""
+    with pytest.raises(E2EError, match="run id"):
+        nightly.step_cleanup(bad)
+    with pytest.raises(SystemExit) as raised:
+        nightly.main(["cleanup", "--run", bad]) if bad else nightly.main(["cleanup", "--run", "."])
+    assert raised.value.code == 2
+
+
+def test_runner_failure_is_reported_as_infra_and_exits_2(tmp_path: Path) -> None:
+    """L2: 실행기 자신의 예상 밖 예외는 product 종료 코드(1)가 아니라 infra(2)로, status를
+    남긴다."""
+    gh = FakeGitHub()
+
+    def broken(run_id: str, sha: str, today: date, out: Path, client: object) -> int:
+        raise RuntimeError("hyperv remove failed during recovery")
+
+    code = nightly.step_all(
+        False,
+        body=broken,
+        github=lambda dry_run: gh,
+        head=lambda: SHA,
+        run_id="20261110T180000Z",
+        today=TODAY,
+        out_dir=lambda run_id: tmp_path / run_id,
+    )
+    assert code == 2
+    summary = json.loads((tmp_path / "20261110T180000Z" / "summary.json").read_text("utf-8"))
+    assert summary["verdict"] == "infra"
+    assert [t["test_id"] for t in summary["tests"]] == ["runner"]
+    assert "hyperv remove failed" in summary["runner_error"]
+    assert ("status", (SHA, "error", "g2/nightly")) in gh.calls
+
+
+def test_runner_failure_survives_a_failing_publish(tmp_path: Path) -> None:
+    def no_github(dry_run: bool) -> FakeGitHub:
+        raise RuntimeError("gh: network unreachable")
+
+    def body(run_id: str, sha: str, today: date, out: Path, client: object) -> int:
+        pytest.fail("body must not run without a GitHub client")
+
+    code = nightly.step_all(
+        True,
+        body=body,
+        github=no_github,
+        head=lambda: SHA,
+        run_id="20261110T180000Z",
+        today=TODAY,
+        out_dir=lambda run_id: tmp_path / run_id,
+    )
+    assert code == 2
+    published = json.loads((tmp_path / "20261110T180000Z" / "publish.json").read_text("utf-8"))
+    assert "not published" in str(published["error"])
+
+
+def test_prune_results_keeps_14_days_and_only_touches_g2_runs(tmp_path: Path) -> None:
+    """M3-3: 파괴적 정리의 배선 — 13일 된 결과는 남고 15일 된 것만 지운다. `g2-` 접두가 아닌
+    디렉터리와 파일은 오래돼도 그대로 둔다."""
+    now = datetime(2026, 11, 10, tzinfo=UTC).timestamp()
+    ages = {"g2-new": 13, "g2-old": 15, "m2d-old": 30, "keep": 30}
+    for name, days in ages.items():
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "summary.json").write_text("{}", encoding="utf-8")
+        os.utime(tmp_path / name, (now - days * 86400, now - days * 86400))
+    stray = tmp_path / "g2-file.txt"
+    stray.write_text("x", encoding="utf-8")
+    os.utime(stray, (now - 30 * 86400, now - 30 * 86400))
+    assert preflight.prune_results(tmp_path, now) == ["g2-old"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "g2-file.txt",
+        "g2-new",
+        "keep",
+        "m2d-old",
+    ]
+    assert preflight.prune_results(tmp_path / "missing", now) == []

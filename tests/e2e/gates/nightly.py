@@ -15,8 +15,13 @@
 - `collect`: VM마다 `updater.json`·메트릭·`journalctl -u pureiron-updater`·compose 로그를
   `<결과>/<site>/`로(실패해도 계속).
 - `publish`: `e2e-history` 브랜치 `history.jsonl`에 줄 추가, commit status `g2/nightly`, product
-  실패가 2회 연속이면 이슈(열린 것이 있으면 댓글). `--dry-run`이면 무엇을 보낼지 출력만 한다.
+  실패가 2회 연속이면 이슈(열린 것이 있으면 댓글). 같은 시험이 2회 연속 infra로 실패해도 따로
+  이슈(라벨 `g2-nightly-infra`)를 연다 — 재시도로도 낫지 않는 실행 환경 문제나 제품 멈춤(시간
+  초과)이 "error"로만 쌓이지 않게. `--dry-run`이면 무엇을 보낼지 출력만 한다.
 - `cleanup`: 이 run의 번들 디렉터리를 지우고 VM을 끈다(다음 preflight가 VM을 지운다).
+
+`all`이 예상 밖 예외로 멈추면 시험 id `runner`(infra) 하나로 summary를 남기고 publish를 시도한 뒤
+exit 2로 끝난다. run id는 `20261110T180000Z` 형식만 받는다.
 
 결과는 `<PUREIRON_E2E_ROOT>/results/g2-<run>/`(junit.xml·summary.json·preflight.json·publish.json·
 <site>/). 종료 코드: 0 통과, 1 product, 2 infra.
@@ -30,7 +35,8 @@ import os
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Mapping
 from dataclasses import asdict
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -38,6 +44,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from harness import buildhost, flake, g2, hyperv, paths, preflight, report
+from harness.context import TAIL_CHARS, log
 from harness.failures import INFRA, PRODUCT
 from harness.github import HISTORY_BRANCH, HISTORY_FILE, DryRun, GhCli, GitHub, GitHubError
 from harness.site import Site
@@ -64,6 +71,12 @@ REMOTE_LOGS = {
     "simulator-logs.txt": "sudo docker logs --timestamps --tail 300 e2e-simulator 2>&1",
 }
 RunPytest = Callable[[Path, list[str], float], int]
+Recover = Callable[[], tuple[bool, list[str]]]
+"""infra 재시도 전 복구 — (다시 돌려도 되는가, 조치)."""
+SECRET_ENV = ("GH_TOKEN", "GITHUB_TOKEN")
+"""G2 pytest 자식(VM·WSL을 부르는 프로세스 트리)에는 넘기지 않는 토큰(리뷰 L9)."""
+RUNNER_TEST = "runner"
+UNKNOWN_SHA = "0" * 40
 
 
 def say(data: object) -> None:
@@ -76,17 +89,23 @@ def write_json(path: Path, data: object) -> None:
 
 
 def latest_run() -> str:
-    runs = sorted(d.name for d in g2.RESULTS.glob("g2-*") if d.is_dir())
+    runs = sorted(
+        d.name.removeprefix("g2-")
+        for d in g2.RESULTS.glob("g2-*")
+        if d.is_dir() and g2.RUN_ID.fullmatch(d.name.removeprefix("g2-"))
+    )
     if not runs:
         raise SystemExit(f"no g2 results under {g2.RESULTS} (give --run)")
-    return runs[-1].removeprefix("g2-")
+    return runs[-1]
 
 
 # ---------------------------------------------------------------- run
 
 
-def pytest_env(run_id: str, sha: str) -> dict[str, str]:
-    return {**os.environ, "PUREIRON_G2_RUN": run_id, "PUREIRON_G2_SHA": sha}
+def pytest_env(run_id: str, sha: str, environ: Mapping[str, str] | None = None) -> dict[str, str]:
+    base = os.environ if environ is None else environ
+    kept = {k: v for k, v in base.items() if k.upper() not in SECRET_ENV}
+    return {**kept, "PUREIRON_G2_RUN": run_id, "PUREIRON_G2_SHA": sha}
 
 
 def make_pytest(run_id: str, sha: str) -> RunPytest:
@@ -110,12 +129,29 @@ def read_results(junit: Path) -> list[report.TestResult]:
     return report.parse_junit(junit.read_text(encoding="utf-8")) if junit.is_file() else []
 
 
-def recover() -> list[str]:
-    """infra 재시도 전 복구: WSL 무응답이면 재시작, 남은 G2 VM 삭제, WSL 페이지 캐시 반환."""
-    actions = [] if preflight.wsl_ok() else preflight.recover_wsl()
-    actions += [f"removed vm {name}" for name in preflight.remove_vms(list(G2_SITES))]
-    buildhost.reclaim_host_memory()
-    return [*actions, "reclaimed host memory"]
+def ci_state() -> tuple[int, bool]:
+    count, note = preflight.ci_running()
+    return count, note is None
+
+
+def recover(
+    *,
+    ci: Callable[[], tuple[int, bool]] = ci_state,
+    alive: Callable[[], bool] = preflight.wsl_ok,
+    restart: Callable[[], list[str]] = preflight.recover_wsl,
+    sleep: Callable[[float], None] = time.sleep,
+    remove: Callable[[], list[str]] = lambda: preflight.remove_vms(list(G2_SITES)),
+    reclaim: Callable[[], None] = buildhost.reclaim_host_memory,
+) -> tuple[bool, list[str]]:
+    """infra 재시도 전 복구: WSL이 끝내 답하지 않으면 foundation-ci가 돌지 않을 때만 재시작
+    (`preflight.revive_wsl` — CI가 돌거나 상태를 모르면 재시작하지 않고 재시도도 하지 않는다), 남은
+    G2 VM 삭제, WSL 페이지 캐시 반환."""
+    ready, actions = preflight.revive_wsl(ci, alive=alive, restart=restart, sleep=sleep)
+    if not ready:
+        return False, actions
+    actions += [f"removed vm {name}" for name in remove()]
+    reclaim()
+    return True, [*actions, "reclaimed host memory"]
 
 
 def step_run(
@@ -124,9 +160,10 @@ def step_run(
     out: Path,
     *,
     run_pytest: RunPytest,
-    recover_env: Callable[[], list[str]] = recover,
+    recover_env: Recover = recover,
     today: date,
     quarantine: list[flake.Quarantine] | None = None,
+    warnings: list[str] | None = None,
 ) -> dict[str, object]:
     out.mkdir(parents=True, exist_ok=True)
     entries = flake.load_quarantine(QUARANTINE) if quarantine is None else quarantine
@@ -139,11 +176,14 @@ def step_run(
     retry: dict[str, object] = {"targets": targets, "done": False}
     results = first
     if targets:
-        retry["recovery"] = recover_env()
-        run_pytest(out / "junit-retry.xml", targets, RETRY_TIMEOUT_S)
-        again = read_results(out / "junit-retry.xml")
-        results = report.merge_retry(first, again) if first else again
-        retry["done"] = True
+        ready, retry["recovery"] = recover_env()
+        if ready:
+            run_pytest(out / "junit-retry.xml", targets, RETRY_TIMEOUT_S)
+            again = read_results(out / "junit-retry.xml")
+            results = report.merge_retry(first, again) if first else again
+            retry["done"] = True
+        else:
+            retry["skipped"] = "environment not recovered (see recovery)"
     summary = report.summary(
         run_id=run_id,
         date=today.isoformat(),
@@ -153,6 +193,7 @@ def step_run(
         extra={
             "retry": retry,
             "quarantine_expired": [{**asdict(e), "added": e.added.isoformat()} for e in expired],
+            "warnings": list(warnings or []),
         },
     )
     write_json(out / "summary.json", summary)
@@ -169,8 +210,27 @@ def preflight_summary(
         date=today.isoformat(),
         product_sha=sha,
         results=[failed],
-        extra={"preflight": outcome.as_dict()},
+        extra={"preflight": outcome.as_dict(), "warnings": outcome.warnings},
     )
+
+
+def runner_summary(run_id: str, sha: str, today: date, exc: BaseException) -> dict[str, object]:
+    """실행기 자신이 예상 밖 예외로 멈춘 실행 — 시험 id `runner` 한 줄(infra)로 남긴다."""
+    failed = report.TestResult(RUNNER_TEST, report.FAILED, INFRA, 0.0)
+    return report.summary(
+        run_id=run_id,
+        date=today.isoformat(),
+        product_sha=sha,
+        results=[failed],
+        extra={"runner_error": repr(exc)[-TAIL_CHARS:]},
+    )
+
+
+def announce(warnings: list[str], environ: Mapping[str, str] | None = None) -> None:
+    """눈에 띄게 남길 메모 — GitHub Actions 안이면 `::warning::` 주석(실행 화면에 뜬다)."""
+    actions = (os.environ if environ is None else environ).get("GITHUB_ACTIONS") == "true"
+    for text in warnings:
+        print(f"::warning::{text}" if actions else f"WARNING: {text}", flush=True)
 
 
 # ---------------------------------------------------------------- collect·publish·cleanup
@@ -219,6 +279,33 @@ def issue_body(summary: dict[str, object]) -> str:
     )
 
 
+def infra_issue_body(summary: dict[str, object], tests: list[str]) -> str:
+    return "\n".join(
+        [
+            f"G2 nightly run `{summary.get('run')}` on `{summary.get('product_sha')}`: these tests "
+            "failed as infra in this run and in the previous run (after the infra retry):",
+            "",
+            *(f"- `{t}`" for t in tests),
+            "",
+            "Infra failures are not product verdicts, but a repeated one needs a person: the test "
+            "environment may be broken, or the product may hang (a timeout is classified as "
+            "infra) or a remote step may exit 255. Check the junit and logs.",
+            "",
+            f"Results: `results/g2-{summary.get('run')}` on the e2e runner.",
+        ]
+    )
+
+
+def raise_issue(gh: GitHub, label: str, title: str, body: str) -> str:
+    """`label`로 열린 이슈가 있으면 댓글, 없으면 새 이슈."""
+    number = gh.open_issue(label)
+    if number is None:
+        gh.create_issue(title, body, label)
+        return "created"
+    gh.comment_issue(number, body)
+    return f"commented #{number}"
+
+
 def step_publish(summary: dict[str, object], gh: GitHub, today: date) -> dict[str, object]:
     lines = report.history_lines(summary)
     old = report.parse_history(gh.read_file(HISTORY_BRANCH, HISTORY_FILE) or "")
@@ -235,29 +322,40 @@ def step_publish(summary: dict[str, object], gh: GitHub, today: date) -> dict[st
     rows = old + report.parse_history("\n".join(lines))
     issue: str | None = None
     if verdict == PRODUCT and report.needs_issue(rows):
-        number = gh.open_issue(report.ISSUE_LABEL)
-        if number is None:
-            gh.create_issue(report.ISSUE_TITLE, issue_body(summary), report.ISSUE_LABEL)
-            issue = "created"
-        else:
-            gh.comment_issue(number, issue_body(summary))
-            issue = f"commented #{number}"
+        issue = raise_issue(gh, report.ISSUE_LABEL, report.ISSUE_TITLE, issue_body(summary))
+    infra_issue: str | None = None
+    repeated = report.repeated_infra(rows)
+    if repeated:
+        infra_issue = raise_issue(
+            gh,
+            report.INFRA_ISSUE_LABEL,
+            report.INFRA_ISSUE_TITLE,
+            infra_issue_body(summary, repeated),
+        )
     return {
         "history_lines": len(lines),
         "status": state,
         "issue": issue,
+        "infra_issue": infra_issue,
         "flake_rate_7d": flake.flake_rate(rows, today),
     }
 
 
+def inside(path: Path, root: Path) -> bool:
+    return path.resolve().is_relative_to(root.resolve())
+
+
 def step_cleanup(run_id: str) -> dict[str, object]:
-    shutil.rmtree(paths.BUNDLES / run_id, ignore_errors=True)
+    target = g2.bundles_dir(run_id)
+    if not inside(target, paths.BUNDLES) or target.resolve() == paths.BUNDLES.resolve():
+        raise SystemExit(f"refusing to remove {target}: not a run directory under {paths.BUNDLES}")
+    shutil.rmtree(target, ignore_errors=True)
     stopped: list[str] = []
     for one in G2_SITES:
         if hyperv.vm_state(one.vm_name) not in (None, "Off"):
             hyperv.turn_off(one.vm_name)
             stopped.append(one.vm_name)
-    return {"bundles_removed": str(paths.BUNDLES / run_id), "vms_stopped": stopped}
+    return {"bundles_removed": str(target), "vms_stopped": stopped}
 
 
 def make_github(dry_run: bool) -> GitHub:
@@ -280,10 +378,11 @@ def cleanup_actions(gh: GitHub) -> list[str]:
     ]
 
 
-def step_all(dry_run: bool) -> int:
-    run_id, sha, today = g2.new_run_id(), g2.head_sha(), date.today()
-    out = g2.results_dir(run_id)
-    gh = make_github(dry_run)
+AllBody = Callable[[str, str, date, Path, GitHub], int]
+
+
+def run_all(run_id: str, sha: str, today: date, out: Path, gh: GitHub) -> int:
+    """preflight → run → collect → publish → cleanup."""
     limits = preflight.Limits.from_env(os.environ)
     outcome = preflight.run(
         limits,
@@ -291,9 +390,17 @@ def step_all(dry_run: bool) -> int:
         cleanup=lambda: cleanup_actions(gh),
     )
     write_json(out / "preflight.json", outcome.as_dict())
+    announce(outcome.warnings)
     try:
         if outcome.ok:
-            summary = step_run(run_id, sha, out, run_pytest=make_pytest(run_id, sha), today=today)
+            summary = step_run(
+                run_id,
+                sha,
+                out,
+                run_pytest=make_pytest(run_id, sha),
+                today=today,
+                warnings=outcome.warnings,
+            )
             step_collect(run_id)
         else:
             summary = preflight_summary(run_id, sha, today, outcome)
@@ -305,6 +412,60 @@ def step_all(dry_run: bool) -> int:
         if outcome.ok:
             say(step_cleanup(run_id))
     return EXIT[str(summary["verdict"])]
+
+
+def step_all(
+    dry_run: bool,
+    *,
+    body: AllBody = run_all,
+    github: Callable[[bool], GitHub] = make_github,
+    head: Callable[[], str] = g2.head_sha,
+    run_id: str | None = None,
+    today: date | None = None,
+    out_dir: Callable[[str], Path] = g2.results_dir,
+) -> int:
+    """`run_all`을 돌리고, 예상 밖 예외(복구 중 Hyper-V 실패·gh 네트워크 실패 등)는 시험 id
+    `runner`(infra) summary로 남겨 publish를 시도한 뒤 exit 2로 끝낸다(리뷰 L2 — 기본 종료 코드 1은
+    product와 겹친다)."""
+    run_id = run_id or g2.new_run_id()
+    today = today or date.today()
+    out = out_dir(run_id)
+    sha, gh = UNKNOWN_SHA, None
+    try:
+        sha = head()
+        gh = github(dry_run)
+        return body(run_id, sha, today, out, gh)
+    except Exception as exc:
+        log(f"nightly runner failed: {exc!r}")
+        summary = runner_summary(run_id, sha, today, exc)
+        write_json(out / "summary.json", summary)
+        published: dict[str, object] = {"error": "not published (no GitHub client or sha)"}
+        if gh is not None and sha != UNKNOWN_SHA:
+            try:
+                published = step_publish(summary, gh, today)
+            except Exception as publish_exc:
+                published = {"error": f"publish failed: {publish_exc!r}"[-TAIL_CHARS:]}
+        write_json(out / "publish.json", published)
+        say({"run": run_id, "verdict": summary["verdict"], "publish": published})
+        return EXIT[INFRA]
+
+
+def step_preflight(*, judge_only: bool, dry_run: bool) -> int:
+    limits = preflight.Limits.from_env(os.environ)
+
+    def measure_now() -> preflight.Measure:
+        return preflight.measure(paths.E2E)
+
+    if judge_only:
+        outcome = preflight.judge_only(limits, measure_now)
+    else:
+        gh = make_github(dry_run)
+        outcome = preflight.run(
+            limits, measure_now=measure_now, cleanup=lambda: cleanup_actions(gh)
+        )
+    say(outcome.as_dict())
+    announce(outcome.warnings)
+    return 0 if outcome.ok else EXIT[INFRA]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -336,21 +497,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "all":
         return step_all(args.dry_run)
     if args.command == "preflight":
-        limits = preflight.Limits.from_env(os.environ)
-
-        def measure_now() -> preflight.Measure:
-            return preflight.measure(paths.E2E)
-
-        if args.judge_only:
-            outcome = preflight.judge_only(limits, measure_now)
-        else:
-            gh = make_github(args.dry_run)
-            outcome = preflight.run(
-                limits, measure_now=measure_now, cleanup=lambda: cleanup_actions(gh)
-            )
-        say(outcome.as_dict())
-        return 0 if outcome.ok else EXIT[INFRA]
+        return step_preflight(judge_only=args.judge_only, dry_run=args.dry_run)
     run_id = args.run or (g2.new_run_id() if args.command == "run" else latest_run())
+    if g2.RUN_ID.fullmatch(run_id) is None:
+        parser.error(f"--run must look like 20261110T180000Z, got {run_id!r}")
     if args.command == "run":
         sha = args.sha or g2.head_sha()
         out = g2.results_dir(run_id)

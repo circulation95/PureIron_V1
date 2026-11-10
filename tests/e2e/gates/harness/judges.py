@@ -542,12 +542,15 @@ def judge_outage(
 def judge_window_flake(checks: dict[str, bool], stage: dict[str, object]) -> bool:
     """crash 건이 창 여유 부족 flake(E10, `infra`)인가: CLI 스테이징은 성공했지만(`rc` 0) 창이 열린
     뒤에 끝났고(`margin_s <= 0`) 그 밖의 판정(제품 동작)은 모두 참이다. 다른 판정이 하나라도
-    거짓이면 제품 실패다 — 다시 하지 않는다. CLI 대상(`fetched`)은 창 판정이 없어 늘 거짓이다."""
+    거짓이면 제품 실패다 — 다시 하지 않는다. CLI 대상(`fetched`)은 창 판정이 없어 늘 거짓이다.
+    창 판정 자체가 거짓이어야 한다 — 기록된 `margin_s`는 반올림 값이라 실제 여유가 0~0.05초면
+    판정은 참인데 0.0으로 남는다(리뷰 L1)."""
     margin = stage.get("margin_s")
     if "staged_before_window" not in checks or not isinstance(margin, int | float):
         return False
     product = [ok for name, ok in checks.items() if name != "staged_before_window"]
-    return margin <= 0 and stage.get("rc") == 0 and all(product)
+    late = checks["staged_before_window"] is False
+    return late and margin <= 0 and stage.get("rc") == 0 and all(product)
 
 
 # ---------------------------------------------------------------- G2-1 설치·100태그(M6-2)

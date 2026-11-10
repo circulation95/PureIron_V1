@@ -98,9 +98,18 @@ def test_nightly_workflow_is_manual_only_on_the_e2e_runner() -> None:
     assert job["runs-on"] == ["self-hosted", "e2e"]
     assert job["timeout-minutes"] == 120
     assert flow["concurrency"] == {"group": "g2-nightly", "cancel-in-progress": False}
-    assert flow["permissions"] == {"contents": "write", "statuses": "write", "issues": "write"}
+    # M1: actions: read가 없으면 GITHUB_TOKEN으로 foundation-ci 진행 여부(gh run list)를 못 본다
+    assert flow["permissions"] == {
+        "contents": "write",
+        "statuses": "write",
+        "issues": "write",
+        "actions": "read",
+    }
     assert job["defaults"]["run"]["shell"] == "powershell"
     uses = [step["uses"] for step in job["steps"] if "uses" in step]
+    # L9: 쓰기 토큰을 runner 작업 디렉터리 .git/config에 남기지 않는다
+    (checkout,) = [s for s in job["steps"] if str(s.get("uses", "")).startswith("actions/checkout")]
+    assert checkout["with"]["persist-credentials"] is False
     ci = (paths.REPO / ".github" / "workflows" / "foundation-ci.yml").read_text(encoding="utf-8")
     for action in uses:
         assert "@" in action

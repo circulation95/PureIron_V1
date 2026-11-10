@@ -26,7 +26,8 @@ concurrency:
 permissions:
   contents: write # e2e-history 브랜치에 history.jsonl 커밋
   statuses: write # commit status g2/nightly
-  issues: write # product 2연속 실패 이슈
+  issues: write # product 2연속·같은 시험 infra 2연속 이슈
+  actions: read # preflight가 같은 PC의 foundation-ci 진행 여부를 본다(gh run list)
 
 env:
   PYTHONUTF8: "1"
@@ -46,12 +47,15 @@ jobs:
           ref: ${{ inputs.ref }}
           # BASE = git 태그가 있는 최신 r*(release_pair.nightly) — 태그까지 받는다.
           fetch-depth: 0
+          # gh는 GH_TOKEN을 쓴다 — 쓰기 토큰을 runner 작업 디렉터리 .git/config에 남기지 않는다.
+          persist-credentials: false
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: false
       - name: nightly (${{ inputs.suite }})
         env:
+          # 실행기의 gh 호출에만 쓴다 — G2 pytest 자식(VM·WSL 호출)에는 넘기지 않는다(nightly.py).
           GH_TOKEN: ${{ github.token }}
           # setup-host.ps1 -Switch로 만든 내부 전용 vSwitch(리포지토리 변수, 기본 pureiron-int).
           PUREIRON_E2E_SWITCH: ${{ vars.PUREIRON_E2E_SWITCH || 'pureiron-int' }}
