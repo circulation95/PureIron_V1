@@ -14,12 +14,16 @@ from __future__ import annotations
 import re
 from datetime import datetime, timedelta
 
-CRON = "0 18 * * *"
-"""`nightly.yml` `on.schedule` cron(UTC) — 03:00 KST."""
+CRON = "17 18 * * *"
+"""`nightly.yml` `on.schedule` cron(UTC) — 03:17 KST. 정각을 비킨다: GitHub는 매시 정각에 몰리는
+schedule 이벤트를 늦추거나 버릴 수 있고, `LATE_AFTER` 넘게 늦으면 그 밤은 조용히 건너뛰어진다."""
 SCHEDULE_EVENT = "schedule"
 """cron 실행의 `GITHUB_EVENT_NAME`."""
 LATE_AFTER = timedelta(hours=2)
 """cron 시각보다 이만큼 넘게 늦게 시작한 cron 실행은 건너뛴다(같으면 돈다)."""
+EARLY_GRACE = timedelta(minutes=15)
+"""cron 시각 직전 이만큼 안의 시작은 제시간(지연 0)으로 본다(같으면 제시간). runner PC 시계가
+GitHub보다 늦으면 정시 실행이 cron 시각 직전으로 읽혀 지연이 약 24시간으로 계산되기 때문이다."""
 DAILY = re.compile(r"(\d{1,2}) (\d{1,2}) \* \* \*")
 """해석하는 cron 형식 — 매일 한 번(`분 시 * * *`)."""
 
@@ -37,13 +41,16 @@ def daily_time(cron: str) -> tuple[int, int] | None:
 
 def delay(cron: str, now: datetime) -> timedelta | None:
     """`now`(UTC, 시간대 있음) 이전 가장 최근 cron 시각부터 지난 시간. 자정을 넘겨 시작해도
-    어제 시각부터 잰다(다음 날 17:50 UTC 시작 = 23시간 50분). 해석하지 못하면 None."""
+    어제 시각부터 잰다(다음 날 18:00 UTC 시작 = 23시간 43분). 단 cron 시각 직전 `EARLY_GRACE`
+    안이면 PC 시계 오차로 보고 0이다. 해석하지 못하면 None."""
     at = daily_time(cron)
     if at is None:
         return None
     hour, minute = at
     planned = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if planned > now:
+        if planned - now <= EARLY_GRACE:
+            return timedelta(0)
         planned -= timedelta(days=1)
     return now - planned
 

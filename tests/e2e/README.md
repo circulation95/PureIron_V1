@@ -251,17 +251,21 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
 밤마다 PC가 master HEAD를 빌드해 현장 VM 2대에 설치하고 결과를 GitHub에 남긴다. 시나리오는 G2-1
 하나다. 요약은 [testing SOT 12절](../../docs/wiki/sot/testing.md), 이 절이 세부의 정본이다.
 
-- 언제: `.github/workflows/nightly.yml` — cron 매일 **03:00 KST**(`0 18 * * *` UTC) + 수동 실행
+- 언제: `.github/workflows/nightly.yml` — cron 매일 **03:17 KST**(`17 18 * * *` UTC) + 수동 실행
   (`workflow_dispatch`, 입력 `ref` 기본 master·`suite` 기본 g2). cron 실행은 입력이 빈 값이라 기본
   브랜치를 받는다. cron 시각의 출처는 `harness/schedule.py` `CRON` 하나이고, 단위 시험이 yml cron과
-  같은지 대조한다.
+  같은지 대조한다. 분을 정각에서 비킨 이유: GitHub는 매시 정각에 몰리는 schedule 이벤트를 늦추거나
+  버릴 수 있고, 2시간 넘게 늦으면 아래 늦은 시작 건너뛰기가 그 밤을 조용히 건너뛴다.
 - 늦은 시작 건너뛰기: runner(PC)가 꺼져 있으면 cron 실행은 queued로 최대 24시간 기다렸다가 PC를 켜는
   순간 시작한다. 그래서 cron으로 시작한 실행이 cron 시각보다 **2시간 넘게** 늦었으면(자정을 넘겨도
-  어제 18:00 UTC부터 잰다) `nightly.py all`이 아무것도 하지 않고 exit 0으로 끝난다 — preflight(VM·결과를
+  어제 18:17 UTC부터 잰다) `nightly.py all`이 아무것도 하지 않고 exit 0으로 끝난다 — preflight(VM·결과를
   지운다)·GitHub 호출·이력·status·결과 디렉터리 모두 없고, 실행 화면에 `::notice::` 한 줄만 남는다.
-  수동 실행·로컬 실행에는 적용하지 않는다. cron 문자열을 해석하지 못하면 건너뛰지 않는다. PC가
-  꺼진 날이 이어지면 queued 실행이 24시간 뒤 GitHub에서 실패 처리된다(메일) — concurrency 때문에
-  대기는 1건만 쌓인다.
+  수동 실행·로컬 실행에는 적용하지 않는다. cron 문자열을 해석하지 못하면 건너뛰지 않는다. cron
+  시각 **직전 15분** 안의 시작(`EARLY_GRACE`)은 제시간으로 본다 — PC 시계가 GitHub보다 늦으면 정시
+  실행이 직전으로 읽혀 약 24시간 지연으로 계산되기 때문이다. PC가 꺼진 날이 이어지면 queued 실행이
+  24시간 뒤 GitHub에서 실패 처리된다(메일). 대기는 **최대 2건**이다 — runner를 기다리는 실행 1건 +
+  concurrency 대기 1건이고, 그다음 cron이 오면 concurrency 대기 중인 것을 취소한다. PC를 켜면 두 건이
+  차례로 시작해 둘 다 늦은 시작으로 건너뛴다.
 - vSwitch: workflow는 저장소 변수 **`PUREIRON_E2E_SWITCH`**를 `PUREIRON_E2E_SWITCH` 환경변수로 넘긴다.
   `setup-host.ps1 -Switch`로 만든 이름과 같아야 하고, 변수가 없으면 기본 `pureiron-int`다. 맞지 않으면
   Hyper-V 점검에서 멈춘다(infra — 아래 실패 분류).

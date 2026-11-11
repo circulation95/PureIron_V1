@@ -1,14 +1,15 @@
 # G2 nightly(M6-2a): 개발 PC(Windows self-hosted runner `e2e`)가 ref를 빌드해 현장 VM 2대(Hyper-V)에
 # 설치하고 G2-1을 판정한 뒤 결과를 GitHub에 남긴다(e2e-history·commit status g2/nightly·이슈).
 # 본체는 tests/e2e/gates/nightly.py all 하나다 — 로컬에서 같은 명령으로 돈다.
-# cron + 수동: 매일 03:00 KST(18:00 UTC) cron과 workflow_dispatch. cron 실행이 2시간 넘게 늦게
+# cron + 수동: 매일 03:17 KST(18:17 UTC) cron과 workflow_dispatch. cron 실행이 2시간 넘게 늦게
 # 시작하면(PC가 꺼져 있다가 켜짐) nightly.py가 아무것도 하지 않고 끝낸다(harness/schedule.py).
 name: nightly
 
 on:
   schedule:
-    # harness/schedule.py CRON과 같아야 한다(단위 시험이 대조한다).
-    - cron: "0 18 * * *"
+    # harness/schedule.py CRON과 같아야 한다(단위 시험이 대조한다). 정각을 비킨다 — GitHub는 매시
+    # 정각의 schedule 이벤트를 늦추거나 버릴 수 있고, 2시간 넘게 늦으면 그 밤은 건너뛰어진다.
+    - cron: "17 18 * * *"
   workflow_dispatch:
     inputs:
       ref:

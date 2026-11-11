@@ -4114,7 +4114,7 @@ G1이 커밋마다 코드·계약을 본다면, G2는 밤마다 **설치된 제�
 
 | 항목 | 내용 |
 |---|---|
-| 언제 | `.github/workflows/nightly.yml` — cron 매일 03:00 KST(`0 18 * * *` UTC) + 수동 실행(`workflow_dispatch`, 입력 `ref`·`suite`). cron 실행이 cron 시각보다 2시간 넘게 늦게 시작하면(PC가 꺼져 있다가 켜짐) 아무것도 하지 않고 exit 0으로 끝난다 — 이력·status 없음. 수동·로컬 실행에는 적용하지 않는다 |
+| 언제 | `.github/workflows/nightly.yml` — cron 매일 03:17 KST(`17 18 * * *` UTC) + 수동 실행(`workflow_dispatch`, 입력 `ref`·`suite`). 분을 정각에서 비킨다 — GitHub는 매시 정각의 schedule 이벤트를 늦추거나 버릴 수 있고, 2시간 넘게 늦으면 그 밤이 건너뛰어진다. cron 실행이 cron 시각보다 2시간 넘게 늦게 시작하면(PC가 꺼져 있다가 켜짐) 아무것도 하지 않고 exit 0으로 끝난다 — 이력·status 없음. cron 시각 직전 15분 안의 시작은 제시간으로 본다(PC 시계 오차). 수동·로컬 실행에는 적용하지 않는다 |
 | 어디서 | self-hosted runner `e2e`(개발 PC Windows, 로그온 세션 PowerShell 5.1), `timeout-minutes: 120`, concurrency `g2-nightly`(줄 세우고 취소하지 않음). 빌드는 WSL, 현장은 Hyper-V VM 2대 — site-a = BASE(git 태그가 있는 최신 release), site-b = NEXT(HEAD 빌드) |
 | 시나리오 | G2-1(현장마다): 설치 · 실행 이미지 == release digest · c0 뒤 5분 안에 100태그 GOOD · 장비 CONNECTED · 외부 접속 0. G2 시험은 `tests/e2e/gates/pytest.ini`로만 수집된다(G1 `unit`에는 빠진다) |
 | 순서 | preflight(메모리·디스크·WSL·Docker·foundation-ci 판단, 남은 VM·오래된 결과 정리) → run(pytest) → collect(VM 로그) → publish → cleanup |
