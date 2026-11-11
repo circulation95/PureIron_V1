@@ -325,7 +325,7 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
   회수하고, Windows 가용 메모리가 "지금 시작할 VM 메모리 합 + 2 GB"(`VM_START_HEADROOM_GB` — 3 GiB
   2대면 8 GB, 직렬 모드는 VM마다 5 GB) 이상이 될 때까지 preflight와 같이 최대 120초 기다린다. 끝까지
   모자라면 VM을 시작하지 않고 그 현장 시험이 infra로 실패한다. 회수 전·후 값·기다린 시간은
-  `<site>m-memory.json`과 현장 로그에 남는다.
+  `<site>/vm-memory.json`과 현장 로그에 남는다.
 
 ```powershell
 $env:PUREIRON_E2E_SWITCH = "pureiron-e2e"   # setup-host.ps1 -Switch 값
@@ -359,7 +359,7 @@ runner `e2e`, VM 3 GiB × 2(정식 구성), 낮 시간·데스크톱 앱이 켜�
 - green 1회(nightly run `20261111T021650Z`, 커밋 `7599764`): job **7분 9초** = checkout·uv·preflight
   29초 + HEAD 빌드·번들 3분 52초(빌드 캐시 적중) + VM 2대 부팅·설치·G2-1 2분 30초 + 수집·publish·정리
   18초. 설치 58~66초, 100태그 GOOD까지 c0 뒤 0.3~0.5초. 2/2 통과.
-- VM 시작 직전 메모리(`<site>m-memory.json`, 4회): 빌드 뒤 가용 1.7~1.8 GB → 회수 뒤 8.0~9.3 GB, 기다린
+- VM 시작 직전 메모리(`<site>/vm-memory.json`, 4회): 빌드 뒤 가용 1.7~1.8 GB → 회수 뒤 8.0~9.3 GB, 기다린
   시간 11~32초(기준 8.0 GB). Windows 최저 여유 1.65 GB(빌드 중)·1.69 GB(VM 시작 뒤).
 - 다른 결말의 소요 시간: preflight 멈춤 2분 52초(회수 대기 120초 포함), infra 재시도로 통과 6분 24초,
   product 실패 11분 15초·11분 31초(100태그 GOOD 5분 대기 포함).
