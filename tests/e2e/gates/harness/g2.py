@@ -16,13 +16,24 @@ import os
 import re
 import subprocess
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from harness import buildhost, golden, hyperv, judges, paths, release_pair, site, sites, trees
+from harness import (
+    buildhost,
+    golden,
+    hyperv,
+    judges,
+    paths,
+    preflight,
+    release_pair,
+    site,
+    sites,
+    trees,
+)
 from harness.context import Context, E2EError, InfraError
 from harness.release_pair import ReleasePair
 from harness.site import Site
@@ -37,6 +48,13 @@ LIVE_TIMEOUT_S = 300
 """c0 뒤 100태그 전부 GOOD·장비 connected까지 기다리는 시간(G2-1 "5분 안에")."""
 GIT_TIMEOUT_S = 60
 ITEM_G2_1 = "G2-1 install + 100 tags GOOD + device connected + no external"
+VM_START_HEADROOM_GB = 2.0
+"""VM을 시작하기 직전 Windows 가용 메모리에 VM 메모리 합 말고 더 있어야 하는 몫(`vm_start_need_gb`).
+M6-2a 실측(2 GiB VM 2대, 가용 6.3 GB에서 시작 → VM 뒤 약 2.3 GB)에서 실행 중 최저가 1.25 GB였고(약
+1 GB가 더 줄었다) 1 GB 아래에서는 WSL이 0x8007274c로 멈춘다 — VM을 띄운 뒤 2 GB가 남아야 실행 중에도
+1 GB 근처를 지킨다. 3 GiB VM 2대면 3 * 2 + 2 = 8 GB로 preflight 기준(`Limits.min_mem_gb`)과 같다."""
+VM_MEMORY_FILE = "vm-memory.json"
+"""현장 결과 디렉터리에 남기는 VM 시작 직전 메모리 확인 기록(`make_room`)."""
 SITE_ROLES: tuple[tuple[Site, str], ...] = ((sites.SITE_A, "base"), (sites.SITE_B, "next"))
 """현장 → 설치 release 역할(E2). site-a는 M6-4에서 BASE→HEAD 업그레이드 대상이라 BASE다."""
 
@@ -184,6 +202,58 @@ def prepare(run_id: str, sha: str) -> Session:
 
 
 BringUp = Callable[["SiteRun", "Session", str], None]
+MakeRoom = Callable[[list["SiteRun"], Mapping[str, str]], bool]
+
+
+def vm_start_need_gb(vms: int, environ: Mapping[str, str]) -> float:
+    """VM `vms`대를 지금 시작하는 데 필요한 Windows 가용 메모리(GB) — VM 메모리
+    (`sites.vm_memory_gib`) * 대수 + `VM_START_HEADROOM_GB`."""
+    return vms * sites.vm_memory_gib(environ) + VM_START_HEADROOM_GB
+
+
+def make_room(
+    runs: list[SiteRun],
+    environ: Mapping[str, str],
+    *,
+    mem_now: Callable[[], float | None] | None = None,
+    reclaim: Callable[[], None] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> bool:
+    """`runs`의 VM을 시작하기 직전에 WSL 페이지 캐시를 회수하고 Windows 가용 메모리가
+    `vm_start_need_gb` 이상이 될 때까지 기다린다(`preflight.reclaim_memory` — preflight와 같은 회수·
+    대기). preflight의 측정은 HEAD 빌드·번들 전 값이라 그 사이 WSL 캐시가 다시 찬다(M6-2b 리허설
+    R1: 두 번째 VM이 0x800705AA). 끝까지 모자라면 각 현장의 `SiteRun.error`에 `InfraError`를 두고
+    거짓 — 부른 쪽은 VM을 시작하지 않는다. 회수 전·후 값과 기다린 시간은 현장 로그와 결과 디렉터리의
+    `VM_MEMORY_FILE`에 남긴다. `mem_now`·`reclaim`이 없으면 preflight 기본값(단위 시험이 바꾼다)."""
+    need = vm_start_need_gb(len(runs), environ)
+    read = mem_now or preflight.windows_mem_gb
+    before = read()
+    after, notes = preflight.reclaim_memory(
+        need, before, mem_now=read, reclaim=reclaim, sleep=sleep, clock=clock
+    )
+    ok = after is not None and after >= need
+    gate: dict[str, object] = {
+        "sites": [run.ctx.site.site_id for run in runs],
+        "need_gb": need,
+        "before_gb": before,
+        "after_gb": after,
+        "ok": ok,
+        "notes": notes,
+    }
+    error = InfraError(
+        f"windows available memory {after} GB < {need} GB needed to start {len(runs)} VM(s) "
+        f"(VM memory + {VM_START_HEADROOM_GB} GB headroom) after reclaiming WSL page cache"
+    )
+    for run in runs:
+        for note in notes:
+            run.ctx.log(note)
+        run.ctx.out.mkdir(parents=True, exist_ok=True)
+        (run.ctx.out / VM_MEMORY_FILE).write_text(json.dumps(gate, indent=2), "utf-8")
+        if not ok:
+            run.ctx.log(f"vm not started: {error}")
+            run.error = error
+    return ok
 
 
 def bring_up(run: SiteRun, session: Session, ssh_pub: str) -> None:
@@ -273,14 +343,21 @@ def bring_up_all(
     *,
     up: BringUp = bring_up,
     prepare_host: Callable[[], str] = host_key,
+    room: MakeRoom = make_room,
 ) -> None:
     """두 현장을 스레드로 동시에 올린다. `PUREIRON_G2_SERIAL=1`이면 차례로(메모리가 모자랄 때,
-    R1)."""
+    R1). VM을 시작하기 전에 `room`(`make_room`)으로 메모리를 확보한다 — 동시 모드는 두 VM 몫으로
+    스레드를 띄우기 전에 한 번, 직렬 모드는 VM마다 그 VM 몫으로. 모자라면 그 현장(들)은 올리지
+    않는다(`SiteRun.error` = `InfraError`)."""
     pub = prepare_host()
     runs = list(session.sites.values())
-    if (environ if environ is not None else dict(os.environ)).get("PUREIRON_G2_SERIAL") == "1":
+    env = environ if environ is not None else dict(os.environ)
+    if env.get("PUREIRON_G2_SERIAL") == "1":
         for run in runs:
-            _guarded(run, session, pub, up)
+            if room([run], env):
+                _guarded(run, session, pub, up)
+        return
+    if not room(runs, env):
         return
     with ThreadPoolExecutor(max_workers=len(runs)) as pool:
         for future in [pool.submit(_guarded, run, session, pub, up) for run in runs]:
