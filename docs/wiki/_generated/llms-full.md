@@ -4129,4 +4129,6 @@ uv run python tests/e2e/gates/nightly.py all --dry-run            # GitHub에 �
 uv run pytest -c tests/e2e/gates/pytest.ini tests/e2e/gates -m g2 --collect-only
 ```
 
+리허설 실측(2026-11-11, Actions·정식 구성 VM 3 GiB × 2, 낮·데스크톱 앱 켜짐): green 1회 job 7분 9초(HEAD 빌드·번들 3분 52초 — 빌드 캐시 적중, VM 2대 부팅·설치·G2-1 2분 30초), 100태그 GOOD까지 c0 뒤 0.3~0.5초. 다른 결말은 preflight 멈춤 2분 52초 · infra 재시도로 통과 6분 24초 · product 실패 약 11분(100태그 GOOD 5분 대기 포함). 이력 브랜치·commit status 3종·product 2연속 이슈와 댓글·임시 브랜치 삭제·재시도 규칙이 실제로 동작했고, schedule 경로(빈 입력·늦은 시작 판단)는 merge 뒤 첫 cron 실행에서 확인한다. VM 시작 직전 회수 뒤 가용이 8.0~9.3 GB로 기준 8 GB에 걸치므로, 앱을 더 켜 둔 밤은 infra로 멈출 수 있다. 세부는 [README "G2 nightly" 절](../../../tests/e2e/README.md)의 "리허설 실측".
+
 ---

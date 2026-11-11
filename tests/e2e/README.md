@@ -352,6 +352,26 @@ Actions 실행 화면의 종료 코드는 product와 infra를 가르지 못한�
 구분은 commit status `g2/nightly`(`failure` = product, `error` = infra)와 이력(`history.jsonl`)의
 `class`로 한다.
 
+**리허설 실측(2026-11-11, M6-2b).** 위 "브랜치 수동 실행"으로 Actions에서 돌렸다. 구성: self-hosted
+runner `e2e`, VM 3 GiB × 2(정식 구성), 낮 시간·데스크톱 앱이 켜진 상태. preflight 뒤 Windows 가용
+8.5 GB.
+
+- green 1회(nightly run `20261111T021650Z`, 커밋 `7599764`): job **7분 9초** = checkout·uv·preflight
+  29초 + HEAD 빌드·번들 3분 52초(빌드 캐시 적중) + VM 2대 부팅·설치·G2-1 2분 30초 + 수집·publish·정리
+  18초. 설치 58~66초, 100태그 GOOD까지 c0 뒤 0.3~0.5초. 2/2 통과.
+- VM 시작 직전 메모리(`<site>m-memory.json`, 4회): 빌드 뒤 가용 1.7~1.8 GB → 회수 뒤 8.0~9.3 GB, 기다린
+  시간 11~32초(기준 8.0 GB). Windows 최저 여유 1.65 GB(빌드 중)·1.69 GB(VM 시작 뒤).
+- 다른 결말의 소요 시간: preflight 멈춤 2분 52초(회수 대기 120초 포함), infra 재시도로 통과 6분 24초,
+  product 실패 11분 15초·11분 31초(100태그 GOOD 5분 대기 포함).
+- 실제 동작이 확인된 것: `e2e-history` 빈 뿌리 브랜치 생성과 줄 추가, commit status
+  `success`·`failure`·`error`, product 2회 연속에서 이슈 1개 생성(라벨 `g2-nightly`는 처음 쓸 때
+  자동으로 만들어진다)과 그 뒤 댓글, 7일 넘은 `e2e-tmp/*` 브랜치 삭제, Actions 안의 foundation-ci 상태
+  읽기, infra 재시도 1회, product 재시도 0회.
+- 아직 확인되지 않은 것: schedule 경로(빈 입력·늦은 시작 판단) — 수동 실행으로는 리허설할 수 없어
+  merge 뒤 첫 cron 실행에서 본다.
+- 운영 메모: 데스크톱 앱이 켜진 상태에서는 회수 뒤 가용이 기준(8.0 GB)에 걸친다(8.0~9.3 GB). 앱을 더
+  켜 둔 밤은 preflight나 VM 시작 직전 확인에서 infra로 멈출 수 있다.
+
 ## 단위 테스트
 
 `tests/e2e/tests/` — 공용화 불변 조건(`test_harness_shared.py` — 항목 39개 이름·순서, `ReleasePair` 기본값 = 옛 상수, 현장 둘의 상태 파일·이름 분리, 롤백 5분 경계, VM 3 GiB)·phase 순서·상태 읽기·nft 규칙(현장 장비 `field_fwd` 규칙 위치·끝점 추출·외부 접속 판정)·seed ISO 왕복·PowerShell 인용·수렴 판정·release 쌍(BASE·NEXT 기록 대조 필수·crash 순서·항목 39개·단계 순서·c0/NEXT 스키마 집합 판정(같은 epoch 실측값, 지난 쌍 c0 교차)·전환기 경보·FAULT 트리 복원·M5 확인 판정(트리·PATCH·absorb·재적용)·gen 배정·NEXT/FAULT 트리 판정(로컬 실측 `fixtures/m4c-tree-db.json` — 같은 트리 재적용 no-op에서 ⓐ 실패, NEXT 트리에서 통과, 롤백·재시도 정의 값)·업그레이드/FAULT/재시도 배선(가짜 `apply`))·온라인 판정(`test_online.py` — 실측 `/fleet` 행으로 단계별 통과·교차 실패, CA 지문 표기, `central.py` 값·토큰을 출력에 내지 않음, 화면 비밀번호·현장 token이 명령 줄에 없고 stdin으로만 감 — `basic_auth_line`·`site_online`·`Vm.run(input=)`)·store symlink 다시 연결·`ensure_image` 적재 조건·스테이징 진단 기록(`stage_for_window`)·G2(`test_harness_g2.py` — 현장별 디렉터리·seed 바이트 동일·
