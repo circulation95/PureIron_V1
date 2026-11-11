@@ -246,10 +246,32 @@ seed에 넘긴다)로 가는 eth0 전달은 `ext_fwd` **앞** 규칙이 세고 `
 `plc-1` = 10.0.0.5:502)부터 생긴다(VM 1차 실측 `ext_fwd` 216). 정확히 선언된 host:port TCP만 빠지고 그 밖의
 eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 않는다.
 
-## G2 nightly (M6-2a)
+## G2 nightly (M6-2)
 
-밤마다 PC가 master HEAD를 빌드해 현장 VM 2대에 설치하고 결과를 GitHub에 남긴다. 2a는 시나리오 G2-1
-하나와 수동 실행(`.github/workflows/nightly.yml`, `workflow_dispatch`)만 있다 — cron은 M6-2b.
+밤마다 PC가 master HEAD를 빌드해 현장 VM 2대에 설치하고 결과를 GitHub에 남긴다. 시나리오는 G2-1
+하나다. 요약은 [testing SOT 12절](../../docs/wiki/sot/testing.md), 이 절이 세부의 정본이다.
+
+- 언제: `.github/workflows/nightly.yml` — cron 매일 **03:17 KST**(`17 18 * * *` UTC) + 수동 실행
+  (`workflow_dispatch`, 입력 `ref` 기본 master·`suite` 기본 g2). cron 실행은 입력이 빈 값이라 기본
+  브랜치를 받는다. cron 시각의 출처는 `harness/schedule.py` `CRON` 하나이고, 단위 시험이 yml cron과
+  같은지 대조한다. 분을 정각에서 비킨 이유: GitHub는 매시 정각에 몰리는 schedule 이벤트를 늦추거나
+  버릴 수 있고, 2시간 넘게 늦으면 아래 늦은 시작 건너뛰기가 그 밤을 조용히 건너뛴다.
+- 늦은 시작 건너뛰기: runner(PC)가 꺼져 있으면 cron 실행은 queued로 최대 24시간 기다렸다가 PC를 켜는
+  순간 시작한다. 그래서 cron으로 시작한 실행이 cron 시각보다 **2시간 넘게** 늦었으면(자정을 넘겨도
+  어제 18:17 UTC부터 잰다) `nightly.py all`이 아무것도 하지 않고 exit 0으로 끝난다 — preflight(VM·결과를
+  지운다)·GitHub 호출·이력·status·결과 디렉터리 모두 없고, 실행 화면에 `::notice::` 한 줄만 남는다.
+  수동 실행·로컬 실행에는 적용하지 않는다. cron 문자열을 해석하지 못하면 건너뛰지 않는다. cron
+  시각 **직전 15분** 안의 시작(`EARLY_GRACE`)은 제시간으로 본다 — PC 시계가 GitHub보다 늦으면 정시
+  실행이 직전으로 읽혀 약 24시간 지연으로 계산되기 때문이다. PC가 꺼진 날이 이어지면 queued 실행이
+  24시간 뒤 GitHub에서 실패 처리된다(메일). 대기는 **최대 2건**이다 — runner를 기다리는 실행 1건 +
+  concurrency 대기 1건이고, 그다음 cron이 오면 concurrency 대기 중인 것을 취소한다. PC를 켜면 두 건이
+  차례로 시작해 둘 다 늦은 시작으로 건너뛴다.
+- vSwitch: workflow는 저장소 변수 **`PUREIRON_E2E_SWITCH`**를 `PUREIRON_E2E_SWITCH` 환경변수로 넘긴다.
+  `setup-host.ps1 -Switch`로 만든 이름과 같아야 하고, 변수가 없으면 기본 `pureiron-int`다. 맞지 않으면
+  Hyper-V 점검에서 멈춘다(infra — 아래 실패 분류).
+- 브랜치 수동 실행: `gh workflow run nightly.yml --ref <브랜치> -f ref=<브랜치>`. `--ref`가 고르는 것은
+  **workflow 파일**(그 브랜치의 `nightly.yml`·환경변수)이고 `-f ref`가 빌드·시험할 커밋이다 — 둘을 같이
+  줘야 브랜치의 수정이 그대로 돈다. master merge 없이 수정·리허설을 돌릴 수 있다.
 
 - 현장: site-a(10.77.0.10) = **BASE**(git 태그가 있는 최신 `deploy/releases/r*.json`), site-b
   (10.77.0.11) = **NEXT**(HEAD 빌드 `n<sha7>`, 버전 `<BASE 다음 번호>-nightly.<sha7>`). NEXT는 WSL
@@ -276,11 +298,18 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
   돌리지 않음) — 원격 명령의 0 아닌 종료(`install.sh`·`pureiron-site` 등, `RemoteCommandError`), WSL
   빌드·번들 스크립트의 0 아닌 종료(`WslScriptError`), HEAD 빌드 실패, 단언 실패. junit `failure_class`
   속성과 `summary.json`에 남는다. 원격 명령이 스스로 255로 끝나면 ssh 실패와 구분되지 않아 infra다.
+  Hyper-V 호스트 점검(`sites.check_host` — 권한 없음·vSwitch 없음)은 PC 설정 문제라 `InfraError`다.
 - 알림: product가 2회 연속이면 이슈(라벨 `g2-nightly`), **같은 시험이 2회 연속 infra**(재시도 뒤)여도
   이슈(라벨 `g2-nightly-infra`) — 시간 초과로 드러난 제품 멈춤이 "error"로만 쌓이지 않게. pytest
   전체가 시간 제한에 죽거나 크래시해 junit이 없으면 시험 id `pytest`(infra) 한 줄로 이력에 남으므로 이
   경우도 이틀째에 이슈가 된다(`summary.json`의 `pytest_rc`, -1 = 시간 초과). 시간 초과였으면 그날은
   다시 돌리지 않는다(멈춘 제품은 재시도로 낫지 않는다). 크래시면 전체를 1회 다시 돌린다.
+- 시작하지 못한 실행: preflight에서 멈춘 run은 시험 id `preflight`(infra) 한 줄만 이력에 남는다
+  (`report.not_started`). 이력 줄·commit status `error`·exit 2는 그대로 남지만 **이슈는 열지 않는다** —
+  PC를 끄거나 앱을 켜 둔 밤(메모리 부족)과 같은 종류다. "최근 두 실행"을 고를 때도 건너뛰므로 product →
+  preflight 멈춤 → product는 2연속이고, 가장 최근 실행이 preflight에서 멈췄으면 그 밤은 이슈를 열지도
+  댓글을 달지도 않는다. 7일 flake 비율의 분모·분자에서도 빠진다. 시작한 뒤 깨진 실행(시험 id
+  `runner`·`pytest`)은 그대로 센다(이틀 연속이면 infra 이슈).
 - 시간 예산: workflow `timeout-minutes: 120`을 넘기면 Actions가 job을 죽여 status·이력이 남지 않는다.
   그래서 준비 10분 + run 90분(preflight 시작부터 첫 실행·복구·재시도 — pytest 시간 제한(첫 75분·재시도
   30분)을 남은 시간으로 줄이고, 10분도 남지 않으면 재시도를 건너뛴다) + 뒷정리 15분(collect 명령당 60초
@@ -291,6 +320,12 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
   답하면 WSL 페이지 캐시를 비우고 최대 120초(10초 간격) 다시 재서 판단한다(재시도 전 복구도 같다 —
   WSL은 캐시를 Windows에 늦게 돌려준다). `--judge-only`는 회수하지 않고 `measure`에 vmmemWSL·WSL
   페이지 캐시 크기와 "회수하면 통과할 수 있음" 메모를 남긴다.
+- VM 시작 직전 메모리: preflight의 8 GB는 HEAD 빌드·번들 **전** 값이다(그 사이 WSL 페이지 캐시가 다시
+  찬다 — M6-2b 리허설에서 두 번째 VM이 `0x800705AA`). 그래서 VM을 시작하기 직전(`g2.make_room`)에 다시
+  회수하고, Windows 가용 메모리가 "지금 시작할 VM 메모리 합 + 2 GB"(`VM_START_HEADROOM_GB` — 3 GiB
+  2대면 8 GB, 직렬 모드는 VM마다 5 GB) 이상이 될 때까지 preflight와 같이 최대 120초 기다린다. 끝까지
+  모자라면 VM을 시작하지 않고 그 현장 시험이 infra로 실패한다. 회수 전·후 값·기다린 시간은
+  `<site>/vm-memory.json`과 현장 로그에 남는다.
 
 ```powershell
 $env:PUREIRON_E2E_SWITCH = "pureiron-e2e"   # setup-host.ps1 -Switch 값
@@ -312,8 +347,34 @@ uv run pytest -c tests/e2e/gates/pytest.ini tests/e2e/gates -m g2 --collect-only
 cleanup에서 멈춤) 덮어쓰지 않고 그것으로 publish를 다시 시도한다(이력에 이미 들어간 run은 다시 쓰지
 않는다).
 
+Actions 실행 화면의 종료 코드는 product와 infra를 가르지 못한다 — workflow의 `shell: powershell`
+(`powershell -Command`)이 0·1 밖의 종료 코드를 1로 바꾸므로 infra(exit 2)도 `exit code 1`로 보인다.
+구분은 commit status `g2/nightly`(`failure` = product, `error` = infra)와 이력(`history.jsonl`)의
+`class`로 한다.
+
+**리허설 실측(2026-11-11, M6-2b).** 위 "브랜치 수동 실행"으로 Actions에서 돌렸다. 구성: self-hosted
+runner `e2e`, VM 3 GiB × 2(정식 구성), 낮 시간·데스크톱 앱이 켜진 상태. preflight 뒤 Windows 가용
+8.5 GB.
+
+- green 1회(nightly run `20261111T021650Z`, 커밋 `7599764`): job **7분 9초** = checkout·uv·preflight
+  29초 + HEAD 빌드·번들 3분 52초(빌드 캐시 적중) + VM 2대 부팅·설치·G2-1 2분 30초 + 수집·publish·정리
+  18초. 설치 58~66초, 100태그 GOOD까지 c0 뒤 0.3~0.5초. 2/2 통과.
+- VM 시작 직전 메모리(`<site>/vm-memory.json`, 4회): 빌드 뒤 가용 1.7~1.8 GB → 회수 뒤 8.0~9.3 GB, 기다린
+  시간 11~32초(기준 8.0 GB). Windows 최저 여유 1.65 GB(빌드 중)·1.69 GB(VM 시작 뒤).
+- 다른 결말의 소요 시간: preflight 멈춤 2분 52초(회수 대기 120초 포함), infra 재시도로 통과 6분 24초,
+  product 실패 11분 15초·11분 31초(100태그 GOOD 5분 대기 포함).
+- 실제 동작이 확인된 것: `e2e-history` 빈 뿌리 브랜치 생성과 줄 추가, commit status
+  `success`·`failure`·`error`, product 2회 연속에서 이슈 1개 생성(라벨 `g2-nightly`는 처음 쓸 때
+  자동으로 만들어진다)과 그 뒤 댓글, 7일 넘은 `e2e-tmp/*` 브랜치 삭제, Actions 안의 foundation-ci 상태
+  읽기, infra 재시도 1회, product 재시도 0회.
+- 아직 확인되지 않은 것: schedule 경로(빈 입력·늦은 시작 판단) — 수동 실행으로는 리허설할 수 없어
+  merge 뒤 첫 cron 실행에서 본다.
+- 운영 메모: 데스크톱 앱이 켜진 상태에서는 회수 뒤 가용이 기준(8.0 GB)에 걸친다(8.0~9.3 GB). 앱을 더
+  켜 둔 밤은 preflight나 VM 시작 직전 확인에서 infra로 멈출 수 있다.
+
 ## 단위 테스트
 
 `tests/e2e/tests/` — 공용화 불변 조건(`test_harness_shared.py` — 항목 39개 이름·순서, `ReleasePair` 기본값 = 옛 상수, 현장 둘의 상태 파일·이름 분리, 롤백 5분 경계, VM 3 GiB)·phase 순서·상태 읽기·nft 규칙(현장 장비 `field_fwd` 규칙 위치·끝점 추출·외부 접속 판정)·seed ISO 왕복·PowerShell 인용·수렴 판정·release 쌍(BASE·NEXT 기록 대조 필수·crash 순서·항목 39개·단계 순서·c0/NEXT 스키마 집합 판정(같은 epoch 실측값, 지난 쌍 c0 교차)·전환기 경보·FAULT 트리 복원·M5 확인 판정(트리·PATCH·absorb·재적용)·gen 배정·NEXT/FAULT 트리 판정(로컬 실측 `fixtures/m4c-tree-db.json` — 같은 트리 재적용 no-op에서 ⓐ 실패, NEXT 트리에서 통과, 롤백·재시도 정의 값)·업그레이드/FAULT/재시도 배선(가짜 `apply`))·온라인 판정(`test_online.py` — 실측 `/fleet` 행으로 단계별 통과·교차 실패, CA 지문 표기, `central.py` 값·토큰을 출력에 내지 않음, 화면 비밀번호·현장 token이 명령 줄에 없고 stdin으로만 감 — `basic_auth_line`·`site_online`·`Vm.run(input=)`)·store symlink 다시 연결·`ensure_image` 적재 조건·스테이징 진단 기록(`stage_for_window`)·G2(`test_harness_g2.py` — 현장별 디렉터리·seed 바이트 동일·
-`nft_mark` site id·E10 재시도, `test_nightly_pair.py`, `test_trees_g2.py`, `test_frame_g2.py`,
-`test_nightly_runner.py`, 실패 분류 `test_failure_split.py`). G1 `unit`에 포함된다.
+`nft_mark` site id·E10 재시도·VM 시작 직전 메모리 확보(동시·직렬), `test_nightly_pair.py`, `test_trees_g2.py`, `test_frame_g2.py`,
+`test_nightly_runner.py`, 실패 분류 `test_failure_split.py`, cron 늦은 시작·호스트 점검 분류·시작하지
+못한 실행 `test_nightly_cron.py`). G1 `unit`에 포함된다.

@@ -22,6 +22,10 @@
   초과)이 "error"로만 쌓이지 않게. `--dry-run`이면 무엇을 보낼지 출력만 한다.
 - `cleanup`: 이 run의 번들 디렉터리를 지우고 VM을 끈다(다음 preflight가 VM을 지운다).
 
+`all`은 cron(`schedule` 이벤트)으로 시작한 실행이 cron 시각보다 2시간 넘게 늦었으면 아무것도 하지
+않고 exit 0으로 끝난다(`harness.schedule` — preflight·GitHub 호출·결과 디렉터리 없음). PC가 꺼져
+있다가 낮에 켜졌을 때 VM을 띄우지 않게. 수동 실행·로컬 실행에는 적용하지 않는다.
+
 `all`이 예상 밖 예외로 멈추면 시험 id `runner`(infra) 하나로 `runner-summary.json`을 남기고
 publish를 시도한 뒤 exit 2로 끝난다 — 그 run의 `summary.json`이 이미 있으면 덮어쓰지 않고 그것으로
 publish를 다시 시도한다. run id는 `20261110T180000Z` 형식만 받는다.
@@ -52,7 +56,7 @@ from typing import cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from harness import buildhost, flake, g2, hyperv, paths, preflight, report
+from harness import buildhost, flake, g2, hyperv, paths, preflight, report, schedule
 from harness.context import TAIL_CHARS, log
 from harness.failures import INFRA, PRODUCT
 from harness.github import HISTORY_BRANCH, HISTORY_FILE, DryRun, GhCli, GitHub, GitHubError
@@ -260,8 +264,9 @@ def step_run(
 def preflight_summary(
     run_id: str, sha: str, today: date, outcome: preflight.Outcome
 ) -> dict[str, object]:
-    """preflight에서 멈춘 실행 — 시험 대신 `preflight` 한 줄(infra)로 남긴다."""
-    failed = report.TestResult("preflight", report.FAILED, INFRA, 0.0)
+    """preflight에서 멈춘 실행 — 시험 대신 `preflight` 한 줄(infra)로 남긴다. 이력·status는 남고
+    이슈·flake 비율에서는 빠진다(`report.not_started`)."""
+    failed = report.TestResult(report.PREFLIGHT_TEST, report.FAILED, INFRA, 0.0)
     return report.summary(
         run_id=run_id,
         date=today.isoformat(),
@@ -283,11 +288,14 @@ def runner_summary(run_id: str, sha: str, today: date, exc: BaseException) -> di
     )
 
 
-def announce(warnings: list[str], environ: Mapping[str, str] | None = None) -> None:
-    """눈에 띄게 남길 메모 — GitHub Actions 안이면 `::warning::` 주석(실행 화면에 뜬다)."""
+def announce(
+    warnings: list[str], environ: Mapping[str, str] | None = None, *, level: str = "warning"
+) -> None:
+    """눈에 띄게 남길 메모 — GitHub Actions 안이면 `::warning::`(`level`이 notice면 `::notice::`)
+    주석(실행 화면에 뜬다)."""
     actions = (os.environ if environ is None else environ).get("GITHUB_ACTIONS") == "true"
     for text in warnings:
-        print(f"::warning::{text}" if actions else f"WARNING: {text}", flush=True)
+        print(f"::{level}::{text}" if actions else f"{level.upper()}: {text}", flush=True)
 
 
 # ---------------------------------------------------------------- collect·publish·cleanup
@@ -488,10 +496,25 @@ def step_all(
     run_id: str | None = None,
     today: date | None = None,
     out_dir: Callable[[str], Path] = g2.results_dir,
+    environ: Mapping[str, str] | None = None,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> int:
     """`run_all`을 돌리고, 예상 밖 예외(복구 중 Hyper-V 실패·gh 네트워크 실패 등)는 시험 id
     `runner`(infra) summary로 남겨 publish를 시도한 뒤 exit 2로 끝낸다(리뷰 L2 — 기본 종료 코드 1은
-    product와 겹친다)."""
+    product와 겹친다). 맨 앞에서 늦게 시작한 cron 실행이면(`schedule.late_start`) 아무것도 하지
+    않고 0으로 끝낸다 — preflight는 VM·결과를 지우므로 부르지 않는다(G7)."""
+    env = os.environ if environ is None else environ
+    started = now()
+    if schedule.late_start(env.get("GITHUB_EVENT_NAME", ""), schedule.CRON, started):
+        announce(
+            [
+                f"scheduled run started at {started:%Y-%m-%d %H:%M} UTC, more than "
+                f"{schedule.LATE_AFTER} after cron '{schedule.CRON}': skipped (nothing run)"
+            ],
+            env,
+            level="notice",
+        )
+        return 0
     run_id = run_id or g2.new_run_id()
     today = today or date.today()
     out = out_dir(run_id)

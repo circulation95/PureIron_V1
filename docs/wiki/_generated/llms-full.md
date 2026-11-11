@@ -4106,4 +4106,29 @@ E2E/NF:
 - 통합 테스트는 `PUREIRON_TEST_EXISTING_DSN`을 주면 새 DB를 만들지 않고 주어진 DB에서 돈다(n-minus-1이 쓰는 모드).
 - **G1-6 property(hypothesis 1,000예, `deadline=None`)**: `packages/project-tools/tests/test_canonical.py`(JSON 값 dump/load 왕복)와 `test_absorb_property.py`(M5-3a) ⓐ 무작위 유효 트리를 JSON(정규형이 아닌 YAML)으로 쓰기 → `load_project` → `fmt` 고정점·fmt 전후 hash 동일 ⓑ 무작위 base 트리 + 무작위 PATCH 허용 값(설정·제거) 드래프트를 base 사본에 absorb → repo hash == 드래프트 `content_hash` ⓒ repo가 앞선 경우(태그 추가 + 기존 항목의 PATCH 비허용 필드 — 태그 `modbus.address`, 알람 `type`·`tag`·`description` — 변경) 그 변경 보존(드래프트 항목을 통째로 덮는 병합 버그를 잡는다). ⓑ·ⓒ의 hash 비교는 absorb가 기록한 `project.yaml absorbs` 키를 지운 트리 기준이다(기록 값은 따로 확인). `unit` job에 포함된다.
 
+## 12. V1 G2 nightly (PureIron_V1, M6-2)
+
+> 이 절은 **PureIron_V1 현행**이다. 분류 규칙·시간 예산·환경변수·결과 파일·실행 방법의 세부는 [tests/e2e/README.md](../../../tests/e2e/README.md)의 "G2 nightly" 절이 정본이다.
+
+G1이 커밋마다 코드·계약을 본다면, G2는 밤마다 **설치된 제품**을 본다: 개발 PC가 master HEAD를 빌드해 현장 VM 2대(Hyper-V)에 설치하고 시나리오를 판정한 뒤 결과를 GitHub에 남긴다. 본체는 `tests/e2e/gates/nightly.py all` 하나이고 로컬에서도 같은 명령으로 돈다.
+
+| 항목 | 내용 |
+|---|---|
+| 언제 | `.github/workflows/nightly.yml` — cron 매일 03:17 KST(`17 18 * * *` UTC) + 수동 실행(`workflow_dispatch`, 입력 `ref`·`suite`). 분을 정각에서 비킨다 — GitHub는 매시 정각의 schedule 이벤트를 늦추거나 버릴 수 있고, 2시간 넘게 늦으면 그 밤이 건너뛰어진다. cron 실행이 cron 시각보다 2시간 넘게 늦게 시작하면(PC가 꺼져 있다가 켜짐) 아무것도 하지 않고 exit 0으로 끝난다 — 이력·status 없음. cron 시각 직전 15분 안의 시작은 제시간으로 본다(PC 시계 오차). 수동·로컬 실행에는 적용하지 않는다 |
+| 어디서 | self-hosted runner `e2e`(개발 PC Windows, 로그온 세션 PowerShell 5.1), `timeout-minutes: 120`, concurrency `g2-nightly`(줄 세우고 취소하지 않음). 빌드는 WSL, 현장은 Hyper-V VM 2대 — site-a = BASE(git 태그가 있는 최신 release), site-b = NEXT(HEAD 빌드) |
+| 시나리오 | G2-1(현장마다): 설치 · 실행 이미지 == release digest · c0 뒤 5분 안에 100태그 GOOD · 장비 CONNECTED · 외부 접속 0. G2 시험은 `tests/e2e/gates/pytest.ini`로만 수집된다(G1 `unit`에는 빠진다) |
+| 순서 | preflight(메모리·디스크·WSL·Docker·foundation-ci 판단, 남은 VM·오래된 결과 정리) → run(pytest) → collect(VM 로그) → publish → cleanup. preflight 메모리는 HEAD 빌드 전 값이라, run은 VM을 시작하기 직전에 WSL 캐시를 다시 회수하고 "VM 메모리 합 + 2 GB"가 될 때까지 기다린다(모자라면 VM을 시작하지 않고 infra) |
+| 판정·분류 | 시험 실패를 예외 종류로 가른다: **호출 자체**의 실패(ssh·wsl.exe·Hyper-V·시간 초과·`InfraError`) = `infra`, **호출된 제품 스크립트**·단언·HEAD 빌드 실패 = `product`. 실행 판정은 product가 하나라도 있으면 product, 실패가 모두 infra면 infra. 종료 코드 0 통과 · 1 product · 2 infra — Actions 실행 화면은 `shell: powershell` 탓에 2도 1로 보이므로 구분은 commit status(`failure`·`error`)와 이력 `class`로 한다 |
+| 재시도 | 실패가 모두 infra일 때만 복구(WSL·남은 VM·호스트 메모리) 뒤 실패한 시험만 1회. product는 다시 돌리지 않는다. preflight에서 멈추면 pytest를 돌리지 않는다(재시도 없음) |
+| 알림 | commit status `g2/nightly`(success·failure·error), 브랜치 `e2e-history`의 `history.jsonl`(시험마다 한 줄), 이슈 2종 — product 2연속(라벨 `g2-nightly`), 같은 시험 infra 2연속(라벨 `g2-nightly-infra`). 열린 이슈가 있으면 댓글 |
+| 시작하지 못한 실행 | 이력에 시험 id `preflight` 줄만 있는 run. 이력 줄·status `error`·exit 2는 남지만 이슈를 열지 않고, "최근 두 실행"을 고를 때와 7일 flake 비율에서 빠진다. 시작한 뒤 깨진 실행(`runner`·`pytest`)은 그대로 센다 |
+
+```powershell
+uv run python tests/e2e/gates/nightly.py preflight --judge-only   # 판단만(조치 없음)
+uv run python tests/e2e/gates/nightly.py all --dry-run            # GitHub에 쓰지 않음(VM·결과 정리는 한다)
+uv run pytest -c tests/e2e/gates/pytest.ini tests/e2e/gates -m g2 --collect-only
+```
+
+리허설 실측(2026-11-11, Actions·정식 구성 VM 3 GiB × 2, 낮·데스크톱 앱 켜짐): green 1회 job 7분 9초(HEAD 빌드·번들 3분 52초 — 빌드 캐시 적중, VM 2대 부팅·설치·G2-1 2분 30초), 100태그 GOOD까지 c0 뒤 0.3~0.5초. 다른 결말은 preflight 멈춤 2분 52초 · infra 재시도로 통과 6분 24초 · product 실패 약 11분(100태그 GOOD 5분 대기 포함). 이력 브랜치·commit status 3종·product 2연속 이슈와 댓글·임시 브랜치 삭제·재시도 규칙이 실제로 동작했고, schedule 경로(빈 입력·늦은 시작 판단)는 merge 뒤 첫 cron 실행에서 확인한다. VM 시작 직전 회수 뒤 가용이 8.0~9.3 GB로 기준 8 GB에 걸치므로, 앱을 더 켜 둔 밤은 infra로 멈출 수 있다. 세부는 [README "G2 nightly" 절](../../../tests/e2e/README.md)의 "리허설 실측".
+
 ---

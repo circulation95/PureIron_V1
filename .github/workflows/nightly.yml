@@ -1,10 +1,15 @@
 # G2 nightly(M6-2a): 개발 PC(Windows self-hosted runner `e2e`)가 ref를 빌드해 현장 VM 2대(Hyper-V)에
 # 설치하고 G2-1을 판정한 뒤 결과를 GitHub에 남긴다(e2e-history·commit status g2/nightly·이슈).
 # 본체는 tests/e2e/gates/nightly.py all 하나다 — 로컬에서 같은 명령으로 돈다.
-# 수동 실행(workflow_dispatch)만 있다. cron은 Actions 리허설 뒤 M6-2b에서 켠다.
+# cron + 수동: 매일 03:17 KST(18:17 UTC) cron과 workflow_dispatch. cron 실행이 2시간 넘게 늦게
+# 시작하면(PC가 꺼져 있다가 켜짐) nightly.py가 아무것도 하지 않고 끝낸다(harness/schedule.py).
 name: nightly
 
 on:
+  schedule:
+    # harness/schedule.py CRON과 같아야 한다(단위 시험이 대조한다). 정각을 비킨다 — GitHub는 매시
+    # 정각의 schedule 이벤트를 늦추거나 버릴 수 있고, 2시간 넘게 늦으면 그 밤은 건너뛰어진다.
+    - cron: "17 18 * * *"
   workflow_dispatch:
     inputs:
       ref:
@@ -44,6 +49,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # schedule 실행에서는 inputs가 빈 값이다 — ref가 비면 기본 브랜치를 받는다.
           ref: ${{ inputs.ref }}
           # BASE = git 태그가 있는 최신 r*(release_pair.nightly) — 태그까지 받는다.
           fetch-depth: 0
@@ -53,7 +59,7 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: false
-      - name: nightly (${{ inputs.suite }})
+      - name: nightly (${{ inputs.suite || 'g2' }})
         env:
           # 실행기의 gh 호출에만 쓴다 — G2 pytest 자식(VM·WSL 호출)에는 넘기지 않는다(nightly.py).
           GH_TOKEN: ${{ github.token }}
@@ -63,4 +69,7 @@ jobs:
           uv sync --all-packages --locked
           if (-not $?) { exit 1 }
           uv run python tests/e2e/gates/nightly.py all
+          # shell: powershell(powershell -Command)은 0·1 밖의 종료 코드를 1로 바꾼다 — infra(exit 2)도
+          # 실행 화면에는 exit code 1이다. product/infra 구분은 commit status g2/nightly(failure /
+          # error)와 e2e-history의 class로 본다.
           exit $LASTEXITCODE

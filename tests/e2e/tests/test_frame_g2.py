@@ -8,7 +8,7 @@ import sys
 from typing import Any, cast
 
 import pytest
-from harness import buildhost, failures, g2, paths
+from harness import buildhost, failures, g2, paths, schedule
 from harness.context import E2EError, InfraError
 from harness.golden import WslError
 from harness.hyperv import HyperVError
@@ -89,10 +89,12 @@ def workflow(name: str) -> dict[str, Any]:
     return cast(dict[str, Any], canonical.load(text, name))
 
 
-def test_nightly_workflow_is_manual_only_on_the_e2e_runner() -> None:
-    """E1: 2a에는 cron이 없다(workflow_dispatch만). runner·시간·동시 실행·권한·action 고정."""
+def test_nightly_workflow_runs_by_cron_and_by_hand_on_the_e2e_runner() -> None:
+    """E1·M6-2b A1: cron 하나(`schedule.CRON`과 같은 값 — 다르면 늦은 시작 판단이 엉뚱한 시각을
+    잰다) + 수동 실행. runner·시간·동시 실행·권한·action 고정."""
     flow = workflow("nightly.yml")
-    assert list(flow["on"]) == ["workflow_dispatch"]
+    assert list(flow["on"]) == ["schedule", "workflow_dispatch"]
+    assert flow["on"]["schedule"] == [{"cron": schedule.CRON}]
     assert set(flow["on"]["workflow_dispatch"]["inputs"]) == {"ref", "suite"}
     job = flow["jobs"]["g2"]
     assert job["runs-on"] == ["self-hosted", "e2e"]
@@ -117,3 +119,6 @@ def test_nightly_workflow_is_manual_only_on_the_e2e_runner() -> None:
         assert action in ci  # foundation-ci와 같은 고정 값
     runs = [str(step.get("run", "")) for step in job["steps"]]
     assert any("tests/e2e/gates/nightly.py all" in run for run in runs)
+    # schedule 실행에서는 inputs가 빈 값이다 — step 이름이 `nightly ()`가 되지 않게
+    names = [str(step.get("name", "")) for step in job["steps"]]
+    assert "nightly (${{ inputs.suite || 'g2' }})" in names

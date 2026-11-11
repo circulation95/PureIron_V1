@@ -7,12 +7,13 @@ import dataclasses
 import hashlib
 import json
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
 import pytest
 import run
-from harness import buildhost, g2, golden, judges, paths, site, sites, trees, vm
+from harness import buildhost, g2, golden, judges, paths, preflight, site, sites, trees, vm
 from harness.context import Context, E2EError, InfraError
 from harness.release_pair import DEFAULT, nightly
 from harness.vm import Vm
@@ -431,6 +432,7 @@ def test_one_site_failure_is_kept_for_its_test_and_does_not_stop_the_other(
         {"PUREIRON_G2_SERIAL": serial},
         up=up,
         prepare_host=lambda: "ssh-ed25519 AAAA test",
+        room=lambda runs, env: True,
     )
     assert session.sites["site-a"].error is boom
     assert session.sites["site-b"].error is None
@@ -438,3 +440,152 @@ def test_one_site_failure_is_kept_for_its_test_and_does_not_stop_the_other(
     with pytest.raises(vm.RemoteCommandError) as raised:
         g2.check_install(session, "site-a", probe=lambda _: pytest.fail("must not probe"))
     assert raised.value is boom
+
+
+class Host:
+    """VM 시작 직전 메모리 확인의 가짜 호스트 — Windows 가용 메모리(GB) 측정값을 차례로 내고(마지막
+    값은 계속), 회수·대기·VM 시작을 `events`에 시간순으로 남긴다. `sleep`이 시계를 앞으로 민다."""
+
+    def __init__(self, readings: list[float | None]) -> None:
+        self.readings = readings
+        self.events: list[str] = []
+        self.now = 0.0
+
+    def mem_now(self) -> float | None:
+        value = self.readings.pop(0) if len(self.readings) > 1 else self.readings[0]
+        self.events.append(f"read {value}")
+        return value
+
+    def reclaim(self) -> None:
+        self.events.append("reclaim")
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+        self.events.append("sleep")
+
+    def clock(self) -> float:
+        return self.now
+
+    def room(self) -> g2.MakeRoom:
+        def room(runs: list[g2.SiteRun], env: Mapping[str, str]) -> bool:
+            self.events.append("room " + ",".join(r.ctx.site.site_id for r in runs))
+            return g2.make_room(
+                runs,
+                env,
+                mem_now=self.mem_now,
+                reclaim=self.reclaim,
+                sleep=self.sleep,
+                clock=self.clock,
+            )
+
+        return room
+
+    def up(self, one: g2.SiteRun, s: g2.Session, pub: str) -> None:
+        self.events.append(f"start {one.ctx.site.site_id}")
+
+
+VM_3GIB = {"PUREIRON_E2E_VM_GIB": "3"}
+
+
+def bring_up_with(host: Host, session: g2.Session, env: dict[str, str]) -> None:
+    g2.bring_up_all(
+        session, env, up=host.up, prepare_host=lambda: "ssh-ed25519 AAAA test", room=host.room()
+    )
+
+
+def test_vm_start_needs_every_vm_memory_plus_headroom() -> None:
+    """R1-1 (c): 필요량 = VM 메모리 * 지금 시작할 대수 + 여유(3 GiB VM 2대 = 3 * 2 + 2 = 8)."""
+    assert g2.VM_START_HEADROOM_GB == 2.0
+    assert g2.vm_start_need_gb(2, VM_3GIB) == 8.0
+    assert g2.vm_start_need_gb(1, VM_3GIB) == 5.0
+    assert g2.vm_start_need_gb(2, {}) == 8.0
+
+
+def test_vms_start_only_after_reclaimed_memory_has_come_back(tmp_path: Path) -> None:
+    """R1-1 (a)·(c): 빌드 뒤 1.4 GB → 회수분이 늦게 돌아온다(3.4 → 6.0 → 7.9 → 8.5). 두 VM 합
+    8 GB가 될 때까지 기다린 뒤에야 VM을 시작한다 — 7.9(VM 하나 몫 5 GB는 넘는다)에서는 아직
+    시작하지 않는다. 회수 전·후와 기다린 시간이 현장 결과 디렉터리에 남는다."""
+    session = session_for_bring_up(tmp_path)
+    host = Host([1.4, 3.4, 6.0, 7.9, 8.5])
+    bring_up_with(host, session, VM_3GIB)
+    assert host.events[:10] == [
+        "room site-a,site-b",
+        "read 1.4",
+        "reclaim",
+        "read 3.4",
+        "sleep",
+        "read 6.0",
+        "sleep",
+        "read 7.9",
+        "sleep",
+        "read 8.5",
+    ]
+    assert sorted(host.events[10:]) == ["start site-a", "start site-b"]
+    for one in session.sites.values():
+        assert one.error is None
+        gate = json.loads((one.ctx.out / g2.VM_MEMORY_FILE).read_text(encoding="utf-8"))
+        assert gate["sites"] == ["site-a", "site-b"]
+        assert (gate["need_gb"], gate["before_gb"], gate["after_gb"], gate["ok"]) == (
+            8.0,
+            1.4,
+            8.5,
+            True,
+        )
+        assert "1.4 -> 8.5 GB" in gate["notes"][0]
+        assert "waited 30s" in gate["notes"][0]
+
+
+def test_vms_are_not_started_when_memory_never_comes_back(tmp_path: Path) -> None:
+    """R1-1 (b): `RECLAIM_WAIT_S` 끝까지 모자라면 VM 시작 호출 0, 두 현장 모두 `InfraError`(필요·
+    실제 GB를 메시지에) — 그 현장 시험이 infra로 다시 던진다."""
+    session = session_for_bring_up(tmp_path)
+    host = Host([1.6, 6.0])
+    bring_up_with(host, session, VM_3GIB)
+    assert not [e for e in host.events if e.startswith("start")]
+    assert host.now >= preflight.RECLAIM_WAIT_S
+    for one in session.sites.values():
+        assert isinstance(one.error, InfraError)
+        assert "6.0 GB < 8.0 GB" in str(one.error)
+        gate = json.loads((one.ctx.out / g2.VM_MEMORY_FILE).read_text(encoding="utf-8"))
+        assert (gate["before_gb"], gate["after_gb"], gate["ok"]) == (1.6, 6.0, False)
+    with pytest.raises(InfraError):
+        g2.check_install(session, "site-a", probe=lambda _: pytest.fail("must not probe"))
+
+
+def test_unreadable_memory_is_short(tmp_path: Path) -> None:
+    """재지 못한 값(None)은 모자란 것으로 친다(preflight `judge`와 같다)."""
+    session = session_for_bring_up(tmp_path)
+    host = Host([None])
+    bring_up_with(host, session, VM_3GIB)
+    assert not [e for e in host.events if e.startswith("start")]
+    assert all(isinstance(one.error, InfraError) for one in session.sites.values())
+
+
+def test_serial_mode_makes_room_for_each_vm_in_turn(tmp_path: Path) -> None:
+    """R1-1 (d): 직렬 모드(`PUREIRON_G2_SERIAL=1`)는 VM마다 그 VM 몫(3 + 2 = 5 GB)으로 확인하고 바로
+    그 VM을 시작한다. 두 번째 VM 몫이 끝까지 모자라면 그 VM만 시작하지 않는다(첫 현장은 그대로)."""
+    session = session_for_bring_up(tmp_path)
+    host = Host([4.0, 5.0, 4.5])
+    bring_up_with(host, session, {**VM_3GIB, "PUREIRON_G2_SERIAL": "1"})
+    starts = [e for e in host.events if e.startswith(("room", "start"))]
+    assert starts == ["room site-a", "start site-a", "room site-b"]
+    assert host.events[:4] == ["room site-a", "read 4.0", "reclaim", "read 5.0"]
+    assert session.sites["site-a"].error is None
+    error = session.sites["site-b"].error
+    assert isinstance(error, InfraError)
+    assert "4.5 GB < 5.0 GB" in str(error)
+    gate_a = json.loads((session.sites["site-a"].ctx.out / g2.VM_MEMORY_FILE).read_text("utf-8"))
+    gate_b = json.loads((session.sites["site-b"].ctx.out / g2.VM_MEMORY_FILE).read_text("utf-8"))
+    assert (gate_a["sites"], gate_a["need_gb"], gate_a["ok"]) == (["site-a"], 5.0, True)
+    assert (gate_b["sites"], gate_b["need_gb"], gate_b["ok"]) == (["site-b"], 5.0, False)
+
+
+def test_serial_mode_starts_both_vms_when_each_share_fits(tmp_path: Path) -> None:
+    """R1-1 (d): 직렬 모드에서 VM마다 5 GB가 되면 둘 다 차례로 시작한다(동시 모드라면 모자랄
+    7 GB)."""
+    session = session_for_bring_up(tmp_path)
+    host = Host([7.0])
+    bring_up_with(host, session, {**VM_3GIB, "PUREIRON_G2_SERIAL": "1"})
+    starts = [e for e in host.events if e.startswith(("room", "start"))]
+    assert starts == ["room site-a", "start site-a", "room site-b", "start site-b"]
+    assert "sleep" not in host.events

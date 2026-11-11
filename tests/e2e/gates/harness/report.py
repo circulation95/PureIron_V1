@@ -6,6 +6,11 @@
 `product`, 실패가 모두 `infra`면 `infra`(그때만 실패한 시험을 1회 다시 돌린다). junit에 분류
 속성이 없는 실패(수집 오류 등)는 `product`다. 시험 결과가 하나도 없으면(pytest가 죽음·시간 초과)
 `infra`다.
+
+시작하지 못한 실행(이력에 시험 id `preflight` 줄만 있는 run — preflight에서 멈춤)은 이슈 판단과
+flake 비율에서 빠진다(`not_started`, M6-2b ★G2·L8). 그런 밤은 PC를 끄거나 앱을 켜 둔 밤과 같은
+종류라 이력 줄·commit status `error`·exit 2만 남기고 이슈는 열지 않는다. 시험 id `runner`·`pytest`
+줄은 시작한 뒤 깨진 실행이라 그대로 센다.
 """
 
 from __future__ import annotations
@@ -30,6 +35,8 @@ ISSUE_TITLE = "G2 nightly: product failure in 2 consecutive runs"
 INFRA_ISSUE_LABEL = "g2-nightly-infra"
 INFRA_ISSUE_TITLE = "G2 nightly: the same test failed as infra in 2 consecutive runs"
 DESCRIPTION_CHARS = 140
+PREFLIGHT_TEST = "preflight"
+"""preflight에서 멈춘 실행의 시험 id(infra) — 시험을 시작하지 못했다."""
 
 
 @dataclass(frozen=True)
@@ -146,31 +153,55 @@ def parse_history(text: str) -> list[dict[str, object]]:
     return rows
 
 
-def needs_issue(history: Iterable[Mapping[str, object]]) -> bool:
-    """가장 최근 실행 두 개(run id 순)가 모두 product 실패를 냈는가(E9)."""
-    runs: dict[str, bool] = {}
+def not_started(rows: Iterable[Mapping[str, object]]) -> bool:
+    """한 run의 이력 줄이 시험 id `PREFLIGHT_TEST` 줄뿐인가 — 시작하지 못한 실행."""
+    return {str(row.get("test_id")) for row in rows} == {PREFLIGHT_TEST}
+
+
+def by_run(history: Iterable[Mapping[str, object]]) -> dict[str, list[Mapping[str, object]]]:
+    runs: dict[str, list[Mapping[str, object]]] = {}
     for row in history:
-        run = str(row.get("run"))
-        product_fail = row.get("outcome") == "fail" and row.get("class") == PRODUCT
-        runs[run] = runs.get(run, False) or product_fail
-    latest = sorted(runs)[-2:]
-    return len(latest) == 2 and all(runs[r] for r in latest)
+        runs.setdefault(str(row.get("run")), []).append(row)
+    return runs
+
+
+def last_two_started(
+    history: Iterable[Mapping[str, object]],
+) -> list[list[Mapping[str, object]]]:
+    """시작한 실행 중 가장 최근 두 개(run id 순)의 줄 — 시작하지 못한 실행은 건너뛴다(product →
+    preflight 멈춤 → product는 2연속이다). 가장 최근 실행이 시작하지 못했으면 빈 목록이다(그 밤은
+    이슈를 열지도 댓글을 달지도 않는다). 두 개가 없어도 빈 목록."""
+    runs = by_run(history)
+    order = sorted(runs)
+    if not order or not_started(runs[order[-1]]):
+        return []
+    started = [runs[r] for r in order if not not_started(runs[r])]
+    return started[-2:] if len(started) >= 2 else []
+
+
+def failed_tests(rows: Iterable[Mapping[str, object]], failure_class: str) -> set[str]:
+    return {
+        str(row.get("test_id"))
+        for row in rows
+        if row.get("outcome") == "fail" and row.get("class") == failure_class
+    }
+
+
+def needs_issue(history: Iterable[Mapping[str, object]]) -> bool:
+    """시작한 실행 중 가장 최근 두 개(`last_two_started`)가 모두 product 실패를 냈는가(E9)."""
+    latest = last_two_started(history)
+    return len(latest) == 2 and all(failed_tests(rows, PRODUCT) for rows in latest)
 
 
 def repeated_infra(history: Iterable[Mapping[str, object]]) -> list[str]:
-    """가장 최근 실행 두 개(run id 순) 모두에서 infra로 실패한 시험 id(정렬). infra는 재시도 뒤의
-    결과이므로, 여기 남는 것은 재시도로도 낫지 않은 실행 환경 문제이거나 infra로 분류된 제품
-    문제(시간 초과로 드러난 멈춤, 원격 명령 종료 코드 255)다."""
-    runs: dict[str, set[str]] = {}
-    for row in history:
-        failed = row.get("outcome") == "fail" and row.get("class") == INFRA
-        tests = runs.setdefault(str(row.get("run")), set())
-        if failed:
-            tests.add(str(row.get("test_id")))
-    latest = sorted(runs)[-2:]
+    """시작한 실행 중 가장 최근 두 개(`last_two_started`) 모두에서 infra로 실패한 시험 id(정렬).
+    infra는 재시도 뒤의 결과이므로, 여기 남는 것은 재시도로도 낫지 않은 실행 환경 문제이거나
+    infra로 분류된 제품 문제(시간 초과로 드러난 멈춤, 원격 명령 종료 코드 255)다. preflight에서
+    멈춘 밤은 세지 않는다(★G2)."""
+    latest = last_two_started(history)
     if len(latest) != 2:
         return []
-    return sorted(runs[latest[0]] & runs[latest[1]])
+    return sorted(failed_tests(latest[0], INFRA) & failed_tests(latest[1], INFRA))
 
 
 def status_description(summary_: Mapping[str, object]) -> str:
