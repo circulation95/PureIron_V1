@@ -69,4 +69,7 @@ jobs:
           uv sync --all-packages --locked
           if (-not $?) { exit 1 }
           uv run python tests/e2e/gates/nightly.py all
+          # shell: powershell(powershell -Command)은 0·1 밖의 종료 코드를 1로 바꾼다 — infra(exit 2)도
+          # 실행 화면에는 exit code 1이다. product/infra 구분은 commit status g2/nightly(failure /
+          # error)와 e2e-history의 class로 본다.
           exit $LASTEXITCODE

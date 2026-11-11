@@ -320,6 +320,12 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
   답하면 WSL 페이지 캐시를 비우고 최대 120초(10초 간격) 다시 재서 판단한다(재시도 전 복구도 같다 —
   WSL은 캐시를 Windows에 늦게 돌려준다). `--judge-only`는 회수하지 않고 `measure`에 vmmemWSL·WSL
   페이지 캐시 크기와 "회수하면 통과할 수 있음" 메모를 남긴다.
+- VM 시작 직전 메모리: preflight의 8 GB는 HEAD 빌드·번들 **전** 값이다(그 사이 WSL 페이지 캐시가 다시
+  찬다 — M6-2b 리허설에서 두 번째 VM이 `0x800705AA`). 그래서 VM을 시작하기 직전(`g2.make_room`)에 다시
+  회수하고, Windows 가용 메모리가 "지금 시작할 VM 메모리 합 + 2 GB"(`VM_START_HEADROOM_GB` — 3 GiB
+  2대면 8 GB, 직렬 모드는 VM마다 5 GB) 이상이 될 때까지 preflight와 같이 최대 120초 기다린다. 끝까지
+  모자라면 VM을 시작하지 않고 그 현장 시험이 infra로 실패한다. 회수 전·후 값·기다린 시간은
+  `<site>m-memory.json`과 현장 로그에 남는다.
 
 ```powershell
 $env:PUREIRON_E2E_SWITCH = "pureiron-e2e"   # setup-host.ps1 -Switch 값
@@ -341,9 +347,14 @@ uv run pytest -c tests/e2e/gates/pytest.ini tests/e2e/gates -m g2 --collect-only
 cleanup에서 멈춤) 덮어쓰지 않고 그것으로 publish를 다시 시도한다(이력에 이미 들어간 run은 다시 쓰지
 않는다).
 
+Actions 실행 화면의 종료 코드는 product와 infra를 가르지 못한다 — workflow의 `shell: powershell`
+(`powershell -Command`)이 0·1 밖의 종료 코드를 1로 바꾸므로 infra(exit 2)도 `exit code 1`로 보인다.
+구분은 commit status `g2/nightly`(`failure` = product, `error` = infra)와 이력(`history.jsonl`)의
+`class`로 한다.
+
 ## 단위 테스트
 
 `tests/e2e/tests/` — 공용화 불변 조건(`test_harness_shared.py` — 항목 39개 이름·순서, `ReleasePair` 기본값 = 옛 상수, 현장 둘의 상태 파일·이름 분리, 롤백 5분 경계, VM 3 GiB)·phase 순서·상태 읽기·nft 규칙(현장 장비 `field_fwd` 규칙 위치·끝점 추출·외부 접속 판정)·seed ISO 왕복·PowerShell 인용·수렴 판정·release 쌍(BASE·NEXT 기록 대조 필수·crash 순서·항목 39개·단계 순서·c0/NEXT 스키마 집합 판정(같은 epoch 실측값, 지난 쌍 c0 교차)·전환기 경보·FAULT 트리 복원·M5 확인 판정(트리·PATCH·absorb·재적용)·gen 배정·NEXT/FAULT 트리 판정(로컬 실측 `fixtures/m4c-tree-db.json` — 같은 트리 재적용 no-op에서 ⓐ 실패, NEXT 트리에서 통과, 롤백·재시도 정의 값)·업그레이드/FAULT/재시도 배선(가짜 `apply`))·온라인 판정(`test_online.py` — 실측 `/fleet` 행으로 단계별 통과·교차 실패, CA 지문 표기, `central.py` 값·토큰을 출력에 내지 않음, 화면 비밀번호·현장 token이 명령 줄에 없고 stdin으로만 감 — `basic_auth_line`·`site_online`·`Vm.run(input=)`)·store symlink 다시 연결·`ensure_image` 적재 조건·스테이징 진단 기록(`stage_for_window`)·G2(`test_harness_g2.py` — 현장별 디렉터리·seed 바이트 동일·
-`nft_mark` site id·E10 재시도, `test_nightly_pair.py`, `test_trees_g2.py`, `test_frame_g2.py`,
+`nft_mark` site id·E10 재시도·VM 시작 직전 메모리 확보(동시·직렬), `test_nightly_pair.py`, `test_trees_g2.py`, `test_frame_g2.py`,
 `test_nightly_runner.py`, 실패 분류 `test_failure_split.py`, cron 늦은 시작·호스트 점검 분류·시작하지
 못한 실행 `test_nightly_cron.py`). G1 `unit`에 포함된다.
