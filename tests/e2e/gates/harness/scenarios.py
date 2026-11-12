@@ -203,3 +203,48 @@ def rollback(session: g2.Session, remote: Remote | None = None) -> RollbackOutco
         logs=None if all(again.values()) else str(retry.report.get("logs"))[-TAIL_CHARS:],
     )
     return RollbackOutcome(rolled, again, health)
+
+
+# ---------------------------------------------------------------- G2-6 ② migrate 실패 (site-b)
+
+MIGRATE_SITE = "site-b"
+ITEM_MIGRATE = "G2-6 2 migrate failure keeps the schema"
+
+
+def migrate_failure(session: g2.Session, remote: Remote | None = None) -> dict[str, bool]:
+    """site-b(c0 = NEXT): c0 복원 → 스키마 집합 5종·epoch·행 수 기록(c0 스냅샷) → FAULT-m
+    g2(FAULT-m 트리) → 수렴. 판정 `judges.judge_migrate_failure`, 기록은 현장 `Context`에."""
+    remote = remote or Remote()
+    pair = session.pair
+    run, before = begin(session, MIGRATE_SITE, remote)
+    ctx = run.ctx
+    fault = attempt(run, FAULT_GEN, pair.fault_migrate, session.tree_of(pair.fault_migrate), remote)
+    checks = judges.judge_migrate_failure(
+        before,
+        fault.snap,
+        fault.report,
+        fault.seconds,
+        gen=FAULT_GEN,
+        next_digests=ctx.digests[pair.next],
+        epoch=pair.epochs[pair.next],
+    )
+    before_db, after_db = judges.db_of(before), judges.db_of(fault.snap)
+    ok = all(checks.values())
+    ctx.record(
+        ITEM_MIGRATE,
+        ok,
+        gen=FAULT_GEN,
+        release=pair.fault_migrate,
+        result=judges.updater_state(fault.snap).get("last_result"),
+        code=fault.report.get("code"),
+        seconds=fault.seconds,
+        phase_durations_s=fault.report.get("phase_durations_s"),
+        checks=checks,
+        epoch_before=before_db.get("epoch"),
+        epoch_after=after_db.get("epoch"),
+        schema_diff=judges.schema_diff(after_db, before_db),
+        rows_before=rows(before_db),
+        rows_after=rows(after_db),
+        logs=None if ok else str(fault.report.get("logs"))[-TAIL_CHARS:],
+    )
+    return checks

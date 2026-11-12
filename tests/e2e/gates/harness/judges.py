@@ -390,6 +390,56 @@ def judge_g2_retry(
     }
 
 
+MIGRATE_CODE = "E_MIGRATE"
+"""FAULT-m 시도의 보고 `code` — migrating phase의 migration 실패(updater `phases.E_MIGRATE`)."""
+FAULT_MARKER = "e2e_fault_marker"
+"""FAULT-m migration이 0으로 나누기 전에 만드는 표지 테이블 — 남으면 부분 적용이다."""
+
+
+def judge_migrate_failure(
+    before: dict[str, object],
+    after: dict[str, object],
+    report: dict[str, object],
+    seconds: float,
+    *,
+    gen: int,
+    next_digests: dict[str, str],
+    epoch: int,
+) -> dict[str, bool]:
+    """G2-6 ②(c0 = NEXT에서 FAULT-m): `CONVERGE_LIMIT_S` 안에 `failed`로 수렴하고 보고 `E_MIGRATE`,
+    실행 이미지 == NEXT digest, DB epoch·Updater `schema_epoch`가 그대로(NEXT epoch), 이름 집합
+    5종이 전과 정확히 같고 표지 테이블(`FAULT_MARKER`)이 없으며, 행 수 4종 ≥ 이전, 경보 없음·
+    edit-lock 해제·applied gen 그대로."""
+    applied = updater_state(before).get("applied_gen")
+    checks = judge_attempt(
+        after,
+        report,
+        expect="failed",
+        want_digests=next_digests,
+        want_applied=cast(int | None, applied),
+        expect_code=MIGRATE_CODE,
+    )
+    state, old, db = updater_state(after), db_of(before), db_of(after)
+    tables = db.get("tables")
+    return {
+        "c0_ready": ready(before),
+        **checks,
+        "converged_in_time": "attempt" in state
+        and state["attempt"] is None
+        and state.get("last_attempted_gen") == gen
+        and 0 <= seconds <= CONVERGE_LIMIT_S,
+        "db_epoch_kept": db.get("epoch") == old.get("epoch") == str(epoch),
+        "updater_epoch_kept": state.get("schema_epoch") == epoch
+        and updater_state(before).get("schema_epoch") == epoch,
+        **{
+            f"schema_unchanged_{key}": bool(names(old, key)) and names(db, key) == names(old, key)
+            for key in SCHEMA_SETS
+        },
+        "no_fault_marker": isinstance(tables, str) and FAULT_MARKER not in names(db, "tables"),
+        **rows_kept(old, db),
+    }
+
+
 # ---------------------------------------------------------------- 외부 접속(nftables·resolved)
 
 

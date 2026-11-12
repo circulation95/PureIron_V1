@@ -82,8 +82,9 @@ def test_real_g2_collection_follows_the_table() -> None:
     assert collected_g2() == [
         "test_g2_1_install_and_100_tags_good[site-a]",
         "test_g2_1_install_and_100_tags_good[site-b]",
-        *[t for t in collected_g2() if t.startswith(("test_g2_4", "test_g2_6_3"))],
-        *[t for t in collected_g2() if t.startswith("test_g2_6_2")],
+        "test_g2_4_rollback",
+        "test_g2_6_3_health_failure",
+        "test_g2_6_2_migrate_failure",
         "test_g2_no_external[site-a]",
         "test_g2_no_external[site-b]",
     ]
