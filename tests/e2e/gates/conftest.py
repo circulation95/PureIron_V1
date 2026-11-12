@@ -1,5 +1,10 @@
-"""G2 pytest 틀(M6-2 E7·E8) — session fixture(prepare → 현장 VM 2대 → 설치 → 체크포인트 c0)와
-실패 분류(`failure_class` = infra·product)를 junit 속성으로 남긴다.
+"""G2 pytest 틀(M6-2 E7·E8, M6-3 H6·H12) — session fixture(prepare → 현장 VM 2대 → 설치 → 체크포인트
+c0), 실행 순서(`harness.order` 표 — G2-1 → site-a 시나리오 → site-b 시나리오 → 외부 접속 0, 파일
+이름 순서에 기대지 않는다)와 실패 분류(`failure_class` = infra·product)를 junit 속성으로 남긴다.
+
+시나리오(`harness.scenarios`)는 현장 하나에 묶이고 c0 복원으로 시작한다 — 앞 시험이 남긴 VM 상태에
+기대지 않으므로 nightly의 infra 재시도가 실패한 시험만 골라 새 pytest로 돌려도 된다. 판정 여러 개를
+내는 시나리오는 module fixture가 한 번 돌리고 시험들이 항목별로 단언한다.
 
 G2 시험(`test_g2_*.py`)은 `tests/e2e/gates/pytest.ini`로 실행할 때만 수집한다 — 루트 설정으로 도는
 G1 `unit`(`pytest … tests/e2e`)에는 skip이 아니라 수집 자체가 빠진다(실제 VM이 필요하다).
@@ -16,7 +21,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from harness import failures, g2
+from harness import failures, g2, order
+from harness.context import E2EError
 
 GATES_INI = Path(__file__).resolve().parent / "pytest.ini"
 
@@ -25,6 +31,18 @@ def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool 
     if collection_path.name.startswith("test_g2_") and config.inipath != GATES_INI:
         return True
     return None
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """G2 실행(`gates/pytest.ini`)이면 `harness.order` 표대로 시험 순서를 바꾼다. 표에 없는 시험
+    파일은 수집 오류다."""
+    if config.inipath != GATES_INI:
+        return
+    try:
+        ranked = order.sort_order([item.path.name for item in items])
+    except E2EError as exc:
+        raise pytest.UsageError(str(exc)) from exc
+    items[:] = [items[i] for i in ranked]
 
 
 @pytest.fixture(scope="session")

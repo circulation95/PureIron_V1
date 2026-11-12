@@ -1,0 +1,265 @@
+"""G2 시나리오 틀(M6-3a I1) — 실행 순서 표, c0 복원 직전 메모리 확보·카운터 처리, 시나리오 시작
+계약(현장 예외 다시 던짐·c0 복원 먼저), 맨 끝 외부 접속 0 판정."""
+
+from __future__ import annotations
+
+import dataclasses
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+from harness import g2, judges, order, paths, scenarios
+from harness.context import Context, E2EError, InfraError
+from harness.release_pair import nightly
+from harness.vm import RemoteCommandError, Vm
+
+GATES = paths.REPO / "tests" / "e2e" / "gates"
+VM_3GIB = {"PUREIRON_E2E_VM_GIB": "3"}
+
+
+def session(tmp_path: Path) -> g2.Session:
+    pair = nightly({"r5": {"version": "2026.11.1", "schema": {"epoch": 5}}}, {"r5"}, "a" * 40, 5)
+    runs: dict[str, g2.SiteRun] = {}
+    for base, _ in g2.SITE_ROLES:
+        release = g2.site_release(pair, base.site_id)
+        one = dataclasses.replace(base, state_file=tmp_path / base.site_id / "state.json")
+        ctx = Context(
+            run_id="20261110T180000Z",
+            artifacts=str(tmp_path / base.site_id),
+            current=release,
+            site=one,
+            pair=pair,
+        )
+        ctx.nft_total = dict.fromkeys(judges.AUDIT_COUNTERS, 0)
+        ctx.nft_c0 = {"ext_out_v4": 7}
+        ctx.nft_last = {"ext_out_v4": 9}
+        runs[base.site_id] = g2.SiteRun(ctx, release, c0_at=0.0)
+    return g2.Session("20261110T180000Z", "a" * 40, pair, tmp_path, tmp_path / "sim.tar", runs)
+
+
+# ---------------------------------------------------------------- 실행 순서
+
+
+def test_order_puts_install_first_then_site_a_site_b_and_no_external_last() -> None:
+    files = [
+        "test_g2_no_external.py",
+        "test_g2_faults.py",
+        "test_g2_rollback.py",
+        "test_g2_no_external.py",
+        "test_g2_install.py",
+        "test_g2_rollback.py",
+        "test_g2_install.py",
+    ]
+    ranked = [files[i] for i in order.sort_order(files)]
+    assert ranked == [
+        "test_g2_install.py",
+        "test_g2_install.py",
+        "test_g2_rollback.py",
+        "test_g2_rollback.py",
+        "test_g2_faults.py",
+        "test_g2_no_external.py",
+        "test_g2_no_external.py",
+    ]
+    # 같은 파일 안은 수집 순서 그대로(안정 정렬)
+    assert order.sort_order(["test_g2_rollback.py", "test_g2_rollback.py"]) == [0, 1]
+
+
+def test_order_table_keeps_groups_in_sequence_and_no_external_last() -> None:
+    order.check_table()
+    assert order.FILES[0] == ("test_g2_install.py", order.FIRST)
+    assert order.FILES[-1] == ("test_g2_no_external.py", order.LAST)
+    sites = {group: [n for n, g in order.FILES if g == group] for group in ("site-a", "site-b")}
+    assert sites == {"site-a": ["test_g2_rollback.py"], "site-b": ["test_g2_faults.py"]}
+    swapped = [order.FILES[-1], *order.FILES[:-1]]
+    with pytest.raises(E2EError, match="out of order"):
+        order.check_table(swapped)
+
+
+def test_a_test_file_without_a_place_stops_collection() -> None:
+    with pytest.raises(E2EError, match=r"test_g2_new\.py has no place"):
+        order.sort_order(["test_g2_install.py", "test_g2_new.py"])
+
+
+def collected_g2() -> list[str]:
+    done = subprocess.run(
+        [
+            *(sys.executable, "-m", "pytest", "-c", str(GATES / "pytest.ini"), str(GATES)),
+            *("-m", "g2", "--collect-only", "-q", "-p", "no:cacheprovider"),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=paths.REPO,
+        check=False,
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    return [line.split("::", 1)[1] for line in done.stdout.splitlines() if "::" in line]
+
+
+def test_real_g2_collection_follows_the_table() -> None:
+    """수집된 실제 G2 시험 id와 순서 — G2-1 → site-a(롤백) → site-b(②) → 외부 접속 0(맨 끝)."""
+    assert collected_g2() == [
+        "test_g2_1_install_and_100_tags_good[site-a]",
+        "test_g2_1_install_and_100_tags_good[site-b]",
+        *[t for t in collected_g2() if t.startswith(("test_g2_4", "test_g2_6_3"))],
+        *[t for t in collected_g2() if t.startswith("test_g2_6_2")],
+        "test_g2_no_external[site-a]",
+        "test_g2_no_external[site-b]",
+    ]
+
+
+# ---------------------------------------------------------------- c0 복원
+
+
+class Host:
+    """복원 직전 메모리·Hyper-V·카운터 표시의 가짜 — 측정값을 차례로 내고 호출을 `events`에
+    남긴다."""
+
+    def __init__(self, readings: list[float | None], vm_state: str | None = "Running") -> None:
+        self.readings = readings
+        self.vm_state = vm_state
+        self.events: list[str] = []
+        self.now = 0.0
+
+    def mem_now(self) -> float | None:
+        value = self.readings.pop(0) if len(self.readings) > 1 else self.readings[0]
+        self.events.append(f"read {value}")
+        return value
+
+    def restore(self, run: g2.SiteRun) -> g2.MemoryGate:
+        def mark(ctx: Context, host: Vm) -> None:
+            self.events.append(f"mark {ctx.site.site_id}")
+            ctx.nft_total = {**ctx.nft_total, "ext_out_v4": ctx.nft_total["ext_out_v4"] + 1}
+
+        def state(name: str) -> str | None:
+            self.events.append(f"state {name}")
+            return self.vm_state
+
+        def restore(name: str, snapshot: str) -> None:
+            self.events.append(f"restore {name} {snapshot}")
+
+        def sleep(seconds: float) -> None:
+            self.now += seconds
+
+        return g2.restore_c0(
+            run,
+            VM_3GIB,
+            state=state,
+            mark=mark,
+            restore=restore,
+            wait_ssh=lambda host: self.events.append("ssh"),
+            mem_now=self.mem_now,
+            reclaim=lambda: self.events.append("reclaim"),
+            sleep=sleep,
+            clock=lambda: self.now,
+        )
+
+
+def test_restore_of_a_running_vm_marks_counters_then_waits_for_headroom(tmp_path: Path) -> None:
+    """켜진 VM: 카운터 표시 → 회수 → 여유 2 GB가 될 때까지 대기 → 복원 → 카운터 기준 = c0 값 →
+    ssh."""
+    run = session(tmp_path).sites["site-a"]
+    host = Host([1.2, 1.5, 2.1])
+    gate = host.restore(run)
+    assert host.events == [
+        "state pureiron-site-a",
+        "mark site-a",
+        "read 1.2",
+        "reclaim",
+        "read 1.5",
+        "read 2.1",
+        "restore pureiron-site-a c0",
+        "ssh",
+    ]
+    assert (gate.need_gb, gate.ok) == (g2.VM_START_HEADROOM_GB, True)
+    assert run.ctx.nft_last == {"ext_out_v4": 7}
+    assert run.unmarked_restores == 0
+    saved = json.loads((run.ctx.out / g2.RESTORE_MEMORY_FILE).read_text("utf-8"))
+    assert [(e["vm_state"], e["before_gb"], e["after_gb"], e["ok"]) for e in saved] == [
+        ("Running", 1.2, 2.1, True)
+    ]
+
+
+def test_restore_of_a_stopped_vm_needs_a_whole_vm_and_counts_the_lost_interval(
+    tmp_path: Path,
+) -> None:
+    run = session(tmp_path).sites["site-b"]
+    host = Host([5.0], vm_state="Off")
+    gate = host.restore(run)
+    assert "mark site-b" not in host.events
+    assert gate.need_gb == g2.vm_start_need_gb(1, VM_3GIB) == 5.0
+    assert run.unmarked_restores == 1
+    assert host.restore(run).ok  # 두 번째 복원 — 기록이 배열로 쌓인다
+    saved = json.loads((run.ctx.out / g2.RESTORE_MEMORY_FILE).read_text("utf-8"))
+    assert len(saved) == 2
+
+
+def test_restore_is_refused_as_infra_when_memory_stays_short(tmp_path: Path) -> None:
+    """끝까지 모자라면 복원하지 않는다(`InfraError`, 현장마다 새 객체). 기록은 남는다."""
+    runs = session(tmp_path).sites
+    errors: list[InfraError] = []
+    for site_id in ("site-a", "site-b"):
+        host = Host([1.0])
+        with pytest.raises(InfraError, match=r"1\.0 GB < 2\.0 GB") as raised:
+            host.restore(runs[site_id])
+        assert not [e for e in host.events if e.startswith("restore")]
+        errors.append(raised.value)
+        saved = json.loads((runs[site_id].ctx.out / g2.RESTORE_MEMORY_FILE).read_text("utf-8"))
+        assert saved[-1]["ok"] is False
+    assert errors[0] is not errors[1]
+
+
+def test_restore_needs_headroom_when_running_and_a_whole_vm_when_off() -> None:
+    assert g2.restore_need_gb(True, VM_3GIB) == 2.0
+    assert g2.restore_need_gb(False, VM_3GIB) == 5.0
+    assert g2.restore_need_gb(False, {"PUREIRON_E2E_VM_GIB": "4"}) == 6.0
+
+
+# ---------------------------------------------------------------- 시나리오 시작·외부 접속 0
+
+
+def test_begin_rethrows_the_site_failure_before_touching_the_vm(tmp_path: Path) -> None:
+    s = session(tmp_path)
+    boom = RemoteCommandError("install.sh exited 1", 1)
+    s.sites["site-a"].error = boom
+    remote = scenarios.Remote(restore=lambda run: pytest.fail("must not restore"))
+    with pytest.raises(RemoteCommandError) as raised:
+        scenarios.begin(s, "site-a", remote)
+    assert raised.value is boom
+
+
+def test_begin_restores_c0_before_reading_the_site(tmp_path: Path) -> None:
+    s = session(tmp_path)
+    events: list[str] = []
+
+    def ready(host: Vm) -> dict[str, object]:
+        events.append(f"ready {host.ip}")
+        return {"readyz": {"status": 200}}
+
+    remote = scenarios.Remote(
+        restore=lambda run: events.append(f"restore {run.ctx.site.site_id}"), wait_ready=ready
+    )
+    run, snap = scenarios.begin(s, "site-b", remote)
+    assert events == ["restore site-b", "ready 10.77.0.11"]
+    assert run is s.sites["site-b"]
+    assert judges.ready(snap)
+
+
+def test_no_external_counts_every_scenario_and_lost_intervals(tmp_path: Path) -> None:
+    s = session(tmp_path)
+
+    def mark(ctx: Context, host: Vm) -> None:
+        ctx.nft_total = {**ctx.nft_total, "dns_out": ctx.nft_total["dns_out"] + 0}
+
+    assert all(g2.check_no_external(s, "site-a", mark=mark).values())
+    s.sites["site-a"].ctx.nft_total["ext_out_v6"] = 2
+    assert g2.check_no_external(s, "site-a", mark=mark)["no_external"] is False
+    s.sites["site-b"].unmarked_restores = 1
+    assert g2.check_no_external(s, "site-b", mark=mark) == {
+        "no_external": True,
+        "every_interval_counted": False,
+    }
+    s.sites["site-b"].error = InfraError("vm memory")
+    with pytest.raises(InfraError):
+        g2.check_no_external(s, "site-b", mark=mark)
