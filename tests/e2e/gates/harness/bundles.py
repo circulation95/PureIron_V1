@@ -51,6 +51,14 @@ release 쌍(`BASE`·`NEXT`·`FAULT`)은 `release_pair.py`가 정한다 — 함�
   복사한다). nightly 기록·이미지는 최근 `NIGHTLY_KEEP`개만 남긴다. HEAD 빌드가 실패하면 exit 0으로
   `{"ok": false, ...}`를 낸다(제품 실패, D7) — 빌드 뒤 Docker가 응답하지 않으면 `INFRA_EXIT`(75,
   인프라 실패)이다. 그 밖의 0 아닌 종료(빌드가 성공한 뒤의 예외 포함)는 제품 스크립트 실패다.
+  prune은 NEXT와 그 FAULT 파생(`<NEXT>h`·`<NEXT>m`)을 한 묶음으로 남기고 지운다(store
+  디렉터리·docker 태그).
+- `nightly-faults`(G2 nightly FAULT 2종, M6-3 H9): 같은 run의 NEXT 기록에서 health
+  fault(`<NEXT>h`, collector만 `sleep`)와 migrate fault(`<NEXT>m`, core에 실패하는 migration +
+  epoch + 1)를 `W/releases`·`W/store`에만 만든다(`nightly_faults`).
+
+    uv run --no-sync python tests/e2e/gates/harness/bundles.py nightly-faults --work W \\
+        --next n1a2b3c4
 """
 
 from __future__ import annotations
@@ -58,6 +66,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -70,7 +79,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from images import config_digest_from_tar, config_digest_of_image, image_store, read_lock
 
-from harness.release_pair import DEFAULT, ReleasePair
+from harness.release_pair import (
+    DEFAULT,
+    FAULT_CHANGED,
+    FAULT_HEALTH,
+    FAULT_MIGRATE,
+    ReleasePair,
+    fault_record_problems,
+)
 from pureiron_core.platform.migrate import load_catalog
 from pureiron_project import canonical
 from pureiron_project.project import load_project
@@ -230,11 +246,27 @@ def fault_release(work: Path, pair: ReleasePair) -> Path:
     return path
 
 
+NIGHTLY_FAULT_NAME = re.compile(rf"^(n[0-9a-f]{{7}})[{FAULT_HEALTH}{FAULT_MIGRATE}]$")
+"""nightly FAULT 이름(`n<sha7>h`·`n<sha7>m`) — 그 NEXT와 한 묶음으로 남기고 지운다."""
+
+
+def nightly_group(name: str) -> str:
+    """`name`이 속한 nightly 묶음(NEXT 이름) — FAULT 파생은 그 NEXT, 나머지는 자기 자신."""
+    match = NIGHTLY_FAULT_NAME.fullmatch(name)
+    return match[1] if match else name
+
+
 def nightly_prune(names: dict[str, float], current: str, keep: int = NIGHTLY_KEEP) -> list[str]:
-    """지울 nightly 이름: `names`(이름 → store 디렉터리 mtime) 가운데 `current`와 그 밖의 최근
-    `keep - 1`개를 뺀 나머지(오래된 순)."""
-    others = sorted((n for n in names if n != current), key=lambda n: names[n], reverse=True)
-    return sorted(others[max(keep - 1, 0) :], key=lambda n: names[n])
+    """지울 nightly 이름: `names`(이름 → store 디렉터리 mtime)를 NEXT와 그 FAULT 파생(`h`·`m`)
+    묶음으로 모아, `current` 묶음과 그 밖의 최근 `keep - 1`개 묶음(묶음 안 가장 새 mtime 기준)을 뺀
+    나머지 묶음의 모든 이름(오래된 순)."""
+    groups: dict[str, float] = {}
+    for name, mtime in names.items():
+        group = nightly_group(name)
+        groups[group] = max(groups.get(group, mtime), mtime)
+    others = sorted((g for g in groups if g != current), key=lambda g: groups[g], reverse=True)
+    old = set(others[max(keep - 1, 0) :])
+    return sorted((n for n in names if nightly_group(n) in old), key=lambda n: (names[n], n))
 
 
 def _docker_ok() -> bool:
@@ -360,6 +392,177 @@ def nightly_release(
             for tag in (f"pureiron/{svc}:{old}", f"pureiron/{svc}:{old}-src"):
                 subprocess.run(("docker", "image", "rm", tag), capture_output=True, check=False)
     return {"ok": True, "name": name, "record": record, "simulator_tar": str(sim_out)}
+
+
+FAULT_MIGRATE_SQL = """\
+-- e2e fault(G2-6 ②, M6-3 H9): 표지 테이블을 만든 뒤 0으로 나눠 실패한다. 트랜잭션 migration이라
+-- 실패하면 표지 테이블도 남지 않아야 한다 — 남으면 부분 적용이다.
+CREATE TABLE e2e_fault_marker (id integer);
+SELECT 1 / 0;
+"""
+FAULT_MIGRATE_DOCKERFILE = """\
+FROM pureiron/core:{source}
+# e2e fault: NEXT migration + 실패하는 migration 하나 + epochs.yaml에 NEXT epoch + 1
+# -> Updater migrating에서 E_MIGRATE -> 롤백.
+COPY migrations/ /opt/pureiron/migrations/
+"""
+CORE_MIGRATIONS = "/opt/pureiron/migrations"
+"""core 이미지 안 migration 디렉터리(`services/core/Dockerfile` `PUREIRON_MIGRATIONS_DIR`)."""
+FAULT_MIGRATION_NAME = "e2e_fault_marker"
+
+
+def fault_migration(migrations: Path) -> tuple[str, int, str]:
+    """`migrations`(NEXT core 이미지의 migration 디렉터리) 다음 migration의 (파일 이름, epoch, 새
+    `epochs.yaml` 본문): 번호 = 가장 큰 번호 + 1(`NNNN_e2e_fault_marker.sql` — `load_catalog`의
+    `NNNN_lower_snake.sql`), epoch = NEXT의 `app_expected` + 1, `epochs.yaml`은 끝에 그 epoch 한
+    줄을 더한다. NEXT epoch를 상수로 두지 않는다 — HEAD가 migration을 더하면 같이 오른다."""
+    catalog = load_catalog(migrations)
+    version = max(m.version for m in catalog.migrations) + 1
+    filename = f"{version:04d}_{FAULT_MIGRATION_NAME}.sql"
+    epoch = catalog.app_expected + 1
+    epochs = (migrations / "epochs.yaml").read_text(encoding="utf-8").rstrip("\n")
+    return filename, epoch, f"{epochs}\n  {epoch}: {filename}\n"
+
+
+def write_fault_migrations(source: Path, dest: Path) -> int:
+    """`source`(NEXT migration) 사본 + 실패하는 migration + 새 `epochs.yaml`을 `dest`에 새로 만들고
+    `load_catalog`로 다시 읽어 epoch가 NEXT + 1이고 마지막 파일이 새 migration인지 확인한다. 새
+    epoch."""
+    filename, epoch, epochs = fault_migration(source)
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(source, dest)
+    (dest / filename).write_text(FAULT_MIGRATE_SQL, encoding="utf-8", newline="\n")
+    (dest / "epochs.yaml").write_text(epochs, encoding="utf-8", newline="\n")
+    catalog = load_catalog(dest)
+    if catalog.app_expected != epoch or catalog.migrations[-1].filename != filename:
+        raise SystemExit(f"{dest}: fault migration not accepted ({catalog.app_expected}, {epoch})")
+    return epoch
+
+
+def _image_migrations(tag: str, dest: Path) -> Path:
+    """이미지 `tag` 안의 migration 디렉터리를 `dest`로 꺼낸다(`docker create` → `docker cp`)."""
+    name = f"e2e-migrations-{os.getpid()}"
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    _run("docker", "create", "--name", name, tag)
+    try:
+        _run("docker", "cp", f"{name}:{CORE_MIGRATIONS}", str(dest))
+    finally:
+        subprocess.run(("docker", "rm", "-f", name), capture_output=True, check=False)
+    return dest
+
+
+def fault_pair(next_record: dict[str, object], health: str, migrate: str) -> ReleasePair:
+    """WSL 쪽 FAULT 빌드가 쓰는 최소 쌍 — NEXT 기록(이름·버전·epoch)에서 FAULT 2종의 이름·버전
+    (`<NEXT 버전>.fh`·`.fm`)·epoch(NEXT·NEXT + 1)를 정한다(`release_pair.nightly`와 같은 규칙)."""
+    name, version = str(next_record["name"]), str(next_record["version"])
+    epoch = cast(dict[str, int], next_record["schema"])["epoch"]
+    empty: frozenset[str] = frozenset()
+    return ReleasePair(
+        base="",
+        next=name,
+        fault=health,
+        fault_migrate=migrate,
+        releases={
+            name: version,
+            health: f"{version}.f{FAULT_HEALTH}",
+            migrate: f"{version}.f{FAULT_MIGRATE}",
+        },
+        epochs={name: epoch, health: epoch, migrate: epoch + 1},
+        caggs=empty,
+        base_columns=empty,
+        base_tables=empty,
+        base_indexes=empty,
+        next_tables=empty,
+        next_indexes=empty,
+        tree_tag="",
+        tree_descriptions={},
+    )
+
+
+def nightly_faults(
+    work: Path,
+    next_name: str,
+    *,
+    image_migrations: Callable[[str, Path], Path] = _image_migrations,
+) -> dict[str, object]:
+    """nightly FAULT 2종(M6-3 H9) `<NEXT>h`·`<NEXT>m`을 `W/releases/<이름>.json`·
+    `W/store/<이름>/`에만 만든다(저장소 `deploy/releases`·실제 image store는 건드리지 않는다). 둘 다
+    `W/releases/<NEXT>.json`(같은 run의 `nightly-release`)에서 파생한다:
+
+    - health(`h`): collector만 `sleep`(FAULT_DOCKERFILE — `/readyz` 503 → `E_HEALTH`), core·web은
+      NEXT 이미지 그대로(digest 같음), 스키마 = NEXT.
+    - migrate(`m`): core = `FROM pureiron/core:<NEXT>` + NEXT 이미지의 migration 사본에 실패하는
+      migration 하나와 epoch + 1(`write_fault_migrations`), collector·web은 NEXT 그대로. 스키마
+      epoch·app_expected = NEXT + 1, app_max_compatible = NEXT + 2.
+
+    site-db는 NEXT의 tar를 가리킨다. 기록마다 `fault_record_problems`가 비어야 한다(아니면 exit 1 —
+    제품 스크립트 실패). `{"ok": true, "records": {이름: 기록}}`."""
+    releases, store = work / "releases", work / "store"
+    next_path = releases / f"{next_name}.json"
+    if not next_path.is_file():
+        raise SystemExit(f"{next_path} missing (bundles.py nightly-release)")
+    next_record = cast(dict[str, object], json.loads(next_path.read_text(encoding="utf-8")))
+    pair = fault_pair(next_record, next_name + FAULT_HEALTH, next_name + FAULT_MIGRATE)
+    next_images = cast(dict[str, dict[str, str]], next_record["images"])
+    scratch = work / "digest-scratch"
+    for svc in APP_SERVICES:
+        ensure_image(
+            f"pureiron/{svc}:{next_name}",
+            store / next_name / f"{svc}.tar",
+            next_images[svc]["config_digest"],
+            digest_of=lambda tag: local_digest(tag, scratch),
+            load=lambda tar: _run("docker", "load", "-q", "-i", str(tar)),
+        )
+    build_root = work / "fault-build"
+    if build_root.exists():
+        shutil.rmtree(build_root)
+    records: dict[str, object] = {}
+    for name, kind in ((pair.fault, FAULT_HEALTH), (pair.fault_migrate, FAULT_MIGRATE)):
+        target = store / name
+        if target.exists():
+            shutil.rmtree(target)
+        target.mkdir(parents=True)
+        build_dir = build_root / name
+        build_dir.mkdir(parents=True)
+        changed = FAULT_CHANGED[kind]
+        epoch = pair.epochs[next_name]
+        if kind == FAULT_HEALTH:
+            dockerfile = FAULT_DOCKERFILE.format(base=next_name)
+        else:
+            source = image_migrations(f"pureiron/core:{next_name}", build_root / "next-migrations")
+            if load_catalog(source).app_expected != epoch:
+                raise SystemExit(f"pureiron/core:{next_name} migrations are not epoch {epoch}")
+            epoch = write_fault_migrations(source, build_dir / "migrations")
+            dockerfile = FAULT_MIGRATE_DOCKERFILE.format(source=next_name)
+        (build_dir / "Dockerfile").write_text(dockerfile, encoding="utf-8")
+        _run("docker", "build", "-q", "-t", f"pureiron/{changed}:{name}", str(build_dir))
+        images: dict[str, dict[str, str]] = {}
+        for svc in APP_SERVICES:
+            tag = f"pureiron/{svc}:{name}"
+            if svc != changed:
+                _run("docker", "tag", f"pureiron/{svc}:{next_name}", tag)
+            images[svc] = _save(tag, target / f"{svc}.tar")
+        relink(target / "site-db.tar", (store / next_name / "site-db.tar").resolve())
+        images["site-db"] = dict(next_images["site-db"])
+        record: dict[str, object] = {
+            "name": name,
+            "release": name,
+            "version": pair.releases[name],
+            "commit": next_record["commit"],
+            "images": images,
+            "schema": {"epoch": epoch, "app_expected": epoch, "app_max_compatible": epoch + 1},
+        }
+        problems = fault_record_problems(pair, name, record, next_record)
+        if problems:
+            raise SystemExit(f"{name}: " + "; ".join(problems))
+        path = releases / f"{name}.json"
+        path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        records[name] = record
+    shutil.rmtree(build_root)
+    return {"ok": True, "records": records}
 
 
 def site(
@@ -542,6 +745,9 @@ def main(argv: list[str] | None = None) -> int:
     nightly_cmd.add_argument("--version", required=True)
     nightly_cmd.add_argument("--base", required=True)
     nightly_cmd.add_argument("--sim-out", type=Path, required=True)
+    faults_cmd = sub.add_parser("nightly-faults")
+    faults_cmd.add_argument("--work", type=Path, required=True)
+    faults_cmd.add_argument("--next", required=True, help="NEXT 이름 n<sha7>")
     args = parser.parse_args(argv)
     os.chdir(ROOT)
     if args.command == "fault-release":
@@ -574,6 +780,8 @@ def main(argv: list[str] | None = None) -> int:
             sim_out=args.sim_out,
         )
         print(json.dumps(result, sort_keys=True))
+    elif args.command == "nightly-faults":
+        print(json.dumps(nightly_faults(args.work, args.next), sort_keys=True))
     else:
         print(install(args.work, args.out, args.release))
     return 0

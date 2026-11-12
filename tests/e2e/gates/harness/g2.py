@@ -25,6 +25,7 @@ from typing import cast
 
 from harness import (
     buildhost,
+    bundles,
     golden,
     hyperv,
     judges,
@@ -154,8 +155,17 @@ class Session:
     head_sha: str
     pair: ReleasePair
     tree: Path
+    """G2 100태그 트리(c0 g1 — `trees.g2_tree`)."""
     simulator: Path
     sites: dict[str, SiteRun]
+    release_trees: dict[str, Path] = field(default_factory=dict[str, Path])
+    """NEXT·FAULT 2종의 번들 트리 — G2 트리에서 태그 `pair.tree_tag`의 description만 바꾼 것
+    (`bundles.release_tree(source=tree)`). 판정 기대값(`trees.tree_expect`)도 같은 디렉터리에서
+    읽는다."""
+
+    def tree_of(self, release: str) -> Path:
+        """`release` 번들이 싣는 트리 — BASE(c0 g1)는 G2 트리, 나머지는 `release_trees`."""
+        return self.tree if release == self.pair.base else self.release_trees[release]
 
     @property
     def sim_image(self) -> str:
@@ -163,8 +173,9 @@ class Session:
 
 
 def prepare(run_id: str, sha: str) -> Session:
-    """WSL 동기화 → HEAD 빌드(NEXT 기록·시뮬레이터 tar) → 설치 번들 → 100태그 트리 → 현장별 g1
-    번들. HEAD 빌드 실패는 `HeadBuildError`(제품)로 멈춘다."""
+    """WSL 동기화 → HEAD 빌드(NEXT 기록·시뮬레이터 tar) → FAULT 2종(NEXT 파생, 기록·digest 확인)
+    → 설치 번들 → 100태그 트리와 NEXT·FAULT 트리 → 현장별 g1 번들. HEAD 빌드 실패는
+    `HeadBuildError`(제품)로 멈춘다."""
     out = bundles_dir(run_id)
     pair = repo_pair(sha)
     buildhost.sync_repo()
@@ -174,14 +185,22 @@ def prepare(run_id: str, sha: str) -> Session:
     judges.check_record(pair, pair.base, base_record)
     if next_record.get("version") != pair.releases[pair.next]:
         raise E2EError(f"{pair.next}: version {next_record.get('version')!r} != pair")
+    faults = buildhost.nightly_faults(pair, next_record)
+    for name, record in faults.items():
+        judges.check_record(pair, name, record)
     digests = {
         pair.base: judges.digests_of(base_record),
         pair.next: judges.digests_of(next_record),
+        **{name: judges.digests_of(record) for name, record in faults.items()},
     }
     pib, fpr, boot = buildhost.install_bundle(
         out / "install", pair.releases[pair.base], work=buildhost.NIGHTLY_WORK
     )
     tree = trees.g2_tree(out / "tree")
+    release_trees = {
+        name: bundles.release_tree(out / "trees" / name, name, pair, source=tree)
+        for name in (pair.next, pair.fault, pair.fault_migrate)
+    }
     runs: dict[str, SiteRun] = {}
     for base_site, _ in SITE_ROLES:
         release = site_release(pair, base_site.site_id)
@@ -207,7 +226,7 @@ def prepare(run_id: str, sha: str) -> Session:
             work=buildhost.NIGHTLY_WORK,
         )
         runs[base_site.site_id] = SiteRun(ctx, release)
-    return Session(run_id, sha, pair, tree, out / "nightly" / "simulator.tar", runs)
+    return Session(run_id, sha, pair, tree, out / "nightly" / "simulator.tar", runs, release_trees)
 
 
 BringUp = Callable[["SiteRun", "Session", str], None]
