@@ -133,6 +133,8 @@ class SiteRun:
     live: LiveWatch | None = None
     """c0 직후부터 `bring_up` 안에서 지켜본 live 결과(`watch_live`) — 판정(`check_install`)이 다른
     현장 부팅 뒤에 늦게 시작해도 "c0 뒤 5분 안에"를 증명한다(리뷰 r2 L3, 직렬 모드 포함)."""
+    c0_db: dict[str, object] = field(default_factory=dict[str, object])
+    """체크포인트 c0 직전(이력 시드 뒤) probe `db` — c0 기반 판정(`judges.judge_c0_base`)."""
     unmarked_restores: int = 0
     """외부 접속 카운터를 표시하지 못하고(VM이 꺼져 있었다) 복원한 횟수 — 그 구간의 카운터는
     잃었으므로 맨 끝 판정(`check_no_external`)이 거짓이 된다."""
@@ -296,8 +298,9 @@ def make_room(
 
 
 def bring_up(run: SiteRun, session: Session, ssh_pub: str) -> None:
-    """VM 부팅(dummy 장비 주소) → 외부 접속 기준값 → 설치 runbook·g1 → 시뮬레이터 → ready → viewer
-    → 체크포인트 c0."""
+    """VM 부팅(dummy 장비 주소) → 외부 접속 기준값 → 설치 runbook·g1 → 시뮬레이터 → ready → 이력
+    시드(압축 chunk, `site.seed_history`) → c0 기반 측정(`run.c0_db`, `Context.seed_rows`) → viewer
+    → 체크포인트 c0. c0 기반 판정은 G2-1(`check_install`)이 한다."""
     ctx = run.ctx
     host = ctx.site.host()
     files = golden.seed_files(
@@ -328,6 +331,10 @@ def bring_up(run: SiteRun, session: Session, ssh_pub: str) -> None:
     run.evidence["install_s"] = round(install_s, 1)
     site.start_simulator(host, session.simulator, session.sim_image)
     site.wait_ready(host, READY_TIMEOUT_S)
+    ctx.log("seed history (compressed chunks)")
+    site.seed_history(host)
+    run.c0_db = judges.db_of(site.probe(host))
+    ctx.seed_rows = judges.as_int(run.c0_db.get("tag_history_rows"))
     run.evidence["viewer"] = site.add_viewer(host)
     site.nft_mark(ctx, host)
     ctx.nft_c0 = dict(ctx.nft_last)
@@ -413,8 +420,10 @@ def check_install(
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, bool]:
-    """G2-1 한 현장: 설치(ready·실행 이미지 == 그 현장 release digest·overlay2·classic) → c0 뒤
-    5분 안에 100태그 전부 GOOD·장비 connected → 부팅 이후 외부 접속 0. 판정을 기록하고 돌려준다.
+    """G2-1 한 현장: 설치(ready·실행 이미지 == 그 현장 release digest·overlay2·classic) · c0
+    기반(이력 시드 뒤 압축 chunk·행 > 0·DB epoch == 그 현장 release epoch,
+    `judges.judge_c0_base`) → c0 뒤 5분 안에 100태그 전부 GOOD·장비 connected → 부팅 이후 외부
+    접속 0. 판정을 기록하고 돌려준다.
     "5분 안에"는 `bring_up`이 c0 직후부터 지켜본 결과(`run.live`)로 판정하고(`live_in_time`: c0부터
     `LIVE_TIMEOUT_S` 이내), 그것이 없을 때만 지금부터 지켜본다(그때 c0 + 300초가 이미 지났으면
     `live_in_time`이 거짓). 부팅·설치가 실패했으면 그 예외를 다시 던진다. VM 조작(`probe`·`live`·
@@ -424,6 +433,7 @@ def check_install(
     host = ctx.site.host()
     snap = probe(host)
     checks = judges.judge_installed(snap, ctx.digests[run.release])
+    checks |= judges.judge_c0_base(run.c0_db, session.pair.epochs[run.release])
     want = trees.g2_tag_paths()
     watch = run.live or watch_live(run, live=live, clock=clock, sleep=sleep)
     out, live_s = watch.reply, watch.seconds
@@ -443,6 +453,7 @@ def check_install(
         nft_total=ctx.nft_total,
         field_fwd=ctx.nft_total.get(golden.FIELD_RULE, 0),
         dns_lookups=ctx.dns_lookups,
+        c0_db={k: run.c0_db.get(k) for k in ("epoch", "compressed_chunks", *judges.ROW_KEYS)},
         **run.evidence,
     )
     return checks

@@ -9,8 +9,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+import probe
 import pytest
-from harness import g2, judges, order, paths, scenarios
+from harness import buildhost, g2, golden, hyperv, judges, order, paths, scenarios, site, sites
 from harness.context import Context, E2EError, InfraError
 from harness.release_pair import nightly
 from harness.vm import RemoteCommandError, Vm
@@ -263,3 +264,106 @@ def test_no_external_counts_every_scenario_and_lost_intervals(tmp_path: Path) ->
     s.sites["site-b"].error = InfraError("vm memory")
     with pytest.raises(InfraError):
         g2.check_no_external(s, "site-b", mark=mark)
+
+
+# ---------------------------------------------------------------- c0 보강(I2)
+
+
+C0_GOOD: dict[str, object] = {"epoch": "5", "compressed_chunks": "2", "tag_history_rows": "6900"}
+
+
+@pytest.mark.parametrize(
+    ("change", "item"),
+    [
+        ({"compressed_chunks": "0"}, "c0_compressed_chunks"),
+        ({"tag_history_rows": "0"}, "c0_seed_rows"),
+        ({"epoch": "4"}, "c0_epoch"),
+        ({"compressed_chunks": {"error": "x"}}, "c0_compressed_chunks"),
+    ],
+)
+def test_c0_base_needs_compressed_seed_rows_and_the_release_epoch(
+    change: dict[str, object], item: str
+) -> None:
+    assert all(judges.judge_c0_base(C0_GOOD, 5).values())
+    checks = judges.judge_c0_base({**C0_GOOD, **change}, 5)
+    assert scenarios.failed(checks) == [item]
+
+
+def test_g2_1_fails_on_a_c0_without_compressed_history(tmp_path: Path) -> None:
+    """G2-1 기록·단언에 c0 기반이 들어간다 — 압축 chunk가 없으면 그 현장 G2-1이 실패한다."""
+    s = session(tmp_path)
+    run = s.sites["site-b"]
+    run.c0_db = {**C0_GOOD, "compressed_chunks": "0"}
+    run.live = g2.LiveWatch({}, {"tags_good": True}, 1.0)
+    run.ctx.digests = {run.release: {}}
+    checks = g2.check_install(
+        s, "site-b", probe=lambda _: {"readyz": {"status": 200}}, mark=lambda ctx, host: None
+    )
+    assert checks["c0_compressed_chunks"] is False
+    assert checks["c0_seed_rows"] is True
+    saved = json.loads(run.ctx.site.state_file.read_text("utf-8"))["results"][-1]
+    assert saved["ok"] is False
+    assert saved["c0_db"]["compressed_chunks"] == "0"
+
+
+def test_bring_up_seeds_history_and_measures_c0_base_before_the_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F5: 시드 → c0 기반 측정(`run.c0_db`, `Context.seed_rows`) → 체크포인트 c0 순서."""
+    s = session(tmp_path)
+    run = s.sites["site-a"]
+    events: list[str] = []
+
+    def note(name: str, value: object = None) -> object:
+        def call(*args: object, **kwargs: object) -> object:
+            events.append(name)
+            return value
+
+        return call
+
+    monkeypatch.setattr(golden, "seed_files", note("seed_files", {}))
+    monkeypatch.setattr(sites, "boot_vm", note("boot", 1.0))
+    monkeypatch.setattr(sites, "site_vm_spec", note("spec"))
+    monkeypatch.setattr(site, "nft_counters", note("nft", {}))
+    monkeypatch.setattr(site, "resolved_lookups", note("dns", (0, dict[str, int]())))
+    monkeypatch.setattr(site, "install_runbook", note("install", 1.0))
+    monkeypatch.setattr(buildhost, "site_bundle", note("bundle", tmp_path / "g1.pib"))
+    monkeypatch.setattr(site, "start_simulator", note("simulator"))
+    monkeypatch.setattr(site, "wait_ready", note("ready", {}))
+    monkeypatch.setattr(site, "seed_history", note("seed"))
+    monkeypatch.setattr(site, "probe", note("probe", {"db": C0_GOOD}))
+    monkeypatch.setattr(site, "add_viewer", note("viewer", {}))
+    monkeypatch.setattr(site, "nft_mark", note("mark"))
+    monkeypatch.setattr(hyperv, "checkpoint", note("checkpoint"))
+    monkeypatch.setattr(g2, "watch_live", note("live", g2.LiveWatch({}, {}, 0.0)))
+    monkeypatch.setattr(g2, "trees", type("T", (), {"field_endpoints": note("field", ())}))
+    g2.bring_up(run, s, "ssh-ed25519 AAAA test")
+    assert events.index("ready") < events.index("seed") < events.index("probe")
+    assert events.index("probe") < events.index("checkpoint")
+    assert run.c0_db == C0_GOOD
+    assert run.ctx.seed_rows == 6900
+
+
+def test_probe_adds_three_row_counts_and_keeps_every_existing_key() -> None:
+    """F6: users·audit_log·alarm_journal 행 수 3개. 기존 키(run.py가 같이 쓴다)는 그대로."""
+    existing = {
+        "epoch",
+        "caggs",
+        "compressed_chunks",
+        "tag_history_rows",
+        "realtime_caggs",
+        "tables",
+        "indexes",
+        "columns",
+        "project_files",
+        "device_ids",
+        "tag_paths",
+        "alarm_ids",
+        "tag_defs",
+        "alarm_defs",
+    }
+    assert set(probe.DB_SQL) == existing | {"users_rows", "audit_log_rows", "alarm_journal_rows"}
+    assert probe.DB_SQL["users_rows"] == "SELECT count(*) FROM users"
+    assert probe.DB_SQL["audit_log_rows"] == "SELECT count(*) FROM audit_log"
+    assert probe.DB_SQL["alarm_journal_rows"] == "SELECT count(*) FROM alarm_journal"
+    assert set(judges.ROW_KEYS) <= set(probe.DB_SQL)

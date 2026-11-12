@@ -609,6 +609,21 @@ def judge_device_connected(body: object, device_id: str) -> dict[str, bool]:
     }
 
 
+ROW_KEYS = ("users_rows", "audit_log_rows", "alarm_journal_rows", "tag_history_rows")
+"""probe 행 수 4종 — 롤백·실패한 시도 뒤 "≥ 이전"으로 본다(users·감사·ACK 기록·이력)."""
+
+
+def judge_c0_base(db: dict[str, object], epoch: int) -> dict[str, bool]:
+    """G2 c0 기반(M6-3 F5): 이력 시드(`site.seed_history`) 뒤 압축 chunk와 `tag_history` 행이 있고
+    DB epoch가 그 현장 release의 epoch다 — 업그레이드가 압축 DB 위에서 돌고 행 수 보존을 잴 수
+    있어야 한다."""
+    return {
+        "c0_compressed_chunks": as_int(db.get("compressed_chunks")) > 0,
+        "c0_seed_rows": as_int(db.get("tag_history_rows")) > 0,
+        "c0_epoch": db.get("epoch") == str(epoch),
+    }
+
+
 def judge_live(
     out: dict[str, object], want_paths: frozenset[str], device_id: str
 ) -> dict[str, bool]:
