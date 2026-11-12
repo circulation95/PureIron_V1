@@ -265,6 +265,131 @@ def judge_rollback_time(result: dict[str, object]) -> bool:
     return bool(result["images_match"]) and float(str(result["seconds"])) <= ROLLBACK_LIMIT_S
 
 
+ROLLING_BACK = "rolling_back"
+"""Updater phase — 실패한 phase에서 들어가 직전 이미지 + ready를 확인하면 `failed`로 나간다."""
+CONVERGE_LIMIT_S = 600
+"""fault 시도가 failed로 수렴해야 하는 시간(G2-6 "10분 안")."""
+
+
+def rolling_back_seconds(report: dict[str, object]) -> float | None:
+    """보고 `phase_durations_s.rolling_back` — `rolling_back` 진입부터 다음 phase(`failed`·
+    `failed_manual`) 진입까지. Updater는 직전 이미지를 띄우고 ready를 확인한 뒤에야 `failed`로
+    들어가므로(`phases._rollback`) 이 구간이 "롤백 시작부터 직전 이미지 + ready까지"다. 롤백을 다시
+    해도(`rollback_tries`) phase 진입 시각은 처음 한 번이라 다시 한 시간이 포함된다. 없으면 None."""
+    durations = report.get("phase_durations_s")
+    if not isinstance(durations, dict):
+        return None
+    value = cast(dict[str, object], durations).get(ROLLING_BACK)
+    return float(value) if isinstance(value, int | float) else None
+
+
+def judge_rollback_window(report: dict[str, object]) -> bool:
+    """`rolling_back` 구간(`rolling_back_seconds`)이 있고 `ROLLBACK_LIMIT_S` 이하다."""
+    seconds = rolling_back_seconds(report)
+    return seconds is not None and 0 <= seconds <= ROLLBACK_LIMIT_S
+
+
+def rows_kept(before: dict[str, object], after: dict[str, object]) -> dict[str, bool]:
+    """행 수 4종(`ROW_KEYS`)이 이전 이상이다(이전 값을 못 읽었으면 거짓)."""
+    return {
+        f"rows_{key.removesuffix('_rows')}": 0 <= as_int(before.get(key)) <= as_int(after.get(key))
+        for key in ROW_KEYS
+    }
+
+
+def prefixed(prefix: str, checks: dict[str, bool]) -> dict[str, bool]:
+    return {f"{prefix}{name}": ok for name, ok in checks.items()}
+
+
+def judge_g2_rollback(
+    before: dict[str, object],
+    after: dict[str, object],
+    report: dict[str, object],
+    *,
+    base_digests: dict[str, str],
+    base_tree: TreeExpect,
+) -> dict[str, bool]:
+    """G2-4(revert 전): c0(BASE)에서 FAULT-h를 적용한 시도가 `failed`·보고 `E_HEALTH`로 끝나고 실행
+    이미지가 BASE digest이며 `rolling_back` 진입부터 직전 이미지 + ready까지 `ROLLBACK_LIMIT_S`
+    이하다. 행 수 4종 ≥ 이전, site_rev·base_site_rev가 이전과 같고, BASE 트리(content_hash·정의
+    값)로 돌아왔으며, 경보 없음·메트릭 `updater_failed_manual` 0·edit-lock 해제·applied gen
+    그대로."""
+    applied = updater_state(before).get("applied_gen")
+    checks = judge_attempt(
+        after,
+        report,
+        expect="failed",
+        want_digests=base_digests,
+        want_applied=cast(int | None, applied),
+        expect_code=FAULT_CODE,
+        check_metric=True,
+    )
+    rev = revs(project_body(before))
+    return {
+        "c0_ready": ready(before),
+        **checks,
+        "rolling_back_window": judge_rollback_window(report),
+        **rows_kept(db_of(before), db_of(after)),
+        "revs_kept": rev is not None and revs(project_body(after)) == rev,
+        **prefixed("base_tree_", judge_tree(after, base_tree)),
+    }
+
+
+def judge_health_failure(
+    snap: dict[str, object],
+    report: dict[str, object],
+    seconds: float,
+    *,
+    gen: int,
+    base_digests: dict[str, str],
+) -> dict[str, bool]:
+    """G2-6 ③(G2-4와 같은 FAULT-h 시도): `CONVERGE_LIMIT_S` 안에 그 gen이 failed로 수렴했고(보고
+    `E_HEALTH`), 시도 잔류가 없으며(probe가 읽은 `attempt`가 None — 못 읽었으면 거짓), 직전 정상
+    이미지(BASE)로 ready이고 edit-lock이 풀렸다."""
+    state = updater_state(snap)
+    return {
+        "failed_in_time": state.get("last_result") == "failed"
+        and state.get("last_attempted_gen") == gen
+        and 0 <= seconds <= CONVERGE_LIMIT_S,
+        "code": report.get("code") == FAULT_CODE,
+        "no_attempt_left": "attempt" in state and state["attempt"] is None,
+        "previous_ready": ready(snap) and running_digests(snap) == base_digests,
+        "edit_unlocked": edit_unlocked(snap),
+    }
+
+
+def judge_g2_retry(
+    c0_db: dict[str, object],
+    snap: dict[str, object],
+    report: dict[str, object],
+    *,
+    gen: int,
+    next_digests: dict[str, str],
+    next_tree: TreeExpect,
+    expected_schema: dict[str, object],
+) -> dict[str, bool]:
+    """G2-4 재시도(롤백된 BASE 위에서 NEXT): `succeeded`·실행 이미지 == NEXT·NEXT 트리 적용·경보
+    없음·메트릭 0, D9 ⓐ(이름 집합 5종 == 기대 스키마)·ⓑ(c0 집합 ⊂ 지금 집합), 압축 chunk 유지
+    (c0 이상, c0 > 0)."""
+    checks = judge_attempt(
+        snap,
+        report,
+        expect="succeeded",
+        want_digests=next_digests,
+        want_applied=gen,
+        check_metric=True,
+    )
+    db = db_of(snap)
+    chunks = as_int(c0_db.get("compressed_chunks"))
+    return {
+        **checks,
+        **prefixed("next_tree_", judge_tree(snap, next_tree)),
+        **judge_schema_equal(db, expected_schema),
+        **judge_schema_kept(c0_db, db),
+        "compressed_chunks_kept": 0 < chunks <= as_int(db.get("compressed_chunks")),
+    }
+
+
 # ---------------------------------------------------------------- 외부 접속(nftables·resolved)
 
 
