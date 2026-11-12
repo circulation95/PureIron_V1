@@ -266,7 +266,7 @@ def test_c0_base_needs_compressed_seed_rows_and_the_release_epoch(
     assert scenarios.failed(checks) == [item]
 
 
-def test_g2_1_fails_on_a_c0_without_compressed_history(tmp_path: Path) -> None:
+def test_install_check_fails_on_a_c0_without_compressed_history(tmp_path: Path) -> None:
     """G2-1 기록·단언에 c0 기반이 들어간다 — 압축 chunk가 없으면 그 현장 G2-1이 실패한다."""
     s = session(tmp_path)
     run = s.sites["site-b"]
