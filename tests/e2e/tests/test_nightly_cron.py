@@ -12,7 +12,7 @@ from typing import NoReturn
 import nightly
 import pytest
 import run
-from harness import failures, flake, golden, hyperv, preflight, report, schedule, sites
+from harness import failures, flake, golden, hyperv, preflight, publish, report, schedule, sites
 from harness.context import Context, InfraError
 from harness.github import DryRun
 from harness.release_pair import DEFAULT
@@ -315,6 +315,6 @@ def test_a_night_stopped_at_preflight_leaves_a_line_and_an_error_status_but_no_i
     )
     outcome = preflight.Outcome(measure, preflight.Limits(), ["memory 2.0 GB < 8.0 GB"], [])
     summary = nightly.preflight_summary("20261110T180000Z", SHA, TODAY, outcome)
-    out = nightly.step_publish(summary, gh, TODAY)
+    out = publish.step_publish(summary, gh, TODAY)
     assert gh.calls == ["append", "status error"]
     assert (out["issue"], out["infra_issue"]) == (None, None)
