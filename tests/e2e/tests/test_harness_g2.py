@@ -256,7 +256,12 @@ def test_window_flake_on_fault_retries_without_settling(tmp_path: Path) -> None:
 
 SIM_PATHS = sorted(trees.g2_tag_paths())
 NEXT_DIGESTS = {"core": "sha256:n1", "collector": "sha256:n2", "web": "sha256:n3"}
-C0_DB: dict[str, object] = {"epoch": "5", "compressed_chunks": "3", "tag_history_rows": "6900"}
+C0_DB: dict[str, object] = {
+    "epoch": "5",
+    "compressed_chunks": "3",
+    "tag_history_rows": "6900",
+    **dict.fromkeys(judges.SCHEMA_SETS, "x"),
+}
 """이력 시드 뒤 c0 기반 probe `db`(M6-3a I2) — 압축 chunk·행 > 0, epoch = 쌍의 epoch 5."""
 
 
@@ -276,7 +281,16 @@ def g2_session(tmp_path: Path) -> g2.Session:
         )
         ctx.nft_total = dict.fromkeys(judges.AUDIT_COUNTERS, 0)
         runs[base.site_id] = g2.SiteRun(ctx, release, c0_at=0.0, c0_db=dict(C0_DB))
-    return g2.Session("20261110T180000Z", "a" * 40, pair, tmp_path, tmp_path / "sim.tar", runs)
+    expected = {k: C0_DB[k] for k in ("epoch", *judges.SCHEMA_SETS)}
+    return g2.Session(
+        "20261110T180000Z",
+        "a" * 40,
+        pair,
+        tmp_path,
+        tmp_path / "sim.tar",
+        runs,
+        expected_schema=expected,
+    )
 
 
 def installed(_: Vm) -> dict[str, object]:

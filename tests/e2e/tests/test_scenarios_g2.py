@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 import json
 import subprocess
 import sys
@@ -11,33 +10,13 @@ from pathlib import Path
 
 import probe
 import pytest
+from g2_fakes import C0_GOOD, session
 from harness import buildhost, g2, golden, hyperv, judges, order, paths, scenarios, site, sites
 from harness.context import Context, E2EError, InfraError
-from harness.release_pair import nightly
 from harness.vm import RemoteCommandError, Vm
 
 GATES = paths.REPO / "tests" / "e2e" / "gates"
 VM_3GIB = {"PUREIRON_E2E_VM_GIB": "3"}
-
-
-def session(tmp_path: Path) -> g2.Session:
-    pair = nightly({"r5": {"version": "2026.11.1", "schema": {"epoch": 5}}}, {"r5"}, "a" * 40, 5)
-    runs: dict[str, g2.SiteRun] = {}
-    for base, _ in g2.SITE_ROLES:
-        release = g2.site_release(pair, base.site_id)
-        one = dataclasses.replace(base, state_file=tmp_path / base.site_id / "state.json")
-        ctx = Context(
-            run_id="20261110T180000Z",
-            artifacts=str(tmp_path / base.site_id),
-            current=release,
-            site=one,
-            pair=pair,
-        )
-        ctx.nft_total = dict.fromkeys(judges.AUDIT_COUNTERS, 0)
-        ctx.nft_c0 = {"ext_out_v4": 7}
-        ctx.nft_last = {"ext_out_v4": 9}
-        runs[base.site_id] = g2.SiteRun(ctx, release, c0_at=0.0)
-    return g2.Session("20261110T180000Z", "a" * 40, pair, tmp_path, tmp_path / "sim.tar", runs)
 
 
 # ---------------------------------------------------------------- 실행 순서
@@ -267,9 +246,6 @@ def test_no_external_counts_every_scenario_and_lost_intervals(tmp_path: Path) ->
 
 
 # ---------------------------------------------------------------- c0 보강(I2)
-
-
-C0_GOOD: dict[str, object] = {"epoch": "5", "compressed_chunks": "2", "tag_history_rows": "6900"}
 
 
 @pytest.mark.parametrize(

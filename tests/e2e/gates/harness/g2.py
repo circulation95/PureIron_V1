@@ -60,6 +60,8 @@ VM_MEMORY_FILE = "vm-memory.json"
 RESTORE_MEMORY_FILE = "restore-memory.json"
 """현장 결과 디렉터리에 남기는 c0 복원 직전 메모리 확인 기록(`restore_c0`, 복원마다 한 항목)."""
 ITEM_NO_EXTERNAL = "G2 no external since boot (all scenarios)"
+EXPECTED_SCHEMA_FILE = "expected-schema.json"
+"""결과 디렉터리에 남기는 D9 기대 스키마(`buildhost.expected_schema`)."""
 SITE_ROLES: tuple[tuple[Site, str], ...] = ((sites.SITE_A, "base"), (sites.SITE_B, "next"))
 """현장 → 설치 release 역할(E2). site-a는 M6-4에서 BASE→HEAD 업그레이드 대상이라 BASE다."""
 
@@ -158,6 +160,9 @@ class Session:
     """G2 100태그 트리(c0 g1 — `trees.g2_tree`)."""
     simulator: Path
     sites: dict[str, SiteRun]
+    expected_schema: dict[str, object] = field(default_factory=dict[str, object])
+    """D9 기대 스키마 — WSL의 빈 DB에 NEXT를 migrate한 뒤 probe와 같은 SQL로 읽은 이름 집합
+    5종·epoch(`EXPECTED_SCHEMA_FILE`)."""
     release_trees: dict[str, Path] = field(default_factory=dict[str, Path])
     """NEXT·FAULT 2종의 번들 트리 — G2 트리에서 태그 `pair.tree_tag`의 description만 바꾼 것
     (`bundles.release_tree(source=tree)`). 판정 기대값(`trees.tree_expect`)도 같은 디렉터리에서
@@ -186,6 +191,7 @@ def prepare(run_id: str, sha: str) -> Session:
     if next_record.get("version") != pair.releases[pair.next]:
         raise E2EError(f"{pair.next}: version {next_record.get('version')!r} != pair")
     faults = buildhost.nightly_faults(pair, next_record)
+    expected = buildhost.expected_schema(results_dir(run_id) / EXPECTED_SCHEMA_FILE, pair)
     for name, record in faults.items():
         judges.check_record(pair, name, record)
     digests = {
@@ -226,7 +232,16 @@ def prepare(run_id: str, sha: str) -> Session:
             work=buildhost.NIGHTLY_WORK,
         )
         runs[base_site.site_id] = SiteRun(ctx, release)
-    return Session(run_id, sha, pair, tree, out / "nightly" / "simulator.tar", runs, release_trees)
+    return Session(
+        run_id,
+        sha,
+        pair,
+        tree,
+        out / "nightly" / "simulator.tar",
+        runs,
+        expected_schema=expected,
+        release_trees=release_trees,
+    )
 
 
 BringUp = Callable[["SiteRun", "Session", str], None]
@@ -453,6 +468,9 @@ def check_install(
     snap = probe(host)
     checks = judges.judge_installed(snap, ctx.digests[run.release])
     checks |= judges.judge_c0_base(run.c0_db, session.pair.epochs[run.release])
+    fresh = run.release == session.pair.next
+    if fresh:  # D9 ⓒ: 새 설치(NEXT) c0의 이름 집합 5종 == 기대 스키마
+        checks |= judges.judge_schema_equal(run.c0_db, session.expected_schema)
     want = trees.g2_tag_paths()
     watch = run.live or watch_live(run, live=live, clock=clock, sleep=sleep)
     out, live_s = watch.reply, watch.seconds
@@ -473,6 +491,7 @@ def check_install(
         field_fwd=ctx.nft_total.get(golden.FIELD_RULE, 0),
         dns_lookups=ctx.dns_lookups,
         c0_db={k: run.c0_db.get(k) for k in ("epoch", "compressed_chunks", *judges.ROW_KEYS)},
+        schema_diff=judges.schema_diff(run.c0_db, session.expected_schema) if fresh else None,
         **run.evidence,
     )
     return checks

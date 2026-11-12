@@ -59,6 +59,12 @@ release 쌍(`BASE`·`NEXT`·`FAULT`)은 `release_pair.py`가 정한다 — 함�
 
     uv run --no-sync python tests/e2e/gates/harness/bundles.py nightly-faults --work W \\
         --next n1a2b3c4
+- `expected-schema`(G2 스키마 자동 판정 D9, M6-3 H8): 임시 TimescaleDB(그 run의 site-db 이미지,
+  호스트 포트 없음)에 NEXT core로 빈 DB를 끝까지 migrate하고 probe와 같은 SQL로 이름 집합
+  5종·epoch를 `--out`에 쓴다(`expected_schema`). 컨테이너는 성공·실패 모두 지운다.
+
+    uv run --no-sync python tests/e2e/gates/harness/bundles.py expected-schema --work W \\
+        --next n1a2b3c4 --out <expected-schema.json>
 """
 
 from __future__ import annotations
@@ -70,13 +76,17 @@ import re
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "deploy" / "build"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "site"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import probe
 from images import config_digest_from_tar, config_digest_of_image, image_store, read_lock
 
 from harness.release_pair import (
@@ -565,6 +575,149 @@ def nightly_faults(
     return {"ok": True, "records": records}
 
 
+SCHEMA_LABEL = "pureiron.e2e=expected-schema"
+"""기대 스키마용 임시 컨테이너·네트워크 표지 — 시작할 때 남은 것을 이것으로 찾아 지운다."""
+SCHEMA_DB_READY_S = 180
+"""임시 TimescaleDB가 TCP로 받을 때까지(initdb 포함)."""
+SCHEMA_MIGRATE_S = 600
+"""빈 DB에 NEXT를 끝까지 migrate하는 시간."""
+SCHEMA_QUERY_S = 60
+SCHEMA_POLL_S = 2
+SCHEMA_DOCKER_S = 120
+"""그 밖의 docker 명령 하나(network·run -d·rm·load)."""
+EXPECTED_KEYS = ("epoch", *probe.SCHEMA_KEYS)
+"""기대 스키마 항목 — probe와 같은 SQL(`probe.DB_SQL`)로 읽는다."""
+
+DockerRun = Callable[[Sequence[str], float], subprocess.CompletedProcess[str]]
+
+
+def _docker(args: Sequence[str], timeout_s: float) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ("docker", *args), capture_output=True, text=True, timeout=timeout_s, check=False
+    )
+
+
+def _remove_labeled(docker: DockerRun) -> None:
+    """`SCHEMA_LABEL`이 붙은 컨테이너·네트워크를 지운다(이전 실행이 시간 초과로 죽어 남긴 것)."""
+    found = docker(("ps", "-aq", "--filter", f"label={SCHEMA_LABEL}"), SCHEMA_DOCKER_S)
+    if found.stdout.split():
+        docker(("rm", "-f", *found.stdout.split()), SCHEMA_DOCKER_S)
+    found = docker(("network", "ls", "-q", "--filter", f"label={SCHEMA_LABEL}"), SCHEMA_DOCKER_S)
+    if found.stdout.split():
+        docker(("network", "rm", *found.stdout.split()), SCHEMA_DOCKER_S)
+
+
+@dataclass(frozen=True)
+class SchemaDb:
+    """기대 스키마용 임시 DB — 이름·네트워크·이미지와 docker·시계."""
+
+    name: str
+    net: str
+    image: str
+    docker: DockerRun
+    sleep: Callable[[float], None]
+    clock: Callable[[], float]
+
+    def start(self) -> None:
+        """네트워크 → TimescaleDB(신뢰 인증, 호스트 포트 없음) → TCP로 받을 때까지. 실패는
+        인프라."""
+        label = ("--label", SCHEMA_LABEL)
+        if self.docker(("network", "create", *label, self.net), SCHEMA_DOCKER_S).returncode:
+            raise infra_exit(f"docker network create {self.net} failed")
+        env = ("POSTGRES_USER=pureiron", "POSTGRES_DB=pureiron", "POSTGRES_HOST_AUTH_METHOD=trust")
+        run = ("run", "-d", "--name", self.name, *label, "--network", self.net)
+        started = self.docker(
+            (
+                *run,
+                *(a for e in env for a in ("-e", e)),
+                self.image,
+                *("postgres", "-c", "timescaledb.telemetry_level=off"),
+            ),
+            SCHEMA_DOCKER_S,
+        )
+        if started.returncode:
+            raise infra_exit(f"site-db {self.image} did not start: {started.stderr[-800:]}")
+        # TCP로 본다 — initdb 임시 서버는 unix socket만 열고 곧 재시작한다(compose healthcheck)
+        ready = ("exec", self.name, "pg_isready", "-h", "127.0.0.1", "-U", "pureiron")
+        deadline = self.clock() + SCHEMA_DB_READY_S
+        while self.docker((*ready, "-d", "pureiron"), SCHEMA_QUERY_S).returncode:
+            if self.clock() >= deadline:
+                raise infra_exit(f"site-db {self.image} not ready in {SCHEMA_DB_READY_S}s")
+            self.sleep(SCHEMA_POLL_S)
+
+    def migrate(self, core: str) -> subprocess.CompletedProcess[str] | None:
+        """`core` 이미지로 빈 DB를 끝까지 migrate한다(시간 초과면 None)."""
+        dsn = f"PUREIRON_DB_DSN=postgresql://pureiron@{self.name}:5432/pureiron"
+        cmd = ("run", "--rm", "--label", SCHEMA_LABEL, "--network", self.net, "-e", dsn, core)
+        try:
+            return self.docker((*cmd, "migrate", "up"), SCHEMA_MIGRATE_S)
+        except subprocess.TimeoutExpired:
+            return None
+
+    def read(self) -> dict[str, object]:
+        """probe와 같은 SQL로 `EXPECTED_KEYS`를 읽는다. psql 실패는 하네스 스크립트 실패(exit 1)."""
+        schema: dict[str, object] = {}
+        for key in EXPECTED_KEYS:
+            psql = ("exec", self.name, "psql", "-At", "-U", "pureiron", "-d", "pureiron", "-c")
+            done = self.docker((*psql, probe.DB_SQL[key]), SCHEMA_QUERY_S)
+            if done.returncode:
+                raise SystemExit(f"{key}: psql exited {done.returncode}: {done.stderr[-800:]}")
+            schema[key] = done.stdout.strip()
+        return schema
+
+    def remove(self) -> None:
+        for cleanup in (("rm", "-f", self.name), ("network", "rm", self.net)):
+            try:
+                self.docker(cleanup, SCHEMA_DOCKER_S)
+            except subprocess.TimeoutExpired:
+                print(f"cleanup timed out: docker {' '.join(cleanup)}", file=sys.stderr)
+
+
+def expected_schema(
+    work: Path,
+    next_name: str,
+    out: Path,
+    *,
+    docker: DockerRun = _docker,
+    docker_ok: Callable[[], bool] = _docker_ok,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> dict[str, object]:
+    """D9 기대 스키마(M6-3 H8): 그 run의 site-db 이미지로 임시 TimescaleDB를 띄우고(호스트 포트
+    없음 — 같은 PC의 CI가 25432·25433을 쓴다) NEXT core 이미지로 빈 DB를 끝까지 migrate한 뒤, VM
+    probe와 같은 SQL(`probe.DB_SQL`)로 이름 집합 5종과 epoch를 읽어 `out`(JSON)에 쓴다. 컨테이너·
+    네트워크는 성공·실패 모두 지운다(시작할 때 남은 것도). 결과 한 줄: `{"ok": true, "schema":
+    {...}}` / NEXT가 빈 DB에 migrate되지 않으면 `{"ok": false, "stage": "migrate", ...}`(제품,
+    exit 0). Docker 무응답·DB가 끝내 받지 않음은 `INFRA_EXIT`(인프라)."""
+    path = work / "releases" / f"{next_name}.json"
+    images = cast(dict[str, dict[str, str]], json.loads(path.read_text("utf-8"))["images"])
+    core, image = images["core"]["tag"], images["site-db"]["tag"]
+    suffix = f"{next_name}-{os.getpid()}"
+    db = SchemaDb(f"e2e-schema-db-{suffix}", f"e2e-schema-{suffix}", image, docker, sleep, clock)
+    try:
+        if docker(("image", "inspect", image), SCHEMA_DOCKER_S).returncode:
+            tar = work / "store" / next_name / "site-db.tar"
+            if docker(("load", "-q", "-i", str(tar)), SCHEMA_DOCKER_S).returncode:
+                raise infra_exit(f"cannot load {image} from {tar}")
+        _remove_labeled(docker)
+        db.start()
+        migrated = db.migrate(core)
+        if migrated is None or migrated.returncode:
+            if not docker_ok():
+                raise infra_exit("docker is not responding after migrate failed")
+            rc = "timeout" if migrated is None else migrated.returncode
+            tail = "" if migrated is None else (migrated.stdout + migrated.stderr)
+            return {"ok": False, "stage": "migrate", "rc": rc, "tail": tail[-BUILD_TAIL_CHARS:]}
+        schema = db.read()
+    except subprocess.TimeoutExpired as exc:
+        raise infra_exit(f"docker did not answer: {exc}") from None
+    finally:
+        db.remove()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(schema, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return {"ok": True, "schema": schema, "path": str(out), "image": core}
+
+
 def site(
     work: Path,
     out: Path,
@@ -748,6 +901,10 @@ def main(argv: list[str] | None = None) -> int:
     faults_cmd = sub.add_parser("nightly-faults")
     faults_cmd.add_argument("--work", type=Path, required=True)
     faults_cmd.add_argument("--next", required=True, help="NEXT 이름 n<sha7>")
+    schema_cmd = sub.add_parser("expected-schema")
+    schema_cmd.add_argument("--work", type=Path, required=True)
+    schema_cmd.add_argument("--next", required=True, help="NEXT 이름 n<sha7>")
+    schema_cmd.add_argument("--out", type=Path, required=True, help="expected-schema.json")
     args = parser.parse_args(argv)
     os.chdir(ROOT)
     if args.command == "fault-release":
@@ -782,6 +939,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, sort_keys=True))
     elif args.command == "nightly-faults":
         print(json.dumps(nightly_faults(args.work, args.next), sort_keys=True))
+    elif args.command == "expected-schema":
+        print(json.dumps(expected_schema(args.work, args.next, args.out), sort_keys=True))
     else:
         print(install(args.work, args.out, args.release))
     return 0

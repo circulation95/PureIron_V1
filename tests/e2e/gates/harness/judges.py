@@ -173,6 +173,43 @@ def judge_next_schema(db: dict[str, object], pair: ReleasePair) -> dict[str, boo
     }
 
 
+SCHEMA_SETS = ("tables", "columns", "indexes", "caggs", "realtime_caggs")
+"""자동 판정(D9)이 비교하는 이름 집합 5종 — probe `SCHEMA_KEYS`와 같다(단위 시험이 대조한다)."""
+
+
+def judge_schema_equal(db: dict[str, object], expected: dict[str, object]) -> dict[str, bool]:
+    """D9 ⓐ(업그레이드 뒤)·ⓒ(새 설치 c0): 이름 집합 5종이 기대 스키마(`expected-schema.json`)와
+    정확히 같고 epoch도 같다. 기대 집합이 비면 거짓이다 — 못 읽은 기대값이 통과가 되지 않게."""
+    checks = {
+        f"schema_{key}": bool(names(expected, key)) and names(db, key) == names(expected, key)
+        for key in SCHEMA_SETS
+    }
+    want = expected.get("epoch")
+    checks["schema_epoch"] = isinstance(want, str) and bool(want) and db.get("epoch") == want
+    return checks
+
+
+def judge_schema_kept(before: dict[str, object], after: dict[str, object]) -> dict[str, bool]:
+    """D9 ⓑ: 업그레이드 전(c0, BASE) 이름 집합 5종이 업그레이드 뒤 집합에 모두 있다(ADD-only). 전
+    집합이 비면(못 읽음) 거짓."""
+    return {
+        f"kept_{key}": bool(names(before, key)) and names(before, key) <= names(after, key)
+        for key in SCHEMA_SETS
+    }
+
+
+def schema_diff(db: dict[str, object], expected: dict[str, object]) -> dict[str, object]:
+    """기록용: 집합마다 기대에 없는 이름(`extra`)·기대에 있는데 없는 이름(`missing`), 다른 것만."""
+    diff: dict[str, object] = {}
+    for key in SCHEMA_SETS:
+        got, want = names(db, key), names(expected, key)
+        if got != want:
+            diff[key] = {"extra": sorted(got - want), "missing": sorted(want - got)}
+    if db.get("epoch") != expected.get("epoch"):
+        diff["epoch"] = {"got": db.get("epoch"), "want": expected.get("epoch")}
+    return diff
+
+
 # ---------------------------------------------------------------- 끝난 시도
 
 
