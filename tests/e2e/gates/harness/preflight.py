@@ -2,7 +2,8 @@
 
 판단 기준(`Limits`, 환경변수로 덮어쓸 수 있다 — 리허설에서 일부러 infra 실패를 낼 때):
 Windows 가용 메모리 ≥ `PUREIRON_G2_MIN_MEM_GB`(8), C: 여유 ≥ `PUREIRON_G2_MIN_DISK_GB`(40),
-WSL이 응답(시간 제한 있는 echo), WSL Docker 동작, 진행 중인 foundation-ci 없음(최대
+Hyper-V 권한·vSwitch(`sites.check_host`), WSL이 응답(시간 제한 있는 echo), WSL Docker 동작,
+진행 중인 foundation-ci 없음(최대
 `PUREIRON_G2_CI_WAIT_S` 1800초 기다린다). GitHub Actions 안(`GITHUB_ACTIONS=true`)에서는
 foundation-ci 상태를 읽지 못하는 것(`gh run list` 실패)도 어긴 것으로 친다 — 그 확인이 꺼진 채로
 도는 것을 조용히 넘기지 않게(로컬에서는 메모만 남긴다). 하나라도 어기면 `infra`로 멈춘다.
@@ -31,9 +32,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
-from harness import buildhost, golden, hyperv
-from harness.context import E2EError
+from harness import buildhost, golden, hyperv, sites
+from harness.context import E2EError, InfraError
 from harness.github import TEMP_BRANCH_PREFIX, GitHub, GitHubError
+from harness.hyperv import HyperVError
 from harness.site import Site
 
 GIB = 1024**3
@@ -103,6 +105,8 @@ class Measure:
     wsl_cache_gb: float | None = None
     """WSL 안의 페이지 캐시(`/proc/meminfo` Buffers + Cached) — 회수하면 Windows로 돌아올 수
     있는 몫."""
+    host_problem: str | None = None
+    """Hyper-V 권한·vSwitch 점검(`sites.check_host`) 실패 이유. None이면 통과(M6-2b r1 L3)."""
 
 
 def judge(measure: Measure, limits: Limits) -> list[str]:
@@ -120,6 +124,8 @@ def judge(measure: Measure, limits: Limits) -> list[str]:
         problems.append(f"{measure.ci_running} foundation-ci run(s) still in progress")
     if not measure.ci_known and limits.require_ci_status:
         problems.append(CI_UNKNOWN_PROBLEM)
+    if measure.host_problem is not None:
+        problems.append(f"Hyper-V host check failed: {measure.host_problem}")
     return problems
 
 
@@ -261,6 +267,17 @@ def ci_running(run: Runner = _quiet) -> tuple[int, str | None]:
     return count, None
 
 
+def host_problem(check: Callable[[], None] | None = None) -> str | None:
+    """Hyper-V 권한·vSwitch 점검(`sites.check_host`, 부를 때 모듈 속성으로 찾는다) — 실패 이유,
+    통과면 None. PC 설정 문제라 preflight에서 멈춘다("시작하지 못한 실행", 이슈 없음). 세션 안의
+    점검(`g2.host_key`)은 로컬 pytest 실행용으로 남는다."""
+    try:
+        (check or sites.check_host)()
+    except (InfraError, HyperVError, subprocess.TimeoutExpired) as exc:
+        return str(exc) or type(exc).__name__
+    return None
+
+
 def measure(e2e_root: Path) -> Measure:
     ci, note = ci_running()
     alive = wsl_ok()
@@ -274,6 +291,7 @@ def measure(e2e_root: Path) -> Measure:
         ci_known=note is None,
         wsl_vmmem_gb=wsl_vmmem_gb(),
         wsl_cache_gb=wsl_cache_gb() if alive else None,
+        host_problem=host_problem(),
     )
 
 

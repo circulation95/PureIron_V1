@@ -262,5 +262,6 @@ def test_selecting_one_test_still_sets_up_the_module_scenario() -> None:
     )
     assert done.returncode == 0, done.stdout + done.stderr
     lines = [line.split() for line in done.stdout.splitlines()]
-    assert ["SETUP", "S", "g2_session"] in lines
+    assert next(x[:3] for x in lines if x[2:3] == ["g2_session"]) == ["SETUP", "S", "g2_session"]
     assert ["SETUP", "M", "rollback", "(fixtures", "used:", "g2_session)"] in lines
+    assert any(x[:3] == ["SETUP", "S", "windows_memory"] for x in lines)  # B-2: 세션 내내 잰다

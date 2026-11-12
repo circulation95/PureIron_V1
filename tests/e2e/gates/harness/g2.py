@@ -245,7 +245,7 @@ def prepare(run_id: str, sha: str) -> Session:
 
 
 BringUp = Callable[["SiteRun", "Session", str], None]
-MakeRoom = Callable[[list["SiteRun"], Mapping[str, str]], bool]
+MakeRoom = Callable[[list["SiteRun"], Mapping[str, str]], "MemoryGate"]
 
 
 def vm_start_need_gb(vms: int, environ: Mapping[str, str]) -> float:
@@ -307,28 +307,33 @@ def make_room(
     reclaim: Callable[[], None] | None = None,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
-) -> bool:
+) -> MemoryGate:
     """`runs`의 VM을 시작하기 직전에 `secure_memory`로 Windows 가용 메모리가
-    `vm_start_need_gb` 이상이 되게 한다. preflight의 측정은 HEAD 빌드·번들 전 값이라 그 사이 WSL
-    캐시가 다시 찬다(M6-2b 리허설 R1: 두 번째 VM이 0x800705AA). 끝까지 모자라면 각 현장의
-    `SiteRun.error`에 `InfraError`를 두고 거짓 — 부른 쪽은 VM을 시작하지 않는다. 회수 전·후 값과
-    기다린 시간은 현장 로그와 결과 디렉터리의 `VM_MEMORY_FILE`에 남긴다."""
+    `vm_start_need_gb(len(runs))` 이상이 되게 한다. preflight의 측정은 HEAD 빌드·번들 전 값이라 그
+    사이 WSL 캐시가 다시 찬다(M6-2b 리허설 R1: 두 번째 VM이 0x800705AA). 회수 전·후 값과 기다린
+    시간은 현장 로그와 결과 디렉터리의 `VM_MEMORY_FILE`(확인마다 한 항목)에 남긴다. 모자랄 때 VM을
+    시작하지 않고 현장 오류를 두는 것은 부른 쪽(`bring_up_all`)이 한다."""
     need = vm_start_need_gb(len(runs), environ)
     gate = secure_memory(need, mem_now=mem_now, reclaim=reclaim, sleep=sleep, clock=clock)
     record = gate.as_dict(sites=[run.ctx.site.site_id for run in runs])
-    error = InfraError(
-        f"windows available memory {gate.after_gb} GB < {need} GB needed to start {len(runs)} "
-        f"VM(s) (VM memory + {VM_START_HEADROOM_GB} GB headroom) after reclaiming WSL page cache"
-    )
     for run in runs:
         for note in gate.notes:
             run.ctx.log(note)
-        run.ctx.out.mkdir(parents=True, exist_ok=True)
-        (run.ctx.out / VM_MEMORY_FILE).write_text(json.dumps(record, indent=2), "utf-8")
-        if not gate.ok:
-            run.ctx.log(f"vm not started: {error}")
-            run.error = error
-    return gate.ok
+        _append_json(run.ctx.out / VM_MEMORY_FILE, record)
+    return gate
+
+
+def refuse_start(runs: list[SiteRun], gate: MemoryGate) -> None:
+    """메모리가 모자라 VM을 시작하지 않는 현장마다 **새** `InfraError`를 둔다(메시지는 같다 — 한
+    객체를 나눠 쓰면 pytest가 두 시험에서 같은 예외의 traceback을 겹쳐 쌓는다, M6-2b B-1)."""
+    message = (
+        f"windows available memory {gate.after_gb} GB < {gate.need_gb} GB needed to start "
+        f"{len(runs)} VM(s) (VM memory + {VM_START_HEADROOM_GB} GB headroom) after reclaiming "
+        "WSL page cache"
+    )
+    for run in runs:
+        run.ctx.log(f"vm not started: {message}")
+        run.error = InfraError(message)
 
 
 def bring_up(run: SiteRun, session: Session, ssh_pub: str) -> None:
@@ -425,23 +430,38 @@ def bring_up_all(
     prepare_host: Callable[[], str] = host_key,
     room: MakeRoom = make_room,
 ) -> None:
-    """두 현장을 스레드로 동시에 올린다. `PUREIRON_G2_SERIAL=1`이면 차례로(메모리가 모자랄 때,
-    R1). VM을 시작하기 전에 `room`(`make_room`)으로 메모리를 확보한다 — 동시 모드는 두 VM 몫으로
-    스레드를 띄우기 전에 한 번, 직렬 모드는 VM마다 그 VM 몫으로. 모자라면 그 현장(들)은 올리지
-    않는다(`SiteRun.error` = `InfraError`)."""
+    """두 현장을 스레드로 동시에 올린다. VM을 시작하기 전에 `room`(`make_room`)으로 메모리를
+    확보한다 — 동시 모드는 두 VM 몫으로 스레드를 띄우기 전에 한 번. 그 몫이 끝내 모자라도 VM 한
+    대 몫(`vm_start_need_gb(1)`)은 되면 **직렬로 자동 전환**한다(B-3): 한 대 몫을 다시 재서
+    띄우고, 다음 VM도 다시 잰다(앞 VM이 메모리를 잡은 뒤의 값). `PUREIRON_G2_SERIAL=1`이면 처음부터
+    VM마다 그 몫으로 차례로(R1). 모자란 현장은 올리지 않는다(`SiteRun.error` = 현장마다 새
+    `InfraError`). 어떻게 올렸는지는 현장 증거 `boot`에 남는다(G2-1 기록)."""
     pub = prepare_host()
     runs = list(session.sites.values())
     env = environ if environ is not None else dict(os.environ)
-    if env.get("PUREIRON_G2_SERIAL") == "1":
+    mode = "serial (PUREIRON_G2_SERIAL=1)"
+    if env.get("PUREIRON_G2_SERIAL") != "1":
+        gate = room(runs, env)
+        if gate.ok:
+            for run in runs:
+                run.evidence["boot"] = "concurrent"
+            with ThreadPoolExecutor(max_workers=len(runs)) as pool:
+                for future in [pool.submit(_guarded, run, session, pub, up) for run in runs]:
+                    future.result()
+            return
+        if gate.after_gb is None or gate.after_gb < vm_start_need_gb(1, env):
+            refuse_start(runs, gate)
+            return
+        mode = f"serial (auto: {gate.after_gb} GB < {gate.need_gb} GB for {len(runs)} VMs)"
         for run in runs:
-            if room([run], env):
-                _guarded(run, session, pub, up)
-        return
-    if not room(runs, env):
-        return
-    with ThreadPoolExecutor(max_workers=len(runs)) as pool:
-        for future in [pool.submit(_guarded, run, session, pub, up) for run in runs]:
-            future.result()
+            run.ctx.log(f"boot {mode}")
+    for run in runs:
+        run.evidence["boot"] = mode
+        gate = room([run], env)
+        if gate.ok:
+            _guarded(run, session, pub, up)
+        else:
+            refuse_start([run], gate)
 
 
 def check_install(

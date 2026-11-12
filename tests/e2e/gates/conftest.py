@@ -21,7 +21,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from harness import failures, g2, order
+from harness import failures, g2, memwatch, order
 from harness.context import E2EError
 
 GATES_INI = Path(__file__).resolve().parent / "pytest.ini"
@@ -46,11 +46,25 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 
 @pytest.fixture(scope="session")
-def g2_session() -> g2.Session:
-    """`PUREIRON_G2_RUN`(nightly가 정한 run id)·`PUREIRON_G2_SHA`(제품 커밋)가 없으면 새 run id와
-    저장소 HEAD를 쓴다."""
-    run_id = os.environ.get("PUREIRON_G2_RUN") or g2.new_run_id()
-    session = g2.prepare(run_id, os.environ.get("PUREIRON_G2_SHA") or g2.head_sha())
+def g2_run_id() -> str:
+    """`PUREIRON_G2_RUN`(nightly가 정한 run id), 없으면 새 run id."""
+    return os.environ.get("PUREIRON_G2_RUN") or g2.new_run_id()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def windows_memory(g2_run_id: str) -> Generator[None]:
+    """세션 내내 Windows 가용 메모리를 재서 최저값을 결과 디렉터리 `windows-memory.json`에 남긴다
+    (B-2, `harness.memwatch`) — 시험을 시작하기 전(prepare 빌드 포함)부터 잰다."""
+    watch = memwatch.MemoryWatch()
+    watch.start()
+    yield
+    memwatch.save(g2.results_dir(g2_run_id) / memwatch.MEMORY_FILE, watch.stop())
+
+
+@pytest.fixture(scope="session")
+def g2_session(g2_run_id: str) -> g2.Session:
+    """`PUREIRON_G2_SHA`(제품 커밋)가 없으면 저장소 HEAD를 쓴다."""
+    session = g2.prepare(g2_run_id, os.environ.get("PUREIRON_G2_SHA") or g2.head_sha())
     g2.bring_up_all(session)
     return session
 

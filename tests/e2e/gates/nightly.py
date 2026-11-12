@@ -62,6 +62,7 @@ from harness import (
     flake,
     g2,
     hyperv,
+    memwatch,
     paths,
     preflight,
     report,
@@ -238,6 +239,7 @@ def step_run(
             "pytest_rc": codes,
             "quarantine_expired": [{**asdict(e), "added": e.added.isoformat()} for e in expired],
             "warnings": list(warnings or []),
+            "windows_memory": memwatch.read(out / memwatch.MEMORY_FILE),
         },
     )
     write_json(out / "summary.json", summary)
