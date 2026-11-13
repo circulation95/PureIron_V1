@@ -183,6 +183,24 @@ def recover(
     return True, actions
 
 
+FIRST_SESSION = "first"
+"""재시도 전에 첫 세션의 현장 기록(`<결과>/<site>/`)을 옮겨 두는 하위 디렉터리(리뷰 L2)."""
+
+
+def keep_first_session(out: Path) -> list[str]:
+    """재시도 세션이 첫 세션의 현장 기록(`state.json`·로그 꼬리·`vm-memory.json`·
+    `restore-memory.json`)을 덮어쓰거나 배열에 섞지 않게 `<결과>/first/<site>/`로 옮긴다(이미 있으면
+    그대로 둔다 — 재시도는 한 번뿐이다). 옮긴 현장 id."""
+    moved: list[str] = []
+    for one in G2_SITES:
+        source, target = out / one.site_id, out / FIRST_SESSION / one.site_id
+        if source.is_dir() and not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            source.rename(target)
+            moved.append(one.site_id)
+    return moved
+
+
 def step_run(
     run_id: str,
     sha: str,
@@ -229,6 +247,7 @@ def step_run(
         elif left(suite.retry_timeout_s) < suite.retry_min_s:
             retry["skipped"] = f"less than {suite.retry_min_s}s left after recovery"
         else:
+            retry["first_session"] = keep_first_session(out)
             timeout_s = left(suite.retry_timeout_s)
             codes["retry"] = run_pytest(out / "junit-retry.xml", targets, timeout_s)
             again = read_results(out / "junit-retry.xml")

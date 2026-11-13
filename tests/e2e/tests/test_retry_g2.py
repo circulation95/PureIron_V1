@@ -82,6 +82,37 @@ def junit(*cases: tuple[str, str]) -> str:
     return f'<testsuites><testsuite name="pytest">{"".join(body)}</testsuite></testsuites>'
 
 
+def test_retry_moves_the_first_session_records_aside(tmp_path: Path) -> None:
+    """리뷰 L2·변이: 재시도 세션이 `<site>/state.json`을 다시 만들면 첫 세션(infra로 실패한
+    시나리오의
+    로그 꼬리·phase)이 사라진다 — 재시도 전에 `first/<site>/`로 옮긴다."""
+    first = [(t, "infra" if t == FAULTS_62 else "pass") for t in EVERY]
+    calls: list[list[str]] = []
+
+    def run_pytest(path: Path, targets: list[str], timeout_s: float) -> int:
+        calls.append(targets)
+        site_b = tmp_path / "site-b"
+        site_b.mkdir(exist_ok=True)
+        (site_b / "state.json").write_text(f"session {len(calls)}", encoding="utf-8")
+        path.write_text(junit(*(first if len(calls) == 1 else [(FAULTS_62, "pass")])), "utf-8")
+        return 1
+
+    summary = nightly.step_run(
+        "20261113T181700Z",
+        "a" * 40,
+        tmp_path,
+        run_pytest=run_pytest,
+        recover_env=lambda: (True, []),
+        today=date(2026, 11, 13),
+        quarantine=[],
+    )
+    assert (tmp_path / "first" / "site-b" / "state.json").read_text("utf-8") == "session 1"
+    assert (tmp_path / "site-b" / "state.json").read_text("utf-8") == "session 2"
+    retry = summary["retry"]
+    assert isinstance(retry, dict)
+    assert retry["first_session"] == ["site-b"]
+
+
 def test_step_run_retries_the_bundle_and_keeps_a_failed_retry_of_an_added_test(
     tmp_path: Path,
 ) -> None:
