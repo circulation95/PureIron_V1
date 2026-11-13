@@ -58,7 +58,7 @@ def windows_memory(g2_run_id: str) -> Generator[None]:
     watch = memwatch.MemoryWatch()
     watch.start()
     yield
-    memwatch.save(g2.results_dir(g2_run_id) / memwatch.MEMORY_FILE, watch.stop())
+    memwatch.finish(watch, lambda: g2.results_dir(g2_run_id) / memwatch.MEMORY_FILE)
 
 
 @pytest.fixture(scope="session")

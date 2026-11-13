@@ -141,3 +141,27 @@ def test_host_check_failure_stops_preflight_as_a_run_that_did_not_start() -> Non
     rows = report.parse_history("\n".join(report.history_lines(summary)))
     assert [r["test_id"] for r in rows] == [report.PREFLIGHT_TEST]
     assert report.not_started(rows)
+
+
+def test_a_memory_file_that_cannot_be_saved_is_only_logged(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """L5: 저장 실패(디스크·권한·잘못된 run id)는 teardown 오류가 아니라 로그 한 줄."""
+
+    def broken() -> Path:
+        raise OSError("disk full")
+
+    assert memwatch.finish(watch([2.0]), broken) is None
+    assert "windows memory not saved" in capsys.readouterr().out
+    saved = memwatch.finish(watch([3.0]), lambda: tmp_path / memwatch.MEMORY_FILE)
+    assert saved is not None
+    assert saved["min_gb"] == 3.0
+
+
+def test_a_missing_powershell_is_a_host_problem() -> None:
+    """L6: `powershell.exe`를 못 찾으면(OSError) 호스트 문제로 preflight에서 멈춘다."""
+
+    def missing() -> None:
+        raise FileNotFoundError("powershell.exe")
+
+    assert preflight.host_problem(missing) == "powershell.exe"

@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import cast
 
 from harness import preflight
+from harness.context import E2EError, log
 
 MEMORY_FILE = "windows-memory.json"
 SAMPLE_S = 20.0
@@ -114,6 +115,18 @@ def read(path: Path) -> dict[str, object] | None:
     except (OSError, ValueError):
         return None
     return cast(dict[str, object], data) if isinstance(data, dict) else None
+
+
+def finish(watch: MemoryWatch, path: Callable[[], Path]) -> dict[str, object] | None:
+    """세션 끝: 감시를 멈추고 `path()`에 저장한다. 저장하지 못하면(디스크·권한 `OSError`, 잘못된
+    run id `E2EError`) 로그만 남기고 None — pytest teardown 오류(맨 끝 시험의 product 실패)가 되지
+    않게(M6-3a 리뷰 L5). 기록이 없으면 summary의 `windows_memory`가 None이다."""
+    summary = watch.stop()
+    try:
+        return save(path(), summary)
+    except (OSError, E2EError) as exc:
+        log(f"windows memory not saved: {exc!r} (min {summary.get('min_gb')} GB)")
+        return None
 
 
 def save(path: Path, summary: dict[str, object]) -> dict[str, object]:

@@ -270,10 +270,11 @@ def ci_running(run: Runner = _quiet) -> tuple[int, str | None]:
 def host_problem(check: Callable[[], None] | None = None) -> str | None:
     """Hyper-V 권한·vSwitch 점검(`sites.check_host`, 부를 때 모듈 속성으로 찾는다) — 실패 이유,
     통과면 None. PC 설정 문제라 preflight에서 멈춘다("시작하지 못한 실행", 이슈 없음). 세션 안의
-    점검(`g2.host_key`)은 로컬 pytest 실행용으로 남는다."""
+    점검(`g2.host_key`)은 로컬 pytest 실행용으로 남는다. `powershell.exe`를 못 찾는 `OSError`도
+    호스트 문제다(리뷰 L6 — `runner` 실패로 새지 않게)."""
     try:
         (check or sites.check_host)()
-    except (InfraError, HyperVError, subprocess.TimeoutExpired) as exc:
+    except (InfraError, HyperVError, subprocess.TimeoutExpired, OSError) as exc:
         return str(exc) or type(exc).__name__
     return None
 

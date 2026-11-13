@@ -247,7 +247,7 @@ sot-runtime-config	docs/wiki/sot/runtime-config.md	v1-환경변수-m1m3a-구현	
 sot-runtime-config	docs/wiki/sot/runtime-config.md	v1-control-api-환경변수-m4-0-구현	166	18	1815	h3	V1 control-api 환경변수 (M4-0 구현)
 sot-runtime-config	docs/wiki/sot/runtime-config.md	v1-중앙-compose-변수비밀-파일-m4-3-구현	184	19	3937	h3	V1 중앙 compose 변수·비밀 파일 (M4-3 구현)
 sot-runtime-config	docs/wiki/sot/runtime-config.md	v1-fleet-publish-호스트-경로환경변수-m4-2-구현	203	22	2844	h3	V1 fleet publish 호스트 경로·환경변수 (M4-2 구현)
-sot-testing	docs/wiki/sot/testing.md	testing-sot	32	379	49282	h1	Testing SOT
+sot-testing	docs/wiki/sot/testing.md	testing-sot	32	379	49517	h1	Testing SOT
 sot-testing	docs/wiki/sot/testing.md	1-문서-경계	40	20	1306	h2	1. 문서 경계
 sot-testing	docs/wiki/sot/testing.md	2-기본-실행-명령	60	35	1204	h2	2. 기본 실행 명령
 sot-testing	docs/wiki/sot/testing.md	3-테스트-계층	95	73	9877	h2	3. 테스트 계층
@@ -265,4 +265,4 @@ sot-testing	docs/wiki/sot/testing.md	8-테스트-작성-규칙	288	25	1603	h2	8.
 sot-testing	docs/wiki/sot/testing.md	9-실패-처리-원칙	313	19	809	h2	9. 실패 처리 원칙
 sot-testing	docs/wiki/sot/testing.md	10-pr작업-완료-보고-형식	332	19	492	h2	10. PR/작업 완료 보고 형식
 sot-testing	docs/wiki/sot/testing.md	11-v1-g1-게이트-pureiron_v1-m1-구현	351	34	14203	h2	11. V1 G1 게이트 (PureIron_V1, M1 구현)
-sot-testing	docs/wiki/sot/testing.md	12-v1-g2-nightly-pureiron_v1-m6-2m6-3a	385	26	7447	h2	12. V1 G2 nightly (PureIron_V1, M6-2·M6-3a)
+sot-testing	docs/wiki/sot/testing.md	12-v1-g2-nightly-pureiron_v1-m6-2m6-3a	385	26	7682	h2	12. V1 G2 nightly (PureIron_V1, M6-2·M6-3a)
