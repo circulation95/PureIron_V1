@@ -53,6 +53,29 @@ def test_crash_cases_are_bundled_with_site_a() -> None:
     ]
 
 
+CRASH = "test_g2_crash.py::test_g2_6_crash[kill@verified]"
+
+
+@pytest.mark.parametrize(
+    ("selected", "want"),
+    [
+        ([CRASH, NO_EXT_A], {"site-a"}),  # 주간 crash 재시도 — site-b를 띄우지 않는다
+        ([FAULTS_62, NO_EXT_B], {"site-b"}),
+        ([INSTALL_A], {"site-a"}),
+        ([ROLLBACK_4, FAULTS_62], {"site-a", "site-b"}),
+        (EVERY, {"site-a", "site-b"}),
+        (["test_g2_install.py::test_g2_1_install_and_100_tags_good"], {"site-a", "site-b"}),
+        (["test_g2_unknown.py::test_x"], {"site-a", "site-b"}),
+    ],
+)
+def test_only_the_sites_of_the_selected_tests_are_brought_up(
+    selected: list[str], want: set[str]
+) -> None:
+    """3a 리뷰 L3·변이: 재시도가 현장 둘을 다 올리면 메모리가 모자라 실패한 현장을 같은 조건으로 또
+    띄운다(약 7분·VM 한 대 몫)."""
+    assert order.sites_needed(selected) == want
+
+
 def test_bundles_follow_the_order_table(monkeypatch: pytest.MonkeyPatch) -> None:
     """3b가 표에 현장 시험 파일을 더하면 묶음이 따라온다(표에서 현장을 읽는다)."""
     crash = "test_g2_crash.py::test_g2_crash[reset-switching]"

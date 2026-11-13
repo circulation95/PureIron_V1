@@ -62,10 +62,12 @@ def windows_memory(g2_run_id: str) -> Generator[None]:
 
 
 @pytest.fixture(scope="session")
-def g2_session(g2_run_id: str) -> g2.Session:
-    """`PUREIRON_G2_SHA`(제품 커밋)가 없으면 저장소 HEAD를 쓴다."""
+def g2_session(request: pytest.FixtureRequest, g2_run_id: str) -> g2.Session:
+    """`PUREIRON_G2_SHA`(제품 커밋)가 없으면 저장소 HEAD를 쓴다. 이 세션에서 돌 시험(표지·노드 id로
+    고른 뒤)이 쓰는 현장만 올린다(`order.sites_needed`, 3a 리뷰 L3)."""
     session = g2.prepare(g2_run_id, os.environ.get("PUREIRON_G2_SHA") or g2.head_sha())
-    g2.bring_up_all(session)
+    selected = [f"{item.path.name}::{item.name}" for item in request.session.items]
+    g2.bring_up_all(session, only=order.sites_needed(selected))
     return session
 
 

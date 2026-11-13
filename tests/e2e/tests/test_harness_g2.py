@@ -458,6 +458,30 @@ def test_one_site_failure_is_kept_for_its_test_and_does_not_stop_the_other(
     assert raised.value is boom
 
 
+def test_bring_up_all_boots_only_the_selected_sites(tmp_path: Path) -> None:
+    """3a 리뷰 L3: 고른 현장만 올리고(메모리 확인도 그 대수로) 나머지에는 오류를 둔다."""
+    session = session_for_bring_up(tmp_path)
+    done: list[str] = []
+    rooms: list[list[str]] = []
+
+    def room(runs: list[g2.SiteRun], env: Mapping[str, str]) -> g2.MemoryGate:
+        rooms.append([r.ctx.site.site_id for r in runs])
+        return g2.MemoryGate(0.0, 9.0, 9.0, [])
+
+    g2.bring_up_all(
+        session,
+        {},
+        up=lambda one, s, pub: done.append(one.ctx.site.site_id),
+        prepare_host=lambda: "ssh-ed25519 AAAA test",
+        room=room,
+        only={"site-a"},
+    )
+    assert done == ["site-a"]
+    assert rooms == [["site-a"]]
+    assert session.sites["site-a"].error is None
+    assert isinstance(session.sites["site-b"].error, E2EError)
+
+
 class Host:
     """VM 시작 직전 메모리 확인의 가짜 호스트 — Windows 가용 메모리(GB) 측정값을 차례로 내고(마지막
     값은 계속), 회수·대기·VM 시작을 `events`에 시간순으로 남긴다. `sleep`이 시계를 앞으로 민다."""

@@ -76,6 +76,28 @@ def _site_of(test_id: str) -> tuple[str, str] | None:
     return None
 
 
+SITES = ("site-a", "site-b")
+
+
+def sites_needed(test_ids: Sequence[str]) -> set[str]:
+    """선택된 시험(`<파일>::<이름>`)이 쓰는 현장 — 세션 fixture가 이 현장만 올린다(3a 리뷰 L3: crash
+    재시도가 site-b까지 띄우지 않게). 시나리오 묶음은 `GROUP_SITE`, G2-1·맨 끝 묶음은 매개변수
+    현장(`[site-a]`)이다. 현장을 정할 수 없는 시험(표에 없음·매개변수 없음)이 하나라도 있으면 둘
+    다."""
+    needed: set[str] = set()
+    for test_id in test_ids:
+        file_name, _, name = test_id.partition("::")
+        group = dict(FILES).get(file_name)
+        found = SITE_PARAM.search(name)
+        if group in GROUP_SITE:
+            needed.add(GROUP_SITE[group])
+        elif group in (FIRST, LAST) and found is not None and found[1] in SITES:
+            needed.add(found[1])
+        else:
+            return set(SITES)
+    return needed
+
+
 def retry_closure(targets: Sequence[str], every: Sequence[str]) -> list[str]:
     """infra 재시도 대상 묶기 — 재시도는 새 세션(새 VM, c0 새로)이라 외부 접속 0의 뜻이 바뀐다.
     처음 대상(`targets`) 기준으로 한 번만 더한다(연쇄하지 않는다): 한 현장의 시나리오 시험이
