@@ -121,6 +121,26 @@ def test_registration_never_writes_the_token() -> None:
     assert not re.search(r"(Set-Content|Out-File)", text)
 
 
+def test_registration_calls_gh_only_outside_the_stop_context() -> None:
+    """M6-3b 리뷰 M1: PS 5.1에서 `$ErrorActionPreference = 'Stop'`이면 네이티브 stderr가
+    `2>&1`·`2>$null` 어느 쪽이든 예외가 되어 실패한 밤의 로그 줄이 남지 않는다. gh는 `Invoke-Gh`
+    한 곳에서만, 그 함수의 지역 Continue 뒤에 부르고, 두 호출(auth token·workflow run)은 그 함수를
+    거친다. 파일은 UTF-8 BOM이다(BOM이 없으면 PS 5.1이 CP949로 읽는다)."""
+    raw = SCRIPT.read_bytes()
+    assert raw.startswith(b"\xef\xbb\xbf")
+    text = script()
+    body = text.split("function Invoke-Gh(", 1)[1].split("\nfunction ", 1)[0]
+    native = [line for line in text.splitlines() if re.search(r"&\s*(\$Gh|gh)\b", line)]
+    assert native == ["        & $Gh @GhArgs 2>&1 | ForEach-Object {"]
+    assert native[0] in body
+    assert body.index("$ErrorActionPreference = 'Continue'") < body.index(native[0])
+    code = [line for line in text.splitlines() if not line.lstrip().startswith("#")]
+    assert not any("2>$null" in line for line in code)
+    assert "$auth = Invoke-Gh @('auth', 'token', '-u', $GhUser)" in text
+    assert "$run = Invoke-Gh $ghArgs" in text
+    assert "[string]$Gh = 'gh'" in text
+
+
 def test_nightly_workflow_has_no_schedule() -> None:
     """변이: schedule을 되살리면 GitHub cron(3.5~7.5시간 지연)과 작업 스케줄러가 같이 뜬다."""
     text = (paths.REPO / ".github" / "workflows" / "nightly.yml").read_text(encoding="utf-8")

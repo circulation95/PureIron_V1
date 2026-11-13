@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   G2 nightly 시작(M6-3 ★H13) — Windows 작업 스케줄러가 매일 03:17(이 PC 로컬 시각 = KST)에
   `gh workflow run nightly.yml`을 부르게 등록한다. 일요일은 suite=weekly, 나머지는 g2.
@@ -16,6 +16,10 @@
                  <E2E 루트>\logs\nightly-dispatch.log에 한 줄씩(시각·suite·명령·종료 코드·gh 출력)
                  남긴다. 토큰은 이 프로세스 환경변수(GH_TOKEN)에만 두고 파일·로그에 쓰지 않는다.
                  -WhatIf면 gh를 부르지 않고 고른 suite와 명령만 출력한다(-Date로 날짜를 바꿔 본다).
+                 gh가 실패하면(로그인 안 됨·keyring 잠김·네트워크·HTTP 4xx) 종료 코드와 출력 끝부분을
+                 로그 한 줄로 남기고 0이 아닌 코드로 끝난다(작업 스케줄러 "마지막 실행 결과").
+
+  -Gh            gh 실행 파일 이름·경로(기본 gh). 실패 경로를 가짜 명령으로 확인할 때 쓴다.
 
   <E2E 루트> = 환경변수 PUREIRON_E2E_ROOT, 없으면 C:\PureIron_e2e(nightly.py와 같다).
 
@@ -38,6 +42,7 @@ param(
     [string]$Ref = 'master',
     [string]$At = '03:17',
     [string]$TaskName = 'PureIron G2 nightly',
+    [string]$Gh = 'gh',
     [switch]$Dispatch,
     [switch]$Unregister,
     [switch]$WhatIf,
@@ -71,6 +76,36 @@ function Write-DispatchLog([string]$Line) {
     Add-Content -Path (Join-Path $logs 'nightly-dispatch.log') -Value "$stamp $Line" -Encoding UTF8
 }
 
+function Get-Tail([string[]]$Lines) {
+    # 로그 한 줄용: 마지막 5줄을 공백 하나로 잇고 400자로 자른다.
+    $flat = ((@($Lines) | Select-Object -Last 5) -join ' ' -replace '\s+', ' ').Trim()
+    if ($flat.Length -gt 400) { $flat = '...' + $flat.Substring($flat.Length - 400) }
+    return $flat
+}
+
+function Invoke-Gh([string[]]$GhArgs) {
+    # PS 5.1에서 $ErrorActionPreference = 'Stop'이면 네이티브 명령의 stderr 줄이 `2>&1`·`2>$null`
+    # 어느 쪽이든 RemoteException 예외가 되어(M6-3b 리뷰 M1) 실패한 밤의 로그 줄이 남지 않는다. 그래서
+    # gh는 이 함수에서만, 지역 Continue로 부르고 성패는 종료 코드로만 판단한다. stdout(토큰일 수
+    # 있다)과 stderr를 따로 돌려준다 — stderr 줄은 ErrorRecord로 온다.
+    $ErrorActionPreference = 'Continue'
+    if (-not (Get-Command $Gh -ErrorAction SilentlyContinue)) {
+        return [pscustomobject]@{ Code = 127; Out = @(); Err = @("command not found: $Gh") }
+    }
+    $out = New-Object System.Collections.Generic.List[string]
+    $err = New-Object System.Collections.Generic.List[string]
+    try {
+        & $Gh @GhArgs 2>&1 | ForEach-Object {
+            if ($_ -is [System.Management.Automation.ErrorRecord]) { $err.Add("$_") } else { $out.Add("$_") }
+        }
+        $code = $LASTEXITCODE
+    } catch {
+        $err.Add("$($_.Exception.Message)")
+        $code = 1
+    }
+    return [pscustomobject]@{ Code = $code; Out = $out.ToArray(); Err = $err.ToArray() }
+}
+
 function Invoke-Dispatch {
     $suite = Get-Suite $Date
     $ghArgs = Get-DispatchArgs $suite
@@ -80,23 +115,25 @@ function Invoke-Dispatch {
         Write-Output $shown
         return 0
     }
-    # gh 계정의 토큰을 이 프로세스에만 둔다(파일·로그·명령 줄에 남기지 않는다).
-    $token = & gh auth token -u $GhUser 2>$null
-    if ($LASTEXITCODE -ne 0 -or -not $token) {
-        Write-DispatchLog "suite=$suite FAILED: no gh token for $GhUser (gh auth login, user logon session)"
-        return 1
+    # gh 계정의 토큰을 이 프로세스에만 둔다(파일·로그·명령 줄에 남기지 않는다). 실패 줄에는 stderr만
+    # 쓴다 — stdout은 토큰이다.
+    $auth = Invoke-Gh @('auth', 'token', '-u', $GhUser)
+    $token = ($auth.Out -join '').Trim()
+    if ($auth.Code -ne 0 -or -not $token) {
+        $code = if ($auth.Code -ne 0) { $auth.Code } else { 1 }
+        Write-DispatchLog "suite=$suite FAILED: no gh token for $GhUser exit=$code (gh auth login, user logon session) :: $(Get-Tail $auth.Err)"
+        return $code
     }
-    $env:GH_TOKEN = ($token | Out-String).Trim()
-    Remove-Variable token
+    $env:GH_TOKEN = $token
+    Remove-Variable token, auth
     try {
-        $out = & gh @ghArgs 2>&1 | Out-String
-        $code = $LASTEXITCODE
+        $run = Invoke-Gh $ghArgs
     } finally {
         Remove-Item Env:\GH_TOKEN -ErrorAction SilentlyContinue
     }
-    $flat = ($out -replace '\s+', ' ').Trim()
-    Write-DispatchLog "suite=$suite exit=$code $shown :: $flat"
-    return $code
+    $status = if ($run.Code -eq 0) { 'ok' } else { 'FAILED' }
+    Write-DispatchLog "suite=$suite $status exit=$($run.Code) $shown :: $(Get-Tail (@($run.Out) + @($run.Err)))"
+    return $run.Code
 }
 
 function Register-Nightly {
@@ -107,7 +144,7 @@ function Register-Nightly {
     Copy-Item -Path $PSCommandPath -Destination $copy -Force
     $arguments = @(
         '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', "`"$copy`"",
-        '-Dispatch', '-Repo', $Repo, '-GhUser', $GhUser, '-Ref', $Ref
+        '-Dispatch', '-Repo', $Repo, '-GhUser', $GhUser, '-Ref', $Ref, '-Gh', "`"$Gh`""
     ) -join ' '
     $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arguments -WorkingDirectory $bin
     $trigger = New-ScheduledTaskTrigger -Daily -At $At
