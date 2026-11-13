@@ -421,7 +421,10 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
 - 올리는 현장(M6-3b, 3a 리뷰 L3): 세션은 그 pytest에서 돌 시험(표지·노드 id로 고른 뒤)이 쓰는 현장만
   올린다(`order.sites_needed` — crash 재시도는 site-a만). 올리지 않은 현장의 시험이 돌면 `E2EError`다.
 - 재시도 전 첫 세션 기록(3a 리뷰 L2): 재시도 세션이 덮어쓰지 않게 `<결과>/<site>/`를
-  `<결과>/first/<site>/`로 옮긴다(summary `retry.first_session`).
+  `<결과>/first/<site>/`로 옮긴다(summary `retry.first_session`). 옮기지 못하면(Windows에서 파일을
+  잡고 있는 프로세스 — `PermissionError`) summary `retry.first_session_error`에 남기고 재시도는
+  돈다(3b 리뷰 L3). 재시도 세션이 고르지 않은 현장의 `<결과>/<site>/`는 비어 있다(새 `state.json`에
+  결과가 없다) — 그 현장의 첫 세션 기록은 `first/<site>/`에 있다(3b 리뷰 L6).
 - FAULT 2종(nightly 쌍, `release_pair.nightly`): `fault` = `n<sha7>h`(버전 `<NEXT 버전>.fh`, epoch =
   NEXT) — collector만 `sleep`(세션을 맺지 않음 → `/readyz` 503 → `E_HEALTH`), core·web은 NEXT 이미지
   그대로(digest 같음). `fault_migrate` = `n<sha7>m`(`.fm`) — core = `FROM pureiron/core:<NEXT>` + NEXT

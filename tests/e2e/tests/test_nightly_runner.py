@@ -676,6 +676,27 @@ def test_history_month_follows_the_run_date_and_january_reads_december() -> None
     assert publish.run_day({"date": "x"}, date(2026, 12, 1)) == date(2026, 12, 1)
 
 
+def test_publish_writes_to_the_run_date_month_and_never_twice() -> None:
+    """리뷰 L4(변이 R6 생존): runner가 10-31 run의 summary를 11-01에 다시 publish하면 이력은 run
+    날짜의 달(10월 파일)에 쓰고, 이미 있으면 다시 쓰지 않는다 — 오늘의 달에 쓰면 중복 판단이
+    지난달 파일까지 읽느냐에 기댄다."""
+    late = report.summary(
+        run_id="20261031T181700Z",
+        date="2026-10-31",
+        product_sha=SHA,
+        results=results((CASE_A, "passed", None)),
+    )
+    gh = FakeGitHub()
+    out = publish.step_publish(late, gh, date(2026, 11, 1))
+    ((_, path, text),) = gh.appends
+    assert path == out["history_file"] == "history-2026-10.jsonl"
+    assert gh.reads == ["history.jsonl", "history-2026-09.jsonl", "history-2026-10.jsonl"]
+    again = FakeGitHub(files={"history-2026-10.jsonl": text})
+    out = publish.step_publish(late, again, date(2026, 11, 1))
+    assert again.appends == []
+    assert out["history_lines"] == 0
+
+
 def previous_product_run() -> str:
     return json.dumps(rows("20261109T180000Z", "fail", "product")) + "\n"
 

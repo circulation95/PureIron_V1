@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
+from typing import cast
 
 import nightly
 import pytest
@@ -134,6 +135,48 @@ def test_retry_moves_the_first_session_records_aside(tmp_path: Path) -> None:
     retry = summary["retry"]
     assert isinstance(retry, dict)
     assert retry["first_session"] == ["site-b"]
+
+
+def test_a_first_session_move_that_fails_does_not_stop_the_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """리뷰 L3·변이: Windows에서 rename이 `PermissionError`(백신·인덱서가 파일을 잡음)를 내도
+    재시도는 돌고, 오류는 summary `retry.first_session_error`에 남는다 — 예외가 step_run 밖으로
+    나가면 그날이 `runner` 한 줄이 된다."""
+    first = [(t, "infra" if t == FAULTS_62 else "pass") for t in EVERY]
+    calls: list[list[str]] = []
+
+    def run_pytest(path: Path, targets: list[str], timeout_s: float) -> int:
+        calls.append(targets)
+        for site_id in ("site-a", "site-b"):
+            (tmp_path / site_id).mkdir(exist_ok=True)
+        path.write_text(junit(*(first if len(calls) == 1 else [(FAULTS_62, "pass")])), "utf-8")
+        return 1
+
+    real_rename = Path.rename
+
+    def rename(self: Path, target: Path) -> Path:
+        if self.name == "site-a":
+            raise PermissionError(32, "being used by another process", str(self))
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", rename)
+    summary = nightly.step_run(
+        "20261113T181700Z",
+        "a" * 40,
+        tmp_path,
+        run_pytest=run_pytest,
+        recover_env=lambda: (True, []),
+        today=date(2026, 11, 13),
+        quarantine=[],
+    )
+    assert len(calls) == 2
+    assert summary["verdict"] == "passed"
+    retry = summary["retry"]
+    assert isinstance(retry, dict)
+    assert retry["first_session"] == ["site-b"]
+    (error,) = cast(list[str], retry["first_session_error"])
+    assert error.startswith("site-a: PermissionError")
 
 
 def test_step_run_retries_the_bundle_and_keeps_a_failed_retry_of_an_added_test(
