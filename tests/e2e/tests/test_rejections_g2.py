@@ -94,6 +94,8 @@ def test_schema_jump_record_keeps_next_images_and_jumps_two_epochs() -> None:
     assert record["images"] == NEXT_RECORD["images"]
     assert record["name"] == "n1a2b3c4s"
     assert record["version"] == "2026.11.2-nightly.1a2b3c4.fs"
+    plain = bundles.schema_jump_record({**NEXT_RECORD, "version": "2026.11.1"})
+    assert plain["version"] == "2026.11.1-fs"  # 접미사 없는 버전도 fleet 형식 안
 
 
 def copy_link(link: Path, target: Path) -> None:

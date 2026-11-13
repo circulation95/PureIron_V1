@@ -959,13 +959,15 @@ ROGUE_CERT_DAYS = 30
 
 def schema_jump_record(next_record: dict[str, object]) -> dict[str, object]:
     """`E_SCHEMA` 재료: NEXT 기록의 이미지 그대로(digest 검사를 통과한다)에 스키마만 NEXT epoch +
-    `SCHEMA_JUMP_EPOCHS`인 가짜 release 기록. 버전 `<NEXT 버전>.fs`(fleet 버전 형식 안)."""
+    `SCHEMA_JUMP_EPOCHS`인 가짜 release 기록. 버전 `<NEXT 버전>.fs` — 접미사 없는 버전이면
+    `<버전>-fs`(fleet 버전 형식 `YYYY.M.N(-[0-9A-Za-z.]+)?` 안, WSL 실확인에서 찾음)."""
     epoch = cast(dict[str, int], next_record["schema"])["epoch"] + SCHEMA_JUMP_EPOCHS
     name = f"{next_record['name']}{SCHEMA_JUMP}"
+    version = str(next_record["version"])
     return {
         "name": name,
         "release": name,
-        "version": f"{next_record['version']}.f{SCHEMA_JUMP}",
+        "version": f"{version}{'.' if '-' in version else '-'}f{SCHEMA_JUMP}",
         "commit": next_record["commit"],
         "images": json.loads(json.dumps(next_record["images"])),
         "schema": {"epoch": epoch, "app_expected": epoch, "app_max_compatible": epoch + 1},
