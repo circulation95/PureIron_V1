@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from g2_fakes import scenario_session, snap, tree_expect
 from harness import crash, g2, judges, scenarios
-from harness.context import Context, InfraError
+from harness.context import Context
 from harness.vm import Vm
 
 NOW = datetime(2026, 11, 15, 18, 20, tzinfo=UTC)
@@ -181,13 +181,20 @@ def test_e10_late_staging_is_retried_once_from_c0(tmp_path: Path) -> None:
     assert '"e10"' in saved
 
 
-def test_e10_twice_is_infra(tmp_path: Path) -> None:
+def test_e10_twice_keeps_the_judgment_as_a_failure(tmp_path: Path) -> None:
+    """M6-3b 리뷰 M3·변이: 두 번째 E10을 `InfraError`로 바꾸면 스테이징이 느려진 제품 회귀가
+    infra로 보이고 nightly 재시도가 그 건을 다시 돈다. run.py처럼 판정(`staged_before_window`
+    거짓)을 그대로 남기고, 첫 시도의 `e10` 기록과 두 시도의 `margin_s`가 남는다."""
     session = scenario_session(tmp_path)
     fake = CrashFake(session, case_of("reset@switching"))
     fake.injections = [fake.injection(True, False)]
-    with pytest.raises(InfraError, match="E10"):
-        crash.run_case(session, fake.case, fake.remote())
+    checks = crash.run_case(session, fake.case, fake.remote())
+    assert scenarios.failed(checks) == ["staged_before_window"]
     assert fake.events.count("restore site-a") == 2
+    assert fake.events.count("inject reset@switching g2") == 2
+    saved = session.sites["site-a"].ctx.site.state_file.read_text("utf-8")
+    assert '"e10"' in saved
+    assert saved.count('"margin_s"') >= 2
 
 
 def test_judge_crash_reads_rows_against_c0() -> None:

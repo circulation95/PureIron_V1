@@ -11,8 +11,12 @@ CLI를 대상으로 한다. 서비스 대상은 창이 `WINDOW_LEAD_S` 뒤에 �
 
 판정은 `judges.judge_crash`(run.py `crash_once`와 같은 항목 + 주입 뒤 10분 안 수렴). 창 여유 부족
 (E10 — 제품 판정은 모두 참인데 스테이징이 창 뒤에 끝남, `judges.judge_window_flake`)은 infra로 보고
-그 건을 c0부터 1회 다시 한다. 두 번째도 E10이면 `InfraError`(두 번 다시 하지 않는다). run.py의 crash
-경로(`crash_once`·`step_crash`·E10)는 그대로이고 이 모듈은 그것을 부르지 않는다.
+그 건을 c0부터 1회 다시 한다. 두 번째도 E10이면 run.py `retry_window_flake`처럼 판정을 그대로
+남긴다 — `staged_before_window` 거짓 = 그 건의 실패(product). 스테이징(검증 + 이미지 적재)이 꾸준히
+창 대기(150초)를 넘기게 느려진 것은 제품 성능 회귀이고, infra로 두면 nightly 재시도가 그 건을 최대
+4번 돌리며 매일 "error"로만 쌓인다(M6-3b 리뷰 M3). 사람은 기록 `e10`(첫 시도)·두 시도의 `margin_s`로
+가른다. run.py의 crash 경로(`crash_once`·`step_crash`·E10)는 그대로이고 이 모듈은 그것을 부르지
+않는다.
 """
 
 from __future__ import annotations
@@ -25,7 +29,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from harness import buildhost, g2, golden, hyperv, judges, scenarios, site
-from harness.context import TAIL_CHARS, Context, InfraError
+from harness.context import TAIL_CHARS, Context
 from harness.release_pair import ReleasePair
 from harness.site import INCOMING, REMOTE
 from harness.vm import Vm
@@ -241,8 +245,9 @@ def attempt_case(
 def run_case(
     session: g2.Session, case: CrashCase, remote: CrashRemote | None = None
 ) -> dict[str, bool]:
-    """한 건을 돌리고 판정을 돌려준다. 첫 시도가 E10이면 c0부터 1회 다시 하고(기록 `e10`), 그것도
-    E10이면 `InfraError`."""
+    """한 건을 돌리고 판정을 돌려준다. 첫 시도가 E10이면 c0부터 1회 다시 하고(기록 `e10`), 두 번째
+    판정을 그대로 돌려준다 — 그것도 E10이면 `staged_before_window` 거짓으로 그 건이 실패한다
+    (product, 더 다시 하지 않는다)."""
     remote = remote or CrashRemote()
     first = attempt_case(session, case, remote)
     if not judges.judge_window_flake(first.checks, first.stage):
@@ -253,8 +258,9 @@ def run_case(
     note: dict[str, object] = {"e10": {"class": "infra", "first": first.stage}}
     again = attempt_case(session, case, remote, note)
     if judges.judge_window_flake(again.checks, again.stage):
-        raise InfraError(
-            f"crash {case.id}: CLI staging finished after the window opened twice (E10) — "
-            f"margins {first.stage.get('margin_s')}s, {again.stage.get('margin_s')}s"
+        session.sites[CRASH_SITE].ctx.log(
+            f"crash {case.id}: staged after the window opened twice (E10) - kept as a failure"
+            f" (staged_before_window false); margins {first.stage.get('margin_s')}s,"
+            f" {again.stage.get('margin_s')}s"
         )
     return again.checks
