@@ -361,6 +361,11 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
 | `test_g2_6_2_migrate_failure` | site-b | c0 → c0 스냅샷(스키마 집합 5종·epoch·행 수) → FAULT-m g2(FAULT-m 트리) → 수렴 | 10분 안 `failed`·보고 `E_MIGRATE`·실행 이미지 == NEXT·DB epoch와 Updater `schema_epoch` 그대로·이름 집합 5종이 전과 정확히 같음·`e2e_fault_marker` 없음·행 수 4종 ≥ 이전·경보 없음·edit-lock 해제 |
 | `test_g2_no_external[site-a·site-b]` | 둘 | 맨 끝(모든 시나리오 뒤) | 부팅 이후 누적 외부 접속 카운터 0(`field_fwd`는 따로)·카운터를 잃은 복원 없음 |
 
+- "10분 안"(G2-6 ②③): 시도 시간(기록 `seconds`)은 **스테이징 직전부터 수렴 확인 끝까지**다.
+  `pureiron-site apply`는 동기라 시도 전체(검증·적용·health 대기·롤백)가 스테이징 안에서 끝나고, 수렴
+  확인은 probe 한 번(기록 `converge_s`)이다. 시나리오 스테이징의 원격 시간 제한은 900초(한도 600초
+  + 300초)라 600~900초에 끝난 시도는 시간 초과(infra)가 아니라 판정 거짓(product)으로 잡힌다. 900초도
+  넘으면 시간 초과 → infra다. `run.py`의 스테이징 시간 제한(600초)은 그대로다.
 - `rolling_back` 구간: Updater 보고 `phase_durations_s.rolling_back`(진입부터 다음 phase 진입까지).
   Updater는 직전 이미지를 띄우고 ready를 확인한 뒤에야 `failed`로 들어가므로 이 구간이 "롤백 시작부터
   직전 이미지 + ready까지"다. 전체 적용 시간(스테이징부터 수렴까지)으로 대신하지 않는다.

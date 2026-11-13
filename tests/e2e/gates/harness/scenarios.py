@@ -44,8 +44,14 @@ def drop_bundle(host: Vm, pib: Path) -> None:
     host.run(f"sudo rm -f {INCOMING}/{pib.name}", check=False)
 
 
+STAGE_TIMEOUT_S = judges.CONVERGE_LIMIT_S + 300
+"""시나리오 스테이징(`pureiron-site apply`, 동기) 원격 명령의 시간 제한 — "10분 안" 한도
+(`judges.CONVERGE_LIMIT_S`)보다 길게 둔다. 600~900초에 끝난 시도는 시간 초과(`TimeoutExpired`,
+infra)가 아니라 끝까지 기다려 `failed_in_time`·`converged_in_time` 거짓(product)으로 잡힌다."""
+
+
 def stage(host: Vm, pib: Path) -> object:
-    return site.stage(host, pib, check=False)
+    return site.stage(host, pib, check=False, timeout_s=STAGE_TIMEOUT_S)
 
 
 def converge(host: Vm, gen: int) -> tuple[dict[str, object], float]:
@@ -81,7 +87,10 @@ class Attempt:
     report: dict[str, object]
     """그 번들의 Updater 보고(`site.report_for`, 없으면 빈 dict)."""
     seconds: float
-    """스테이징부터 수렴 판정까지(`converge`가 잰 초)."""
+    """스테이징 직전부터 수렴 확인 끝까지(`Remote.clock`) — `pureiron-site apply`는 동기라 시도
+    전체가 스테이징 안에서 끝난다. "10분 안" 판정이 이 값을 본다."""
+    converge_s: float
+    """그중 수렴 확인(`converge`)만의 초 — 보통 probe 한 번."""
 
 
 def begin(
@@ -100,11 +109,13 @@ def attempt(run: g2.SiteRun, gen: int, release: str, tree: Path, remote: Remote)
     host = ctx.site.host()
     ctx.log(f"apply g{gen} {release} ({tree.name} tree)")
     pib = remote.build(ctx, gen, release, tree)
+    started = remote.clock()
     remote.stage(host, pib)
-    snap, seconds = remote.converge(host, gen)
+    snap, converge_s = remote.converge(host, gen)
+    seconds = remote.clock() - started
     report = remote.report_for(host, pib)
     remote.drop(host, pib)
-    return Attempt(gen, release, snap, report, round(seconds, 1))
+    return Attempt(gen, release, snap, report, round(seconds, 1), round(converge_s, 1))
 
 
 def failed(checks: dict[str, bool]) -> list[str]:
@@ -163,6 +174,7 @@ def rollback(session: g2.Session, remote: Remote | None = None) -> RollbackOutco
         "result": judges.updater_state(fault.snap).get("last_result"),
         "code": fault.report.get("code"),
         "seconds": fault.seconds,
+        "converge_s": fault.converge_s,
         "rolling_back_s": judges.rolling_back_seconds(fault.report),
         "phase_durations_s": fault.report.get("phase_durations_s"),
     }
@@ -197,6 +209,7 @@ def rollback(session: g2.Session, remote: Remote | None = None) -> RollbackOutco
         result=judges.updater_state(retry.snap).get("last_result"),
         code=retry.report.get("code"),
         seconds=retry.seconds,
+        converge_s=retry.converge_s,
         checks=again,
         schema_diff=judges.schema_diff(retry_db, session.expected_schema),
         rows_after=rows(retry_db),
@@ -238,6 +251,7 @@ def migrate_failure(session: g2.Session, remote: Remote | None = None) -> dict[s
         result=judges.updater_state(fault.snap).get("last_result"),
         code=fault.report.get("code"),
         seconds=fault.seconds,
+        converge_s=fault.converge_s,
         phase_durations_s=fault.report.get("phase_durations_s"),
         checks=checks,
         epoch_before=before_db.get("epoch"),

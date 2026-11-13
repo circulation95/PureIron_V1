@@ -8,11 +8,14 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import cast
 
+import g2_fakes
 import pytest
 from g2_fakes import FakeRemote, scenario_session, snap, tree_expect
-from harness import g2, judges, paths, scenarios
+from harness import g2, judges, paths, scenarios, site
 from harness.context import InfraError
+from harness.vm import Vm
 
 GATES = paths.REPO / "tests" / "e2e" / "gates"
 FAULT_REPORT: dict[str, object] = {
@@ -181,6 +184,8 @@ def test_rollback_needs_base_images_no_alarm_metric_and_unlocked(tmp_path: Path)
 
 def test_health_failure_needs_failed_in_ten_minutes_and_no_attempt_left(tmp_path: Path) -> None:
     case = Case(tmp_path)
+    case.fault_seconds = 600.0 - g2_fakes.CONVERGE_S  # 스테이징 + 수렴 확인 = 정확히 600초
+    assert case.run()[0].health["failed_in_time"] is True
     case.fault_seconds = 601.0
     assert scenarios.failed(case.run()[0].health) == ["failed_in_time"]
     case = Case(tmp_path)
@@ -193,6 +198,47 @@ def test_health_failure_needs_failed_in_ten_minutes_and_no_attempt_left(tmp_path
     unread["updater"] = {"error": "PermissionError"}
     case.fault = unread
     assert "no_attempt_left" in scenarios.failed(case.run()[0].health)
+
+
+def test_a_700s_staging_is_not_in_ten_minutes(tmp_path: Path) -> None:
+    """H1: 시도는 `pureiron-site apply`(동기) 안에서 끝난다 — 스테이징이 700초 걸렸으면 수렴 확인이
+    1.5초여도 "10분 안"이 거짓이다. 기록 `seconds`는 스테이징부터, `converge_s`는 확인만."""
+    case = Case(tmp_path)
+    case.fault_seconds = 700.0
+    out, _ = case.run()
+    assert scenarios.failed(out.health) == ["failed_in_time"]
+    saved = json.loads(case.session.sites["site-a"].ctx.site.state_file.read_text("utf-8"))
+    record = next(r for r in saved["results"] if r["name"] == scenarios.ITEM_HEALTH)
+    assert (record["seconds"], record["converge_s"]) == (701.5, g2_fakes.CONVERGE_S)
+
+
+class StagingHost:
+    """`site.stage`가 부르는 `Vm`의 가짜 — 원격 명령과 그 시간 제한을 남긴다."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, float]] = []
+
+    def put(self, local: Path, remote: str) -> None:
+        del local, remote
+
+    def run(
+        self, command: str, *, check: bool = True, timeout_s: float = 600
+    ) -> subprocess.CompletedProcess[str]:
+        del check
+        self.calls.append((command, timeout_s))
+        return subprocess.CompletedProcess([command], 1, "", "E_HEALTH")
+
+
+def test_scenario_staging_waits_longer_than_the_ten_minute_limit(tmp_path: Path) -> None:
+    """H1: 600~900초에 끝나는 시도가 시간 초과(infra)가 아니라 판정(product)으로 가도록 시나리오
+    스테이징의 원격 시간 제한은 10분 한도보다 길다. run.py 경로(`site.stage` 기본값)는 그대로."""
+    host = StagingHost()
+    scenarios.stage(cast(Vm, host), tmp_path / "g2.pib")
+    assert [t for _, t in host.calls] == [scenarios.STAGE_TIMEOUT_S]
+    assert scenarios.STAGE_TIMEOUT_S == judges.CONVERGE_LIMIT_S + 300
+    plain = StagingHost()
+    site.stage(cast(Vm, plain), tmp_path / "g2.pib", check=False)
+    assert [t for _, t in plain.calls] == [600]
 
 
 def test_health_failure_needs_the_previous_images_ready(tmp_path: Path) -> None:

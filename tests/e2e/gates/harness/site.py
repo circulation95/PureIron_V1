@@ -42,6 +42,8 @@ SITE_SCRIPTS = ("crash_at.py", "probe.py", "site_api.py")
 STATE_DIR = "/var/lib/pureiron/state"
 INCOMING = "/home/pureiron/incoming"
 CONVERGE_S = 600
+STAGE_TIMEOUT_S = 600
+"""`stage`의 원격 명령 하나 시간 제한 기본값(`Vm.run` 기본과 같다 — run.py 경로는 그대로)."""
 STAGE_TRIES = 30
 DRAFT_REMOTE = f"{REMOTE}/draft.tar"
 ENROLLMENT_REMOTE = f"{REMOTE}/enrollment.json"
@@ -249,11 +251,17 @@ def restore_c0(ctx: Context) -> None:
 # ---------------------------------------------------------------- 적용·수렴
 
 
-def stage(host: Vm, pib: Path, *, check: bool = True) -> subprocess.CompletedProcess[str]:
+def stage(
+    host: Vm, pib: Path, *, check: bool = True, timeout_s: float = STAGE_TIMEOUT_S
+) -> subprocess.CompletedProcess[str]:
+    """번들을 VM에 올리고 `pureiron-site apply`(동기 — 시도 전체가 이 명령 안에서 끝난다). 원격
+    명령 하나의 시간 제한은 `timeout_s`(기본 `Vm.run`과 같은 600초 — run.py 경로)."""
     host.put(pib, f"{INCOMING}/{pib.name}")
     result = subprocess.CompletedProcess[str]([], 2, "", "busy")
     for _ in range(30):  # 서비스 tick이 잠금을 잡고 있으면 exit 2 — 잠시 뒤 다시
-        result = host.run(f"sudo pureiron-site apply {INCOMING}/{pib.name}", check=False)
+        result = host.run(
+            f"sudo pureiron-site apply {INCOMING}/{pib.name}", check=False, timeout_s=timeout_s
+        )
         if result.returncode != 2:
             break
         time.sleep(2)

@@ -157,9 +157,14 @@ def snap(
     return {**out, **changes}
 
 
+CONVERGE_S = 1.5
+"""가짜 수렴 확인 시간 — 실제처럼 probe 한 번이다(시도는 스테이징 안에서 끝난다)."""
+
+
 class FakeRemote:
-    """시나리오의 원격 조작 가짜 — gen마다 정한 (수렴 스냅샷, 보고, 초)를 내고 호출을 `events`에
-    남긴다. `remote()`가 `scenarios.Remote`를 만든다."""
+    """시나리오의 원격 조작 가짜 — gen마다 정한 (수렴 스냅샷, 보고, 스테이징 초)를 내고 호출을
+    `events`에 남긴다. 실제처럼 스테이징(`pureiron-site apply`, 동기)이 시계를 그 초만큼 밀고
+    수렴 확인은 `CONVERGE_S`만 민다. `remote()`가 `scenarios.Remote`를 만든다."""
 
     def __init__(
         self,
@@ -169,6 +174,7 @@ class FakeRemote:
         self.before = before
         self.attempts = attempts
         self.events: list[str] = []
+        self.now = 1000.0
 
     def remote(self) -> scenarios.Remote:
         def restore(run: g2.SiteRun) -> None:
@@ -184,9 +190,11 @@ class FakeRemote:
 
         def stage(host: Vm, pib: Path) -> None:
             self.events.append(f"stage {pib.name}")
+            self.now += self.attempts[int(pib.stem.removeprefix("g"))][2]
 
         def converge(host: Vm, gen: int) -> tuple[dict[str, object], float]:
-            return self.attempts[gen][0], self.attempts[gen][2]
+            self.now += CONVERGE_S
+            return self.attempts[gen][0], CONVERGE_S
 
         def report_for(host: Vm, pib: Path) -> dict[str, object]:
             return self.attempts[int(pib.stem.removeprefix("g"))][1]
@@ -199,4 +207,5 @@ class FakeRemote:
             converge=converge,
             report_for=report_for,
             drop=lambda host, pib: None,
+            clock=lambda: self.now,
         )

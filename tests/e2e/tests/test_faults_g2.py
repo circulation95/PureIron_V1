@@ -96,3 +96,12 @@ def test_next_images_rows_and_time(tmp_path: Path) -> None:
     case = Case(tmp_path)
     case.seconds = 600.5
     assert scenarios.failed(case.run()[0]) == ["converged_in_time"]
+
+
+def test_a_700s_staging_is_not_in_ten_minutes(tmp_path: Path) -> None:
+    """H1: 수렴 확인은 1.5초여도 스테이징(동기 적용)이 700초면 "10분 안" 거짓."""
+    case = Case(tmp_path)
+    case.seconds = 700.0
+    assert scenarios.failed(case.run()[0]) == ["converged_in_time"]
+    saved = json.loads(case.session.sites["site-b"].ctx.site.state_file.read_text("utf-8"))
+    assert saved["results"][-1]["seconds"] == 701.5
