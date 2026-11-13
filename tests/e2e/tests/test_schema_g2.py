@@ -129,10 +129,19 @@ def test_site_a_c0_is_base_and_not_compared_with_next(tmp_path: Path) -> None:
 class Docker:
     """`bundles.expected_schema`의 docker 가짜 — 호출을 남기고 미리 정한 답을 낸다."""
 
-    def __init__(self, *, migrate_rc: int = 0, ready_after: int = 1) -> None:
+    def __init__(
+        self,
+        *,
+        migrate_rc: int = 0,
+        ready_after: int = 1,
+        left: tuple[str, ...] = (),
+        nets: tuple[str, ...] = (),
+    ) -> None:
         self.calls: list[tuple[str, ...]] = []
         self.migrate_rc = migrate_rc
         self.ready_after = ready_after
+        self.left = left
+        self.nets = nets
 
     def __call__(self, args: Sequence[str], timeout_s: float) -> subprocess.CompletedProcess[str]:
         cmd = tuple(args)
@@ -144,6 +153,10 @@ class Docker:
         elif cmd[-2:] == ("migrate", "up"):
             rc = self.migrate_rc
             out = "migrate up: failed" if rc else "migrate up: applied 13"
+        elif cmd[:2] == ("ps", "-a"):
+            out = "\n".join(self.left)
+        elif cmd[:2] == ("network", "ls"):
+            out = "\n".join(self.nets)
         elif "psql" in cmd:
             key = next(k for k in bundles.EXPECTED_KEYS if probe.DB_SQL[k] == cmd[-1])
             out = f"{EXPECTED[key]}\n"
@@ -164,7 +177,10 @@ def work_dir(tmp_path: Path) -> Path:
 
 
 def run_schema(
-    tmp_path: Path, docker: Docker, docker_ok: Callable[[], bool] = lambda: True
+    tmp_path: Path,
+    docker: Docker,
+    docker_ok: Callable[[], bool] = lambda: True,
+    alive: Callable[[int], bool] = lambda pid: False,
 ) -> dict[str, object]:
     clock = iter(float(i) for i in range(10_000))
     return bundles.expected_schema(
@@ -175,6 +191,7 @@ def run_schema(
         docker_ok=docker_ok,
         sleep=lambda _: None,
         clock=lambda: next(clock),
+        alive=alive,
     )
 
 
@@ -198,6 +215,31 @@ def test_expected_schema_migrates_an_empty_db_reads_it_and_removes_it(tmp_path: 
     started = next(c for c in docker.calls if c[:2] == ("run", "-d"))
     assert "pureiron/site-db:2.30.2-pg16" in started
     assert started[4:6] == ("--label", bundles.SCHEMA_LABEL)
+
+
+def test_start_cleanup_leaves_the_temporary_db_of_another_running_build(tmp_path: Path) -> None:
+    """3a 리뷰 L4·변이: 시작 정리가 표지 붙은 것을 모두 지우면 같은 PC에서 동시에 도는 다른
+    expected-schema의 DB를 지운다 — 만든 프로세스가 끝난 것(이름 끝 pid)만 지운다."""
+    docker = Docker(
+        left=("e2e-schema-db-n1-111", "e2e-schema-migrate-n1-111", "e2e-schema-db-n2-222", "x"),
+        nets=("e2e-schema-n1-111", "e2e-schema-n2-222"),
+    )
+    run_schema(tmp_path, docker, alive=lambda pid: pid == 222)
+    removed = [c for c in docker.calls if c[:2] == ("rm", "-f")]
+    assert removed[0] == ("rm", "-f", "e2e-schema-db-n1-111", "e2e-schema-migrate-n1-111")
+    assert ("network", "rm", "e2e-schema-n1-111") in docker.calls
+    assert not any("e2e-schema-db-n2-222" in c or "e2e-schema-n2-222" in c for c in docker.calls)
+
+
+def test_the_migrate_client_is_named_and_removed_with_the_db(tmp_path: Path) -> None:
+    """migrate 시간 초과 때 클라이언트 컨테이너만 남아 `network rm`이 실패하지 않게 이름을 붙여 같이
+    지운다."""
+    docker = Docker()
+    run_schema(tmp_path, docker)
+    migrate = next(c for c in docker.calls if c[-2:] == ("migrate", "up"))
+    name = migrate[migrate.index("--name") + 1]
+    assert name.startswith("e2e-schema-migrate-n1a2b3c4-")
+    assert name in docker.calls[-2]
 
 
 def test_next_that_does_not_migrate_is_a_product_result(tmp_path: Path) -> None:

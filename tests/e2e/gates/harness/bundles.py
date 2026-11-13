@@ -709,14 +709,45 @@ def _docker(args: Sequence[str], timeout_s: float) -> subprocess.CompletedProces
     )
 
 
-def _remove_labeled(docker: DockerRun) -> None:
-    """`SCHEMA_LABEL`이 붙은 컨테이너·네트워크를 지운다(이전 실행이 시간 초과로 죽어 남긴 것)."""
-    found = docker(("ps", "-aq", "--filter", f"label={SCHEMA_LABEL}"), SCHEMA_DOCKER_S)
-    if found.stdout.split():
-        docker(("rm", "-f", *found.stdout.split()), SCHEMA_DOCKER_S)
-    found = docker(("network", "ls", "-q", "--filter", f"label={SCHEMA_LABEL}"), SCHEMA_DOCKER_S)
-    if found.stdout.split():
-        docker(("network", "rm", *found.stdout.split()), SCHEMA_DOCKER_S)
+OWNER_PID = re.compile(r"-(\d+)$")
+"""임시 컨테이너·네트워크 이름 끝의 만든 프로세스 pid(`e2e-schema-db-<NEXT>-<pid>`)."""
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # 다른 사용자의 살아 있는 프로세스
+    return True
+
+
+def stale_names(names: Sequence[str], alive: Callable[[int], bool]) -> list[str]:
+    """`names` 중 만든 프로세스(이름 끝 pid)가 이미 끝난 것 — 지금 도는 다른 expected-schema(같은
+    PC의
+    수동 WSL 빌드)의 것은 남긴다(3a 리뷰 L4). pid가 없는 이름은 누구 것인지 몰라 남긴다."""
+    stale: list[str] = []
+    for name in names:
+        found = OWNER_PID.search(name)
+        if found is not None and not alive(int(found[1])):
+            stale.append(name)
+    return stale
+
+
+def _remove_labeled(docker: DockerRun, alive: Callable[[int], bool]) -> None:
+    """`SCHEMA_LABEL`이 붙은 컨테이너·네트워크 중 만든 프로세스가 끝난 것(이전 실행이 시간 초과로
+    죽어
+    남긴 것)만 지운다."""
+    label = ("--filter", f"label={SCHEMA_LABEL}")
+    found = docker(("ps", "-a", *label, "--format", "{{.Names}}"), SCHEMA_DOCKER_S)
+    stale = stale_names(found.stdout.split(), alive)
+    if stale:
+        docker(("rm", "-f", *stale), SCHEMA_DOCKER_S)
+    found = docker(("network", "ls", *label, "--format", "{{.Name}}"), SCHEMA_DOCKER_S)
+    stale = stale_names(found.stdout.split(), alive)
+    if stale:
+        docker(("network", "rm", *stale), SCHEMA_DOCKER_S)
 
 
 @dataclass(frozen=True)
@@ -729,6 +760,8 @@ class SchemaDb:
     docker: DockerRun
     sleep: Callable[[float], None]
     clock: Callable[[], float]
+    migrator: str = ""
+    """migrate 클라이언트 컨테이너 이름 — 시간 초과로 클라이언트만 죽어도 `remove`가 지운다(L4)."""
 
     def start(self) -> None:
         """네트워크 → TimescaleDB(신뢰 인증, 호스트 포트 없음) → TCP로 받을 때까지. 실패는
@@ -760,7 +793,11 @@ class SchemaDb:
     def migrate(self, core: str) -> subprocess.CompletedProcess[str] | None:
         """`core` 이미지로 빈 DB를 끝까지 migrate한다(시간 초과면 None)."""
         dsn = f"PUREIRON_DB_DSN=postgresql://pureiron@{self.name}:5432/pureiron"
-        cmd = ("run", "--rm", "--label", SCHEMA_LABEL, "--network", self.net, "-e", dsn, core)
+        named = ("--name", self.migrator) if self.migrator else ()
+        cmd = (
+            *("run", "--rm", *named, "--label", SCHEMA_LABEL, "--network", self.net),
+            *("-e", dsn, core),
+        )
         try:
             return self.docker((*cmd, "migrate", "up"), SCHEMA_MIGRATE_S)
         except subprocess.TimeoutExpired:
@@ -778,7 +815,8 @@ class SchemaDb:
         return schema
 
     def remove(self) -> None:
-        for cleanup in (("rm", "-f", self.name), ("network", "rm", self.net)):
+        containers = (self.name, self.migrator) if self.migrator else (self.name,)
+        for cleanup in (("rm", "-f", *containers), ("network", "rm", self.net)):
             try:
                 self.docker(cleanup, SCHEMA_DOCKER_S)
             except subprocess.TimeoutExpired:
@@ -794,6 +832,7 @@ def expected_schema(
     docker_ok: Callable[[], bool] = _docker_ok,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
+    alive: Callable[[int], bool] = _pid_alive,
 ) -> dict[str, object]:
     """D9 기대 스키마(M6-3 H8): 그 run의 site-db 이미지로 임시 TimescaleDB를 띄우고(호스트 포트
     없음 — 같은 PC의 CI가 25432·25433을 쓴다) NEXT core 이미지로 빈 DB를 끝까지 migrate한 뒤, VM
@@ -805,13 +844,21 @@ def expected_schema(
     images = cast(dict[str, dict[str, str]], json.loads(path.read_text("utf-8"))["images"])
     core, image = images["core"]["tag"], images["site-db"]["tag"]
     suffix = f"{next_name}-{os.getpid()}"
-    db = SchemaDb(f"e2e-schema-db-{suffix}", f"e2e-schema-{suffix}", image, docker, sleep, clock)
+    db = SchemaDb(
+        f"e2e-schema-db-{suffix}",
+        f"e2e-schema-{suffix}",
+        image,
+        docker,
+        sleep,
+        clock,
+        migrator=f"e2e-schema-migrate-{suffix}",
+    )
     try:
         if docker(("image", "inspect", image), SCHEMA_DOCKER_S).returncode:
             tar = work / "store" / next_name / "site-db.tar"
             if docker(("load", "-q", "-i", str(tar)), SCHEMA_DOCKER_S).returncode:
                 raise infra_exit(f"cannot load {image} from {tar}")
-        _remove_labeled(docker)
+        _remove_labeled(docker, alive)
         db.start()
         migrated = db.migrate(core)
         if migrated is None or migrated.returncode:
