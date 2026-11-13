@@ -55,10 +55,12 @@ def test_order_table_keeps_groups_in_sequence_and_no_external_last() -> None:
     order.check_table()
     assert order.FILES[0] == ("test_g2_install.py", order.FIRST)
     assert order.FILES[-1] == ("test_g2_no_external.py", order.LAST)
-    sites = {group: [n for n, g in order.FILES if g == group] for group in ("site-a", "site-b")}
+    groups = ("site-a", "site-b", order.CRASH)
+    sites = {group: [n for n, g in order.FILES if g == group] for group in groups}
     assert sites == {
         "site-a": ["test_g2_rollback.py"],
         "site-b": ["test_g2_rejections.py", "test_g2_faults.py", "test_g2_draft.py"],
+        order.CRASH: ["test_g2_crash.py"],
     }
     swapped = [order.FILES[-1], *order.FILES[:-1]]
     with pytest.raises(E2EError, match="out of order"):
@@ -70,11 +72,11 @@ def test_a_test_file_without_a_place_stops_collection() -> None:
         order.sort_order(["test_g2_install.py", "test_g2_new.py"])
 
 
-def collected_g2() -> list[str]:
+def collected_g2(marker: str = "g2 and not weekly") -> list[str]:
     done = subprocess.run(
         [
             *(sys.executable, "-m", "pytest", "-c", str(GATES / "pytest.ini"), str(GATES)),
-            *("-m", "g2", "--collect-only", "-q", "-p", "no:cacheprovider"),
+            *("-m", marker, "--collect-only", "-q", "-p", "no:cacheprovider"),
         ],
         capture_output=True,
         text=True,
@@ -83,6 +85,16 @@ def collected_g2() -> list[str]:
     )
     assert done.returncode == 0, done.stdout + done.stderr
     return [line.split("::", 1)[1] for line in done.stdout.splitlines() if "::" in line]
+
+
+def test_weekly_collection_adds_the_16_crash_cases_before_no_external() -> None:
+    """주간 묶음(`-m g2`) = 평일 시험 전부 + crash 16건(같은 parametrize, 9 phase 순 kill·reset)."""
+    weekday, weekly = collected_g2(), collected_g2("g2")
+    crash = [t for t in weekly if t.startswith("test_g2_6_crash[")]
+    assert len(crash) == 18
+    assert crash[:2] == ["test_g2_6_crash[kill@fetched]", "test_g2_6_crash[reset@fetched]"]
+    assert [t for t in weekly if t not in crash] == [t for t in weekday if t not in crash]
+    assert weekly[-2:] == ["test_g2_no_external[site-a]", "test_g2_no_external[site-b]"]
 
 
 def test_real_g2_collection_follows_the_table() -> None:
@@ -97,6 +109,8 @@ def test_real_g2_collection_follows_the_table() -> None:
         *(f"test_g2_5_rejected[{item}]" for item in REJECT_ITEMS),
         "test_g2_6_2_migrate_failure",
         *(f"test_g2_8_draft_recall[{item}]" for item in DRAFT_ITEMS),
+        "test_g2_6_crash[kill@migrating]",
+        "test_g2_6_crash[reset@switching]",
         "test_g2_no_external[site-a]",
         "test_g2_no_external[site-b]",
     ]

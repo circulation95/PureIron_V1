@@ -604,6 +604,50 @@ def judge_draft_rollback(
     }
 
 
+# ---------------------------------------------------------------- G2-6 ④⑤·주간 crash(M6-3b J3)
+
+
+def judge_crash(
+    before: dict[str, object],
+    after: dict[str, object],
+    report: dict[str, object],
+    *,
+    expect: str,
+    gen: int,
+    want_digests: dict[str, str],
+    hit: bool,
+    staged_before_window: bool | None,
+    effect: dict[str, bool],
+    seconds: float,
+) -> dict[str, bool]:
+    """crash 한 건(run.py `crash_once`와 같은 항목): 끝난 시도(`judge_attempt` — 결과·경보 없음·
+    applied gen·실행 이미지·edit-lock), 감시자가 그 phase에서 멈췄는지(`hit`), 서비스 대상이면 CLI
+    스테이징이 창 전에 끝났는지(`staged_before_window`), 주입 효과(`effect` — 재부팅 또는 서비스
+    재시작), 행 수 4종 ≥ c0, 그리고 주입 뒤 `CONVERGE_LIMIT_S` 안에 그 gen이 끝났는지
+    (`converged_in_time` — 시도 잔류 없음). 실패 기대(`rolling_back`)면 applied gen은 c0 값이다."""
+    applied = updater_state(before).get("applied_gen")
+    checks = judge_attempt(
+        after,
+        report,
+        expect=expect,
+        want_digests=want_digests,
+        want_applied=gen if expect == "succeeded" else cast(int | None, applied),
+    )
+    checks["hit"] = hit
+    if staged_before_window is not None:
+        checks["staged_before_window"] = staged_before_window
+    checks |= effect
+    state = updater_state(after)
+    return {
+        **checks,
+        **rows_kept(db_of(before), db_of(after)),
+        "converged_in_time": "attempt" in state
+        and state["attempt"] is None
+        and state.get("last_attempted_gen") == gen
+        and 0 <= seconds <= CONVERGE_LIMIT_S,
+    }
+
+
 # ---------------------------------------------------------------- 외부 접속(nftables·resolved)
 
 

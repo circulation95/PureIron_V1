@@ -40,6 +40,19 @@ def test_retry_bundles_scenarios_with_their_site_no_external(
     assert order.retry_closure(targets, EVERY) == want
 
 
+def test_crash_cases_are_bundled_with_site_a() -> None:
+    """crash 묶음은 site-a를 쓴다 — crash 재시도에는 외부 접속 0[site-a]가 따라온다."""
+    crash = "test_g2_crash.py::test_g2_6_crash[reset@switching]"
+    every = [*EVERY[:5], crash, *EVERY[5:]]
+    assert order.retry_closure([crash], every) == [crash, NO_EXT_A]
+    assert order.retry_closure([NO_EXT_A], every) == [
+        ROLLBACK_4,
+        ROLLBACK_63,
+        crash,
+        NO_EXT_A,
+    ]
+
+
 def test_bundles_follow_the_order_table(monkeypatch: pytest.MonkeyPatch) -> None:
     """3b가 표에 현장 시험 파일을 더하면 묶음이 따라온다(표에서 현장을 읽는다)."""
     crash = "test_g2_crash.py::test_g2_crash[reset-switching]"
