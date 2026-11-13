@@ -27,11 +27,11 @@ def test_suite_budgets() -> None:
     g2, weekly = suites.SUITES["g2"], suites.SUITES["weekly"]
     assert (g2.workflow_s, g2.run_budget_s, g2.pytest_timeout_s) == (120 * 60, 90 * 60, 75 * 60)
     assert (weekly.workflow_s, weekly.run_budget_s, weekly.pytest_timeout_s) == (
-        210 * 60,
-        180 * 60,
-        150 * 60,
+        270 * 60,
+        240 * 60,
+        200 * 60,
     )
-    assert (g2.retry_timeout_s, weekly.retry_timeout_s) == (30 * 60, 60 * 60)
+    assert (g2.retry_timeout_s, weekly.retry_timeout_s) == (30 * 60, 40 * 60)
 
 
 @pytest.mark.parametrize(
@@ -70,7 +70,7 @@ def test_step_run_uses_the_suite_budget_and_records_the_suite(tmp_path: Path) ->
         quarantine=[],
         suite=suites.SUITES["weekly"],
     )
-    assert timeouts == [150 * 60]
+    assert timeouts == [200 * 60]
     assert summary["suite"] == "weekly"
     assert all('"suite": "weekly"' in line for line in report.history_lines(summary))
 

@@ -48,17 +48,19 @@ SUITES: dict[str, Suite] = {
         retry_timeout_s=30 * 60,
         retry_min_s=10 * 60,
     ),
-    # 주간: 추정 평일 묶음 약 35분 + crash 16건 약 70분 = 약 105분. 첫 pytest 150분(추정의 약
-    # 1.4배 — c0 복원 대기·E10 재시도 몫), 재시도 60분(새 세션 prepare·VM 한 대 부팅 약 10분 +
-    # crash 몇 건 — 재시도는 실패한 시험과 그 현장 묶음만 돈다), run 180분 = 210 - setup 10 - tail
-    # 15 - 여유 5.
+    # 주간(추정 — 첫 주간 실측으로 다시 맞춘다): crash 한 건 5~7분(c0 복원·메모리 대기 0~2분 +
+    # 번들 빌드 약 16초 + 창 대기 150초 + phase 진행 + 주입 뒤 수렴) x 18건 = 90~126분, 나머지
+    # 평일 몫(prepare·VM 2대·G2-1·4·5·6·8·외부 접속 0) 35~45분 → 합 125~171분. 첫 pytest 200분(추정
+    # 상한의 약 1.17배 — E10 재시도는 한 건에 5~7분을 더한다). 넘기면 junit이 없어 그 주 결과가
+    # `pytest` 한 줄로만 남으므로 첫 pytest에 몫을 몰고 재시도는 40분(새 세션 prepare·VM 한 대 약
+    # 10분 + crash 몇 건), run 240분 = 270 - setup 10 - tail 15 - 여유 5.
     "weekly": Suite(
         "weekly",
         "g2",
-        workflow_s=210 * 60,
-        run_budget_s=180 * 60,
-        pytest_timeout_s=150 * 60,
-        retry_timeout_s=60 * 60,
+        workflow_s=270 * 60,
+        run_budget_s=240 * 60,
+        pytest_timeout_s=200 * 60,
+        retry_timeout_s=40 * 60,
         retry_min_s=10 * 60,
     ),
 }

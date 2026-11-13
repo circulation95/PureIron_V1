@@ -40,7 +40,7 @@ jobs:
   g2:
     runs-on: [self-hosted, e2e]
     # 가장 긴 묶음(weekly) 값 — 묶음별 실제 시간 제한은 nightly.py가 건다(harness/suites.py).
-    timeout-minutes: 210
+    timeout-minutes: 270
     defaults:
       run:
         # Windows runner — Windows PowerShell 5.1(로그온 세션, M6-0 ①).

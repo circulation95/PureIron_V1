@@ -101,7 +101,7 @@ def test_nightly_workflow_runs_only_by_dispatch_on_the_e2e_runner() -> None:
     assert inputs["suite"]["default"] == "g2"
     job = flow["jobs"]["g2"]
     assert job["runs-on"] == ["self-hosted", "e2e"]
-    assert job["timeout-minutes"] == 210
+    assert job["timeout-minutes"] == 270 == suites.SUITES["weekly"].workflow_s // 60
     (nightly_step,) = [s for s in job["steps"] if "nightly.py all" in str(s.get("run", ""))]
     assert nightly_step["env"]["PUREIRON_G2_SUITE"] == "${{ inputs.suite }}"
     assert flow["concurrency"] == {"group": "g2-nightly", "cancel-in-progress": False}

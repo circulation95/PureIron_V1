@@ -340,9 +340,12 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
   남지 않는다. 그래서 준비 10분 + run 예산(preflight 시작부터 첫 실행·복구·재시도 — pytest 시간 제한을
   남은 시간으로 줄이고, 10분도 남지 않으면 재시도를 건너뛴다) + 뒷정리 15분(collect 명령당 60초 ×
   10·publish·cleanup)으로 나눈다. **g2**: workflow 120분 · run 90분 · 첫 pytest 75분 · 재시도 30분.
-  **weekly**: workflow 210분 · run 180분 · 첫 pytest 150분(추정 약 105분 — 평일 묶음 약 35분 + crash
-  16건 약 70분 — 의 약 1.4배) · 재시도 60분. yml `timeout-minutes`는 가장 긴 묶음 값(210)이고 묶음별
-  한도는 nightly.py가 건다(합이 묶음의 workflow 시간 미만인지 시험이 본다).
+  **weekly**: workflow 270분 · run 240분 · 첫 pytest 200분 · 재시도 40분. 첫 pytest는 추정 125~171분
+  (crash 한 건 5~7분 — c0 복원·번들 빌드·창 대기 150초·phase 진행·수렴 — × 18건 = 90~126분 + 나머지
+  평일 몫 35~45분)의 상한에 약 1.17배를 둔다. 넘기면 junit이 없어 그 주 결과가 `pytest` 한 줄로만
+  남으므로 재시도보다 첫 pytest에 몫을 몬다. 첫 주간 실측으로 다시 맞춘다. yml `timeout-minutes`는
+  가장 긴 묶음 값(270)이고 묶음별 한도는 nightly.py가 건다(합이 묶음의 workflow 시간 미만인지 시험이
+  본다).
 - preflight: foundation-ci 대기를 먼저 하고, WSL echo가 3번 모두 답하지 않으며 foundation-ci가 돌지
   않는 것이 확인될 때만 WSL을 재시작한다(재시도 전 복구도 같다). Actions 안에서 foundation-ci 상태를
   못 읽으면(`gh run list` 실패) infra로 멈춘다(로컬은 `warnings`에만). 메모리가 기준 미만이고 WSL이

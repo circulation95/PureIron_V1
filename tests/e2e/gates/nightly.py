@@ -33,7 +33,7 @@
 이미 있으면 덮어쓰지 않고 그것으로 publish를 다시 시도한다. run id는 `20261110T180000Z` 형식만
 받는다.
 
-시간 예산(묶음마다, `harness.suites`): `all`은 그 묶음의 workflow 시간(평일 120분·주간 210분)
+시간 예산(묶음마다, `harness.suites`): `all`은 그 묶음의 workflow 시간(평일 120분·주간 270분)
 안에 끝나야 status·이력이 남는다. preflight 시작부터 `run_budget_s` 안에 첫 실행·복구·재시도를
 끝내고(pytest 시간 제한을 남은 시간으로 줄이고, 남은 시간이 `retry_min_s`보다 짧으면 재시도를
 건너뛴다), collect·publish·cleanup은 `TAIL_RESERVE_S` 안에 든다.
