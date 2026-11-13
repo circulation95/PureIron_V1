@@ -131,8 +131,10 @@ def test_rows(summary_: Mapping[str, object]) -> list[dict[str, object]]:
 
 def history_lines(summary_: Mapping[str, object]) -> list[str]:
     """`e2e-history`에 더할 줄 — 시험마다 `{date, run, suite, product_sha, test_id, outcome, class,
-    seconds}`(키 정렬 JSON 한 줄). outcome은 `pass`·`fail`·`skip`, class는 실패일 때만, suite는
-    `suite_of`."""
+    seconds, quarantined}`(키 정렬 JSON 한 줄). outcome은 `pass`·`fail`·`skip`, class는 실패일
+    때만, suite는 `suite_of`, quarantined는 그 run에서 격리(quarantine.yaml) 중이던 시험인가."""
+    held = summary_.get("quarantined")
+    quarantined = set(cast(list[object], held)) if isinstance(held, list) else set[object]()
     lines: list[str] = []
     for row in test_rows(summary_):
         outcome = str(row.get("outcome"))
@@ -145,6 +147,7 @@ def history_lines(summary_: Mapping[str, object]) -> list[str]:
             "outcome": {PASSED: "pass", FAILED: "fail"}.get(outcome, "skip"),
             "class": row.get("failure_class") if outcome == FAILED else None,
             "seconds": row.get("seconds"),
+            "quarantined": row.get("test_id") in quarantined,
         }
         lines.append(json.dumps(line, sort_keys=True, ensure_ascii=False))
     return lines
@@ -190,10 +193,15 @@ def last_two_started(
 
 
 def failed_tests(rows: Iterable[Mapping[str, object]], failure_class: str) -> set[str]:
+    """`failure_class`로 실패한 시험 id — 격리 중이던 실패(`quarantined`, 2a 리뷰 L4)는 뺀다. 격리는
+    알려진 product flake를 이슈 없이 지켜보는 것이라 "2연속" 이슈에 세지 않는다(실행 판정에서
+    빠지는 것과 같다). `quarantined`가 없는 예전 줄은 격리되지 않은 것으로 읽는다."""
     return {
         str(row.get("test_id"))
         for row in rows
-        if row.get("outcome") == "fail" and row.get("class") == failure_class
+        if row.get("outcome") == "fail"
+        and row.get("class") == failure_class
+        and row.get("quarantined") is not True
     }
 
 

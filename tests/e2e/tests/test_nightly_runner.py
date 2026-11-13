@@ -100,11 +100,34 @@ def test_history_line_format() -> None:
     )
     assert lines[1] == (
         '{"class": "infra", "date": "2026-11-10", "outcome": "fail", '
-        f'"product_sha": "{SHA}", "run": "20261110T180000Z", "seconds": 1.0, '
-        f'"suite": "g2", "test_id": "{CASE_B}"}}'
+        f'"product_sha": "{SHA}", "quarantined": false, "run": "20261110T180000Z", '
+        f'"seconds": 1.0, "suite": "g2", "test_id": "{CASE_B}"}}'
     )
     assert json.loads(lines[0])["class"] is None
     assert json.loads(lines[0])["outcome"] == "pass"
+
+
+def quarantined_night(run: str, failure_class: str) -> list[dict[str, object]]:
+    summary = report.summary(
+        run_id=run,
+        date="2026-11-10",
+        product_sha=SHA,
+        results=results((CASE_A, "passed", None), (CASE_B, "failed", failure_class)),
+        quarantined=frozenset({CASE_B}),
+    )
+    return report.parse_history("\n".join(report.history_lines(summary)))
+
+
+@pytest.mark.parametrize("failure_class", ["product", "infra"])
+def test_quarantined_failures_do_not_count_as_two_in_a_row(failure_class: str) -> None:
+    """2a 리뷰 L4·변이: 격리된 실패를 세면 알려진 flake가 이틀마다 이슈를 연다."""
+    rows = quarantined_night("R1", failure_class) + quarantined_night("R2", failure_class)
+    assert [r["quarantined"] for r in rows] == [False, True, False, True]
+    assert report.failed_tests(rows, failure_class) == set[str]()
+    assert not report.needs_issue(rows)
+    assert report.repeated_infra(rows) == []
+    unheld = [{**r, "quarantined": False} for r in rows]
+    assert report.failed_tests(unheld, failure_class) == {CASE_B}
 
 
 def test_history_lines_carry_the_suite_and_old_lines_read_as_g2() -> None:
