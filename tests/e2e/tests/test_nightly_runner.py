@@ -835,6 +835,7 @@ def test_preflight_warnings_reach_the_summary_and_the_actions_log(
         today=TODAY,
         quarantine=[],
         warnings=[preflight.CI_UNAVAILABLE_NOTE],
+        recover_env=lambda: pytest.fail("a passing run must not recover"),
     )
     assert summary["warnings"] == [preflight.CI_UNAVAILABLE_NOTE]
     nightly.announce([preflight.CI_UNAVAILABLE_NOTE], {"GITHUB_ACTIONS": "true"})
@@ -885,6 +886,10 @@ def test_run_ids_that_could_leave_the_run_directory_are_refused(bad: str) -> Non
     assert raised.value.code == 2
 
 
+ON_TIME = datetime(2026, 11, 10, 18, 20, tzinfo=UTC)
+"""cron(18:17 UTC) 직후 — 실행기 시험이 늦은 시작 가드에 걸리지 않는 고정 시각(L8)."""
+
+
 def test_runner_failure_is_reported_as_infra_and_exits_2(tmp_path: Path) -> None:
     """L2: 실행기 자신의 예상 밖 예외는 product 종료 코드(1)가 아니라 infra(2)로, status를
     남긴다."""
@@ -901,6 +906,8 @@ def test_runner_failure_is_reported_as_infra_and_exits_2(tmp_path: Path) -> None
         run_id="20261110T180000Z",
         today=TODAY,
         out_dir=lambda run_id: tmp_path / run_id,
+        environ={},
+        now=lambda: ON_TIME,
     )
     assert code == 2
     out = tmp_path / "20261110T180000Z"
@@ -929,6 +936,8 @@ def test_runner_failure_survives_a_failing_publish(tmp_path: Path) -> None:
         run_id="20261110T180000Z",
         today=TODAY,
         out_dir=lambda run_id: tmp_path / run_id,
+        environ={},
+        now=lambda: ON_TIME,
     )
     assert code == 2
     published = json.loads((tmp_path / "20261110T180000Z" / "publish.json").read_text("utf-8"))
@@ -1140,6 +1149,8 @@ def test_runner_failure_keeps_the_real_summary_and_publishes_it(tmp_path: Path) 
         run_id=DAY2,
         today=TODAY,
         out_dir=lambda run_id: tmp_path / run_id,
+        environ={},
+        now=lambda: ON_TIME,
     )
     assert code == 2
     out = tmp_path / DAY2
