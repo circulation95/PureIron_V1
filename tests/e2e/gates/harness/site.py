@@ -314,11 +314,16 @@ def converge(
     return snap, clock() - started
 
 
+def bundle_sha12(pib: Path) -> str:
+    """보고 파일 이름에 들어가는 번들 sha256 앞 12자."""
+    with pib.open("rb") as f:
+        return hashlib.file_digest(f, "sha256").hexdigest()[:12]
+
+
 def report_for(host: Vm, pib: Path) -> dict[str, object]:
     """그 번들의 최근 보고. 파일 이름 `<started>-g<gen>-<sha256 12자>.json`에서 sha로 찾는다 —
     커밋 전 거부는 gen을 믿지 않아 `g unknown`이므로 gen으로는 못 찾는다."""
-    with pib.open("rb") as f:
-        sha12 = hashlib.file_digest(f, "sha256").hexdigest()[:12]
+    sha12 = bundle_sha12(pib)
     out = host.run(
         f"sudo sh -c 'ls -t /var/lib/pureiron/state/reports/*-{sha12}.json "
         f"/var/lib/pureiron/state/reports/exported/*-{sha12}.json 2>/dev/null | head -1 | "
@@ -326,6 +331,20 @@ def report_for(host: Vm, pib: Path) -> dict[str, object]:
         check=False,
     ).stdout
     return cast(dict[str, object], json.loads(out)) if out.strip() else {}
+
+
+def report_count(host: Vm, pib: Path) -> int | None:
+    """그 번들(sha256 12자)의 보고 파일 수(`reports`·`reports/exported`). 못 읽으면 None —
+    `report_for`의 빈 dict는 "보고 없음"과 "못 읽음"이 같아서, 같은 gen no-op(보고를 쓰지 않는다)을
+    가를 때는 이 수가 0인지 본다(M6-3b 리뷰 L1)."""
+    sha12 = bundle_sha12(pib)
+    done = host.run(
+        f"sudo sh -c 'ls /var/lib/pureiron/state/reports/*-{sha12}.json "
+        f"/var/lib/pureiron/state/reports/exported/*-{sha12}.json 2>/dev/null | wc -l'",
+        check=False,
+    )
+    text = done.stdout.strip()
+    return int(text) if done.returncode == 0 and text.isdigit() else None
 
 
 def apply_and_check(

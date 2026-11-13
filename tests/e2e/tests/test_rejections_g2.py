@@ -17,7 +17,7 @@ from typing import cast
 import pytest
 import tamper
 from g2_fakes import digests, scenario_session, snap, tree_expect
-from harness import buildhost, bundles, g2, judges, preinstall, rejects, scenarios
+from harness import buildhost, bundles, g2, judges, preinstall, rejects, scenarios, site
 from harness.buildhost import RejectMaterials
 from harness.context import Context, E2EError, InfraError
 from harness.release_pair import ReleasePair
@@ -218,10 +218,10 @@ def test_min_updater_is_above_the_installed_one() -> None:
 
 
 def probe_snap(
-    *, started: object = "t0", applied: object = 1, locked: bool = False
+    *, started: object = "t0", applied: object = 1, locked: bool = False, attempted: object = 1
 ) -> dict[str, object]:
     return {
-        "updater": {"applied_gen": applied},
+        "updater": {"applied_gen": applied, "last_attempted_gen": attempted},
         "containers": {
             "core": {"image_id": "c", "running": True, "started_at": started},
             "web": {"image_id": "w", "running": True},
@@ -317,6 +317,66 @@ def test_the_same_gen_no_op_wants_exit_0_and_no_report() -> None:
         probe_snap(), probe_snap(), {}, exit_code=0, want_exit=0, want_code=None, want_digests=WANT
     )
     assert scenarios.failed(checks) == []
+    no_op = judges.judge_no_op(probe_snap(), probe_snap(), {}, report_files=0)
+    assert no_op == {"no_report": True, "attempted_gen_kept": True}
+
+
+@pytest.mark.parametrize(
+    ("report", "files", "before", "after", "want"),
+    [
+        # 재적용(결함): 성공 보고(code None)가 생기면 judge_rejected는 통과해도 이것이 거짓이다
+        ({"code": None, "result": "succeeded"}, 1, probe_snap(), probe_snap(), ["no_report"]),
+        ({}, 1, probe_snap(), probe_snap(), ["no_report"]),
+        ({}, None, probe_snap(), probe_snap(), ["no_report"]),  # 못 읽음 ≠ 보고 없음
+        ({}, 0, probe_snap(), probe_snap(attempted=2), ["attempted_gen_kept"]),
+        (
+            {},
+            0,
+            probe_snap(attempted=None),
+            probe_snap(attempted=None),
+            ["attempted_gen_kept"],
+        ),
+    ],
+)
+def test_no_op_is_told_apart_from_a_reapply(
+    report: dict[str, object],
+    files: int | None,
+    before: dict[str, object],
+    after: dict[str, object],
+    want: list[str],
+) -> None:
+    """M6-3b 리뷰 L1·변이: 보고 수 0 확인이나 `last_attempted_gen` 확인을 빼면 해당 줄이 통과로
+    바뀐다."""
+    checks = judges.judge_no_op(before, after, report, report_files=files)
+    assert scenarios.failed(checks) == want
+
+
+class CountHost:
+    def __init__(self, rc: int, out: str) -> None:
+        self.rc, self.out = rc, out
+        self.commands: list[str] = []
+
+    def run(
+        self, command: str, *, check: bool = True, timeout_s: float = 600
+    ) -> subprocess.CompletedProcess[str]:
+        self.commands.append(command)
+        return subprocess.CompletedProcess([], self.rc, self.out, "")
+
+
+@pytest.mark.parametrize(
+    ("rc", "out", "want"), [(0, "0\n", 0), (0, "2\n", 2), (1, "", None), (0, "x", None)]
+)
+def test_report_count_tells_no_report_from_a_failed_read(
+    tmp_path: Path, rc: int, out: str, want: int | None
+) -> None:
+    pib = tmp_path / "same-gen.pib"
+    pib.write_bytes(b"bundle")
+    host = CountHost(rc, out)
+    assert site.report_count(cast(Vm, host), pib) == want
+    sha12 = site.bundle_sha12(pib)
+    assert f"reports/*-{sha12}.json" in host.commands[0]
+    assert f"reports/exported/*-{sha12}.json" in host.commands[0]
+    assert "wc -l" in host.commands[0]
 
 
 # ---------------------------------------------------------------- 흐름(site-b)
@@ -357,6 +417,9 @@ class RejectFake:
         self.touch: set[str] = set()
         self.codes = dict(CODES)
         self.epoch = pair.epochs[pair.next] + 2
+        self.reapply: set[str] = set()
+        """이 라벨은 거부·no-op 대신 같은 gen을 다시 적용한 것처럼 성공 보고를 쓰고 시도 gen을
+        올린다."""
 
     def g2_snap(self) -> dict[str, object]:
         pair = self.session.pair
@@ -397,6 +460,10 @@ class RejectFake:
             self.events.append(f"stage {label}")
             code = self.codes[label]
             self.reports[pib.name] = {} if code is None else {"code": code}
+            if label in self.reapply:
+                self.reports[pib.name] = {"code": None, "result": "succeeded"}
+                updater = {**judges.updater_state(self.current), "last_attempted_gen": 9}
+                self.current = {**self.current, "updater": updater}
             if label in self.touch:
                 self.current = with_core(self.current, "other", "t9")
             return subprocess.CompletedProcess([], 0 if code is None else 1, "", "")
@@ -425,6 +492,7 @@ class RejectFake:
             tamper=tamper_copy,
             stage=stage,
             updater_version=lambda host: "0.2.0",
+            report_files=lambda host, pib: 1 if self.reports.get(pib.name) else 0,
         )
 
 
@@ -496,6 +564,20 @@ def test_a_rejection_that_restarts_core_fails(tmp_path: Path) -> None:
     fake.touch = {"same-gen"}
     found = rejects.rejections(session, fake.remote())
     assert scenarios.failed(found["same_gen"]) == ["core_not_restarted", "images_match"]
+
+
+def test_a_same_gen_reapply_fails_the_no_op_items(tmp_path: Path) -> None:
+    """L1: 같은 이미지로 다시 적용하면 core가 그대로라 judge_rejected 여섯 항목은 참이다 — 보고
+    파일과 시도 gen이 가른다."""
+    session = scenario_session(tmp_path)
+    fake = RejectFake(session)
+    fake.reapply = {"same-gen"}
+    found = rejects.rejections(session, fake.remote())
+    assert scenarios.failed(found["same_gen"]) == ["attempted_gen_kept", "no_report"]
+    saved = json.loads(session.sites["site-b"].ctx.site.state_file.read_text("utf-8"))
+    (same,) = [r for r in saved["results"] if r["name"] == rejects.item_name("same_gen")]
+    assert same["report_files"] == 1
+    assert all("report_files" not in r for r in saved["results"] if r is not same)
 
 
 def test_a_rejection_with_another_code_fails_instead_of_passing(tmp_path: Path) -> None:

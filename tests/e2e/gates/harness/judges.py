@@ -470,6 +470,26 @@ def judge_rejected(
     }
 
 
+def judge_no_op(
+    before: dict[str, object],
+    after: dict[str, object],
+    report: dict[str, object],
+    *,
+    report_files: int | None,
+) -> dict[str, bool]:
+    """같은 gen no-op이 "재적용"이 아니었는가(M6-3b 리뷰 L1): Updater는 NO_OP이면 보고를 쓰지 않고
+    시도를 지운다. 같은 gen을 결함으로 다시 적용하면 성공 보고(`code` None)가 생기고, 같은 이미지라
+    core가 다시 만들어지지 않으면 `judge_rejected` 여섯 항목이 모두 참일 수 있다. 그래서 보고가 없다
+    — 그 번들 sha의 보고 파일 수가 0(못 읽은 None은 거짓)이고 보고 dict도 비었다 — 와
+    `last_attempted_gen` 불변(전 값이 정수일 때만 참)을 더 본다."""
+    attempted = updater_state(before).get("last_attempted_gen")
+    return {
+        "no_report": report_files == 0 and report == {},
+        "attempted_gen_kept": isinstance(attempted, int)
+        and updater_state(after).get("last_attempted_gen") == attempted,
+    }
+
+
 SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 BOOTSTRAP_MEMBER = "bootstrap/bootstrap-verify.sh"
 PAYLOAD_MISMATCH = "payload sha256 mismatch"

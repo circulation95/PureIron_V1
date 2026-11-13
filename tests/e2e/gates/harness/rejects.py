@@ -3,7 +3,8 @@
 흐름(`rejections`, module fixture가 한 번 돈다): c0 복원 → 거부 재료(WSL `reject-materials`) →
 c0에서 `E_SITE`(다른 현장 id) · `E_DIGEST`(payload 한 바이트) · `E_SIG`(root가 인증하지 않은
 release key) · `E_SCHEMA`(NEXT 이미지 그대로에 스키마만 NEXT epoch + 2) · `E_UPDATER`(min_updater >
-설치된 Updater) · 같은 gen 재빌드 no-op(exit 0, 거부 코드 없음) → `E_CERT` 재료(g3)를 **먼저** 만든
+설치된 Updater) · 같은 gen 재빌드 no-op(exit 0, 거부 코드 없음, 보고 파일 0개·`last_attempted_gen`
+불변) → `E_CERT` 재료(g3)를 **먼저** 만든
 뒤 NEXT g2(NEXT 트리)를 적용(succeeded) → `E_CERT`(생성 시각 역행) · `E_GEN`(g2 뒤에 만든 g1).
 번들은 스테이징 직전에 만든다 — 거부·no-op은 신뢰 상태(`max_seen_created_at`)를 바꾸지 않고, 커밋한
 g2만 바꾼다.
@@ -56,6 +57,8 @@ class Case:
     key: str
     want_exit: int
     want_code: str | None
+    no_op: bool = False
+    """같은 gen no-op — 보고 없음·`last_attempted_gen` 불변도 본다(`judges.judge_no_op`)."""
 
 
 CASES: tuple[Case, ...] = (
@@ -64,7 +67,7 @@ CASES: tuple[Case, ...] = (
     Case("E_SIG", 1, "E_SIG"),
     Case("E_SCHEMA", 1, "E_SCHEMA"),
     Case("E_UPDATER", 1, "E_UPDATER"),
-    Case("same_gen", 0, None),
+    Case("same_gen", 0, None, no_op=True),
     Case("E_CERT", 1, "E_CERT"),
     Case("E_GEN", 1, "E_GEN"),
 )
@@ -141,6 +144,7 @@ class RejectRemote:
     tamper: Callable[[Path], Path] = tamper_copy
     stage: Callable[[Vm, Path], subprocess.CompletedProcess[str]] = stage
     updater_version: Callable[[Vm], str] = updater_version
+    report_files: Callable[[Vm, Path], int | None] = site.report_count
 
 
 def reject_once(
@@ -159,6 +163,7 @@ def reject_once(
     result = remote.stage(host, pib)
     after = remote.base.probe(host)
     report = remote.base.report_for(host, pib)
+    files = remote.report_files(host, pib) if case.no_op else None
     remote.base.drop(host, pib)
     checks = judges.judge_rejected(
         before,
@@ -169,11 +174,14 @@ def reject_once(
         want_code=case.want_code,
         want_digests=ctx.digests[want],
     )
+    if case.no_op:
+        checks |= judges.judge_no_op(before, after, report, report_files=files)
     ok = all(checks.values())
     ctx.record(
         name or item_name(case.key),
         ok,
         bundle=pib.name,
+        **({"report_files": files} if case.no_op else {}),
         exit=result.returncode,
         code=report.get("code"),
         detail=report.get("detail"),
