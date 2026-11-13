@@ -1241,3 +1241,99 @@ def test_runner_failure_keeps_the_real_summary_and_publishes_it(tmp_path: Path) 
     published = json.loads((out / "publish.json").read_text("utf-8"))
     assert published["published_summary"] == "summary.json"
     assert "status call failed" in str(published["runner_error"])
+
+
+# ---------------------------------------------------------------- fix-r1 M2: 시험 단위 2연속
+
+WEEKLY_CASE = "test_g2_crash.py::test_g2_crash_weekly[kill@committed]"
+
+
+def night(
+    run: str, suite: str, *cases: tuple[str, str, str | None], quarantined: bool = False
+) -> list[dict[str, object]]:
+    """한 실행의 이력 줄 — `cases`는 (시험 id, pass·fail, 분류)."""
+    return [
+        {
+            **rows(run, outcome, klass),
+            "suite": suite,
+            "test_id": test_id,
+            "quarantined": quarantined,
+        }
+        for test_id, outcome, klass in cases
+    ]
+
+
+def weekly_chain(failure_class: str, middle_sunday: str | None) -> list[dict[str, object]]:
+    """일요일(주간) 주간 전용 시험 실패 → 월~토(평일, 그 시험 없음·통과) → [가운데 일요일] →
+    월~토 → 마지막 일요일 같은 시험 실패."""
+    weekdays = [f"r{n:02d}" for n in range(2, 8)]
+    history = night("r01", "weekly", (CASE_A, "pass", None), (WEEKLY_CASE, "fail", failure_class))
+    for run in weekdays:
+        history += night(run, "g2", (CASE_A, "pass", None))
+    last = "r08"
+    if middle_sunday is not None:
+        history += night(
+            "r08", "weekly", (CASE_A, "pass", None), (WEEKLY_CASE, middle_sunday, None)
+        )
+        for n in range(9, 15):
+            history += night(f"r{n:02d}", "g2", (CASE_A, "pass", None))
+        last = "r15"
+    return history + night(
+        last, "weekly", (CASE_A, "pass", None), (WEEKLY_CASE, "fail", failure_class)
+    )
+
+
+def test_a_weekly_only_test_failing_two_sundays_in_a_row_opens_an_issue() -> None:
+    """M2·변이: 직전 실행(토요일 평일 묶음)에는 주간 전용 시험이 없다. 실행 단위로만 보면 매주
+    실패해도 이슈가 영영 열리지 않는다."""
+    history = weekly_chain("product", None)
+    assert report.repeated_by_test(history, "product") == {WEEKLY_CASE}
+    assert report.needs_issue(history)
+    infra = weekly_chain("infra", None)
+    assert report.repeated_infra(infra) == [WEEKLY_CASE]
+
+
+def test_a_passing_sunday_in_between_breaks_the_weekly_chain() -> None:
+    assert not report.needs_issue(weekly_chain("product", "pass"))
+    assert report.repeated_infra(weekly_chain("infra", "pass")) == []
+
+
+def test_a_crashed_or_quarantined_previous_sunday_does_not_count() -> None:
+    """직전 주간 실행이 그 시험 없이 깨졌으면(`pytest` 줄만) 끊기고, 격리 중이던 실패는 세지 않는다
+    (지금 규칙 그대로). 시작하지 못한 일요일은 건너뛴다."""
+    first = night("r01", "weekly", (WEEKLY_CASE, "fail", "product"))
+    last = night("r09", "weekly", (CASE_A, "fail", "product"), (WEEKLY_CASE, "fail", "product"))
+    weekday = night("r05", "g2", (CASE_A, "pass", None))
+    crashed = night("r08", "weekly", ("pytest", "fail", "infra"))
+    stopped = night("r08", "weekly", ("preflight", "fail", "infra"))
+    held = night("r01", "weekly", (WEEKLY_CASE, "fail", "product"), quarantined=True)
+    assert report.repeated_by_test(first + weekday + crashed + last, "product") == set[str]()
+    assert report.repeated_by_test(first + weekday + stopped + last, "product") == {WEEKLY_CASE}
+    assert report.repeated_by_test(held + weekday + last, "product") == set[str]()
+
+
+def test_weekday_tests_still_need_the_run_right_before() -> None:
+    """평일 시험은 두 묶음 모두에 있으므로 바로 앞 실행과만 잇는다 — 앞 실행(일요일 주간)이
+    통과였으면 토·월 실패는 2연속이 아니다. 실행 단위 규칙(시험이 달라도 product 2연속이면
+    이슈)은 그대로다."""
+    sat = night("r1", "g2", (CASE_A, "fail", "product"))
+    sun = night("r2", "weekly", (CASE_A, "pass", None), (WEEKLY_CASE, "pass", None))
+    mon = night("r3", "g2", (CASE_A, "fail", "product"))
+    assert not report.needs_issue(sat + sun + mon)
+    different = night("r1", "g2", (CASE_A, "fail", "product")) + night(
+        "r2", "g2", (CASE_A, "pass", None), (CASE_B, "fail", "product")
+    )
+    assert report.repeated_by_test(different, "product") == set[str]()
+    assert report.needs_issue(different)
+
+
+def test_publish_opens_the_issue_for_a_weekly_only_test() -> None:
+    history = weekly_chain("product", None)
+    *older, _ = report.by_run(history).values()
+    old = "".join(json.dumps(row) + "\n" for rows_ in older for row in rows_)
+    sunday = {
+        **summary_of("r08", (CASE_A, "passed", None), (WEEKLY_CASE, "failed", "product")),
+        "suite": "weekly",
+    }
+    out = publish.step_publish(sunday, FakeGitHub(history=old), TODAY)
+    assert out["issue"] == "created"

@@ -336,12 +336,12 @@
     },
     {
       "audience": "both",
-      "bytes": 55083,
+      "bytes": 55313,
       "id": "sot-testing",
       "last_verified": "2026-11-11",
       "path": "docs/wiki/sot/testing.md",
       "section_count": 19,
-      "sha256": "e705a0de0d6c2f916a654c10e8a5a9404341e3e573b4495c39d5f4276d475971",
+      "sha256": "043470e3e697c3d7dbe2c06ced17a3b9e2988dfd8b7385d5c2fa93678a9a5e85",
       "source_globs": [],
       "sources": [
         "https://github.com/circulation95/PureIron_ignition/blob/legacy-final/backend/pyproject.toml",
