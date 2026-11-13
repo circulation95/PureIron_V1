@@ -16,7 +16,7 @@ import nightly
 import pytest
 from harness import collect, flake, preflight, publish, report, suites
 from harness.context import E2EError, write_json
-from harness.github import DryRun
+from harness.github import HISTORY_FILE, DryRun
 
 SHA = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d"
 CASE_A = "test_g2_install.py::test_g2_1_install_and_100_tags_good[site-a]"
@@ -606,14 +606,23 @@ def test_missing_junit_is_infra_and_reruns_everything(tmp_path: Path) -> None:
 
 
 class FakeGitHub:
-    def __init__(self, history: str = "", open_issue: int | None = None) -> None:
-        self.history = history
+    """`history`는 예전 `history.jsonl`의 내용, `files`는 그 밖의 이력 파일(월별)."""
+
+    def __init__(
+        self,
+        history: str = "",
+        open_issue: int | None = None,
+        files: dict[str, str] | None = None,
+    ) -> None:
+        self.files = {HISTORY_FILE: history, **(files or {})}
         self.issue = open_issue
         self.calls: list[tuple[str, object]] = []
         self.appends: list[tuple[str, str, str]] = []
+        self.reads: list[str] = []
 
     def read_file(self, branch: str, path: str) -> str | None:
-        return self.history or None
+        self.reads.append(path)
+        return self.files.get(path) or None
 
     def append_file(self, branch: str, path: str, text: str, message: str) -> None:
         self.calls.append(("append", branch))
@@ -638,6 +647,35 @@ class FakeGitHub:
         self.calls.append(("delete", name))
 
 
+def test_history_goes_to_the_month_file_and_reads_last_month_and_the_old_file() -> None:
+    """2a 리뷰 L5·변이: 지난달 파일을 읽지 않으면 월초(1일)의 "2연속"이 지난달 마지막 실행을
+    놓친다."""
+    day1 = report.summary(
+        run_id="20261201T181700Z",
+        date="2026-12-01",
+        product_sha=SHA,
+        results=results((CASE_B, "failed", "product")),
+    )
+    nov = json.dumps(rows("20261130T181700Z", "fail", "product")) + "\n"
+    gh = FakeGitHub(files={"history-2026-11.jsonl": nov})
+    out = publish.step_publish(day1, gh, date(2026, 12, 1))
+    assert gh.reads == ["history.jsonl", "history-2026-11.jsonl", "history-2026-12.jsonl"]
+    assert [path for _, path, _ in gh.appends] == ["history-2026-12.jsonl"]
+    assert out["history_file"] == "history-2026-12.jsonl"
+    assert out["issue"] == "created"  # 11-30(지난달 파일) + 12-01 = 2연속
+
+
+def test_history_month_follows_the_run_date_and_january_reads_december() -> None:
+    assert publish.history_reads(date(2027, 1, 15)) == [
+        "history.jsonl",
+        "history-2026-12.jsonl",
+        "history-2027-01.jsonl",
+    ]
+    late: dict[str, object] = {"date": "2026-11-30"}
+    assert publish.history_file(publish.run_day(late, date(2026, 12, 1))) == "history-2026-11.jsonl"
+    assert publish.run_day({"date": "x"}, date(2026, 12, 1)) == date(2026, 12, 1)
+
+
 def previous_product_run() -> str:
     return json.dumps(rows("20261109T180000Z", "fail", "product")) + "\n"
 
@@ -651,7 +689,7 @@ def test_publish_appends_history_and_sets_status() -> None:
     )
     assert [name for name, _ in gh.calls] == ["append", "status"]
     ((branch, path, text),) = gh.appends
-    assert (branch, path) == ("e2e-history", "history.jsonl")
+    assert (branch, path) == ("e2e-history", "history-2026-11.jsonl")
     assert text.count("\n") == 2
     assert gh.calls[1] == ("status", (SHA, "success", "g2/nightly"))
     assert out["issue"] is None
