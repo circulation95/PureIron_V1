@@ -31,6 +31,7 @@ from harness import (
     judges,
     paths,
     preflight,
+    preinstall,
     release_pair,
     site,
     sites,
@@ -141,6 +142,10 @@ class SiteRun:
     unmarked_restores: int = 0
     """외부 접속 카운터를 표시하지 못하고(VM이 꺼져 있었다) 복원한 횟수 — 그 구간의 카운터는
     잃었으므로 맨 끝 판정(`check_no_external`)이 거짓이 된다."""
+    preinstall: dict[str, dict[str, object]] = field(default_factory=dict[str, dict[str, object]])
+    """G2-5 설치 전 변조 탐침 결과(`preinstall.run_probes`, site-b만) — 판정은 그 시험이 한다."""
+    preinstall_errors: dict[str, BaseException] = field(default_factory=dict[str, BaseException])
+    """탐침마다의 예외 — 그 시험이 다시 던진다(실제 설치는 막지 않는다)."""
 
 
 @dataclass(frozen=True)
@@ -366,6 +371,7 @@ def bring_up(run: SiteRun, session: Session, ssh_pub: str) -> None:
         site_id=ctx.site.site_id,
         runbook_fpr=ctx.runbook_fpr,
         runbook_bootstrap=ctx.runbook_bootstrap,
+        after_upload=preinstall_hook(run, host),
     )
     run.evidence["install_s"] = round(install_s, 1)
     site.start_simulator(host, session.simulator, session.sim_image)
@@ -381,6 +387,28 @@ def bring_up(run: SiteRun, session: Session, ssh_pub: str) -> None:
     run.c0_at = time.monotonic()
     ctx.save()
     run.live = watch_live(run)
+
+
+def preinstall_hook(
+    run: SiteRun, host: preinstall.Shell, *, probes: preinstall.Probes = preinstall.run_probes
+) -> Callable[[], None] | None:
+    """`preinstall.PREINSTALL_SITE`(site-b)이면 설치 번들을 올린 직후 부를 탐침(결과·예외를
+    `run.preinstall`·`preinstall_errors`에 두고 설치를 계속한다), 다른 현장이면 None."""
+    ctx = run.ctx
+    if ctx.site.site_id != preinstall.PREINSTALL_SITE:
+        return None
+    book = preinstall.Runbook(
+        f"{site.INCOMING}/{Path(ctx.install_pib).name}", ctx.runbook_fpr, ctx.runbook_bootstrap
+    )
+
+    def hook() -> None:
+        ctx.log("pre-install tamper probes (copies of the install bundle)")
+        run.preinstall, run.preinstall_errors = probes(host, book)
+        errors = run.preinstall_errors
+        for name, exc in errors.items():
+            ctx.log(f"pre-install probe {name} failed: {exc!r}")
+
+    return hook
 
 
 def watch_live(

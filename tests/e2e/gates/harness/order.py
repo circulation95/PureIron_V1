@@ -20,8 +20,9 @@ FILES: tuple[tuple[str, str], ...] = (
     ("test_g2_rollback.py", "site-a"),  # G2-4(revert 전) + G2-6 ③ health 실패
     # 3b: ("test_g2_crash.py", "site-a") — G2-6 ④⑤·주간 crash
     # ---- site-b(NEXT, c0 = HEAD) — HEAD의 PATCH·export·검증 코드를 보는 것
+    ("test_g2_rejections.py", "site-b"),  # G2-5 거부(설치 전 변조 2건 + c0·g2 거부 8건)
     ("test_g2_faults.py", "site-b"),  # G2-6 ② migrate 실패
-    # 3b: ("test_g2_rejections.py", "site-b") — G2-5, ("test_g2_draft.py", "site-b") — G2-8
+    # 3b: ("test_g2_draft.py", "site-b") — G2-8
     # ---- 맨 끝: 모든 시나리오를 거친 누적 카운터
     ("test_g2_no_external.py", LAST),
 )

@@ -17,6 +17,10 @@ from harness.vm import RemoteCommandError, Vm
 
 GATES = paths.REPO / "tests" / "e2e" / "gates"
 VM_3GIB = {"PUREIRON_E2E_VM_GIB": "3"}
+REJECT_ITEMS = (
+    *("E_SITE", "E_DIGEST", "E_SIG", "E_SCHEMA", "E_UPDATER", "same_gen"),
+    *("next_g2", "E_CERT", "E_GEN"),
+)
 
 
 # ---------------------------------------------------------------- 실행 순서
@@ -51,7 +55,10 @@ def test_order_table_keeps_groups_in_sequence_and_no_external_last() -> None:
     assert order.FILES[0] == ("test_g2_install.py", order.FIRST)
     assert order.FILES[-1] == ("test_g2_no_external.py", order.LAST)
     sites = {group: [n for n, g in order.FILES if g == group] for group in ("site-a", "site-b")}
-    assert sites == {"site-a": ["test_g2_rollback.py"], "site-b": ["test_g2_faults.py"]}
+    assert sites == {
+        "site-a": ["test_g2_rollback.py"],
+        "site-b": ["test_g2_rejections.py", "test_g2_faults.py"],
+    }
     swapped = [order.FILES[-1], *order.FILES[:-1]]
     with pytest.raises(E2EError, match="out of order"):
         order.check_table(swapped)
@@ -78,12 +85,15 @@ def collected_g2() -> list[str]:
 
 
 def test_real_g2_collection_follows_the_table() -> None:
-    """수집된 실제 G2 시험 id와 순서 — G2-1 → site-a(롤백) → site-b(②) → 외부 접속 0(맨 끝)."""
+    """수집된 실제 G2 시험 id와 순서 — G2-1 → site-a(롤백) → site-b(거부·②) → 외부 접속 0(맨 끝)."""
     assert collected_g2() == [
         "test_g2_1_install_and_100_tags_good[site-a]",
         "test_g2_1_install_and_100_tags_good[site-b]",
         "test_g2_4_rollback",
         "test_g2_6_3_health_failure",
+        "test_g2_5_tampered_before_install[tampered_bootstrap]",
+        "test_g2_5_tampered_before_install[tampered_deb]",
+        *(f"test_g2_5_rejected[{item}]" for item in REJECT_ITEMS),
         "test_g2_6_2_migrate_failure",
         "test_g2_no_external[site-a]",
         "test_g2_no_external[site-b]",

@@ -14,6 +14,7 @@ import shlex
 import subprocess
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -266,6 +267,97 @@ def build_site_bundle(
     ctx.bundles = [b for b in ctx.bundles if b.get("file") != pib.name] + [entry]
     ctx.save()
     return pib
+
+
+REJECTS_TIMEOUT_S = 300
+"""`bundles.py reject-materials`(키 2개·cert 하나·기록 하나·symlink) 전체."""
+
+
+@dataclass(frozen=True)
+class RejectMaterials:
+    """G2-5 거부 재료(`bundles.py reject-materials`) — 값은 WSL 경로다."""
+
+    release_key: str
+    """`E_SIG`: root가 인증하지 않은 release key."""
+    cert_dir: str
+    """그 키에 다른 root가 발급한 `release-cert.json`·`.sig`."""
+    root_pub: str
+    """그 다른 root 공개키(빌더 자체 검증용)."""
+    schema_version: str
+    """`E_SCHEMA`: 가짜 기록의 달력 버전(`--product`)."""
+    schema_epoch: int
+    schema_releases: str
+    schema_store: str
+
+    def signing_options(self) -> tuple[str, ...]:
+        return (
+            "--release-key",
+            self.release_key,
+            "--cert-dir",
+            self.cert_dir,
+            "--root-pub",
+            self.root_pub,
+        )
+
+    def schema_options(self) -> tuple[str, ...]:
+        return ("--releases", self.schema_releases, "--store", self.schema_store)
+
+
+def reject_materials(
+    pair: ReleasePair, *, run_wsl: Callable[..., str] | None = None, work: str = NIGHTLY_WORK
+) -> RejectMaterials:
+    """WSL nightly 작업 디렉터리에 G2-5 거부 재료를 새로 만들고 돌려준다. 가짜 기록의 epoch가 NEXT +
+    `bundles.SCHEMA_JUMP_EPOCHS`가 아니면 `E2EError`(제품: 그 재료로는 `E_SCHEMA`를 못 본다).
+    스크립트 실패는 `golden.WslScriptError`(제품), WSL 호출 실패는 `golden.WslError`(인프라)."""
+    script = f"{bundles_py('reject-materials', work)} --next {pair.next}"
+    raw = (run_wsl or wsl)(script, timeout_s=REJECTS_TIMEOUT_S)
+    found = cast(dict[str, dict[str, object]], json.loads(raw.strip().splitlines()[-1]))
+    rogue, schema = found["rogue"], found["schema"]
+    want = pair.epochs[pair.next] + bundles.SCHEMA_JUMP_EPOCHS
+    if schema.get("epoch") != want:
+        raise E2EError(f"schema-jump record epoch {schema.get('epoch')!r} != {want}")
+    return RejectMaterials(
+        release_key=str(rogue["release_key"]),
+        cert_dir=str(rogue["cert_dir"]),
+        root_pub=str(rogue["root_pub"]),
+        schema_version=str(schema["version"]),
+        schema_epoch=want,
+        schema_releases=str(schema["releases"]),
+        schema_store=str(schema["store"]),
+    )
+
+
+def build_variant(
+    ctx: Context,
+    gen: int,
+    product: str,
+    window_open_at: datetime,
+    project_dir: str,
+    *,
+    label: str,
+    site_id: str | None = None,
+    options: tuple[str, ...] = (),
+    work: str = NIGHTLY_WORK,
+    run_wsl: Callable[..., str] | None = None,
+) -> Path:
+    """G2 번들 하나를 `ctx.work/variants`에 `pureiron-<site>-g<gen>-<label>.pib`로 만든다 — 달력
+    버전 `product`, 트리 `project_dir`(WSL 경로), 현장 `site_id`(기본 `ctx.site`), 그 밖의
+    `bundles.py site` 인자 `options`(서명 재료·`--min-updater`·기록 디렉터리). 거부 시험처럼 같은
+    gen·release의 번들 여럿이 서로 덮어쓰지 않게 이름에 `label`을 둔다(`build_site_bundle`은
+    그대로)."""
+    site = site_id or ctx.site.site_id
+    out = ctx.work / "variants"
+    start = window_open_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+    end = (window_open_at + timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    extra = "".join(f" {shlex.quote(option)}" for option in options)
+    (run_wsl or wsl)(
+        f"{bundles_py('site', work)} "
+        f"--out '{golden.wsl_path(out)}' --gen {gen} --product {product} "
+        f"--window-start {start} --window-end {end} --site {site} "
+        f"--project-dir '{project_dir}'{extra}"
+    )
+    built = out / f"pureiron-{site}-g{gen}.pib"
+    return built.replace(out / f"pureiron-{site}-g{gen}-{label}.pib")
 
 
 def site_bundle(ctx: Context, gen: int, release: str) -> Path:

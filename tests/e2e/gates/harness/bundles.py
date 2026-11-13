@@ -65,6 +65,14 @@ release 쌍(`BASE`·`NEXT`·`FAULT`)은 `release_pair.py`가 정한다 — 함�
 
     uv run --no-sync python tests/e2e/gates/harness/bundles.py expected-schema --work W \\
         --next n1a2b3c4 --out <expected-schema.json>
+- `reject-materials`(G2-5 거부, M6-3b J1): `W/rejects`에 `E_SIG` 재료(root가 인증하지 않은
+  release key와 그 키를 인증한 다른 root·cert)와 `E_SCHEMA` 재료(NEXT 이미지 그대로에 스키마만
+  NEXT epoch + 2인 가짜 기록·store)를 새로 만든다(`reject_materials`). `site`는 서명 재료
+  (`--release-key`·`--cert-dir`·`--root-pub`)·`--min-updater`·기록
+  디렉터리(`--releases`·`--store`)를 받는다 — 기본값은 그대로(시험 키·`--work`의 기록).
+
+    uv run --no-sync python tests/e2e/gates/harness/bundles.py reject-materials --work W \\
+        --next n1a2b3c4
 """
 
 from __future__ import annotations
@@ -79,6 +87,7 @@ import sys
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
@@ -97,6 +106,8 @@ from harness.release_pair import (
     ReleasePair,
     fault_record_problems,
 )
+from pureiron_bundle import keys, trust
+from pureiron_bundle.pib import CERT_FILE, CERT_SIG
 from pureiron_core.platform.migrate import load_catalog
 from pureiron_project import canonical
 from pureiron_project.project import load_project
@@ -736,6 +747,16 @@ def expected_schema(
     return {"ok": True, "schema": schema, "path": str(out), "image": core}
 
 
+@dataclass(frozen=True)
+class Signing:
+    """번들 서명 재료 — 기본은 시험 키(`KEYS`). G2-5 `E_SIG`는 root가 인증하지 않은 release key와
+    그 키를 인증한 다른 root(`reject_materials`)를 넘긴다(빌더의 자체 검증은 그 root로 통과한다)."""
+
+    release_key: Path = KEYS / "release.key"
+    cert_dir: Path = KEYS
+    root_pub: Path = KEYS / "test-root.pub"
+
+
 def site(
     work: Path,
     out: Path,
@@ -746,7 +767,15 @@ def site(
     end: str,
     site_id: str,
     project_dir: Path = FIXTURE,
+    signing: Signing | None = None,
+    min_updater: str | None = None,
+    releases: Path | None = None,
+    store: Path | None = None,
 ) -> Path:
+    """fleet 현장 파일을 쓰고 `build_bundle.py`로 서명 번들을 만든다. 기본은 `work`의 기록·store와
+    시험 키다. G2-5 거부 재료는 서명(`signing`)·`min_updater`·기록 디렉터리(`releases`·`store`)를
+    바꾼다."""
+    keys_used = signing or Signing()
     fleet = work / "sites" / f"{site_id}-g{gen}.yaml"
     fleet.parent.mkdir(parents=True, exist_ok=True)
     fleet.write_text(
@@ -756,6 +785,7 @@ def site(
         encoding="utf-8",
     )
     out.mkdir(parents=True, exist_ok=True)
+    extra = ("--min-updater", min_updater) if min_updater is not None else ()
     _run(
         "uv",
         "run",
@@ -767,21 +797,112 @@ def site(
         "--project-dir",
         str(project_dir),
         "--release-key",
-        str(KEYS / "release.key"),
+        str(keys_used.release_key),
         "--cert-dir",
-        str(KEYS),
+        str(keys_used.cert_dir),
         "--root-pub",
-        str(KEYS / "test-root.pub"),
+        str(keys_used.root_pub),
         "--fleet-commit",
         "e2e0000",
         "--out",
         str(out),
         "--releases",
-        str(work / "releases"),
+        str(releases or work / "releases"),
         "--store",
-        str(work / "store"),
+        str(store or work / "store"),
+        *extra,
     )
     return out / f"pureiron-{site_id}-g{gen}.pib"
+
+
+REJECTS = "rejects"
+"""G2-5 거부 재료 디렉터리(`W/rejects`) — 부를 때마다 새로 만든다. nightly 작업 디렉터리에만
+둔다."""
+SCHEMA_JUMP = "s"
+"""가짜 스키마 기록 이름 접미사(`<NEXT>s`) — FAULT 묶음 정규식(`h`·`m`) 밖이고 `W/rejects`에만
+있다."""
+SCHEMA_JUMP_EPOCHS = 2
+"""가짜 기록의 epoch = NEXT + 2 — 현장(NEXT epoch)에서 두 epoch를 건너뛰므로 `E_SCHEMA`다(+ 1이면
+MIGRATE로 받아들여진다)."""
+ROGUE_CERT_DAYS = 30
+
+
+def schema_jump_record(next_record: dict[str, object]) -> dict[str, object]:
+    """`E_SCHEMA` 재료: NEXT 기록의 이미지 그대로(digest 검사를 통과한다)에 스키마만 NEXT epoch +
+    `SCHEMA_JUMP_EPOCHS`인 가짜 release 기록. 버전 `<NEXT 버전>.fs`(fleet 버전 형식 안)."""
+    epoch = cast(dict[str, int], next_record["schema"])["epoch"] + SCHEMA_JUMP_EPOCHS
+    name = f"{next_record['name']}{SCHEMA_JUMP}"
+    return {
+        "name": name,
+        "release": name,
+        "version": f"{next_record['version']}.f{SCHEMA_JUMP}",
+        "commit": next_record["commit"],
+        "images": json.loads(json.dumps(next_record["images"])),
+        "schema": {"epoch": epoch, "app_expected": epoch, "app_max_compatible": epoch + 1},
+    }
+
+
+def reject_materials(
+    work: Path,
+    next_name: str,
+    *,
+    now: datetime,
+    link: Callable[[Path, Path], None] = relink,
+) -> dict[str, object]:
+    """G2-5 거부 재료를 `W/rejects`에 새로 만든다:
+
+    - `E_SIG`(`rogue/`): 새 root key와 새 release key, 그 root가 release key에 발급한 cert
+      (`not_before` = `now` - 1일). 현장의 진짜 root로는 cert 서명이 맞지 않는다 — payload digest는
+      정상이다.
+    - `E_SCHEMA`(`releases/`·`store/`): `schema_jump_record` 하나와 그 이미지(NEXT store tar를
+    가리키는
+      symlink).
+
+    `E_UPDATER`(`--min-updater`)·`E_SITE`·`E_DIGEST`는 재료가 따로 없다. 결과 JSON(WSL 경로)."""
+    root = work / REJECTS
+    if root.exists():
+        shutil.rmtree(root)
+    rogue = root / "rogue"
+    rogue.mkdir(parents=True)
+    root_seed, release_seed = keys.generate_seed(), keys.generate_seed()
+    keys.write_private_key(rogue / "release.key", release_seed)
+    keys.write_public_key(rogue / "root.pub", keys.public_key(root_seed))
+    cert, cert_sig = trust.issue_cert(
+        root_seed,
+        keys.public_key(release_seed),
+        1,
+        now - timedelta(days=1),
+        days=ROGUE_CERT_DAYS,
+    )
+    (rogue / CERT_FILE).write_bytes(cert)
+    (rogue / CERT_SIG).write_bytes(cert_sig)
+    next_path = work / "releases" / f"{next_name}.json"
+    if not next_path.is_file():
+        raise SystemExit(f"{next_path} missing (bundles.py nightly-release)")
+    record = schema_jump_record(cast(dict[str, object], json.loads(next_path.read_text("utf-8"))))
+    releases, store = root / "releases", root / "store" / str(record["name"])
+    releases.mkdir(parents=True)
+    store.mkdir(parents=True)
+    (releases / f"{record['name']}.json").write_text(
+        json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    for svc in (*APP_SERVICES, "site-db"):
+        link(store / f"{svc}.tar", (work / "store" / next_name / f"{svc}.tar").resolve())
+    schema = cast(dict[str, int], record["schema"])
+    return {
+        "ok": True,
+        "rogue": {
+            "release_key": str(rogue / "release.key"),
+            "cert_dir": str(rogue),
+            "root_pub": str(rogue / "root.pub"),
+        },
+        "schema": {
+            "version": record["version"],
+            "epoch": schema["epoch"],
+            "releases": str(releases),
+            "store": str(root / "store"),
+        },
+    }
 
 
 def unabsorbed_copy(source: Path, dest: Path) -> Path:
@@ -897,6 +1018,15 @@ def main(argv: list[str] | None = None) -> int:
     site_cmd.add_argument("--window-end", required=True)
     site_cmd.add_argument("--site", default="site-a")
     site_cmd.add_argument("--project-dir", type=Path, default=FIXTURE)
+    site_cmd.add_argument("--release-key", type=Path, default=None, help="기본: 시험 키")
+    site_cmd.add_argument("--cert-dir", type=Path, default=None, help="기본: 시험 키 디렉터리")
+    site_cmd.add_argument("--root-pub", type=Path, default=None, help="빌더 자체 검증용 root")
+    site_cmd.add_argument("--min-updater", default=None, help="manifest min_updater")
+    site_cmd.add_argument("--releases", type=Path, default=None, help="기본: --work/releases")
+    site_cmd.add_argument("--store", type=Path, default=None, help="기본: --work/store")
+    rejects_cmd = sub.add_parser("reject-materials")
+    rejects_cmd.add_argument("--work", type=Path, required=True)
+    rejects_cmd.add_argument("--next", required=True, help="NEXT 이름 n<sha7>")
     m5 = sub.add_parser("m5-project")
     m5.add_argument("--work", type=Path, required=True)
     absorb_cmd = sub.add_parser("absorb")
@@ -928,6 +1058,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "fault-release":
         print(fault_release(args.work, DEFAULT))
     elif args.command == "site":
+        default = Signing()
+        signing = Signing(
+            args.release_key or default.release_key,
+            args.cert_dir or default.cert_dir,
+            args.root_pub or default.root_pub,
+        )
         print(
             site(
                 args.work,
@@ -938,8 +1074,15 @@ def main(argv: list[str] | None = None) -> int:
                 end=args.window_end,
                 site_id=args.site,
                 project_dir=args.project_dir,
+                signing=signing,
+                min_updater=args.min_updater,
+                releases=args.releases,
+                store=args.store,
             )
         )
+    elif args.command == "reject-materials":
+        found = reject_materials(args.work, args.next, now=datetime.now(UTC))
+        print(json.dumps(found, sort_keys=True))
     elif args.command == "m5-project":
         print(m5_project(args.work))
     elif args.command == "absorb":

@@ -440,6 +440,85 @@ def judge_migrate_failure(
     }
 
 
+# ---------------------------------------------------------------- G2-5 거부(M6-3b J1)
+
+
+def judge_rejected(
+    before: dict[str, object],
+    after: dict[str, object],
+    report: dict[str, object],
+    *,
+    exit_code: int,
+    want_exit: int,
+    want_code: str | None,
+    want_digests: dict[str, str],
+) -> dict[str, bool]:
+    """적용되면 안 되는 번들(거부·같은 gen no-op): CLI 종료 코드, 보고의 거부 코드(no-op은 보고
+    없음 = None), core `StartedAt` 불변(전 값을 못 읽었으면 거짓), 실행 이미지 == 그 현장의 지금
+    release, edit-lock 해제, applied gen 불변(전 값이 정수일 때만 참). run.py의
+    `site.stage_untouched`는 그대로 두고 G2는 이것을 쓴다(edit-lock·applied gen 추가, M6-3 F13)."""
+    started = core_started_at(before)
+    applied = updater_state(before).get("applied_gen")
+    return {
+        "exit": exit_code == want_exit,
+        "code": report.get("code") == want_code,
+        "core_not_restarted": started is not None and core_started_at(after) == started,
+        "images_match": bool(want_digests) and running_digests(after) == want_digests,
+        "edit_unlocked": edit_unlocked(after),
+        "applied_gen_kept": isinstance(applied, int)
+        and updater_state(after).get("applied_gen") == applied,
+    }
+
+
+SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+BOOTSTRAP_MEMBER = "bootstrap/bootstrap-verify.sh"
+PAYLOAD_MISMATCH = "payload sha256 mismatch"
+"""`bootstrap-verify.sh` ④ 단계가 내는 실패 문구 — 변조된 deb는 여기서 멈춰야 한다."""
+BOOTSTRAP_FAIL_EXIT = 1
+
+
+def _tampered_member(found: dict[str, object]) -> str:
+    tamper = found.get("tamper")
+    member = cast(dict[str, object], tamper).get("member") if isinstance(tamper, dict) else None
+    return member if isinstance(member, str) else ""
+
+
+def _seen_sha(found: dict[str, object]) -> str | None:
+    seen = found.get("sha256")
+    return seen if isinstance(seen, str) and SHA256_HEX.fullmatch(seen) else None
+
+
+def judge_script_tamper(found: dict[str, object], runbook_sha: str) -> dict[str, bool]:
+    """설치 전 ①: 설치 번들 사본의 `bootstrap-verify.sh`만 바꾸면 runbook의 sha256 대조에서 멈추고
+    (읽은 sha256이 runbook 값과 다르다 — 못 읽었으면 거짓) 스크립트를 실행하지 않으며, docker가
+    설치되지 않았고 탐침 디렉터리가 지워졌다."""
+    seen = _seen_sha(found)
+    return {
+        "tampered_copy": _tampered_member(found) == BOOTSTRAP_MEMBER,
+        "runbook_stops": seen is not None and seen != runbook_sha,
+        "bootstrap_not_run": "bootstrap" not in found,
+        "docker_absent": found.get("docker") == "absent",
+        "probe_removed": found.get("removed") is True,
+    }
+
+
+def judge_deb_tamper(found: dict[str, object], runbook_sha: str) -> dict[str, bool]:
+    """설치 전 ②: 설치 번들 사본의 `debs/*.deb` 하나만 바꾸면 정품 `bootstrap-verify.sh`(sha256이
+    runbook 값과 같다)가 payload 대조에서 종료 코드 1로 멈추고, docker가 설치되지 않았으며 탐침
+    디렉터리가 지워졌다."""
+    member = _tampered_member(found)
+    bootstrap = found.get("bootstrap")
+    run = cast(dict[str, object], bootstrap) if isinstance(bootstrap, dict) else {}
+    return {
+        "tampered_copy": member.startswith("debs/") and member.endswith(".deb"),
+        "genuine_script": _seen_sha(found) == runbook_sha,
+        "bootstrap_fails": run.get("rc") == BOOTSTRAP_FAIL_EXIT
+        and PAYLOAD_MISMATCH in str(run.get("stderr") or ""),
+        "docker_absent": found.get("docker") == "absent",
+        "probe_removed": found.get("removed") is True,
+    }
+
+
 # ---------------------------------------------------------------- 외부 접속(nftables·resolved)
 
 

@@ -155,16 +155,33 @@ def wait_ready(
     return snap
 
 
+RUNBOOK_META = (
+    "manifest.json manifest.sig release-cert.json release-cert.sig keys/root.pub "
+    "keys/root.pem bootstrap/bootstrap-verify.sh"
+)
+"""runbook 2단계가 전용 디렉터리에 이름으로 푸는 설치 번들 메타데이터(`bootstrap-verify.sh` ⓪)."""
+
+
 def install_runbook(
-    host: Vm, install: Path, g1: Path, *, site_id: str, runbook_fpr: str, runbook_bootstrap: str
+    host: Vm,
+    install: Path,
+    g1: Path,
+    *,
+    site_id: str,
+    runbook_fpr: str,
+    runbook_bootstrap: str,
+    after_upload: Callable[[], object] | None = None,
 ) -> float:
     """설치 번들 runbook(2단계 메타데이터 추출·지문 대조 → `install.sh --offline-time-confirmed`)
-    → enroll → g1 apply → 서비스 시작. 걸린 초. 판정은 호출자가 한다."""
+    → enroll → g1 apply → 서비스 시작. 걸린 초(업로드 뒤부터). 판정은 호출자가 한다.
+    `after_upload`는 번들을 올린 직후·설치 전에 부른다(G2-5 설치 전 변조 탐침 — 올린 번들을 다시
+    올리지 않는다). run.py는 넘기지 않는다."""
     for bundle in (install, g1):
         host.put(bundle, f"{INCOMING}/{bundle.name}")
+    if after_upload is not None:
+        after_upload()
     remote_install = f"{INCOMING}/{install.name}"
-    meta = "manifest.json manifest.sig release-cert.json release-cert.sig keys/root.pub "
-    meta += "keys/root.pem bootstrap/bootstrap-verify.sh"
+    meta = RUNBOOK_META
     started = time.monotonic()
     # runbook 2단계는 root 셸에서 친다(/root는 700, bootstrap-verify ⓪은 추출물이
     # 실행 사용자 소유인지 본다).
