@@ -519,6 +519,91 @@ def judge_deb_tamper(found: dict[str, object], runbook_sha: str) -> dict[str, bo
     }
 
 
+# ---------------------------------------------------------------- G2-8 드래프트 회수(M6-3b J2)
+
+DRAFT_ALARM = "temp-low"
+DRAFT_ALARM_BODY: dict[str, object] = {"setpoint": 6.5}
+"""G2-8의 세 번째 PATCH — fixture `setpoint: 5`의 운영 값 변경."""
+DRAFT_PATCHES = 3
+"""G2-8 PATCH 수(태그 하나·알람 둘) — 하나마다 site_rev +1."""
+
+
+def draft_patch_kept(db: dict[str, object]) -> bool:
+    """G2-8 PATCH 값 셋이 DB 정의에 그대로 있는가(`patch_kept` + 세 번째 알람)."""
+    alarm = definitions(db, "alarm_defs").get(DRAFT_ALARM, {})
+    return patch_kept(db) and all(alarm.get(k) == v for k, v in DRAFT_ALARM_BODY.items())
+
+
+def judge_draft_patch(out: dict[str, object], db: dict[str, object]) -> dict[str, bool]:
+    """G2-8 현장 PATCH 3회: web 경유 로그인 → 태그·알람·알람이 각각 200이고 site_rev를 하나씩
+    올리며(전 + 1·+ 2·+ 3), 끝난 뒤 site_rev = 전 + `DRAFT_PATCHES`·base_site_rev 그대로, DB
+    정의 = PATCH 값 셋. 전 값을 못 읽었으면 PATCH 판정이 모두 거짓이다."""
+    before = revs(reply(out, "project_before")[1])
+    after = revs(reply(out, "project_after")[1])
+    login, _ = reply(out, "login")
+    rev0 = before[0] if before is not None else None
+
+    def patched(key: str, step: int) -> bool:
+        status, body = reply(out, key)
+        site_rev = cast(dict[str, object], body).get("site_rev") if isinstance(body, dict) else None
+        return rev0 is not None and status == 200 and site_rev == rev0 + step
+
+    return {
+        "login": login == 200 and out.get("session_cookie") is True,
+        "tag_patch": patched("tag", 1),
+        "alarm_patch": patched("alarm", 2),
+        "alarm2_patch": patched("alarm2", DRAFT_PATCHES),
+        "site_rev": before is not None
+        and after is not None
+        and after == (before[0] + DRAFT_PATCHES, before[1]),
+        "readback": draft_patch_kept(db),
+    }
+
+
+def judge_draft_reapplied(
+    snap: dict[str, object], want_rev: int, content_hash: str | None
+) -> dict[str, bool]:
+    """G2-8 흡수 트리 재적용 뒤: 흡수한 트리(content_hash, absorb 출력 — 못 읽었으면 거짓)가
+    적용됐고 `base_site_rev == site_rev == want_rev`이며 PATCH 값 셋이 DB 정의에 남았다."""
+    body = project_body(snap)
+    return {
+        "content_hash": content_hash is not None and body.get("content_hash") == content_hash,
+        "base_site_rev": revs(body) == (want_rev, want_rev),
+        "patch_kept": draft_patch_kept(db_of(snap)),
+    }
+
+
+def judge_draft_rollback(
+    before: dict[str, object],
+    after: dict[str, object],
+    report: dict[str, object],
+    *,
+    want_digests: dict[str, str],
+    want_rev: int,
+    content_hash: str | None,
+) -> dict[str, bool]:
+    """G2-8 뒤 FAULT-h(리뷰 L1): site_rev·base_site_rev가 0이 아닌 상태(`want_rev`)에서 health
+    실패로 롤백하면 `failed`·`E_HEALTH`·실행 이미지 == 그 전 release·applied gen 그대로·경보 없음·
+    edit-lock 해제이고, site_rev·base_site_rev·PATCH 값 셋·content_hash(흡수 트리)가 그대로다 —
+    롤백이 드래프트 기준점을 0으로 되돌리는 결함을 잡는다."""
+    applied = updater_state(before).get("applied_gen")
+    checks = judge_attempt(
+        after,
+        report,
+        expect="failed",
+        want_digests=want_digests,
+        want_applied=cast(int | None, applied),
+        expect_code=FAULT_CODE,
+    )
+    return {
+        **checks,
+        "revs_kept": want_rev > 0 and revs(project_body(after)) == (want_rev, want_rev),
+        "patch_kept": draft_patch_kept(db_of(after)),
+        "content_hash_kept": content_hash is not None
+        and project_body(after).get("content_hash") == content_hash,
+    }
+
+
 # ---------------------------------------------------------------- 외부 접속(nftables·resolved)
 
 

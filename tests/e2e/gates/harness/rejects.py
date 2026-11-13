@@ -144,7 +144,13 @@ class RejectRemote:
 
 
 def reject_once(
-    run: g2.SiteRun, case: Case, pib: Path, remote: RejectRemote, *, want: str
+    run: g2.SiteRun,
+    case: Case,
+    pib: Path,
+    remote: RejectRemote,
+    *,
+    want: str,
+    name: str | None = None,
 ) -> dict[str, bool]:
     """`pib`를 스테이징하고(적용되면 안 된다) 전·후 probe·보고로 판정해 기록한다. `want`는 지금 실행
     중이어야 하는 release."""
@@ -165,7 +171,7 @@ def reject_once(
     )
     ok = all(checks.values())
     ctx.record(
-        item_name(case.key),
+        name or item_name(case.key),
         ok,
         bundle=pib.name,
         exit=result.returncode,

@@ -22,7 +22,7 @@ FILES: tuple[tuple[str, str], ...] = (
     # ---- site-b(NEXT, c0 = HEAD) — HEAD의 PATCH·export·검증 코드를 보는 것
     ("test_g2_rejections.py", "site-b"),  # G2-5 거부(설치 전 변조 2건 + c0·g2 거부 8건)
     ("test_g2_faults.py", "site-b"),  # G2-6 ② migrate 실패
-    # 3b: ("test_g2_draft.py", "site-b") — G2-8
+    ("test_g2_draft.py", "site-b"),  # G2-8 드래프트 회수(PR 전) + 그 뒤 롤백
     # ---- 맨 끝: 모든 시나리오를 거친 누적 카운터
     ("test_g2_no_external.py", LAST),
 )

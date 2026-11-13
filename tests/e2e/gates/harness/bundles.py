@@ -954,9 +954,20 @@ def _tool(*cmd: str) -> dict[str, object]:
     return {"rc": done.returncode, "stdout": done.stdout[-2000:], "stderr": done.stderr[-2000:]}
 
 
-def absorb(work: Path, draft: Path, site_key: Path, site_id: str) -> dict[str, object]:
-    """ⓓ: 아직 absorb하지 않은 repo 사본에 현장 드래프트를 회수하고 게이트를 사전 점검한다."""
-    repo, absorbed = work / "m5" / "repo", work / "m5" / "absorbed"
+def absorb(
+    work: Path,
+    draft: Path,
+    site_key: Path,
+    site_id: str,
+    *,
+    repo: Path | None = None,
+    dest: Path | None = None,
+) -> dict[str, object]:
+    """ⓓ: 아직 absorb하지 않은 repo 사본에 현장 드래프트를 회수하고 게이트를 사전 점검한다. 기본
+    repo·결과는 `W/m5/repo`·`W/m5/absorbed`(run.py). G2-8은 G2 트리(`--repo`)를 `--dest`에 복사해
+    회수한다."""
+    repo = repo or work / "m5" / "repo"
+    absorbed = dest or work / "m5" / "absorbed"
     if not repo.is_dir():
         raise SystemExit(f"{repo} missing (bundles.py m5-project)")
     if absorbed.exists():
@@ -1034,6 +1045,8 @@ def main(argv: list[str] | None = None) -> int:
     absorb_cmd.add_argument("--draft", type=Path, required=True)
     absorb_cmd.add_argument("--site-key", type=Path, required=True)
     absorb_cmd.add_argument("--site", default="site-a")
+    absorb_cmd.add_argument("--repo", type=Path, default=None, help="기본: --work/m5/repo")
+    absorb_cmd.add_argument("--dest", type=Path, default=None, help="기본: --work/m5/absorbed")
     install_cmd = sub.add_parser("install")
     install_cmd.add_argument("--work", type=Path, required=True)
     install_cmd.add_argument("--out", type=Path, required=True)
@@ -1086,7 +1099,10 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "m5-project":
         print(m5_project(args.work))
     elif args.command == "absorb":
-        print(json.dumps(absorb(args.work, args.draft, args.site_key, args.site)))
+        absorbed = absorb(
+            args.work, args.draft, args.site_key, args.site, repo=args.repo, dest=args.dest
+        )
+        print(json.dumps(absorbed))
     elif args.command == "nightly-release":
         result = nightly_release(
             args.work,

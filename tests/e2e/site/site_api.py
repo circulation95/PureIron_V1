@@ -12,6 +12,8 @@
 
 출력: `project_before`·`project_after`(`GET /api/v1/project`), `login`·`tag`·`alarm`(HTTP 상태와
 본문) — 판정은 하네스(`run.judge_patch`)가 한다. 표준 라이브러리만 쓴다.
+`--alarm2`·`--alarm2-body`를 주면 알람 PATCH를 하나 더 하고 `alarm2`로 낸다(G2-8 PATCH 3회 — 주지
+않으면 출력이 그대로다).
 
 `live`(G2-1): viewer로 로그인해 `GET /api/v1/tags`(태그 현재값·품질)·`GET /api/v1/devices`(장비
 통신 상태 — 태그가 아니다)를 읽고 로그아웃한다. 출력 `login`·`tags`·`devices`(HTTP 상태와 본문),
@@ -100,6 +102,13 @@ def patch(args: argparse.Namespace, call: Call = call) -> dict[str, Any]:
         out["alarm"] = call(
             "PATCH", f"/api/v1/project/alarms/{args.alarm}", json.loads(args.alarm_body), token
         )[:2]
+        if args.alarm2 is not None:  # G2-8: 세 번째 PATCH(site_rev +3)
+            out["alarm2"] = call(
+                "PATCH",
+                f"/api/v1/project/alarms/{args.alarm2}",
+                json.loads(args.alarm2_body),
+                token,
+            )[:2]
         out["logout"] = call("POST", "/api/v1/auth/logout", None, token)[0]
     out["project_after"] = call("GET", "/api/v1/project")[:2]
     return out
@@ -124,6 +133,8 @@ def main() -> int:
     cmd.add_argument("--tag-body", required=True)
     cmd.add_argument("--alarm", required=True)
     cmd.add_argument("--alarm-body", required=True)
+    cmd.add_argument("--alarm2", default=None)
+    cmd.add_argument("--alarm2-body", default="{}")
     live_cmd = sub.add_parser("live")
     live_cmd.add_argument("--username", required=True)
     live_cmd.add_argument("--password-file", required=True)

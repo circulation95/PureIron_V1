@@ -470,9 +470,12 @@ def stage_for_window(
 # ---------------------------------------------------------------- M5 현장 PATCH·온라인 전환
 
 
-def site_patch(host: Vm) -> tuple[dict[str, object], dict[str, object]]:
+def site_patch(
+    host: Vm, *, alarm2: tuple[str, dict[str, object]] | None = None
+) -> tuple[dict[str, object], dict[str, object]]:
     """e2e admin(CLI 전용 계정, VM에서 만든 비밀번호)을 만들고 web 경유로 태그·알람을 PATCH한다.
-    (site_api 출력, 계정 생성 결과)."""
+    (site_api 출력, 계정 생성 결과). `alarm2`(알람 id, 본문)를 주면 알람 PATCH를 하나 더 한다(G2-8
+    PATCH 3회 — run.py는 넘기지 않는다)."""
     created = host.run(
         as_root(
             "umask 077 && python3 -c 'import secrets; print(secrets.token_urlsafe(24))' "
@@ -490,12 +493,15 @@ def site_patch(host: Vm) -> tuple[dict[str, object], dict[str, object]]:
     if created.returncode != 0:
         return {}, admin
     host.put(paths.REPO / "tests" / "e2e" / "site" / "site_api.py", f"{REMOTE}/site_api.py")
+    extra = ""
+    if alarm2 is not None:
+        extra = f" --alarm2 {alarm2[0]} --alarm2-body {shlex.quote(json.dumps(alarm2[1]))}"
     try:
         out = host.json(
             f"sudo python3 {REMOTE}/site_api.py patch --username {E2E_ADMIN} "
             f"--password-file {ADMIN_PASSWORD} --tag {PATCH_TAG} "
             f"--tag-body {shlex.quote(json.dumps(PATCH_TAG_BODY))} --alarm {PATCH_ALARM} "
-            f"--alarm-body {shlex.quote(json.dumps(PATCH_ALARM_BODY))}"
+            f"--alarm-body {shlex.quote(json.dumps(PATCH_ALARM_BODY))}{extra}"
         )
     except (*REMOTE_ERRORS, ValueError) as exc:
         return {"error": str(exc)[-TAIL_CHARS:]}, admin

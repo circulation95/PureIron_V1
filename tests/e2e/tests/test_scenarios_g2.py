@@ -17,6 +17,7 @@ from harness.vm import RemoteCommandError, Vm
 
 GATES = paths.REPO / "tests" / "e2e" / "gates"
 VM_3GIB = {"PUREIRON_E2E_VM_GIB": "3"}
+DRAFT_ITEMS = ("patch", "draft_gate", "absorb", "reapply", "rollback_keeps_drafts")
 REJECT_ITEMS = (
     *("E_SITE", "E_DIGEST", "E_SIG", "E_SCHEMA", "E_UPDATER", "same_gen"),
     *("next_g2", "E_CERT", "E_GEN"),
@@ -57,7 +58,7 @@ def test_order_table_keeps_groups_in_sequence_and_no_external_last() -> None:
     sites = {group: [n for n, g in order.FILES if g == group] for group in ("site-a", "site-b")}
     assert sites == {
         "site-a": ["test_g2_rollback.py"],
-        "site-b": ["test_g2_rejections.py", "test_g2_faults.py"],
+        "site-b": ["test_g2_rejections.py", "test_g2_faults.py", "test_g2_draft.py"],
     }
     swapped = [order.FILES[-1], *order.FILES[:-1]]
     with pytest.raises(E2EError, match="out of order"):
@@ -95,6 +96,7 @@ def test_real_g2_collection_follows_the_table() -> None:
         "test_g2_5_tampered_before_install[tampered_deb]",
         *(f"test_g2_5_rejected[{item}]" for item in REJECT_ITEMS),
         "test_g2_6_2_migrate_failure",
+        *(f"test_g2_8_draft_recall[{item}]" for item in DRAFT_ITEMS),
         "test_g2_no_external[site-a]",
         "test_g2_no_external[site-b]",
     ]
