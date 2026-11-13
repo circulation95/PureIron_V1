@@ -51,6 +51,9 @@ release 쌍(`BASE`·`NEXT`·`FAULT`)은 `release_pair.py`가 정한다 — 함�
   복사한다). nightly 기록·이미지는 최근 `NIGHTLY_KEEP`개만 남긴다. HEAD 빌드가 실패하면 exit 0으로
   `{"ok": false, ...}`를 낸다(제품 실패, D7) — 빌드 뒤 Docker가 응답하지 않으면 `INFRA_EXIT`(75,
   인프라 실패)이다. 그 밖의 0 아닌 종료(빌드가 성공한 뒤의 예외 포함)는 제품 스크립트 실패다.
+  단계마다 시간 제한이 있다(`HEAD_BUILD_TIMEOUT_S`·`DOCKER_BUILD_TIMEOUT_S`·`DOCKER_SAVE_TIMEOUT_S`·
+  `GIT_TIMEOUT_S`, M6-3b N3): 시간 초과 때 Docker가 답하면 제품(빌드 초과는 `{"ok": false, "rc":
+  "timeout"}`, 그 뒤 단계는 exit 1), 답하지 않으면 인프라(75)다.
   prune은 NEXT와 그 FAULT 파생(`<NEXT>h`·`<NEXT>m`)을 한 묶음으로 남기고 지운다(store
   디렉터리·docker 태그).
 - `nightly-faults`(G2 nightly FAULT 2종, M6-3 H9): 같은 run의 NEXT 기록에서 health
@@ -134,6 +137,16 @@ NIGHTLY_KEEP = 3
 """WSL에 남기는 nightly 기록·이미지 수(디스크, 상위 계획 R8)."""
 BUILD_TAIL_CHARS = 4000
 DOCKER_INFO_TIMEOUT_S = 60
+HEAD_BUILD_TIMEOUT_S = 40 * 60
+"""`build_images.sh`(core·collector·web·simulator) 한 번 — BuildKit 캐시 적중이면 1분 안(M6-3a
+실측 34초), 캐시가 없어도 의존성 설치 몇 분이다. 넘기면(Docker가 답하는데) HEAD가 빌드에서 멈춘
+것으로 본다(제품)."""
+DOCKER_BUILD_TIMEOUT_S = 5 * 60
+"""라벨 파생·FAULT 파생 `docker build` 하나(`FROM` 한 겹 — 보통 몇 초)."""
+DOCKER_SAVE_TIMEOUT_S = 10 * 60
+"""`docker save` 하나(이미지 tar 수백 MB)."""
+DOCKER_RM_TIMEOUT_S = 2 * 60
+GIT_TIMEOUT_S = 60
 INFRA_EXIT = 75
 """실행 환경 탓으로 멈출 때의 종료 코드(EX_TEMPFAIL) — Windows 쪽 `golden.wsl`이 `WslError`(infra)로
 바꾼다(`golden.WSL_INFRA_EXIT`와 같다). 그 밖의 0 아닌 종료는 제품 스크립트 실패(product)다."""
@@ -145,8 +158,8 @@ def infra_exit(message: str) -> SystemExit:
     return SystemExit(INFRA_EXIT)
 
 
-def _run(*cmd: str, cwd: Path = ROOT) -> None:
-    subprocess.run(cmd, cwd=cwd, check=True)
+def _run(*cmd: str, cwd: Path = ROOT, timeout_s: float | None = None) -> None:
+    subprocess.run(cmd, cwd=cwd, check=True, timeout=timeout_s)
 
 
 def local_digest(tag: str, scratch: Path) -> str | None:
@@ -301,7 +314,7 @@ def _docker_ok() -> bool:
 
 
 def _save(tag: str, tar: Path) -> dict[str, str]:
-    _run("docker", "save", "-o", str(tar), tag)
+    _run("docker", "save", "-o", str(tar), tag, timeout_s=DOCKER_SAVE_TIMEOUT_S)
     return {"tag": tag, "config_digest": config_digest_from_tar(tar)}
 
 
@@ -317,7 +330,11 @@ def nightly_images(
         dockerfile = NIGHTLY_DOCKERFILE.format(svc=svc, source=f"{name}-src", sha=sha)
         tag = f"pureiron/{svc}:{name}"
         subprocess.run(
-            ("docker", "build", "-q", "-t", tag, "-"), input=dockerfile, text=True, check=True
+            ("docker", "build", "-q", "-t", tag, "-"),
+            input=dockerfile,
+            text=True,
+            check=True,
+            timeout=DOCKER_BUILD_TIMEOUT_S,
         )
         images[svc] = _save(tag, target / f"{svc}.tar")
     lock = read_lock(src / "deploy" / "releases" / "site-db.lock")
@@ -337,7 +354,11 @@ def nightly_images(
 
 def _git_head(src: Path) -> str:
     return subprocess.run(
-        ("git", "-C", str(src), "rev-parse", "HEAD"), capture_output=True, text=True, check=True
+        ("git", "-C", str(src), "rev-parse", "HEAD"),
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=GIT_TIMEOUT_S,
     ).stdout.strip()
 
 
@@ -349,6 +370,7 @@ def _build_head(src: Path, name: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         check=False,
+        timeout=HEAD_BUILD_TIMEOUT_S,
     )
 
 
@@ -366,15 +388,30 @@ def nightly_release(
     docker_ok: Callable[[], bool] = _docker_ok,
     store_root: Callable[[], Path] = image_store,
     records: Path = ROOT / "deploy" / "releases",
+    link: Callable[[Path, Path], None] = relink,
+    finish: Callable[..., dict[str, dict[str, str]]] | None = None,
 ) -> dict[str, object]:
     """HEAD(`src`) 빌드 → 라벨 파생 → `W/releases/<name>.json`·`W/store/<name>/`·시뮬레이터 tar.
     빌드 실패는 `{"ok": false}`(제품 실패), 사본 커밋 불일치·빌드 뒤 Docker 무응답·BASE 기록/store
-    없음은 `INFRA_EXIT`(인프라 실패), 빌드가 성공한 뒤의 다른 예외는 exit 1(제품 실패)이다.
-    `git_head`·`build_head`·`docker_ok`·`store_root`·`records`는 단위 시험이 바꿔 끼운다."""
-    head = git_head(src)
+    없음은 `INFRA_EXIT`(인프라 실패), 빌드가 성공한 뒤의 다른 예외는 exit 1(제품 실패)이다. 시간
+    초과(N3): git = 인프라(사본 문제), 빌드 = Docker가 답하면 `{"ok": false, "rc": "timeout"}`(제품
+    — HEAD가 빌드에서 멈춤) 아니면 인프라, 빌드 뒤 파생·저장 = Docker가 답하면 exit 1(제품 스크립트
+    실패, nightly-faults와 같은 규칙) 아니면 인프라. `git_head`·`build_head`·`docker_ok`·
+    `store_root`·`records`·`link`·`finish`(빌드 뒤 단계 — 기본 `finish_release`)는 단위 시험이 바꿔
+    끼운다."""
+    try:
+        head = git_head(src)
+    except subprocess.TimeoutExpired:
+        raise infra_exit(f"git rev-parse in {src} timed out after {GIT_TIMEOUT_S}s") from None
     if head != sha:
         raise infra_exit(f"{src} is at {head}, not {sha}")
-    build = build_head(src, name)
+    try:
+        build = build_head(src, name)
+    except subprocess.TimeoutExpired:
+        if not docker_ok():
+            raise infra_exit("docker is not responding after the HEAD build timed out") from None
+        tail = f"build_images.sh did not finish in {HEAD_BUILD_TIMEOUT_S}s (docker answers)"
+        return {"ok": False, "stage": "build", "rc": "timeout", "tail": tail}
     if build.returncode != 0:
         if not docker_ok():
             raise infra_exit("docker is not responding after the HEAD build failed")
@@ -386,9 +423,16 @@ def nightly_release(
         raise infra_exit(f"BASE {base}: record or image store {real_store / base} missing")
     reset_records(releases)
     store.mkdir(parents=True, exist_ok=True)
-    relink(store / base, real_store / base)
+    link(store / base, real_store / base)
     base_record = cast(dict[str, object], json.loads(base_path.read_text(encoding="utf-8")))
-    images = nightly_images(store, real_store, src, name=name, sha=sha, base_record=base_record)
+    try:
+        images = (finish or finish_release)(
+            store, real_store, src, name=name, sha=sha, base_record=base_record, sim_out=sim_out
+        )
+    except subprocess.TimeoutExpired as exc:
+        if not docker_ok():
+            raise infra_exit(f"docker is not responding after {exc.cmd} timed out") from None
+        raise SystemExit(f"{exc.cmd} timed out after {exc.timeout}s (docker answers)") from None
     catalog = load_catalog(src / "services" / "core" / "migrations")
     record = {
         "name": name,
@@ -404,15 +448,46 @@ def nightly_release(
     }
     path = releases / f"{name}.json"
     path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return {"ok": True, "name": name, "record": record, "simulator_tar": str(sim_out)}
+
+
+def finish_release(
+    store: Path,
+    real_store: Path,
+    src: Path,
+    *,
+    name: str,
+    sha: str,
+    base_record: dict[str, object],
+    sim_out: Path,
+) -> dict[str, dict[str, str]]:
+    """HEAD 빌드 뒤 단계: 라벨 파생·이미지 저장(`nightly_images`) → 시뮬레이터 tar → 오래된 nightly
+    묶음 prune(이미지 지우기는 최선 노력 — 시간 초과도 넘긴다). 이미지 기록을 돌려준다."""
+    images = nightly_images(store, real_store, src, name=name, sha=sha, base_record=base_record)
     sim_out.parent.mkdir(parents=True, exist_ok=True)
-    _run("docker", "save", "-o", str(sim_out), f"pureiron/simulator:{name}-src")
+    _run(
+        "docker",
+        "save",
+        "-o",
+        str(sim_out),
+        f"pureiron/simulator:{name}-src",
+        timeout_s=DOCKER_SAVE_TIMEOUT_S,
+    )
     nightly = {d.name: d.stat().st_mtime for d in store.glob("n*") if d.is_dir()}
     for old in nightly_prune(nightly, name):
         shutil.rmtree(store / old)
         for svc in NIGHTLY_BUILD:
             for tag in (f"pureiron/{svc}:{old}", f"pureiron/{svc}:{old}-src"):
-                subprocess.run(("docker", "image", "rm", tag), capture_output=True, check=False)
-    return {"ok": True, "name": name, "record": record, "simulator_tar": str(sim_out)}
+                try:
+                    subprocess.run(
+                        ("docker", "image", "rm", tag),
+                        capture_output=True,
+                        check=False,
+                        timeout=DOCKER_RM_TIMEOUT_S,
+                    )
+                except subprocess.TimeoutExpired:
+                    continue  # 디스크 정리일 뿐이다 — 다음 run의 prune이 다시 지운다
+    return images
 
 
 FAULT_MIGRATE_SQL = """\
@@ -515,7 +590,7 @@ def nightly_faults(
     그대로 다시 던진다(제품 스크립트 실패, exit 1)."""
     try:
         return build_faults(work, next_name, image_migrations=image_migrations)
-    except subprocess.CalledProcessError as exc:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         if not docker_ok():
             raise infra_exit(f"docker is not responding after {exc.cmd} failed") from None
         raise
@@ -577,7 +652,15 @@ def build_faults(
             epoch = write_fault_migrations(source, build_dir / "migrations")
             dockerfile = FAULT_MIGRATE_DOCKERFILE.format(source=next_name)
         (build_dir / "Dockerfile").write_text(dockerfile, encoding="utf-8")
-        _run("docker", "build", "-q", "-t", f"pureiron/{changed}:{name}", str(build_dir))
+        _run(
+            "docker",
+            "build",
+            "-q",
+            "-t",
+            f"pureiron/{changed}:{name}",
+            str(build_dir),
+            timeout_s=DOCKER_BUILD_TIMEOUT_S,
+        )
         images: dict[str, dict[str, str]] = {}
         for svc in APP_SERVICES:
             tag = f"pureiron/{svc}:{name}"
