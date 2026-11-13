@@ -63,6 +63,7 @@ from harness import (
     g2,
     hyperv,
     memwatch,
+    order,
     paths,
     preflight,
     report,
@@ -206,7 +207,9 @@ def step_run(
 
     codes = {"first": run_pytest(out / "junit.xml", [GATES_REL], left(PYTEST_TIMEOUT_S))}
     first = read_results(out / "junit.xml")
-    targets = [f"{GATES_REL}/{t}" for t in report.retry_targets(first, active)]
+    # 재시도는 새 세션이다 — 시나리오와 같은 현장의 외부 접속 0을 함께 묶는다(order.retry_closure)
+    again_ids = order.retry_closure(report.retry_targets(first, active), [r.test_id for r in first])
+    targets = [f"{GATES_REL}/{t}" for t in again_ids]
     retry: dict[str, object] = {"targets": targets, "done": False}
     if not first and codes["first"] == PYTEST_TIMED_OUT:
         retry["skipped"] = "pytest timed out without results (a hang does not heal on retry)"

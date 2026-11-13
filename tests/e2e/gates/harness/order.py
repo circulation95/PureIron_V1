@@ -7,6 +7,7 @@ G2-1(설치) → site-a 시나리오 → site-b 시나리오 → 외부 접속 0
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 
 from harness.context import E2EError
@@ -48,3 +49,35 @@ def sort_order(file_names: Sequence[str]) -> list[int]:
     수집 순서 그대로다(안정 정렬)."""
     check_table()
     return sorted(range(len(file_names)), key=lambda i: rank(file_names[i]))
+
+
+# ---------------------------------------------------------------- infra 재시도 묶음(리뷰 M1)
+
+SITE_PARAM = re.compile(r"\[([^\]]+)\]$")
+"""맨 끝 묶음 시험 id의 현장 매개변수(`test_g2_no_external[site-a]` → `site-a`)."""
+
+
+def _site_of(test_id: str) -> tuple[str, str] | None:
+    """시험 id(`<파일>::<이름>`)의 (묶음 종류, 현장): 현장 묶음이면 ("scenario", 현장), 맨 끝
+    묶음이면 ("last", 매개변수 현장), 그 밖(G2-1·표에 없음)은 None."""
+    file_name, _, name = test_id.partition("::")
+    group = dict(FILES).get(file_name)
+    if group == LAST:
+        found = SITE_PARAM.search(name)
+        return ("last", found[1]) if found else None
+    if group is not None and group not in (FIRST, LAST):
+        return ("scenario", group)
+    return None
+
+
+def retry_closure(targets: Sequence[str], every: Sequence[str]) -> list[str]:
+    """infra 재시도 대상 묶기 — 재시도는 새 세션(새 VM, c0 새로)이라 외부 접속 0의 뜻이 바뀐다.
+    처음 대상(`targets`) 기준으로 한 번만 더한다(연쇄하지 않는다): 한 현장의 시나리오 시험이
+    대상이면 그 현장의 맨 끝 시험(외부 접속 0)을 더하고(다시 돈 시나리오의 외부 접속을 본다), 맨 끝
+    시험이 대상이면 그 현장의 시나리오 시험 전부를 더한다(시나리오 없는 세션의 카운터로 통과하지
+    않게). 현장은 `FILES` 표에서 읽는다 — 시험을 더하면 묶음이 따라온다. `every`(첫 실행의 시험 id
+    전부)에서 고르고 그 순서로 돌려준다."""
+    found = [f for t in targets if (f := _site_of(t)) is not None]
+    want = {("last" if kind == "scenario" else "scenario", site) for kind, site in found}
+    chosen = set(targets) | {t for t in every if _site_of(t) in want}
+    return [t for t in every if t in chosen] + [t for t in targets if t not in every]

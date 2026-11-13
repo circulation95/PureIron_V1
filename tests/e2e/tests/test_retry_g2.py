@@ -1,0 +1,100 @@
+"""infra 재시도 대상 묶기(M6-3a 리뷰 M1) — 재시도는 새 세션(새 VM)이라 한 현장의 시나리오와 그
+현장의 외부 접속 0(맨 끝)을 함께 다시 돌린다. 합친 결과에서 다시 돈 시험은 재시도 결과로 남는다."""
+
+from __future__ import annotations
+
+from datetime import date
+from pathlib import Path
+
+import nightly
+import pytest
+from harness import order, report
+
+ROLLBACK_4 = "test_g2_rollback.py::test_g2_4_rollback"
+ROLLBACK_63 = "test_g2_rollback.py::test_g2_6_3_health_failure"
+FAULTS_62 = "test_g2_faults.py::test_g2_6_2_migrate_failure"
+INSTALL_A = "test_g2_install.py::test_g2_1_install_and_100_tags_good[site-a]"
+INSTALL_B = "test_g2_install.py::test_g2_1_install_and_100_tags_good[site-b]"
+NO_EXT_A = "test_g2_no_external.py::test_g2_no_external[site-a]"
+NO_EXT_B = "test_g2_no_external.py::test_g2_no_external[site-b]"
+EVERY = [INSTALL_A, INSTALL_B, ROLLBACK_4, ROLLBACK_63, FAULTS_62, NO_EXT_A, NO_EXT_B]
+
+
+@pytest.mark.parametrize(
+    ("targets", "want"),
+    [
+        # (b) 시나리오만 → 그 현장의 외부 접속 0을 더한다
+        ([ROLLBACK_4], [ROLLBACK_4, NO_EXT_A]),
+        ([FAULTS_62], [FAULTS_62, NO_EXT_B]),
+        # (a) 외부 접속 0만 → 그 현장의 시나리오 전부를 더한다
+        ([NO_EXT_A], [ROLLBACK_4, ROLLBACK_63, NO_EXT_A]),
+        ([NO_EXT_B], [FAULTS_62, NO_EXT_B]),
+        # G2-1은 묶지 않는다(세션 fixture가 어차피 다시 만든다), 연쇄하지 않는다
+        ([INSTALL_B], [INSTALL_B]),
+        ([ROLLBACK_63, INSTALL_B], [INSTALL_B, ROLLBACK_63, NO_EXT_A]),
+    ],
+)
+def test_retry_bundles_scenarios_with_their_site_no_external(
+    targets: list[str], want: list[str]
+) -> None:
+    assert order.retry_closure(targets, EVERY) == want
+
+
+def test_bundles_follow_the_order_table(monkeypatch: pytest.MonkeyPatch) -> None:
+    """3b가 표에 현장 시험 파일을 더하면 묶음이 따라온다(표에서 현장을 읽는다)."""
+    crash = "test_g2_crash.py::test_g2_crash[reset-switching]"
+    table = (*order.FILES[:2], ("test_g2_crash.py", "site-a"), *order.FILES[2:])
+    monkeypatch.setattr(order, "FILES", table)
+    assert order.retry_closure([NO_EXT_A], [*EVERY, crash]) == [
+        ROLLBACK_4,
+        ROLLBACK_63,
+        NO_EXT_A,
+        crash,
+    ]
+    assert order.retry_closure([crash], [*EVERY, crash]) == [NO_EXT_A, crash]
+
+
+def junit(*cases: tuple[str, str]) -> str:
+    """(시험 id, 결과: pass·infra·product)마다 testcase 하나."""
+    body: list[str] = []
+    for test_id, outcome in cases:
+        file_name, name = test_id.split("::")
+        fail = (
+            ""
+            if outcome == "pass"
+            else f'<failure message="x"/><properties><property name="failure_class" '
+            f'value="{outcome}"/></properties>'
+        )
+        body.append(f'<testcase file="{file_name}" name="{name}" time="1">{fail}</testcase>')
+    return f'<testsuites><testsuite name="pytest">{"".join(body)}</testsuite></testsuites>'
+
+
+def test_step_run_retries_the_bundle_and_keeps_a_failed_retry_of_an_added_test(
+    tmp_path: Path,
+) -> None:
+    """롤백(site-a)만 infra로 실패 → 재시도 대상 = 롤백 + 외부 접속 0[site-a]. 첫 세션에서 통과했던
+    외부 접속 0이 재시도 세션에서 실패하면 합친 결과에 실패로 남는다."""
+    first = [(t, "infra" if t == ROLLBACK_4 else "pass") for t in EVERY]
+    again = [(ROLLBACK_4, "pass"), (ROLLBACK_63, "pass"), (NO_EXT_A, "product")]
+    calls: list[list[str]] = []
+
+    def run_pytest(path: Path, targets: list[str], timeout_s: float) -> int:
+        calls.append(targets)
+        path.write_text(junit(*(first if len(calls) == 1 else again)), encoding="utf-8")
+        return 1
+
+    summary = nightly.step_run(
+        "20261113T181700Z",
+        "a" * 40,
+        tmp_path,
+        run_pytest=run_pytest,
+        recover_env=lambda: (True, []),
+        today=date(2026, 11, 13),
+        quarantine=[],
+    )
+    assert calls[1] == [f"{nightly.GATES_REL}/{t}" for t in (ROLLBACK_4, NO_EXT_A)]
+    rows = {str(r["test_id"]): r for r in report.test_rows(summary)}
+    assert rows[NO_EXT_A]["outcome"] == report.FAILED
+    assert rows[NO_EXT_A]["retried"] is True
+    assert rows[ROLLBACK_4]["outcome"] == report.PASSED
+    assert summary["verdict"] == "product"

@@ -369,6 +369,12 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
 - `rolling_back` 구간: Updater 보고 `phase_durations_s.rolling_back`(진입부터 다음 phase 진입까지).
   Updater는 직전 이미지를 띄우고 ready를 확인한 뒤에야 `failed`로 들어가므로 이 구간이 "롤백 시작부터
   직전 이미지 + ready까지"다. 전체 적용 시간(스테이징부터 수렴까지)으로 대신하지 않는다.
+- infra 재시도 묶음(`order.retry_closure`): 재시도는 새 세션(새 VM, c0 새로)이라, 한 현장의 시나리오
+  시험이 다시 돌면 그 현장의 `test_g2_no_external[site]`를 함께 돌리고(다시 돈 시나리오의 외부 접속을
+  본다), `test_g2_no_external[site]`가 다시 돌면 그 현장의 시나리오 시험 전부를 함께 돌린다(시나리오
+  없는 세션의 카운터로 통과하지 않게). 처음 대상 기준으로 한 번만 더하고(연쇄 없음), 현장은 순서 표에서
+  읽는다. 합친 결과에서 다시 돈 시험은 재시도 결과로 바뀐다 — 첫 세션에서 통과한 외부 접속 0도
+  재시도에서 실패하면 실패로 남는다.
 - 실행 순서: `harness/order.py`의 표 하나가 정한다(G2-1 → site-a → site-b → 외부 접속 0). 표에 없는
   `test_g2_*.py`는 수집 오류다 — M6-3b의 거부(site-b)·draft(site-b)·crash(site-a) 자리가 표에 주석으로
   있다.
