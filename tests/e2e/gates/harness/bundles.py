@@ -497,6 +497,24 @@ def nightly_faults(
     next_name: str,
     *,
     image_migrations: Callable[[str, Path], Path] = _image_migrations,
+    docker_ok: Callable[[], bool] = _docker_ok,
+) -> dict[str, object]:
+    """`build_faults`를 돌린다. docker 명령(`build`·`save`·`tag`·`load`)이 실패했을 때 Docker가
+    응답하지 않으면 `INFRA_EXIT`(인프라 — `nightly-release`와 같은 규칙, M6-3a 리뷰 M2), 응답하면
+    그대로 다시 던진다(제품 스크립트 실패, exit 1)."""
+    try:
+        return build_faults(work, next_name, image_migrations=image_migrations)
+    except subprocess.CalledProcessError as exc:
+        if not docker_ok():
+            raise infra_exit(f"docker is not responding after {exc.cmd} failed") from None
+        raise
+
+
+def build_faults(
+    work: Path,
+    next_name: str,
+    *,
+    image_migrations: Callable[[str, Path], Path] = _image_migrations,
 ) -> dict[str, object]:
     """nightly FAULT 2종(M6-3 H9) `<NEXT>h`·`<NEXT>m`을 `W/releases/<이름>.json`·
     `W/store/<이름>/`에만 만든다(저장소 `deploy/releases`·실제 image store는 건드리지 않는다). 둘 다

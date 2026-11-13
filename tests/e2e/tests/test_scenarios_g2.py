@@ -344,3 +344,37 @@ def test_probe_adds_three_row_counts_and_keeps_every_existing_key() -> None:
     assert probe.DB_SQL["audit_log_rows"] == "SELECT count(*) FROM audit_log"
     assert probe.DB_SQL["alarm_journal_rows"] == "SELECT count(*) FROM alarm_journal"
     assert set(judges.ROW_KEYS) <= set(probe.DB_SQL)
+
+
+def test_no_external_marks_the_last_interval_before_judging(tmp_path: Path) -> None:
+    """M3 ①: 맨 끝 시험의 표시(`mark`)가 마지막 복원 뒤 시나리오 전체 구간을 센다 — 그 구간에
+    외부 접속이 있으면(가짜 `mark`가 카운터를 올린다) 판정이 거짓이다."""
+    s = session(tmp_path)
+    marked: list[str] = []
+
+    def mark(ctx: Context, host: Vm) -> None:
+        marked.append(ctx.site.site_id)
+        ctx.nft_total = {**ctx.nft_total, "ext_out_v4": ctx.nft_total["ext_out_v4"] + 3}
+
+    checks = g2.check_no_external(s, "site-a", mark=mark)
+    assert marked == ["site-a"]
+    assert checks["no_external"] is False
+    assert s.sites["site-a"].ctx.nft_total["ext_out_v4"] == 3
+
+
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        ({"error": "x"}, "2"),
+        ("2", {"error": "x"}),
+        ({"error": "x"}, {"error": "x"}),
+        (None, None),
+    ],
+)
+def test_unreadable_row_counts_are_not_kept(before: object, after: object) -> None:
+    """M3 ②: 행 수를 전·후 어느 쪽이든(둘 다 포함) 못 읽으면 `rows_kept`는 거짓이다."""
+    rows = dict.fromkeys(judges.ROW_KEYS, "2")
+    old = {**rows, "users_rows": before}
+    new = {**rows, "users_rows": after}
+    checks = judges.rows_kept(old, new)
+    assert scenarios.failed(checks) == ["rows_users"]

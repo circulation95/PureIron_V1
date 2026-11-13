@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
 from typing import cast
@@ -322,3 +323,23 @@ def test_next_and_fault_trees_come_from_the_g2_tree(tmp_path: Path) -> None:
         assert want.tree_tag_description != base.tree_tag_description
         seen.add(want.content_hash)
     assert len(seen) == 4
+
+
+@pytest.mark.parametrize(("alive", "code"), [(False, bundles.INFRA_EXIT), (True, None)])
+def test_a_failing_docker_command_is_infra_only_when_docker_does_not_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, alive: bool, code: int | None
+) -> None:
+    """M2: FAULT 파생의 docker 명령이 실패했을 때 Docker가 답하지 않으면 `INFRA_EXIT`(인프라),
+    답하면 그대로 다시 던진다(exit 1 — 제품 스크립트 실패). nightly-release와 같은 규칙."""
+
+    def broken(work: Path, next_name: str, **kwargs: object) -> dict[str, object]:
+        raise subprocess.CalledProcessError(1, ["docker", "save", "-o", "x.tar", "img"])
+
+    monkeypatch.setattr(bundles, "build_faults", broken)
+    if code is None:
+        with pytest.raises(subprocess.CalledProcessError):
+            bundles.nightly_faults(tmp_path, "n1a2b3c4", docker_ok=lambda: alive)
+        return
+    with pytest.raises(SystemExit) as raised:
+        bundles.nightly_faults(tmp_path, "n1a2b3c4", docker_ok=lambda: alive)
+    assert raised.value.code == code
