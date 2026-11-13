@@ -5,140 +5,41 @@ from __future__ import annotations
 
 import dataclasses
 import json
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from typing import NoReturn
 
 import nightly
 import pytest
 import run
-from harness import failures, flake, golden, hyperv, preflight, publish, report, schedule, sites
+from harness import failures, flake, golden, hyperv, preflight, publish, report, sites, suites
 from harness.context import Context, InfraError
 from harness.github import DryRun
 from harness.release_pair import DEFAULT
 
 SHA = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d"
 TODAY = date(2026, 11, 10)
-CRON_AT = datetime(2026, 11, 10, 18, 17, tzinfo=UTC)
-"""`schedule.CRON`("17 18 * * *")의 한 시각."""
-
-
-def at(day: int, hour: int, minute: int = 0, second: int = 0) -> datetime:
-    return datetime(2026, 11, day, hour, minute, second, tzinfo=UTC)
-
-
-# ---------------------------------------------------------------- 늦은 시작(G7)
+# ---------------------------------------------------------------- 시작(★H13 — cron·가드 없음)
 
 
 @pytest.mark.parametrize(
-    ("now", "late"),
+    ("environ", "suite"),
     [
-        (at(10, 18, 17), False),  # 제시간
-        (at(10, 18, 24), False),  # GitHub cron은 몇 분씩 늦는다
-        (at(10, 20, 17, 0), False),  # 정확히 2시간 — 아직 돈다
-        (at(10, 20, 17, 1), True),  # 2시간 넘음
-        (at(10, 23, 30), True),
-        (at(11, 0, 30), True),  # 자정을 넘김(6시간 13분)
-        (at(11, 9, 0), True),  # 아침에 PC를 켬
-        (at(11, 18, 0), True),  # 다음 날 18:00 = 23시간 43분 지연
+        ({}, "g2"),  # 로컬 실행
+        ({"GITHUB_EVENT_NAME": "workflow_dispatch", "PUREIRON_G2_SUITE": "g2"}, "g2"),
+        ({"GITHUB_EVENT_NAME": "workflow_dispatch", "PUREIRON_G2_SUITE": "weekly"}, "weekly"),
+        ({"GITHUB_EVENT_NAME": "schedule"}, "g2"),  # 예전 cron 이벤트도 가드 없이 돈다
     ],
 )
-def test_scheduled_run_is_late_after_two_hours_past_the_cron_time(
-    now: datetime, late: bool
+def test_every_start_reaches_the_body_with_its_suite(
+    tmp_path: Path, environ: dict[str, str], suite: str
 ) -> None:
-    assert schedule.late_start("schedule", schedule.CRON, now) is late
+    called: list[tuple[str, str]] = []
 
-
-def test_cron_is_off_the_hour() -> None:
-    """M1: GitHub는 매시 정각의 schedule 이벤트를 늦추거나 버릴 수 있다 — 2시간 넘게 늦으면 그 밤은
-    늦은 시작으로 조용히 건너뛰어진다."""
-    _, minute = schedule.daily_time(schedule.CRON) or (0, 0)
-    assert minute != 0
-
-
-@pytest.mark.parametrize(
-    ("now", "late"),
-    [
-        (at(10, 18, 2, 0), False),  # 직전 15분 정각 — 제시간
-        (at(10, 18, 16), False),  # 직전 1분 — 제시간
-        (at(10, 18, 1, 59), True),  # 직전 15분 1초 — 어제 cron부터 약 24시간 지연
-    ],
-)
-def test_a_start_just_before_the_cron_time_is_on_time(now: datetime, late: bool) -> None:
-    """L1: runner PC 시계가 GitHub보다 늦으면 정시 실행이 cron 시각 직전으로 읽힌다(여유 15분)."""
-    assert schedule.late_start("schedule", schedule.CRON, now) is late
-
-
-@pytest.mark.parametrize("event", ["workflow_dispatch", "", "push"])
-def test_manual_and_local_runs_are_never_late(event: str) -> None:
-    """수동 실행(workflow_dispatch)·로컬 실행(GITHUB_EVENT_NAME 없음)은 언제 시작해도 돈다."""
-    assert not schedule.late_start(event, schedule.CRON, at(11, 9, 0))
-
-
-def test_delay_counts_from_the_latest_cron_time_before_now() -> None:
-    assert schedule.delay(schedule.CRON, at(10, 18, 17)) == timedelta(0)
-    assert schedule.delay(schedule.CRON, at(11, 18, 0)) == at(11, 18, 0) - CRON_AT
-    assert schedule.delay("30 1 * * *", at(11, 1, 0)) == at(11, 1, 0) - at(10, 1, 30)
-    assert schedule.delay(schedule.CRON, at(10, 18, 10)) == timedelta(0)  # 직전 7분
-
-
-def test_delay_just_past_the_grace_counts_from_yesterday() -> None:
-    assert schedule.delay(schedule.CRON, at(10, 18, 1, 59)) == at(10, 18, 1, 59) - at(9, 18, 17)
-
-
-@pytest.mark.parametrize("cron", ["*/30 * * * *", "0 18 * * 1-5", "0 24 * * *", "60 1 * * *", ""])
-def test_unreadable_cron_is_never_late(cron: str) -> None:
-    """해석하지 못하는 cron이면 돈다(건너뛰면 이력·status 없이 밤마다 조용히 사라진다)."""
-    assert schedule.daily_time(cron) is None
-    assert not schedule.late_start("schedule", cron, at(11, 9, 0))
-
-
-def test_cron_constant_is_the_one_in_nightly_yml() -> None:
-    """`schedule.CRON`이 실제로 해석된다(yml과 같은 값인지는 `test_frame_g2`가 본다)."""
-    assert schedule.daily_time(schedule.CRON) == (18, 17)
-
-
-def refuse(*args: object) -> NoReturn:
-    pytest.fail(f"a late scheduled run must not reach this call {args!r}")
-
-
-def test_late_scheduled_run_does_nothing_and_exits_0(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """preflight(본체)·GitHub·HEAD 조회·결과 디렉터리 어느 것도 부르지 않는다."""
-    code = nightly.step_all(
-        False,
-        body=refuse,
-        github=refuse,
-        head=refuse,
-        run_id="20261111T090000Z",
-        today=TODAY,
-        out_dir=refuse,
-        environ={"GITHUB_EVENT_NAME": "schedule", "GITHUB_ACTIONS": "true"},
-        now=lambda: at(11, 9, 0),
-    )
-    assert code == 0
-    assert list(tmp_path.iterdir()) == []
-    out = capsys.readouterr().out
-    assert out.startswith("::notice::scheduled run started at 2026-11-11 09:00 UTC")
-    assert "skipped" in out
-
-
-@pytest.mark.parametrize(
-    ("event", "now"),
-    [
-        ("schedule", at(10, 19, 30)),  # 제시간 cron
-        ("workflow_dispatch", at(11, 9, 0)),  # 낮의 수동 실행
-        ("", at(11, 9, 0)),  # 로컬 실행
-    ],
-)
-def test_on_time_cron_and_manual_runs_reach_the_body(
-    tmp_path: Path, event: str, now: datetime
-) -> None:
-    called: list[str] = []
-
-    def body(run_id: str, sha: str, today: date, out: Path, gh: object) -> int:
-        called.append(run_id)
+    def body(
+        run_id: str, sha: str, today: date, out: Path, gh: object, *, suite: suites.Suite
+    ) -> int:
+        called.append((run_id, suite.name))
         return 0
 
     code = nightly.step_all(
@@ -149,10 +50,33 @@ def test_on_time_cron_and_manual_runs_reach_the_body(
         run_id="20261111T090000Z",
         today=TODAY,
         out_dir=lambda run_id: tmp_path / run_id,
-        environ={"GITHUB_EVENT_NAME": event} if event else {},
-        now=lambda: now,
+        environ=environ,
     )
-    assert (code, called) == (0, ["20261111T090000Z"])
+    assert (code, called) == (0, [("20261111T090000Z", suite)])
+
+
+def test_an_unknown_suite_is_a_runner_failure_recorded_under_that_name(tmp_path: Path) -> None:
+    def body(*args: object, suite: object) -> NoReturn:
+        pytest.fail(f"an unknown suite must not reach the body {args!r} {suite!r}")
+
+    code = nightly.step_all(
+        True,
+        body=body,
+        github=lambda dry_run: DryRun(),
+        head=lambda: SHA,
+        run_id="20261111T090000Z",
+        today=TODAY,
+        out_dir=lambda run_id: tmp_path / run_id,
+        environ={"PUREIRON_G2_SUITE": "monthly"},
+    )
+    assert code == 2
+    runner = json.loads((tmp_path / "20261111T090000Z" / "runner-summary.json").read_text("utf-8"))
+    assert runner["suite"] == "monthly"
+    assert "PUREIRON_G2_SUITE" in runner["runner_error"]
+
+
+def refuse(*args: object) -> NoReturn:
+    pytest.fail(f"must not reach this call {args!r}")
 
 
 # ---------------------------------------------------------------- Hyper-V 호스트 점검(A3)

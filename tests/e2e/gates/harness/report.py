@@ -37,6 +37,14 @@ INFRA_ISSUE_TITLE = "G2 nightly: the same test failed as infra in 2 consecutive 
 DESCRIPTION_CHARS = 140
 PREFLIGHT_TEST = "preflight"
 """preflight에서 멈춘 실행의 시험 id(infra) — 시험을 시작하지 못했다."""
+DEFAULT_SUITE = "g2"
+
+
+def suite_of(entry: Mapping[str, object]) -> str:
+    """summary·이력 줄의 묶음 이름(`suite`). 없으면 `g2` — M6-3b 전 이력 줄(리허설·3a)은 모두 평일
+    묶음이다. 주간 run은 평일 시간 판정(run 90분)에서 이것으로 뺀다."""
+    suite = entry.get("suite")
+    return suite if isinstance(suite, str) and suite else DEFAULT_SUITE
 
 
 @dataclass(frozen=True)
@@ -122,14 +130,16 @@ def test_rows(summary_: Mapping[str, object]) -> list[dict[str, object]]:
 
 
 def history_lines(summary_: Mapping[str, object]) -> list[str]:
-    """`e2e-history/history.jsonl`에 더할 줄 — 시험마다 `{date, run, product_sha, test_id, outcome,
-    class, seconds}`(키 정렬 JSON 한 줄). outcome은 `pass`·`fail`·`skip`, class는 실패일 때만."""
+    """`e2e-history`에 더할 줄 — 시험마다 `{date, run, suite, product_sha, test_id, outcome, class,
+    seconds}`(키 정렬 JSON 한 줄). outcome은 `pass`·`fail`·`skip`, class는 실패일 때만, suite는
+    `suite_of`."""
     lines: list[str] = []
     for row in test_rows(summary_):
         outcome = str(row.get("outcome"))
         line = {
             "date": summary_.get("date"),
             "run": summary_.get("run"),
+            "suite": suite_of(summary_),
             "product_sha": summary_.get("product_sha"),
             "test_id": row.get("test_id"),
             "outcome": {PASSED: "pass", FAILED: "fail"}.get(outcome, "skip"),
@@ -207,7 +217,9 @@ def repeated_infra(history: Iterable[Mapping[str, object]]) -> list[str]:
 def status_description(summary_: Mapping[str, object]) -> str:
     rows = test_rows(summary_)
     failed = [str(r.get("test_id")).rsplit("::", 1)[-1] for r in rows if r.get("outcome") == FAILED]
-    text = f"G2 nightly {summary_.get('verdict')}: {len(rows) - len(failed)}/{len(rows)} passed"
+    suite = suite_of(summary_)
+    label = "G2 nightly" if suite == DEFAULT_SUITE else f"G2 {suite}"
+    text = f"{label} {summary_.get('verdict')}: {len(rows) - len(failed)}/{len(rows)} passed"
     if failed:
         text += " - failed " + ", ".join(failed)
     return text[:DESCRIPTION_CHARS]

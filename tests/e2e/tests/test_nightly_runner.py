@@ -14,13 +14,14 @@ from typing import cast
 
 import nightly
 import pytest
-from harness import collect, flake, preflight, publish, report
+from harness import collect, flake, preflight, publish, report, suites
 from harness.context import E2EError, write_json
 from harness.github import DryRun
 
 SHA = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d"
 CASE_A = "test_g2_install.py::test_g2_1_install_and_100_tags_good[site-a]"
 CASE_B = "test_g2_install.py::test_g2_1_install_and_100_tags_good[site-b]"
+G2 = suites.SUITES["g2"]
 TODAY = date(2026, 11, 10)
 
 
@@ -100,10 +101,22 @@ def test_history_line_format() -> None:
     assert lines[1] == (
         '{"class": "infra", "date": "2026-11-10", "outcome": "fail", '
         f'"product_sha": "{SHA}", "run": "20261110T180000Z", "seconds": 1.0, '
-        f'"test_id": "{CASE_B}"}}'
+        f'"suite": "g2", "test_id": "{CASE_B}"}}'
     )
     assert json.loads(lines[0])["class"] is None
     assert json.loads(lines[0])["outcome"] == "pass"
+
+
+def test_history_lines_carry_the_suite_and_old_lines_read_as_g2() -> None:
+    """주간 run은 평일 시간 판정(run 90분)에서 빠진다 — 이력 줄의 `suite`로 가른다. M6-3b 전 줄
+    (리허설·3a)에는 `suite`가 없고 모두 평일 묶음이다."""
+    weekly = {**summary_of("R1", (CASE_A, "passed", None)), "suite": "weekly"}
+    (line,) = report.history_lines(weekly)
+    assert report.suite_of(json.loads(line)) == "weekly"
+    old = '{"class": null, "date": "2026-11-10", "outcome": "pass", "run": "R0", "test_id": "x"}'
+    assert [report.suite_of(row) for row in report.parse_history(old)] == ["g2"]
+    assert report.status_description(weekly).startswith("G2 weekly passed: 1/1")
+    assert report.status_description(summary_of("R2")).startswith("G2 nightly ")
 
 
 def test_status_state_and_description() -> None:
@@ -886,16 +899,14 @@ def test_run_ids_that_could_leave_the_run_directory_are_refused(bad: str) -> Non
     assert raised.value.code == 2
 
 
-ON_TIME = datetime(2026, 11, 10, 18, 20, tzinfo=UTC)
-"""cron(18:17 UTC) 직후 — 실행기 시험이 늦은 시작 가드에 걸리지 않는 고정 시각(L8)."""
-
-
 def test_runner_failure_is_reported_as_infra_and_exits_2(tmp_path: Path) -> None:
     """L2: 실행기 자신의 예상 밖 예외는 product 종료 코드(1)가 아니라 infra(2)로, status를
     남긴다."""
     gh = FakeGitHub()
 
-    def broken(run_id: str, sha: str, today: date, out: Path, client: object) -> int:
+    def broken(
+        run_id: str, sha: str, today: date, out: Path, client: object, *, suite: object
+    ) -> int:
         raise RuntimeError("hyperv remove failed during recovery")
 
     code = nightly.step_all(
@@ -907,7 +918,6 @@ def test_runner_failure_is_reported_as_infra_and_exits_2(tmp_path: Path) -> None
         today=TODAY,
         out_dir=lambda run_id: tmp_path / run_id,
         environ={},
-        now=lambda: ON_TIME,
     )
     assert code == 2
     out = tmp_path / "20261110T180000Z"
@@ -925,7 +935,9 @@ def test_runner_failure_survives_a_failing_publish(tmp_path: Path) -> None:
     def no_github(dry_run: bool) -> FakeGitHub:
         raise RuntimeError("gh: network unreachable")
 
-    def body(run_id: str, sha: str, today: date, out: Path, client: object) -> int:
+    def body(
+        run_id: str, sha: str, today: date, out: Path, client: object, *, suite: object
+    ) -> int:
         pytest.fail("body must not run without a GitHub client")
 
     code = nightly.step_all(
@@ -937,7 +949,6 @@ def test_runner_failure_survives_a_failing_publish(tmp_path: Path) -> None:
         today=TODAY,
         out_dir=lambda run_id: tmp_path / run_id,
         environ={},
-        now=lambda: ON_TIME,
     )
     assert code == 2
     published = json.loads((tmp_path / "20261110T180000Z" / "publish.json").read_text("utf-8"))
@@ -1099,25 +1110,29 @@ def test_retry_timeout_is_capped_by_the_time_left(tmp_path: Path) -> None:
         recover_env=lambda: (True, []),
         today=TODAY,
         quarantine=[],
-        deadline=nightly.RUN_BUDGET_S,
+        deadline=G2.run_budget_s,
         clock=clock,
     )
-    assert fake.timeouts == [nightly.PYTEST_TIMEOUT_S, nightly.RUN_BUDGET_S - 70 * 60]
+    assert fake.timeouts == [G2.pytest_timeout_s, G2.run_budget_s - 70 * 60]
     assert summary["verdict"] == "passed"
 
 
-def test_time_budget_fits_the_workflow_timeout() -> None:
-    """R2-H1: workflow `timeout-minutes`를 넘기면 Actions가 job을 죽여 status·이력이 남지 않는다 —
-    준비(checkout·uv sync) + run 예산(preflight·첫 실행·복구·재시도, 실행 중 남은 시간으로 자른다)
-    + 뒷정리(collect 최악·publish·cleanup)가 120분보다 작아야 한다."""
+@pytest.mark.parametrize("name", sorted(suites.SUITES))
+def test_time_budget_fits_the_workflow_timeout(name: str) -> None:
+    """R2-H1: workflow 시간을 넘기면 Actions가 job을 죽여 status·이력이 남지 않는다 — 준비
+    (checkout·uv sync) + 묶음의 run 예산(preflight·첫 실행·복구·재시도, 실행 중 남은 시간으로
+    자른다) + 뒷정리(collect 최악·publish·cleanup)가 묶음의 workflow 시간보다 작고, 그것이 yml
+    `timeout-minutes`(가장 긴 묶음) 이하여야 한다."""
+    suite = suites.SUITES[name]
     workflow = (nightly.paths.REPO / ".github" / "workflows" / "nightly.yml").read_text("utf-8")
     assert f"timeout-minutes: {nightly.WORKFLOW_TIMEOUT_S // 60}\n" in workflow
-    total = nightly.SETUP_RESERVE_S + nightly.RUN_BUDGET_S + nightly.TAIL_RESERVE_S
-    assert total < nightly.WORKFLOW_TIMEOUT_S
+    assert suite.workflow_s <= nightly.WORKFLOW_TIMEOUT_S
+    total = nightly.SETUP_RESERVE_S + suite.run_budget_s + nightly.TAIL_RESERVE_S
+    assert total < suite.workflow_s
     collect_worst = len(nightly.G2_SITES) * len(collect.REMOTE_LOGS) * collect.COLLECT_TIMEOUT_S
     assert collect_worst + nightly.PUBLISH_RESERVE_S <= nightly.TAIL_RESERVE_S
-    assert nightly.RETRY_MIN_S < nightly.RETRY_TIMEOUT_S < nightly.PYTEST_TIMEOUT_S
-    assert nightly.PYTEST_TIMEOUT_S < nightly.RUN_BUDGET_S
+    assert suite.retry_min_s < suite.retry_timeout_s < suite.pytest_timeout_s
+    assert suite.pytest_timeout_s < suite.run_budget_s
 
 
 def test_publish_does_not_append_the_same_run_twice() -> None:
@@ -1137,7 +1152,9 @@ def test_runner_failure_keeps_the_real_summary_and_publishes_it(tmp_path: Path) 
     gh = FakeGitHub()
     real = summary_of(DAY2, (CASE_B, "failed", "product"))
 
-    def body(run_id: str, sha: str, today: date, out: Path, client: object) -> int:
+    def body(
+        run_id: str, sha: str, today: date, out: Path, client: object, *, suite: object
+    ) -> int:
         write_json(out / "summary.json", real)
         raise RuntimeError("gh: status call failed")
 
@@ -1150,7 +1167,6 @@ def test_runner_failure_keeps_the_real_summary_and_publishes_it(tmp_path: Path) 
         today=TODAY,
         out_dir=lambda run_id: tmp_path / run_id,
         environ={},
-        now=lambda: ON_TIME,
     )
     assert code == 2
     out = tmp_path / DAY2

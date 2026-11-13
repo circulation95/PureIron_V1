@@ -9,7 +9,7 @@
     uv run python tests/e2e/gates/nightly.py cleanup [--run RUN]
 
 - `preflight`(`harness.preflight`): 메모리·디스크·WSL·Docker·foundation-ci 판단, 복구·정리.
-- `run`: `pytest -c tests/e2e/gates/pytest.ini -m g2 --junitxml …/junit.xml` → 분류
+- `run`: `pytest -c tests/e2e/gates/pytest.ini -m <묶음 표지> --junitxml …/junit.xml` → 분류
   (`harness.report`) → 실패가 모두 `infra`면 복구(WSL·남은 VM·호스트 메모리) 뒤 실패한 시험만 1회
   다시(`junit-retry.xml`) → `summary.json`. `product`는 다시 돌리지 않는다. pytest가 결과(junit)를
   남기지 못하면 시험 id `pytest`(infra) 한 줄로 남긴다 — 시간 초과였으면 다시 돌리지 않고(멈춘
@@ -22,19 +22,21 @@
   문제나 제품 멈춤(시간 초과)이 "error"로만 쌓이지 않게. `--dry-run`이면 무엇을 보낼지 출력만 한다.
 - `cleanup`: 이 run의 번들 디렉터리를 지우고 VM을 끈다(다음 preflight가 VM을 지운다).
 
-`all`은 cron(`schedule` 이벤트)으로 시작한 실행이 cron 시각보다 2시간 넘게 늦었으면 아무것도 하지
-않고 exit 0으로 끝난다(`harness.schedule` — preflight·GitHub 호출·결과 디렉터리 없음). PC가 꺼져
-있다가 낮에 켜졌을 때 VM을 띄우지 않게. 수동 실행·로컬 실행에는 적용하지 않는다.
+묶음(`harness.suites`)은 환경변수 `PUREIRON_G2_SUITE`로 받는다: `g2`(평일, 기본 —
+`-m "g2 and not weekly"`)·`weekly`(일요일 — `-m g2`, crash 16건 더). 시작은 Windows 작업
+스케줄러가 03:17 KST에 `gh workflow run nightly.yml`을 부르는 것이다
+(`tests/e2e/infra/register-nightly.ps1`, ★H13 — GitHub cron은 이 저장소에서 3.5~7.5시간 늦게
+만들어져 지웠다). PC가 꺼져 있으면 실행 자체가 없으므로 늦은 시작 가드도 지웠다.
 
 `all`이 예상 밖 예외로 멈추면(`harness.runner`) 시험 id `runner`(infra) 하나로
 `runner-summary.json`을 남기고 publish를 시도한 뒤 exit 2로 끝난다 — 그 run의 `summary.json`이
 이미 있으면 덮어쓰지 않고 그것으로 publish를 다시 시도한다. run id는 `20261110T180000Z` 형식만
 받는다.
 
-시간 예산: `all`은 workflow `timeout-minutes`(120분) 안에 끝나야 status·이력이 남는다. preflight
-시작부터 `RUN_BUDGET_S` 안에 첫 실행·복구·재시도를 끝내고(pytest 시간 제한을 남은 시간으로
-줄이고, 남은 시간이 `RETRY_MIN_S`보다 짧으면 재시도를 건너뛴다), collect·publish·cleanup은
-`TAIL_RESERVE_S` 안에 든다.
+시간 예산(묶음마다, `harness.suites`): `all`은 그 묶음의 workflow 시간(평일 120분·주간 210분)
+안에 끝나야 status·이력이 남는다. preflight 시작부터 `run_budget_s` 안에 첫 실행·복구·재시도를
+끝내고(pytest 시간 제한을 남은 시간으로 줄이고, 남은 시간이 `retry_min_s`보다 짧으면 재시도를
+건너뛴다), collect·publish·cleanup은 `TAIL_RESERVE_S` 안에 든다.
 
 결과는 `<PUREIRON_E2E_ROOT>/results/g2-<run>/`(junit.xml·summary.json·preflight.json·publish.json·
 <site>/). 종료 코드: 0 통과, 1 product, 2 infra.
@@ -53,6 +55,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import asdict
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import Protocol
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -68,7 +71,7 @@ from harness import (
     preflight,
     report,
     runner,
-    schedule,
+    suites,
 )
 from harness.context import say, write_json
 from harness.failures import INFRA, PRODUCT
@@ -80,21 +83,15 @@ GATES = Path(__file__).resolve().parent
 GATES_REL = GATES.relative_to(paths.REPO).as_posix()
 INI = GATES / "pytest.ini"
 QUARANTINE = GATES / "quarantine.yaml"
-WORKFLOW_TIMEOUT_S = 120 * 60
-"""`nightly.yml` `timeout-minutes` — 넘기면 Actions가 job을 죽여 status·이력·publish.json이 하나도
-남지 않는다(리뷰 r2 H1)."""
+WORKFLOW_TIMEOUT_S = max(s.workflow_s for s in suites.SUITES.values())
+"""`nightly.yml` `timeout-minutes` = 가장 긴 묶음의 workflow 시간 — 넘기면 Actions가 job을 죽여
+status·이력·publish.json이 하나도 남지 않는다(리뷰 r2 H1). 묶음별 한도는 `suites.Suite`."""
 SETUP_RESERVE_S = 10 * 60
 """nightly.py 앞의 checkout·`uv sync`."""
 PUBLISH_RESERVE_S = 5 * 60
 """publish(gh 호출)·cleanup(번들 삭제·VM 끄기)."""
 TAIL_RESERVE_S = 15 * 60
 """run 뒤 collect·publish·cleanup에 남겨 두는 시간."""
-RUN_BUDGET_S = 90 * 60
-"""preflight 시작부터 첫 실행·복구·재시도가 끝나야 하는 시간."""
-PYTEST_TIMEOUT_S = 75 * 60
-RETRY_TIMEOUT_S = 30 * 60
-RETRY_MIN_S = 10 * 60
-"""재시도에 이만큼도 남지 않으면 건너뛴다(끝내지 못할 재시도로 예산만 쓰지 않게)."""
 EXIT = {report.PASSED: 0, PRODUCT: 1, INFRA: 2}
 G2_SITES: tuple[Site, ...] = tuple(s for s, _ in g2.SITE_ROLES)
 RunPytest = Callable[[Path, list[str], float], int]
@@ -124,9 +121,14 @@ def pytest_env(run_id: str, sha: str, environ: Mapping[str, str] | None = None) 
     return {**kept, "PUREIRON_G2_RUN": run_id, "PUREIRON_G2_SHA": sha}
 
 
-def make_pytest(run_id: str, sha: str) -> RunPytest:
+def pytest_command(suite: suites.Suite) -> list[str]:
+    """G2 pytest 명령 — 묶음 표지로 고른다(`g2`는 `weekly` 표지 시험을 빼고 `weekly`는 다 돈다)."""
+    return [sys.executable, "-m", "pytest", "-c", str(INI), "-m", suite.marker]
+
+
+def make_pytest(run_id: str, sha: str, suite: suites.Suite) -> RunPytest:
     def run_pytest(junit: Path, targets: list[str], timeout_s: float) -> int:
-        cmd = [sys.executable, "-m", "pytest", "-c", str(INI), "-m", "g2"]
+        cmd = pytest_command(suite)
         try:
             return subprocess.run(
                 [*cmd, "--junitxml", str(junit), *targets],
@@ -193,9 +195,11 @@ def step_run(
     warnings: list[str] | None = None,
     deadline: float | None = None,
     clock: Callable[[], float] = time.monotonic,
+    suite: suites.Suite = suites.SUITES[suites.DEFAULT_SUITE],
 ) -> dict[str, object]:
-    """첫 실행 → (infra 실패만) 복구 뒤 1회 재시도 → `summary.json`. `deadline`(`clock` 기준)을 주면
-    pytest 시간 제한을 남은 시간으로 줄이고, 재시도할 시간이 `RETRY_MIN_S`보다 적으면 건너뛴다.
+    """첫 실행 → (infra 실패만) 복구 뒤 1회 재시도 → `summary.json`(묶음 이름 `suite` 포함). 시간
+    제한은 `suite`의 값이다. `deadline`(`clock` 기준)을 주면 pytest 시간 제한을 남은 시간으로
+    줄이고, 재시도할 시간이 `suite.retry_min_s`보다 적으면 건너뛴다.
     결과가 하나도 없으면(junit 없음) 시험 id `pytest`(infra) 한 줄 — 이력에 남아야 같은 실패가
     이틀 이어질 때 infra 이슈가 열린다(리뷰 r2 H1)."""
     out.mkdir(parents=True, exist_ok=True)
@@ -205,7 +209,7 @@ def step_run(
     def left(cap: float) -> float:
         return cap if deadline is None else max(0.0, min(cap, deadline - clock()))
 
-    codes = {"first": run_pytest(out / "junit.xml", [GATES_REL], left(PYTEST_TIMEOUT_S))}
+    codes = {"first": run_pytest(out / "junit.xml", [GATES_REL], left(suite.pytest_timeout_s))}
     first = read_results(out / "junit.xml")
     # 재시도는 새 세션이다 — 시나리오와 같은 현장의 외부 접속 0을 함께 묶는다(order.retry_closure)
     again_ids = order.retry_closure(report.retry_targets(first, active), [r.test_id for r in first])
@@ -216,16 +220,17 @@ def step_run(
     elif not first:  # 크래시 — 결과가 없으니 전체를 다시
         retry["targets"] = targets = [GATES_REL]
     results = first
-    if targets and left(RETRY_TIMEOUT_S) < RETRY_MIN_S:
-        retry["skipped"] = f"less than {RETRY_MIN_S}s left before the workflow timeout"
+    if targets and left(suite.retry_timeout_s) < suite.retry_min_s:
+        retry["skipped"] = f"less than {suite.retry_min_s}s left before the workflow timeout"
     elif targets:
         ready, retry["recovery"] = recover_env()
         if not ready:
             retry["skipped"] = "environment not recovered (see recovery)"
-        elif left(RETRY_TIMEOUT_S) < RETRY_MIN_S:
-            retry["skipped"] = f"less than {RETRY_MIN_S}s left after recovery"
+        elif left(suite.retry_timeout_s) < suite.retry_min_s:
+            retry["skipped"] = f"less than {suite.retry_min_s}s left after recovery"
         else:
-            codes["retry"] = run_pytest(out / "junit-retry.xml", targets, left(RETRY_TIMEOUT_S))
+            timeout_s = left(suite.retry_timeout_s)
+            codes["retry"] = run_pytest(out / "junit-retry.xml", targets, timeout_s)
             again = read_results(out / "junit-retry.xml")
             results = report.merge_retry(first, again) if first else again
             retry["done"] = True
@@ -238,6 +243,7 @@ def step_run(
         results=results,
         quarantined=active,
         extra={
+            "suite": suite.name,
             "retry": retry,
             "pytest_rc": codes,
             "quarantine_expired": [{**asdict(e), "added": e.added.isoformat()} for e in expired],
@@ -250,7 +256,11 @@ def step_run(
 
 
 def preflight_summary(
-    run_id: str, sha: str, today: date, outcome: preflight.Outcome
+    run_id: str,
+    sha: str,
+    today: date,
+    outcome: preflight.Outcome,
+    suite: str = suites.DEFAULT_SUITE,
 ) -> dict[str, object]:
     """preflight에서 멈춘 실행 — 시험 대신 `preflight` 한 줄(infra)로 남긴다. 이력·status는 남고
     이슈·flake 비율에서는 빠진다(`report.not_started`)."""
@@ -260,7 +270,7 @@ def preflight_summary(
         date=today.isoformat(),
         product_sha=sha,
         results=[failed],
-        extra={"preflight": outcome.as_dict(), "warnings": outcome.warnings},
+        extra={"suite": suite, "preflight": outcome.as_dict(), "warnings": outcome.warnings},
     )
 
 
@@ -318,13 +328,28 @@ def cleanup_actions(gh: GitHub) -> list[str]:
     ]
 
 
-AllBody = Callable[[str, str, date, Path, GitHub], int]
+class AllBody(Protocol):
+    """`run_all`과 같은 호출 모양 — 실행기 시험이 가짜로 바꿔 끼운다."""
+
+    def __call__(
+        self,
+        run_id: str,
+        sha: str,
+        today: date,
+        out: Path,
+        gh: GitHub,
+        /,
+        *,
+        suite: suites.Suite,
+    ) -> int: ...
 
 
-def run_all(run_id: str, sha: str, today: date, out: Path, gh: GitHub) -> int:
-    """preflight → run → collect → publish → cleanup. preflight 시작부터 `RUN_BUDGET_S` 안에 run을
-    끝낸다(`step_run(deadline=)`)."""
-    deadline = time.monotonic() + RUN_BUDGET_S
+def run_all(
+    run_id: str, sha: str, today: date, out: Path, gh: GitHub, *, suite: suites.Suite
+) -> int:
+    """preflight → run → collect → publish → cleanup. preflight 시작부터 `suite.run_budget_s` 안에
+    run을 끝낸다(`step_run(deadline=)`)."""
+    deadline = time.monotonic() + suite.run_budget_s
     limits = preflight.Limits.from_env(os.environ)
     outcome = preflight.run(
         limits,
@@ -339,14 +364,15 @@ def run_all(run_id: str, sha: str, today: date, out: Path, gh: GitHub) -> int:
                 run_id,
                 sha,
                 out,
-                run_pytest=make_pytest(run_id, sha),
+                run_pytest=make_pytest(run_id, sha, suite),
                 today=today,
                 warnings=outcome.warnings,
                 deadline=deadline,
+                suite=suite,
             )
             step_collect(run_id)
         else:
-            summary = preflight_summary(run_id, sha, today, outcome)
+            summary = preflight_summary(run_id, sha, today, outcome, suite.name)
             write_json(out / "summary.json", summary)
         published = step_publish(summary, gh, today)
         write_json(out / "publish.json", published)
@@ -367,34 +393,23 @@ def step_all(
     today: date | None = None,
     out_dir: Callable[[str], Path] = g2.results_dir,
     environ: Mapping[str, str] | None = None,
-    now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> int:
-    """`run_all`을 돌리고, 예상 밖 예외(복구 중 Hyper-V 실패·gh 네트워크 실패 등)는 시험 id
-    `runner`(infra) summary로 남겨 publish를 시도한 뒤 exit 2로 끝낸다(리뷰 L2 — 기본 종료 코드 1은
-    product와 겹친다). 맨 앞에서 늦게 시작한 cron 실행이면(`schedule.late_start`) 아무것도 하지
-    않고 0으로 끝낸다 — preflight는 VM·결과를 지우므로 부르지 않는다(G7)."""
+    """`run_all`을 묶음(`PUREIRON_G2_SUITE`, `harness.suites`)으로 돌리고, 예상 밖 예외(모르는 묶음
+    이름·복구 중 Hyper-V 실패·gh 네트워크 실패 등)는 시험 id `runner`(infra) summary로 남겨
+    publish를 시도한 뒤 exit 2로 끝낸다(리뷰 L2 — 기본 종료 코드 1은 product와 겹친다)."""
     env = os.environ if environ is None else environ
-    started = now()
-    if schedule.late_start(env.get("GITHUB_EVENT_NAME", ""), schedule.CRON, started):
-        announce(
-            [
-                f"scheduled run started at {started:%Y-%m-%d %H:%M} UTC, more than "
-                f"{schedule.LATE_AFTER} after cron '{schedule.CRON}': skipped (nothing run)"
-            ],
-            env,
-            level="notice",
-        )
-        return 0
     run_id = run_id or g2.new_run_id()
     today = today or date.today()
     out = out_dir(run_id)
     sha, gh = runner.UNKNOWN_SHA, None
+    suite_name = env.get(suites.SUITE_ENV) or suites.DEFAULT_SUITE
     try:
+        suite = suites.from_env(env)
         sha = head()
         gh = github(dry_run)
-        return body(run_id, sha, today, out, gh)
+        return body(run_id, sha, today, out, gh, suite=suite)
     except Exception as exc:
-        runner.report_failure(run_id, sha, today, out, gh=gh, exc=exc)
+        runner.report_failure(run_id, sha, today, out, gh=gh, exc=exc, suite=suite_name)
         return EXIT[INFRA]
 
 
@@ -452,7 +467,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "run":
         sha = args.sha or g2.head_sha()
         out = g2.results_dir(run_id)
-        summary = step_run(run_id, sha, out, run_pytest=make_pytest(run_id, sha), today=today)
+        suite = suites.from_env(os.environ)
+        summary = step_run(
+            run_id,
+            sha,
+            out,
+            run_pytest=make_pytest(run_id, sha, suite),
+            today=today,
+            suite=suite,
+        )
         say(summary)
         return EXIT[str(summary["verdict"])]
     if args.command == "collect":

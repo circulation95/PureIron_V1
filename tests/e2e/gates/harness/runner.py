@@ -21,7 +21,9 @@ RUNNER_TEST = "runner"
 UNKNOWN_SHA = "0" * 40
 
 
-def runner_summary(run_id: str, sha: str, today: date, exc: BaseException) -> dict[str, object]:
+def runner_summary(
+    run_id: str, sha: str, today: date, exc: BaseException, suite: str = "g2"
+) -> dict[str, object]:
     """실행기 자신이 예상 밖 예외로 멈춘 실행 — 시험 id `runner` 한 줄(infra)로 남긴다."""
     failed = report.TestResult(RUNNER_TEST, report.FAILED, INFRA, 0.0)
     return report.summary(
@@ -29,7 +31,7 @@ def runner_summary(run_id: str, sha: str, today: date, exc: BaseException) -> di
         date=today.isoformat(),
         product_sha=sha,
         results=[failed],
-        extra={"runner_error": repr(exc)[-TAIL_CHARS:]},
+        extra={"suite": suite, "runner_error": repr(exc)[-TAIL_CHARS:]},
     )
 
 
@@ -48,13 +50,20 @@ def read_summary(path: Path, run_id: str) -> dict[str, object] | None:
 
 
 def report_failure(
-    run_id: str, sha: str, today: date, out: Path, *, gh: GitHub | None, exc: BaseException
+    run_id: str,
+    sha: str,
+    today: date,
+    out: Path,
+    *,
+    gh: GitHub | None,
+    exc: BaseException,
+    suite: str = "g2",
 ) -> dict[str, object]:
     """`exc`로 멈춘 run을 남긴다: `runner-summary.json` → (summary.json이 있으면 그것, 없으면
     runner summary로) publish 시도 → `publish.json`. 출력한 결과(`{"run", "verdict", "publish"}`)를
     돌려준다. publish가 실패해도 예외를 내지 않는다(`publish.json`에 남긴다)."""
     log(f"nightly runner failed: {exc!r}")
-    runner = runner_summary(run_id, sha, today, exc)
+    runner = runner_summary(run_id, sha, today, exc, suite)
     write_json(out / "runner-summary.json", runner)
     # 그 run의 실제 결과가 이미 있으면(예: publish·cleanup에서 멈춤) 덮어쓰지 않고 그것을 낸다
     # (리뷰 r2 L4) — 이미 이력에 들어갔으면 step_publish가 줄을 다시 쓰지 않는다.

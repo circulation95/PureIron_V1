@@ -1,15 +1,13 @@
 # G2 nightly(M6-2a): 개발 PC(Windows self-hosted runner `e2e`)가 ref를 빌드해 현장 VM 2대(Hyper-V)에
 # 설치하고 G2-1을 판정한 뒤 결과를 GitHub에 남긴다(e2e-history·commit status g2/nightly·이슈).
 # 본체는 tests/e2e/gates/nightly.py all 하나다 — 로컬에서 같은 명령으로 돈다.
-# cron + 수동: 매일 03:17 KST(18:17 UTC) cron과 workflow_dispatch. cron 실행이 2시간 넘게 늦게
-# 시작하면(PC가 꺼져 있다가 켜짐) nightly.py가 아무것도 하지 않고 끝낸다(harness/schedule.py).
+# 시작: workflow_dispatch만. 개발 PC의 Windows 작업 스케줄러가 매일 03:17 KST에
+# `gh workflow run nightly.yml --ref master -f ref=master -f suite=<g2|weekly>`를 부른다(일요일은
+# weekly) — tests/e2e/infra/register-nightly.ps1(M6-3 ★H13). GitHub schedule은 이 저장소에서 매번
+# 3.5~7.5시간 늦게 만들어져 지웠다. PC가 꺼져 있으면 실행이 없다(놓친 예약을 나중에 실행하지 않는다).
 name: nightly
 
 on:
-  schedule:
-    # harness/schedule.py CRON과 같아야 한다(단위 시험이 대조한다). 정각을 비킨다 — GitHub는 매시
-    # 정각의 schedule 이벤트를 늦추거나 버릴 수 있고, 2시간 넘게 늦으면 그 밤은 건너뛰어진다.
-    - cron: "17 18 * * *"
   workflow_dispatch:
     inputs:
       ref:
@@ -17,11 +15,11 @@ on:
         required: false
         default: master
       suite:
-        description: "시나리오 묶음(지금은 g2 하나)"
+        description: "시나리오 묶음 — g2(평일, crash 2건) · weekly(일요일, + crash 16건)"
         required: false
         default: g2
         type: choice
-        options: [g2]
+        options: [g2, weekly]
 
 concurrency:
   # VM·포트·WSL을 하나만 쓴다 — 동시에 돌지 않게 줄 세우고, 도는 것을 취소하지 않는다.
@@ -41,7 +39,8 @@ env:
 jobs:
   g2:
     runs-on: [self-hosted, e2e]
-    timeout-minutes: 120
+    # 가장 긴 묶음(weekly) 값 — 묶음별 실제 시간 제한은 nightly.py가 건다(harness/suites.py).
+    timeout-minutes: 210
     defaults:
       run:
         # Windows runner — Windows PowerShell 5.1(로그온 세션, M6-0 ①).
@@ -49,7 +48,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # schedule 실행에서는 inputs가 빈 값이다 — ref가 비면 기본 브랜치를 받는다.
           ref: ${{ inputs.ref }}
           # BASE = git 태그가 있는 최신 r*(release_pair.nightly) — 태그까지 받는다.
           fetch-depth: 0
@@ -59,12 +57,14 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: false
-      - name: nightly (${{ inputs.suite || 'g2' }})
+      - name: nightly (${{ inputs.suite }})
         env:
           # 실행기의 gh 호출에만 쓴다 — G2 pytest 자식(VM·WSL 호출)에는 넘기지 않는다(nightly.py).
           GH_TOKEN: ${{ github.token }}
           # setup-host.ps1 -Switch로 만든 내부 전용 vSwitch(리포지토리 변수, 기본 pureiron-int).
           PUREIRON_E2E_SWITCH: ${{ vars.PUREIRON_E2E_SWITCH || 'pureiron-int' }}
+          # 묶음(harness/suites.py) — g2: -m "g2 and not weekly", weekly: -m g2.
+          PUREIRON_G2_SUITE: ${{ inputs.suite }}
         run: |
           uv sync --all-packages --locked
           if (-not $?) { exit 1 }
