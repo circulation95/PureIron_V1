@@ -14,8 +14,8 @@ from typing import cast
 
 import nightly
 import pytest
-from harness import flake, preflight, report
-from harness.context import E2EError
+from harness import collect, flake, preflight, publish, report
+from harness.context import E2EError, write_json
 from harness.github import DryRun
 
 SHA = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d"
@@ -608,7 +608,7 @@ def previous_product_run() -> str:
 
 def test_publish_appends_history_and_sets_status() -> None:
     gh = FakeGitHub()
-    out = nightly.step_publish(
+    out = publish.step_publish(
         summary_of("20261110T180000Z", (CASE_A, "passed", None), (CASE_B, "passed", None)),
         gh,
         TODAY,
@@ -624,16 +624,16 @@ def test_publish_appends_history_and_sets_status() -> None:
 def test_second_product_failure_opens_one_issue_then_comments() -> None:
     failing = summary_of("20261110T180000Z", (CASE_B, "failed", "product"))
     gh = FakeGitHub(history=previous_product_run())
-    assert nightly.step_publish(failing, gh, TODAY)["issue"] == "created"
+    assert publish.step_publish(failing, gh, TODAY)["issue"] == "created"
     assert ("issue", (report.ISSUE_TITLE, "g2-nightly")) in gh.calls
     gh = FakeGitHub(history=previous_product_run(), open_issue=7)
-    assert nightly.step_publish(failing, gh, TODAY)["issue"] == "commented #7"
+    assert publish.step_publish(failing, gh, TODAY)["issue"] == "commented #7"
     assert ("comment", 7) in gh.calls
 
 
 def test_infra_failure_sets_error_status_without_an_issue() -> None:
     gh = FakeGitHub(history=previous_product_run())
-    out = nightly.step_publish(
+    out = publish.step_publish(
         summary_of("20261110T180000Z", (CASE_B, "failed", "infra")), gh, TODAY
     )
     assert ("status", (SHA, "error", "g2/nightly")) in gh.calls
@@ -643,7 +643,7 @@ def test_infra_failure_sets_error_status_without_an_issue() -> None:
 def test_dry_run_prints_writes_instead_of_sending(capsys: pytest.CaptureFixture[str]) -> None:
     reader = FakeGitHub(history=previous_product_run(), open_issue=None)
     gh = DryRun(reader)
-    out = nightly.step_publish(
+    out = publish.step_publish(
         summary_of("20261110T180000Z", (CASE_B, "failed", "product")), gh, TODAY
     )
     assert reader.calls == []
@@ -682,21 +682,21 @@ def test_second_infra_failure_of_the_same_test_opens_an_infra_issue() -> None:
     초과가 "error"로만 쌓이지 않게). 이슈는 product 이슈와 라벨이 다르다."""
     failing = summary_of("20261110T180000Z", (CASE_B, "failed", "infra"))
     gh = FakeGitHub(history=previous_infra_run())
-    out = nightly.step_publish(failing, gh, TODAY)
+    out = publish.step_publish(failing, gh, TODAY)
     assert out["infra_issue"] == "created"
     assert out["issue"] is None
     assert ("issue", (report.INFRA_ISSUE_TITLE, "g2-nightly-infra")) in gh.calls
     assert report.INFRA_ISSUE_LABEL != report.ISSUE_LABEL
     assert ("status", (SHA, "error", "g2/nightly")) in gh.calls
     gh = FakeGitHub(history=previous_infra_run(), open_issue=9)
-    assert nightly.step_publish(failing, gh, TODAY)["infra_issue"] == "commented #9"
+    assert publish.step_publish(failing, gh, TODAY)["infra_issue"] == "commented #9"
     # 다른 시험이었으면 열지 않는다
     gh = FakeGitHub(history=previous_infra_run(CASE_A))
-    assert nightly.step_publish(failing, gh, TODAY)["infra_issue"] is None
+    assert publish.step_publish(failing, gh, TODAY)["infra_issue"] is None
 
 
 def test_infra_issue_body_names_the_tests_and_the_hang_possibility() -> None:
-    body = nightly.infra_issue_body(summary_of("R2", (CASE_B, "failed", "infra")), [CASE_B])
+    body = publish.infra_issue_body(summary_of("R2", (CASE_B, "failed", "infra")), [CASE_B])
     assert CASE_B in body
     assert "timeout" in body
 
@@ -835,6 +835,7 @@ def test_preflight_warnings_reach_the_summary_and_the_actions_log(
         today=TODAY,
         quarantine=[],
         warnings=[preflight.CI_UNAVAILABLE_NOTE],
+        recover_env=lambda: pytest.fail("a passing run must not recover"),
     )
     assert summary["warnings"] == [preflight.CI_UNAVAILABLE_NOTE]
     nightly.announce([preflight.CI_UNAVAILABLE_NOTE], {"GITHUB_ACTIONS": "true"})
@@ -885,6 +886,10 @@ def test_run_ids_that_could_leave_the_run_directory_are_refused(bad: str) -> Non
     assert raised.value.code == 2
 
 
+ON_TIME = datetime(2026, 11, 10, 18, 20, tzinfo=UTC)
+"""cron(18:17 UTC) 직후 — 실행기 시험이 늦은 시작 가드에 걸리지 않는 고정 시각(L8)."""
+
+
 def test_runner_failure_is_reported_as_infra_and_exits_2(tmp_path: Path) -> None:
     """L2: 실행기 자신의 예상 밖 예외는 product 종료 코드(1)가 아니라 infra(2)로, status를
     남긴다."""
@@ -901,6 +906,8 @@ def test_runner_failure_is_reported_as_infra_and_exits_2(tmp_path: Path) -> None
         run_id="20261110T180000Z",
         today=TODAY,
         out_dir=lambda run_id: tmp_path / run_id,
+        environ={},
+        now=lambda: ON_TIME,
     )
     assert code == 2
     out = tmp_path / "20261110T180000Z"
@@ -929,6 +936,8 @@ def test_runner_failure_survives_a_failing_publish(tmp_path: Path) -> None:
         run_id="20261110T180000Z",
         today=TODAY,
         out_dir=lambda run_id: tmp_path / run_id,
+        environ={},
+        now=lambda: ON_TIME,
     )
     assert code == 2
     published = json.loads((tmp_path / "20261110T180000Z" / "publish.json").read_text("utf-8"))
@@ -1007,16 +1016,16 @@ def test_two_days_of_pytest_timeouts_open_an_infra_issue(tmp_path: Path) -> None
     0줄이라 영영 열리지 않았다)."""
     day1, _, _ = timed_out_run(tmp_path, DAY1)
     gh = FakeGitHub()
-    first = nightly.step_publish(day1, gh, TODAY)
+    first = publish.step_publish(day1, gh, TODAY)
     assert (first["history_lines"], first["infra_issue"]) == (1, None)
     ((_, _, appended),) = gh.appends
     day2, _, _ = timed_out_run(tmp_path, DAY2)
     gh = FakeGitHub(history=appended)
-    second = nightly.step_publish(day2, gh, TODAY)
+    second = publish.step_publish(day2, gh, TODAY)
     assert second["infra_issue"] == "created"
     assert ("issue", (report.INFRA_ISSUE_TITLE, "g2-nightly-infra")) in gh.calls
     assert ("status", (SHA, "error", "g2/nightly")) in gh.calls
-    body = nightly.infra_issue_body(day2, ["pytest"])
+    body = publish.infra_issue_body(day2, ["pytest"])
     assert '"first": -1' in body
 
 
@@ -1105,7 +1114,7 @@ def test_time_budget_fits_the_workflow_timeout() -> None:
     assert f"timeout-minutes: {nightly.WORKFLOW_TIMEOUT_S // 60}\n" in workflow
     total = nightly.SETUP_RESERVE_S + nightly.RUN_BUDGET_S + nightly.TAIL_RESERVE_S
     assert total < nightly.WORKFLOW_TIMEOUT_S
-    collect_worst = len(nightly.G2_SITES) * len(nightly.REMOTE_LOGS) * nightly.COLLECT_TIMEOUT_S
+    collect_worst = len(nightly.G2_SITES) * len(collect.REMOTE_LOGS) * collect.COLLECT_TIMEOUT_S
     assert collect_worst + nightly.PUBLISH_RESERVE_S <= nightly.TAIL_RESERVE_S
     assert nightly.RETRY_MIN_S < nightly.RETRY_TIMEOUT_S < nightly.PYTEST_TIMEOUT_S
     assert nightly.PYTEST_TIMEOUT_S < nightly.RUN_BUDGET_S
@@ -1116,7 +1125,7 @@ def test_publish_does_not_append_the_same_run_twice() -> None:
     failing = summary_of(DAY2, (CASE_B, "failed", "product"))
     already = "".join(line + "\n" for line in report.history_lines(failing))
     gh = FakeGitHub(history=already)
-    out = nightly.step_publish(failing, gh, TODAY)
+    out = publish.step_publish(failing, gh, TODAY)
     assert out["history_lines"] == 0
     assert gh.appends == []
     assert ("status", (SHA, "failure", "g2/nightly")) in gh.calls
@@ -1129,7 +1138,7 @@ def test_runner_failure_keeps_the_real_summary_and_publishes_it(tmp_path: Path) 
     real = summary_of(DAY2, (CASE_B, "failed", "product"))
 
     def body(run_id: str, sha: str, today: date, out: Path, client: object) -> int:
-        nightly.write_json(out / "summary.json", real)
+        write_json(out / "summary.json", real)
         raise RuntimeError("gh: status call failed")
 
     code = nightly.step_all(
@@ -1140,6 +1149,8 @@ def test_runner_failure_keeps_the_real_summary_and_publishes_it(tmp_path: Path) 
         run_id=DAY2,
         today=TODAY,
         out_dir=lambda run_id: tmp_path / run_id,
+        environ={},
+        now=lambda: ON_TIME,
     )
     assert code == 2
     out = tmp_path / DAY2

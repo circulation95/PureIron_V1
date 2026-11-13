@@ -21,9 +21,11 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import cast
 
 from harness import (
     buildhost,
+    bundles,
     golden,
     hyperv,
     judges,
@@ -55,6 +57,11 @@ M6-2a 실측(2 GiB VM 2대, 가용 6.3 GB에서 시작 → VM 뒤 약 2.3 GB)에
 1 GB 근처를 지킨다. 3 GiB VM 2대면 3 * 2 + 2 = 8 GB로 preflight 기준(`Limits.min_mem_gb`)과 같다."""
 VM_MEMORY_FILE = "vm-memory.json"
 """현장 결과 디렉터리에 남기는 VM 시작 직전 메모리 확인 기록(`make_room`)."""
+RESTORE_MEMORY_FILE = "restore-memory.json"
+"""현장 결과 디렉터리에 남기는 c0 복원 직전 메모리 확인 기록(`restore_c0`, 복원마다 한 항목)."""
+ITEM_NO_EXTERNAL = "G2 no external since boot (all scenarios)"
+EXPECTED_SCHEMA_FILE = "expected-schema.json"
+"""결과 디렉터리에 남기는 D9 기대 스키마(`buildhost.expected_schema`)."""
 SITE_ROLES: tuple[tuple[Site, str], ...] = ((sites.SITE_A, "base"), (sites.SITE_B, "next"))
 """현장 → 설치 release 역할(E2). site-a는 M6-4에서 BASE→HEAD 업그레이드 대상이라 BASE다."""
 
@@ -129,6 +136,11 @@ class SiteRun:
     live: LiveWatch | None = None
     """c0 직후부터 `bring_up` 안에서 지켜본 live 결과(`watch_live`) — 판정(`check_install`)이 다른
     현장 부팅 뒤에 늦게 시작해도 "c0 뒤 5분 안에"를 증명한다(리뷰 r2 L3, 직렬 모드 포함)."""
+    c0_db: dict[str, object] = field(default_factory=dict[str, object])
+    """체크포인트 c0 직전(이력 시드 뒤) probe `db` — c0 기반 판정(`judges.judge_c0_base`)."""
+    unmarked_restores: int = 0
+    """외부 접속 카운터를 표시하지 못하고(VM이 꺼져 있었다) 복원한 횟수 — 그 구간의 카운터는
+    잃었으므로 맨 끝 판정(`check_no_external`)이 거짓이 된다."""
 
 
 @dataclass(frozen=True)
@@ -145,8 +157,20 @@ class Session:
     head_sha: str
     pair: ReleasePair
     tree: Path
+    """G2 100태그 트리(c0 g1 — `trees.g2_tree`)."""
     simulator: Path
     sites: dict[str, SiteRun]
+    expected_schema: dict[str, object] = field(default_factory=dict[str, object])
+    """D9 기대 스키마 — WSL의 빈 DB에 NEXT를 migrate한 뒤 probe와 같은 SQL로 읽은 이름 집합
+    5종·epoch(`EXPECTED_SCHEMA_FILE`)."""
+    release_trees: dict[str, Path] = field(default_factory=dict[str, Path])
+    """NEXT·FAULT 2종의 번들 트리 — G2 트리에서 태그 `pair.tree_tag`의 description만 바꾼 것
+    (`bundles.release_tree(source=tree)`). 판정 기대값(`trees.tree_expect`)도 같은 디렉터리에서
+    읽는다."""
+
+    def tree_of(self, release: str) -> Path:
+        """`release` 번들이 싣는 트리 — BASE(c0 g1)는 G2 트리, 나머지는 `release_trees`."""
+        return self.tree if release == self.pair.base else self.release_trees[release]
 
     @property
     def sim_image(self) -> str:
@@ -154,8 +178,9 @@ class Session:
 
 
 def prepare(run_id: str, sha: str) -> Session:
-    """WSL 동기화 → HEAD 빌드(NEXT 기록·시뮬레이터 tar) → 설치 번들 → 100태그 트리 → 현장별 g1
-    번들. HEAD 빌드 실패는 `HeadBuildError`(제품)로 멈춘다."""
+    """WSL 동기화 → HEAD 빌드(NEXT 기록·시뮬레이터 tar) → FAULT 2종(NEXT 파생, 기록·digest 확인)
+    → 설치 번들 → 100태그 트리와 NEXT·FAULT 트리 → 현장별 g1 번들. HEAD 빌드 실패는
+    `HeadBuildError`(제품)로 멈춘다."""
     out = bundles_dir(run_id)
     pair = repo_pair(sha)
     buildhost.sync_repo()
@@ -165,14 +190,23 @@ def prepare(run_id: str, sha: str) -> Session:
     judges.check_record(pair, pair.base, base_record)
     if next_record.get("version") != pair.releases[pair.next]:
         raise E2EError(f"{pair.next}: version {next_record.get('version')!r} != pair")
+    faults = buildhost.nightly_faults(pair, next_record)
+    expected = buildhost.expected_schema(results_dir(run_id) / EXPECTED_SCHEMA_FILE, pair)
+    for name, record in faults.items():
+        judges.check_record(pair, name, record)
     digests = {
         pair.base: judges.digests_of(base_record),
         pair.next: judges.digests_of(next_record),
+        **{name: judges.digests_of(record) for name, record in faults.items()},
     }
     pib, fpr, boot = buildhost.install_bundle(
         out / "install", pair.releases[pair.base], work=buildhost.NIGHTLY_WORK
     )
     tree = trees.g2_tree(out / "tree")
+    release_trees = {
+        name: bundles.release_tree(out / "trees" / name, name, pair, source=tree)
+        for name in (pair.next, pair.fault, pair.fault_migrate)
+    }
     runs: dict[str, SiteRun] = {}
     for base_site, _ in SITE_ROLES:
         release = site_release(pair, base_site.site_id)
@@ -198,17 +232,71 @@ def prepare(run_id: str, sha: str) -> Session:
             work=buildhost.NIGHTLY_WORK,
         )
         runs[base_site.site_id] = SiteRun(ctx, release)
-    return Session(run_id, sha, pair, tree, out / "nightly" / "simulator.tar", runs)
+    return Session(
+        run_id,
+        sha,
+        pair,
+        tree,
+        out / "nightly" / "simulator.tar",
+        runs,
+        expected_schema=expected,
+        release_trees=release_trees,
+    )
 
 
 BringUp = Callable[["SiteRun", "Session", str], None]
-MakeRoom = Callable[[list["SiteRun"], Mapping[str, str]], bool]
+MakeRoom = Callable[[list["SiteRun"], Mapping[str, str]], "MemoryGate"]
 
 
 def vm_start_need_gb(vms: int, environ: Mapping[str, str]) -> float:
     """VM `vms`대를 지금 시작하는 데 필요한 Windows 가용 메모리(GB) — VM 메모리
     (`sites.vm_memory_gib`) * 대수 + `VM_START_HEADROOM_GB`."""
     return vms * sites.vm_memory_gib(environ) + VM_START_HEADROOM_GB
+
+
+@dataclass(frozen=True)
+class MemoryGate:
+    """VM 시작·체크포인트 복원 직전의 메모리 확보 결과(`secure_memory`)."""
+
+    need_gb: float
+    before_gb: float | None
+    """회수 전 Windows 가용 메모리(GB, 못 읽으면 None)."""
+    after_gb: float | None
+    """회수·대기 뒤 마지막 측정값."""
+    notes: list[str]
+
+    @property
+    def ok(self) -> bool:
+        return self.after_gb is not None and self.after_gb >= self.need_gb
+
+    def as_dict(self, **extra: object) -> dict[str, object]:
+        return {
+            **extra,
+            "need_gb": self.need_gb,
+            "before_gb": self.before_gb,
+            "after_gb": self.after_gb,
+            "ok": self.ok,
+            "notes": self.notes,
+        }
+
+
+def secure_memory(
+    need: float,
+    *,
+    mem_now: Callable[[], float | None] | None = None,
+    reclaim: Callable[[], None] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> MemoryGate:
+    """WSL 페이지 캐시를 회수하고 Windows 가용 메모리가 `need` GB 이상이 될 때까지 기다린다
+    (`preflight.reclaim_memory` — preflight와 같은 회수·대기). `mem_now`·`reclaim`이 없으면
+    preflight 기본값(부를 때 모듈 속성으로 찾는다 — 단위 시험이 바꾼다)."""
+    read = mem_now or preflight.windows_mem_gb
+    before = read()
+    after, notes = preflight.reclaim_memory(
+        need, before, mem_now=read, reclaim=reclaim, sleep=sleep, clock=clock
+    )
+    return MemoryGate(need, before, after, notes)
 
 
 def make_room(
@@ -219,46 +307,39 @@ def make_room(
     reclaim: Callable[[], None] | None = None,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
-) -> bool:
-    """`runs`의 VM을 시작하기 직전에 WSL 페이지 캐시를 회수하고 Windows 가용 메모리가
-    `vm_start_need_gb` 이상이 될 때까지 기다린다(`preflight.reclaim_memory` — preflight와 같은 회수·
-    대기). preflight의 측정은 HEAD 빌드·번들 전 값이라 그 사이 WSL 캐시가 다시 찬다(M6-2b 리허설
-    R1: 두 번째 VM이 0x800705AA). 끝까지 모자라면 각 현장의 `SiteRun.error`에 `InfraError`를 두고
-    거짓 — 부른 쪽은 VM을 시작하지 않는다. 회수 전·후 값과 기다린 시간은 현장 로그와 결과 디렉터리의
-    `VM_MEMORY_FILE`에 남긴다. `mem_now`·`reclaim`이 없으면 preflight 기본값(단위 시험이 바꾼다)."""
+) -> MemoryGate:
+    """`runs`의 VM을 시작하기 직전에 `secure_memory`로 Windows 가용 메모리가
+    `vm_start_need_gb(len(runs))` 이상이 되게 한다. preflight의 측정은 HEAD 빌드·번들 전 값이라 그
+    사이 WSL 캐시가 다시 찬다(M6-2b 리허설 R1: 두 번째 VM이 0x800705AA). 회수 전·후 값과 기다린
+    시간은 현장 로그와 결과 디렉터리의 `VM_MEMORY_FILE`(확인마다 한 항목)에 남긴다. 모자랄 때 VM을
+    시작하지 않고 현장 오류를 두는 것은 부른 쪽(`bring_up_all`)이 한다."""
     need = vm_start_need_gb(len(runs), environ)
-    read = mem_now or preflight.windows_mem_gb
-    before = read()
-    after, notes = preflight.reclaim_memory(
-        need, before, mem_now=read, reclaim=reclaim, sleep=sleep, clock=clock
-    )
-    ok = after is not None and after >= need
-    gate: dict[str, object] = {
-        "sites": [run.ctx.site.site_id for run in runs],
-        "need_gb": need,
-        "before_gb": before,
-        "after_gb": after,
-        "ok": ok,
-        "notes": notes,
-    }
-    error = InfraError(
-        f"windows available memory {after} GB < {need} GB needed to start {len(runs)} VM(s) "
-        f"(VM memory + {VM_START_HEADROOM_GB} GB headroom) after reclaiming WSL page cache"
+    gate = secure_memory(need, mem_now=mem_now, reclaim=reclaim, sleep=sleep, clock=clock)
+    record = gate.as_dict(sites=[run.ctx.site.site_id for run in runs])
+    for run in runs:
+        for note in gate.notes:
+            run.ctx.log(note)
+        _append_json(run.ctx.out / VM_MEMORY_FILE, record)
+    return gate
+
+
+def refuse_start(runs: list[SiteRun], gate: MemoryGate) -> None:
+    """메모리가 모자라 VM을 시작하지 않는 현장마다 **새** `InfraError`를 둔다(메시지는 같다 — 한
+    객체를 나눠 쓰면 pytest가 두 시험에서 같은 예외의 traceback을 겹쳐 쌓는다, M6-2b B-1)."""
+    message = (
+        f"windows available memory {gate.after_gb} GB < {gate.need_gb} GB needed to start "
+        f"{len(runs)} VM(s) (VM memory + {VM_START_HEADROOM_GB} GB headroom) after reclaiming "
+        "WSL page cache"
     )
     for run in runs:
-        for note in notes:
-            run.ctx.log(note)
-        run.ctx.out.mkdir(parents=True, exist_ok=True)
-        (run.ctx.out / VM_MEMORY_FILE).write_text(json.dumps(gate, indent=2), "utf-8")
-        if not ok:
-            run.ctx.log(f"vm not started: {error}")
-            run.error = error
-    return ok
+        run.ctx.log(f"vm not started: {message}")
+        run.error = InfraError(message)
 
 
 def bring_up(run: SiteRun, session: Session, ssh_pub: str) -> None:
-    """VM 부팅(dummy 장비 주소) → 외부 접속 기준값 → 설치 runbook·g1 → 시뮬레이터 → ready → viewer
-    → 체크포인트 c0."""
+    """VM 부팅(dummy 장비 주소) → 외부 접속 기준값 → 설치 runbook·g1 → 시뮬레이터 → ready → 이력
+    시드(압축 chunk, `site.seed_history`) → c0 기반 측정(`run.c0_db`, `Context.seed_rows`) → viewer
+    → 체크포인트 c0. c0 기반 판정은 G2-1(`check_install`)이 한다."""
     ctx = run.ctx
     host = ctx.site.host()
     files = golden.seed_files(
@@ -289,6 +370,10 @@ def bring_up(run: SiteRun, session: Session, ssh_pub: str) -> None:
     run.evidence["install_s"] = round(install_s, 1)
     site.start_simulator(host, session.simulator, session.sim_image)
     site.wait_ready(host, READY_TIMEOUT_S)
+    ctx.log("seed history (compressed chunks)")
+    site.seed_history(host)
+    run.c0_db = judges.db_of(site.probe(host))
+    ctx.seed_rows = judges.as_int(run.c0_db.get("tag_history_rows"))
     run.evidence["viewer"] = site.add_viewer(host)
     site.nft_mark(ctx, host)
     ctx.nft_c0 = dict(ctx.nft_last)
@@ -345,23 +430,38 @@ def bring_up_all(
     prepare_host: Callable[[], str] = host_key,
     room: MakeRoom = make_room,
 ) -> None:
-    """두 현장을 스레드로 동시에 올린다. `PUREIRON_G2_SERIAL=1`이면 차례로(메모리가 모자랄 때,
-    R1). VM을 시작하기 전에 `room`(`make_room`)으로 메모리를 확보한다 — 동시 모드는 두 VM 몫으로
-    스레드를 띄우기 전에 한 번, 직렬 모드는 VM마다 그 VM 몫으로. 모자라면 그 현장(들)은 올리지
-    않는다(`SiteRun.error` = `InfraError`)."""
+    """두 현장을 스레드로 동시에 올린다. VM을 시작하기 전에 `room`(`make_room`)으로 메모리를
+    확보한다 — 동시 모드는 두 VM 몫으로 스레드를 띄우기 전에 한 번. 그 몫이 끝내 모자라도 VM 한
+    대 몫(`vm_start_need_gb(1)`)은 되면 **직렬로 자동 전환**한다(B-3): 한 대 몫을 다시 재서
+    띄우고, 다음 VM도 다시 잰다(앞 VM이 메모리를 잡은 뒤의 값). `PUREIRON_G2_SERIAL=1`이면 처음부터
+    VM마다 그 몫으로 차례로(R1). 모자란 현장은 올리지 않는다(`SiteRun.error` = 현장마다 새
+    `InfraError`). 어떻게 올렸는지는 현장 증거 `boot`에 남는다(G2-1 기록)."""
     pub = prepare_host()
     runs = list(session.sites.values())
     env = environ if environ is not None else dict(os.environ)
-    if env.get("PUREIRON_G2_SERIAL") == "1":
+    mode = "serial (PUREIRON_G2_SERIAL=1)"
+    if env.get("PUREIRON_G2_SERIAL") != "1":
+        gate = room(runs, env)
+        if gate.ok:
+            for run in runs:
+                run.evidence["boot"] = "concurrent"
+            with ThreadPoolExecutor(max_workers=len(runs)) as pool:
+                for future in [pool.submit(_guarded, run, session, pub, up) for run in runs]:
+                    future.result()
+            return
+        if gate.after_gb is None or gate.after_gb < vm_start_need_gb(1, env):
+            refuse_start(runs, gate)
+            return
+        mode = f"serial (auto: {gate.after_gb} GB < {gate.need_gb} GB for {len(runs)} VMs)"
         for run in runs:
-            if room([run], env):
-                _guarded(run, session, pub, up)
-        return
-    if not room(runs, env):
-        return
-    with ThreadPoolExecutor(max_workers=len(runs)) as pool:
-        for future in [pool.submit(_guarded, run, session, pub, up) for run in runs]:
-            future.result()
+            run.ctx.log(f"boot {mode}")
+    for run in runs:
+        run.evidence["boot"] = mode
+        gate = room([run], env)
+        if gate.ok:
+            _guarded(run, session, pub, up)
+        else:
+            refuse_start([run], gate)
 
 
 def check_install(
@@ -374,19 +474,23 @@ def check_install(
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, bool]:
-    """G2-1 한 현장: 설치(ready·실행 이미지 == 그 현장 release digest·overlay2·classic) → c0 뒤
-    5분 안에 100태그 전부 GOOD·장비 connected → 부팅 이후 외부 접속 0. 판정을 기록하고 돌려준다.
+    """G2-1 한 현장: 설치(ready·실행 이미지 == 그 현장 release digest·overlay2·classic) · c0
+    기반(이력 시드 뒤 압축 chunk·행 > 0·DB epoch == 그 현장 release epoch,
+    `judges.judge_c0_base`) → c0 뒤 5분 안에 100태그 전부 GOOD·장비 connected → 부팅 이후 외부
+    접속 0. 판정을 기록하고 돌려준다.
     "5분 안에"는 `bring_up`이 c0 직후부터 지켜본 결과(`run.live`)로 판정하고(`live_in_time`: c0부터
     `LIVE_TIMEOUT_S` 이내), 그것이 없을 때만 지금부터 지켜본다(그때 c0 + 300초가 이미 지났으면
     `live_in_time`이 거짓). 부팅·설치가 실패했으면 그 예외를 다시 던진다. VM 조작(`probe`·`live`·
     `mark`)과 시계는 단위 시험이 가짜로 바꾼다."""
-    run = session.sites[site_id]
-    if run.error is not None:
-        raise run.error
+    run = site_up(session, site_id)
     ctx = run.ctx
     host = ctx.site.host()
     snap = probe(host)
     checks = judges.judge_installed(snap, ctx.digests[run.release])
+    checks |= judges.judge_c0_base(run.c0_db, session.pair.epochs[run.release])
+    fresh = run.release == session.pair.next
+    if fresh:  # D9 ⓒ: 새 설치(NEXT) c0의 이름 집합 5종 == 기대 스키마
+        checks |= judges.judge_schema_equal(run.c0_db, session.expected_schema)
     want = trees.g2_tag_paths()
     watch = run.live or watch_live(run, live=live, clock=clock, sleep=sleep)
     out, live_s = watch.reply, watch.seconds
@@ -406,6 +510,116 @@ def check_install(
         nft_total=ctx.nft_total,
         field_fwd=ctx.nft_total.get(golden.FIELD_RULE, 0),
         dns_lookups=ctx.dns_lookups,
+        c0_db={k: run.c0_db.get(k) for k in ("epoch", "compressed_chunks", *judges.ROW_KEYS)},
+        schema_diff=judges.schema_diff(run.c0_db, session.expected_schema) if fresh else None,
         **run.evidence,
+    )
+    return checks
+
+
+# ---------------------------------------------------------------- 시나리오 공용(M6-3)
+
+
+def restore_need_gb(running: bool, environ: Mapping[str, str]) -> float:
+    """c0 복원 직전에 있어야 하는 Windows 가용 메모리(GB). 복원 대상 VM이 켜져 있으면
+    `Restore-VMSnapshot`이 그 VM을 먼저 끄고(메모리 반환) `Start-VM`이 같은 양을 다시 잡으므로 VM
+    몫은 이미 쓰고 있는 셈이다 — 실행 중 여유 `VM_START_HEADROOM_GB`만 요구한다(VM을 띄운 뒤 2 GB가
+    남아야 실행 중 WSL 빌드로 줄어도 1 GB 근처를 지킨다, `VM_START_HEADROOM_GB` 근거). 꺼져 있으면
+    새로 시작하는 것과 같아 VM 한 대 몫(`vm_start_need_gb(1)`)이다."""
+    return VM_START_HEADROOM_GB if running else vm_start_need_gb(1, environ)
+
+
+def _append_json(path: Path, entry: dict[str, object]) -> None:
+    """`path`(JSON 배열)에 `entry`를 하나 더한다. 없거나 깨졌으면 새 배열."""
+    try:
+        old: object = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        old = []
+    entries = cast(list[object], old) if isinstance(old, list) else []
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps([*entries, entry], indent=2), "utf-8")
+
+
+def restore_c0(
+    run: SiteRun,
+    environ: Mapping[str, str] | None = None,
+    *,
+    state: Callable[[str], str | None] = hyperv.vm_state,
+    mark: Callable[[Context, Vm], None] = site.nft_mark,
+    restore: Callable[[str, str], None] = hyperv.restore,
+    wait_ssh: Callable[[Vm], object] = lambda host: host.wait_ssh(),
+    mem_now: Callable[[], float | None] | None = None,
+    reclaim: Callable[[], None] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> MemoryGate:
+    """G2 시나리오의 시작: 그 현장 VM을 체크포인트 c0로 되돌린다. 순서: 외부 접속 카운터 표시(복원이
+    카운터를 c0 값으로 되돌리므로 그 전 구간을 누적 — VM이 꺼져 있으면 표시할 수 없어
+    `unmarked_restores`를 올린다) → 메모리 확보(`restore_need_gb`, `secure_memory`) → 복원 →
+    카운터 기준을 c0 값으로 → ssh 대기. 메모리가 끝까지 모자라면 복원하지 않고 `InfraError`(현장마다
+    새 객체). 회수 전·후 값은 현장 로그와 `RESTORE_MEMORY_FILE`에 남긴다. `run.py`의
+    `site.restore_c0`(회수만 하고 기다리지 않는다)는 그대로다. Hyper-V·ssh·메모리 조작은 단위 시험이
+    가짜로 바꾼다."""
+    ctx = run.ctx
+    host = ctx.site.host()
+    env = os.environ if environ is None else environ
+    vm_state = state(ctx.site.vm_name)
+    running = vm_state == "Running"
+    if running:
+        mark(ctx, host)
+    else:
+        run.unmarked_restores += 1
+        ctx.log(f"vm {vm_state}: external-access counters since the last mark are lost")
+    gate = secure_memory(
+        restore_need_gb(running, env), mem_now=mem_now, reclaim=reclaim, sleep=sleep, clock=clock
+    )
+    for note in gate.notes:
+        ctx.log(note)
+    _append_json(ctx.out / RESTORE_MEMORY_FILE, gate.as_dict(vm_state=vm_state))
+    if not gate.ok:
+        raise InfraError(
+            f"windows available memory {gate.after_gb} GB < {gate.need_gb} GB needed to restore "
+            f"{ctx.site.vm_name} (vm {vm_state}) to c0 after reclaiming WSL page cache"
+        )
+    ctx.log("restore c0")
+    restore(ctx.site.vm_name, "c0")
+    ctx.nft_last = dict(ctx.nft_c0)  # 복원은 카운터(메모리)도 c0 시점으로 되돌린다
+    ctx.save()
+    wait_ssh(host)
+    return gate
+
+
+def site_up(session: Session, site_id: str) -> SiteRun:
+    """`site_id`의 `SiteRun` — 부팅·설치가 실패한 현장이면 그 예외를 다시 던진다(분류는 예외
+    종류)."""
+    run = session.sites[site_id]
+    if run.error is not None:
+        raise run.error
+    return run
+
+
+def check_no_external(
+    session: Session,
+    site_id: str,
+    *,
+    mark: Callable[[Context, Vm], None] = site.nft_mark,
+) -> dict[str, bool]:
+    """맨 끝 시험: 부팅 이후 모든 시나리오를 거친 누적 외부 접속 카운터(`ctx.nft_total` — 복원
+    직전마다 표시해 더한다)가 0이고, 카운터를 잃은 복원이 없다. 판정을 기록하고 돌려준다."""
+    run = site_up(session, site_id)
+    ctx = run.ctx
+    mark(ctx, ctx.site.host())
+    checks = {
+        "no_external": judges.no_external(ctx.nft_total),
+        "every_interval_counted": run.unmarked_restores == 0,
+    }
+    ctx.record(
+        ITEM_NO_EXTERNAL,
+        all(checks.values()),
+        checks=checks,
+        nft_total=ctx.nft_total,
+        field_fwd=ctx.nft_total.get(golden.FIELD_RULE, 0),
+        dns_lookups=ctx.dns_lookups,
+        unmarked_restores=run.unmarked_restores,
     )
     return checks

@@ -74,6 +74,9 @@ class ReleasePair:
     """NEXT·FAULT 트리가 fixture와 다르게 두는 태그. M5 확인 ⓑ의 PATCH 대상과 겹치지 않아야 한다."""
     tree_descriptions: Mapping[str, str]
     """release → 그 번들 트리의 `tree_tag` description."""
+    fault_migrate: str = ""
+    """마이그레이션 실패 fault(G2-6 ②, nightly 쌍만 — `NEXT` core에 실패하는 migration과 epoch + 1을
+    얹은 파생). `DEFAULT`(run.py)에는 없다(빈 이름)."""
 
 
 DEFAULT = ReleasePair(
@@ -120,6 +123,12 @@ DEFAULT = ReleasePair(
 
 
 NIGHTLY_SUFFIX = "nightly"
+FAULT_HEALTH, FAULT_MIGRATE = "h", "m"
+"""nightly FAULT 2종의 이름 접미사(`n<sha7>h`·`n<sha7>m`)와 버전 접미사(`<NEXT 버전>.fh`·`.fm`)."""
+FAULT_CHANGED = {FAULT_HEALTH: "collector", FAULT_MIGRATE: "core"}
+"""FAULT마다 NEXT와 달라야 하는 서비스 — 나머지 이미지(site-db 포함)는 NEXT와 digest가 같다."""
+NIGHTLY_TREE_TAG = "line1/temp_sp"
+"""nightly 쌍의 NEXT·FAULT 트리가 G2 트리(fixture + 시뮬레이터 100태그)와 다르게 두는 태그."""
 RELEASE_NAME = re.compile(r"^r(\d+)$")
 CALENDAR = re.compile(r"^(\d{4})\.(\d{1,2})\.(\d+)$")
 HEAD_SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -154,10 +163,14 @@ def nightly(
     head_sha: str,
     next_epoch: int,
 ) -> ReleasePair:
-    """nightly 쌍(D8·E4): BASE = 태그가 있는 최신 `r<N>` 기록, NEXT = `n<sha7>`(HEAD 빌드,
-    `bundles.py nightly-release`가 WSL 작업 디렉터리에만 기록한다). FAULT는 아직 없다(M6-3) — 빈
-    이름이다. 스키마·트리 기대값은 비운다: G2-1은 스키마 판정을 하지 않는다(E5, 구조는 D9에서
-    바꾼다). `records`는 이름 → release 기록(JSON), `next_epoch`는 HEAD migration의 epoch다."""
+    """nightly 쌍(D8·E4, M6-3 H9): BASE = 태그가 있는 최신 `r<N>` 기록, NEXT = `n<sha7>`(HEAD 빌드,
+    `bundles.py nightly-release`가 WSL 작업 디렉터리에만 기록한다), FAULT 2종(NEXT 파생,
+    `bundles.py nightly-faults`): `fault` = `n<sha7>h`(collector만 세션을 맺지 않는 health 실패,
+    버전 `<NEXT 버전>.fh`, NEXT epoch)·`fault_migrate` = `n<sha7>m`(core에 실패하는 migration, 버전
+    `.fm`, NEXT epoch + 1). 수동 스키마 집합은 비운다 — G2 스키마 판정은 자동(D9,
+    `expected-schema.json`)이다. 트리: NEXT·FAULT 번들은 G2 트리에서 태그 `NIGHTLY_TREE_TAG`의
+    description만 release마다 바꾼다. `records`는 이름 → release 기록(JSON), `next_epoch`는 HEAD
+    migration의 epoch다(상수로 박지 않는다 — HEAD가 migration을 더하면 FAULT-m도 따라 오른다)."""
     if HEAD_SHA.fullmatch(head_sha) is None:
         raise E2EError(f"head sha must be 40 lowercase hex digits, got {head_sha!r}")
     base = latest_tagged(records, tags)
@@ -167,21 +180,76 @@ def nightly(
     if not isinstance(epoch, int):
         raise E2EError(f"{base}: release record has no schema.epoch")
     nxt = f"n{head_sha[:7]}"
+    health, migrate = nxt + FAULT_HEALTH, nxt + FAULT_MIGRATE
+    version = nightly_version(str(record.get("version")), head_sha)
     return ReleasePair(
         base=base,
         next=nxt,
-        fault="",
+        fault=health,
+        fault_migrate=migrate,
         releases={
             base: str(record.get("version")),
-            nxt: nightly_version(str(record.get("version")), head_sha),
+            nxt: version,
+            health: f"{version}.f{FAULT_HEALTH}",
+            migrate: f"{version}.f{FAULT_MIGRATE}",
         },
-        epochs={base: epoch, nxt: next_epoch},
+        epochs={base: epoch, nxt: next_epoch, health: next_epoch, migrate: next_epoch + 1},
         caggs=frozenset(),
         base_columns=frozenset(),
         base_tables=frozenset(),
         base_indexes=frozenset(),
         next_tables=frozenset(),
         next_indexes=frozenset(),
-        tree_tag="",
-        tree_descriptions={},
+        tree_tag=NIGHTLY_TREE_TAG,
+        tree_descriptions={name: f"e2e tree {name}" for name in (nxt, health, migrate)},
     )
+
+
+def fault_record_problems(
+    pair: ReleasePair, name: str, record: Mapping[str, object], next_record: Mapping[str, object]
+) -> list[str]:
+    """nightly FAULT 기록(`name` = `pair.fault`·`pair.fault_migrate`)이 NEXT 파생 규칙을 어긴 곳(빈
+    목록이면 맞다): 버전·스키마 envelope(epoch·app_expected = `pair.epochs[name]`,
+    app_max_compatible = + 1), 바뀌어야 하는 서비스(`FAULT_CHANGED`) 하나만 NEXT와 config digest가
+    다르고 나머지(site-db 포함)는 같다. WSL 빌드(`bundles.py nightly-faults`)와 prepare가 같이
+    쓴다."""
+    kinds = {pair.fault: FAULT_HEALTH, pair.fault_migrate: FAULT_MIGRATE}
+    if not name or name not in kinds or not name.startswith(pair.next):
+        return [f"{name!r} is not a nightly fault of {pair.next}"]
+    changed = FAULT_CHANGED[kinds[name]]
+    problems: list[str] = []
+    if record.get("version") != pair.releases[name]:
+        problems.append(f"version {record.get('version')!r} != {pair.releases[name]!r}")
+    epoch = pair.epochs[name]
+    schema = record.get("schema")
+    got = (
+        tuple(cast(Mapping[str, object], schema).get(k) for k in SCHEMA_KEYS)
+        if isinstance(schema, Mapping)
+        else None
+    )
+    if got != (epoch, epoch, epoch + 1):
+        problems.append(f"schema {got} != {(epoch, epoch, epoch + 1)}")
+    mine, theirs = _digests(record), _digests(next_record)
+    if not theirs or set(mine) != set(theirs):
+        return [*problems, f"services {sorted(mine)} != NEXT {sorted(theirs)}"]
+    for svc, digest in sorted(mine.items()):
+        same = digest == theirs[svc]
+        if svc == changed and same:
+            problems.append(f"{svc} digest equals NEXT (the fault must change it)")
+        if svc != changed and not same:
+            problems.append(f"{svc} digest {digest} != NEXT {theirs[svc]}")
+    return problems
+
+
+SCHEMA_KEYS = ("epoch", "app_expected", "app_max_compatible")
+
+
+def _digests(record: Mapping[str, object]) -> dict[str, object]:
+    images = record.get("images")
+    if not isinstance(images, Mapping):
+        return {}
+    return {
+        str(svc): cast(Mapping[str, object], info).get("config_digest")
+        for svc, info in cast(Mapping[object, object], images).items()
+        if isinstance(info, Mapping)
+    }

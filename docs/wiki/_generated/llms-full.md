@@ -4106,7 +4106,7 @@ E2E/NF:
 - 통합 테스트는 `PUREIRON_TEST_EXISTING_DSN`을 주면 새 DB를 만들지 않고 주어진 DB에서 돈다(n-minus-1이 쓰는 모드).
 - **G1-6 property(hypothesis 1,000예, `deadline=None`)**: `packages/project-tools/tests/test_canonical.py`(JSON 값 dump/load 왕복)와 `test_absorb_property.py`(M5-3a) ⓐ 무작위 유효 트리를 JSON(정규형이 아닌 YAML)으로 쓰기 → `load_project` → `fmt` 고정점·fmt 전후 hash 동일 ⓑ 무작위 base 트리 + 무작위 PATCH 허용 값(설정·제거) 드래프트를 base 사본에 absorb → repo hash == 드래프트 `content_hash` ⓒ repo가 앞선 경우(태그 추가 + 기존 항목의 PATCH 비허용 필드 — 태그 `modbus.address`, 알람 `type`·`tag`·`description` — 변경) 그 변경 보존(드래프트 항목을 통째로 덮는 병합 버그를 잡는다). ⓑ·ⓒ의 hash 비교는 absorb가 기록한 `project.yaml absorbs` 키를 지운 트리 기준이다(기록 값은 따로 확인). `unit` job에 포함된다.
 
-## 12. V1 G2 nightly (PureIron_V1, M6-2)
+## 12. V1 G2 nightly (PureIron_V1, M6-2·M6-3a)
 
 > 이 절은 **PureIron_V1 현행**이다. 분류 규칙·시간 예산·환경변수·결과 파일·실행 방법의 세부는 [tests/e2e/README.md](../../../tests/e2e/README.md)의 "G2 nightly" 절이 정본이다.
 
@@ -4116,12 +4116,14 @@ G1이 커밋마다 코드·계약을 본다면, G2는 밤마다 **설치된 제�
 |---|---|
 | 언제 | `.github/workflows/nightly.yml` — cron 매일 03:17 KST(`17 18 * * *` UTC) + 수동 실행(`workflow_dispatch`, 입력 `ref`·`suite`). 분을 정각에서 비킨다 — GitHub는 매시 정각의 schedule 이벤트를 늦추거나 버릴 수 있고, 2시간 넘게 늦으면 그 밤이 건너뛰어진다. cron 실행이 cron 시각보다 2시간 넘게 늦게 시작하면(PC가 꺼져 있다가 켜짐) 아무것도 하지 않고 exit 0으로 끝난다 — 이력·status 없음. cron 시각 직전 15분 안의 시작은 제시간으로 본다(PC 시계 오차). 수동·로컬 실행에는 적용하지 않는다 |
 | 어디서 | self-hosted runner `e2e`(개발 PC Windows, 로그온 세션 PowerShell 5.1), `timeout-minutes: 120`, concurrency `g2-nightly`(줄 세우고 취소하지 않음). 빌드는 WSL, 현장은 Hyper-V VM 2대 — site-a = BASE(git 태그가 있는 최신 release), site-b = NEXT(HEAD 빌드) |
-| 시나리오 | G2-1(현장마다): 설치 · 실행 이미지 == release digest · c0 뒤 5분 안에 100태그 GOOD · 장비 CONNECTED · 외부 접속 0. G2 시험은 `tests/e2e/gates/pytest.ini`로만 수집된다(G1 `unit`에는 빠진다) |
-| 순서 | preflight(메모리·디스크·WSL·Docker·foundation-ci 판단, 남은 VM·오래된 결과 정리) → run(pytest) → collect(VM 로그) → publish → cleanup. preflight 메모리는 HEAD 빌드 전 값이라, run은 VM을 시작하기 직전에 WSL 캐시를 다시 회수하고 "VM 메모리 합 + 2 GB"가 될 때까지 기다린다(모자라면 VM을 시작하지 않고 infra) |
+| 시나리오 | 시나리오 = `(세션, 현장) → 기록`(`gates/harness/scenarios.py`): 시작할 때 그 현장을 체크포인트 c0로 복원하고, 다른 시나리오가 남긴 VM 상태에 기대지 않으며(infra 재시도가 실패한 시험만 새 pytest로 돌린다), 판정은 순수 함수다. 판정 여러 개를 내는 시나리오는 module fixture가 한 번 돌리고 시험들이 항목별로 단언한다. 지금 시험(이 순서로 돈다 — `gates/harness/order.py` 표 하나가 정한다): **G2-1**(현장마다) 설치 · 실행 이미지 == release digest · c0 기반(이력 시드 뒤 압축 chunk·행 > 0·epoch) · c0 뒤 5분 안에 100태그 GOOD · 장비 CONNECTED · 외부 접속 0, site-b는 D9 ⓒ → **G2-4 + G2-6 ③**(site-a, 같은 FAULT-h 시도) → **G2-6 ②**(site-b, FAULT-m) → **외부 접속 0**(현장마다, 맨 끝 — 모든 시나리오를 거친 누적 카운터). 표는 README "G2 nightly" 절. G2 시험은 `tests/e2e/gates/pytest.ini`로만 수집된다(G1 `unit`에는 빠진다) |
+| FAULT 2종 | nightly 쌍의 NEXT(`n<sha7>`) 파생, WSL nightly 작업 디렉터리에만 둔다: `n<sha7>h`(버전 `<NEXT>.fh`, collector만 세션을 맺지 않음 → `E_HEALTH` → 롤백, core·web digest는 NEXT와 같다)·`n<sha7>m`(`.fm`, core = NEXT + 실패하는 migration 하나(표지 테이블을 만든 뒤 0으로 나누기) + epoch NEXT + 1 → `E_MIGRATE`). NEXT·FAULT 번들 트리는 G2 100태그 트리에서 태그 하나의 description만 바꾼다. nightly prune은 NEXT와 파생을 한 묶음으로 지운다 |
+| 스키마 자동 판정(D9) | prepare가 WSL에 임시 TimescaleDB(그 run의 site-db 이미지, 호스트 포트 없음)를 띄워 NEXT로 빈 DB를 끝까지 migrate하고, VM probe와 **같은 SQL**(`tests/e2e/site/probe.py` 한 곳)로 이름 집합 5종(tables·columns·indexes·caggs·realtime_caggs)과 epoch를 읽어 `expected-schema.json`으로 남긴다. 판정: ⓐ 업그레이드 뒤 == 기대(정확히 같음) ⓑ c0(BASE) ⊂ 업그레이드 뒤 ⓒ 새 설치(site-b c0) == 기대. NEXT가 빈 DB에 migrate되지 않으면 product, Docker 무응답은 infra. `run.py`의 수동 집합은 그대로다(M6 마감에서 run.py와 함께 지운다). 판정은 이름 집합 5종이 모두 비지 않았다고 가정한다(빈 기대·전 집합은 못 읽은 값으로 보고 거짓) — HEAD가 한 종류(예: 실시간 CAGG)를 정당하게 없애는 날에는 판정을 고친다 |
+| 순서 | preflight(메모리·디스크·Hyper-V 권한·vSwitch·WSL·Docker·foundation-ci 판단, 남은 VM·오래된 결과 정리) → run(pytest: prepare = HEAD 빌드·FAULT 2종·기대 스키마·번들 → VM 2대 → 시나리오) → collect(VM 로그) → publish → cleanup. preflight 메모리는 HEAD 빌드 전 값이라, run은 VM을 시작하기 직전에 WSL 캐시를 다시 회수하고 "VM 메모리 합 + 2 GB"가 될 때까지 기다린다 — 두 대 몫이 모자라도 한 대 몫이 되면 직렬로 자동 전환하고, 그것도 모자라면 VM을 시작하지 않고 infra(현장마다). 시나리오의 c0 복원 직전에도 같은 회수·대기를 한다(VM이 켜져 있으면 2 GB, 꺼져 있으면 VM 한 대 몫 + 2 GB, 모자라면 복원하지 않고 infra). 세션 내내 Windows 최저 가용 메모리를 20초마다 재서 `summary.json`의 `windows_memory`에 싣는다 |
 | 판정·분류 | 시험 실패를 예외 종류로 가른다: **호출 자체**의 실패(ssh·wsl.exe·Hyper-V·시간 초과·`InfraError`) = `infra`, **호출된 제품 스크립트**·단언·HEAD 빌드 실패 = `product`. 실행 판정은 product가 하나라도 있으면 product, 실패가 모두 infra면 infra. 종료 코드 0 통과 · 1 product · 2 infra — Actions 실행 화면은 `shell: powershell` 탓에 2도 1로 보이므로 구분은 commit status(`failure`·`error`)와 이력 `class`로 한다 |
-| 재시도 | 실패가 모두 infra일 때만 복구(WSL·남은 VM·호스트 메모리) 뒤 실패한 시험만 1회. product는 다시 돌리지 않는다. preflight에서 멈추면 pytest를 돌리지 않는다(재시도 없음) |
+| 재시도 | 실패가 모두 infra일 때만 복구(WSL·남은 VM·호스트 메모리) 뒤 실패한 시험만 1회(새 세션). 한 현장의 시나리오와 그 현장의 외부 접속 0은 함께 다시 돈다(`order.retry_closure`). product는 다시 돌리지 않는다. preflight에서 멈추면 pytest를 돌리지 않는다(재시도 없음) |
 | 알림 | commit status `g2/nightly`(success·failure·error), 브랜치 `e2e-history`의 `history.jsonl`(시험마다 한 줄), 이슈 2종 — product 2연속(라벨 `g2-nightly`), 같은 시험 infra 2연속(라벨 `g2-nightly-infra`). 열린 이슈가 있으면 댓글 |
-| 시작하지 못한 실행 | 이력에 시험 id `preflight` 줄만 있는 run. 이력 줄·status `error`·exit 2는 남지만 이슈를 열지 않고, "최근 두 실행"을 고를 때와 7일 flake 비율에서 빠진다. 시작한 뒤 깨진 실행(`runner`·`pytest`)은 그대로 센다 |
+| 시작하지 못한 실행 | 이력에 시험 id `preflight` 줄만 있는 run(Hyper-V 권한·vSwitch 점검 실패 포함). 이력 줄·status `error`·exit 2는 남지만 이슈를 열지 않고, "최근 두 실행"을 고를 때와 7일 flake 비율에서 빠진다. 시작한 뒤 깨진 실행(`runner`·`pytest`)은 그대로 센다 |
 
 ```powershell
 uv run python tests/e2e/gates/nightly.py preflight --judge-only   # 판단만(조치 없음)

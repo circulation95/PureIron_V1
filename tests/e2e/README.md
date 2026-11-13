@@ -10,7 +10,7 @@
 |---|---|
 | `m2d/run.py` | M2d 시나리오 진입점(단계 순서·CLI·결과 항목 39개). 현장 `SITE_A`(site-a, 10.77.0.10) 하나 |
 | `gates/harness/` | 공용 하네스(M6-1, G2 nightly와 같이 쓴다): `release_pair`(`ReleasePair`·지금 쌍 `DEFAULT`·nightly 쌍 `nightly()`), `sites`(`SITE_A`·`SITE_B`·VM 준비), `site`(`Site`·원격 조작·시뮬레이터), `judges`(순수 판정), `trees`(트리 기대값·G2 100태그 트리), `context`(`Context`·상태 파일·`InfraError`), `buildhost`(WSL 호출·HEAD 빌드), `hyperv`·`golden`·`vm`, WSL 스크립트 `bundles.py`·`central.py` |
-| `gates/` (G2) | `nightly.py`(실행기), `pytest.ini`·`conftest.py`(G2 pytest 틀), `test_g2_install.py`(G2-1), `quarantine.yaml`, 하네스 `g2`(세션)·`failures`(분류)·`report`(junit·이력·status)·`flake`·`preflight`·`github` |
+| `gates/` (G2) | `nightly.py`(실행기 — CLI·단계 순서·시간 예산), `pytest.ini`·`conftest.py`(G2 pytest 틀·실행 순서·메모리 감시), 시험 `test_g2_install.py`(G2-1)·`test_g2_rollback.py`(G2-4 + G2-6 ③)·`test_g2_faults.py`(G2-6 ②)·`test_g2_no_external.py`(맨 끝), `quarantine.yaml`, 하네스 `g2`(세션·c0 복원)·`scenarios`(시나리오)·`order`(실행 순서 표)·`memwatch`(세션 최저 메모리)·`failures`(분류)·`report`(junit·이력·status)·`collect`·`publish`·`runner`(실행기 보호)·`flake`·`preflight`·`github` |
 | `site/` | VM에 복사하는 스크립트(`probe.py`·`crash_at.py`·`site_api.py`) |
 | `infra/setup-host.ps1` | 1회 호스트 준비 |
 | `tests/` | 단위 시험(G1 `unit`) |
@@ -248,8 +248,9 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
 
 ## G2 nightly (M6-2)
 
-밤마다 PC가 master HEAD를 빌드해 현장 VM 2대에 설치하고 결과를 GitHub에 남긴다. 시나리오는 G2-1
-하나다. 요약은 [testing SOT 12절](../../docs/wiki/sot/testing.md), 이 절이 세부의 정본이다.
+밤마다 PC가 master HEAD를 빌드해 현장 VM 2대에 설치하고 시나리오(G2-1·G2-4·G2-6 ②③·외부 접속 0)를
+판정해 결과를 GitHub에 남긴다. 요약은 [testing SOT 12절](../../docs/wiki/sot/testing.md), 이 절이
+세부의 정본이다.
 
 - 언제: `.github/workflows/nightly.yml` — cron 매일 **03:17 KST**(`17 18 * * *` UTC) + 수동 실행
   (`workflow_dispatch`, 입력 `ref` 기본 master·`suite` 기본 g2). cron 실행은 입력이 빈 값이라 기본
@@ -323,15 +324,89 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
 - VM 시작 직전 메모리: preflight의 8 GB는 HEAD 빌드·번들 **전** 값이다(그 사이 WSL 페이지 캐시가 다시
   찬다 — M6-2b 리허설에서 두 번째 VM이 `0x800705AA`). 그래서 VM을 시작하기 직전(`g2.make_room`)에 다시
   회수하고, Windows 가용 메모리가 "지금 시작할 VM 메모리 합 + 2 GB"(`VM_START_HEADROOM_GB` — 3 GiB
-  2대면 8 GB, 직렬 모드는 VM마다 5 GB) 이상이 될 때까지 preflight와 같이 최대 120초 기다린다. 끝까지
-  모자라면 VM을 시작하지 않고 그 현장 시험이 infra로 실패한다. 회수 전·후 값·기다린 시간은
-  `<site>/vm-memory.json`과 현장 로그에 남는다.
+  2대면 8 GB, 직렬 모드는 VM마다 5 GB) 이상이 될 때까지 preflight와 같이 최대 120초 기다린다. 두 대
+  몫이 끝내 모자라도 **한 대 몫이 되면 직렬로 자동 전환**한다(한 대를 그 몫으로 다시 재서 띄우고,
+  다음 VM도 다시 잰다). 그것도 모자라면 VM을 시작하지 않고 그 현장 시험이 infra로 실패한다(현장마다
+  따로 만든 `InfraError`). `PUREIRON_G2_SERIAL=1`은 처음부터 직렬이다. 부팅 방식은 G2-1 기록 `boot`,
+  회수 전·후 값·기다린 시간은 `<site>/vm-memory.json`(확인마다 한 항목, 배열)과 현장 로그에 남는다.
+- c0 복원 직전 메모리(M6-3a): 시나리오는 c0 복원으로 시작한다(`g2.restore_c0`). 복원 직전에도 같은
+  회수·대기를 하고, 필요한 양은 복원 대상 VM이 **켜져 있으면 2 GB**(`Restore-VMSnapshot`이 그 VM을 먼저
+  꺼 메모리를 돌려주고 `Start-VM`이 같은 양을 다시 잡으므로 VM 몫은 이미 쓰는 셈 — 실행 중 여유
+  `VM_START_HEADROOM_GB`만), **꺼져 있으면 VM 한 대 몫 + 2 GB**(새로 시작하는 것과 같다)다. 모자라면
+  복원하지 않고 infra. 복원 직전에 외부 접속 카운터를 표시하고(VM이 꺼져 있어 못 하면 그 구간을 잃은
+  것으로 센다 — 맨 끝 외부 접속 0 시험이 실패한다) 복원 뒤 기준을 c0 값으로 되돌린다. 기록은
+  `<site>/restore-memory.json`(복원마다 한 항목)과 현장 로그. `run.py`의 `site.restore_c0`는 그대로다
+  (회수만 하고 기다리지 않는다).
+- 세션 최저 메모리(M6-3a): G2 pytest 세션 내내 20초마다 Windows 가용 메모리를 재서(PowerShell 한 번
+  약 0.4초) 최저값·시각·표본 수를 `windows-memory.json`에 남기고(infra 재시도 세션과 합친다)
+  `summary.json`의 `windows_memory`에 싣는다.
+- Hyper-V 점검(M6-3a): 권한·vSwitch 점검(`sites.check_host`)은 preflight 판단에 들어간다 — 실패하면
+  preflight에서 멈춘다("시작하지 못한 실행", 이슈 없음). pytest 세션 안의 점검은 로컬 실행용으로
+  남는다.
+
+### 시나리오 (M6-3a)
+
+시나리오 = `(g2.Session, 현장) → 기록`(`harness/scenarios.py`). 계약: ① 시작할 때 그 현장을 c0로
+복원한다 ② 다른 시나리오가 남긴 VM 상태·기록에 기대지 않는다 — infra 재시도는 남은 VM을 지우고 실패한
+시험 id만 새 pytest로 돌리므로 시험 하나만 골라도 통과해야 한다 ③ 판정은 `judges`의 순수 함수,
+원격·WSL·Hyper-V 호출은 `scenarios.Remote`로 주입한다(단위 시험이 가짜로 바꾼다) ④ 부팅·설치가 실패한
+현장이면 그 예외를 다시 던진다(분류는 예외 종류). 판정 여러 개를 내는 시나리오는 module fixture가
+한 번 돌리고 시험들이 항목별로 단언한다. 시나리오 기록은 그 현장 `state.json`의 `results`에 남는다.
+
+| 시험(실행 순서) | 현장 | 흐름 | 판정(모두 참) |
+|---|---|---|---|
+| `test_g2_1_install_and_100_tags_good[site-a·site-b]` | 둘 | 부팅 → 설치 → 시뮬레이터 → ready → 이력 시드(`site.seed_history`) → c0 기반 측정 → viewer → c0 | 설치·digest·overlay2·classic · c0 기반(압축 chunk > 0·`tag_history` 행 > 0·DB epoch == 그 release epoch) · c0 뒤 5분 안에 100태그 GOOD·장비 CONNECTED · 그 시점 외부 접속 0 · site-b는 D9 ⓒ(c0 이름 집합 5종·epoch == 기대 스키마) |
+| `test_g2_4_rollback` | site-a | c0 → c0 스냅샷(행 수 4종 users·audit_log·alarm_journal·tag_history, site_rev·base_site_rev, 스키마 집합) → FAULT-h g2(FAULT-h 트리) → 수렴 → NEXT g3(NEXT 트리) → 수렴 | `failed`·보고 `E_HEALTH`·실행 이미지 == BASE·`rolling_back` 구간 ≤ 300초·행 수 4종 ≥ 이전·site_rev/base_site_rev 보존·BASE 트리(content_hash)와 정의 값 복귀·경보 없음·메트릭 `updater_failed_manual` 0·edit-lock 해제. 재시도: `succeeded`·이미지 == NEXT·NEXT 트리·D9 ⓐ(== 기대)·ⓑ(c0 ⊂)·압축 chunk 유지 |
+| `test_g2_6_3_health_failure` | site-a | 위와 같은 FAULT-h 시도(module fixture 하나) | 10분 안에 `failed`로 수렴(보고 `E_HEALTH`) · 시도 잔류 없음(`attempt` 없음 — 못 읽으면 거짓) · 직전 정상 이미지(BASE)로 ready · edit-lock 해제 |
+| `test_g2_6_2_migrate_failure` | site-b | c0 → c0 스냅샷(스키마 집합 5종·epoch·행 수) → FAULT-m g2(FAULT-m 트리) → 수렴 | 10분 안 `failed`·보고 `E_MIGRATE`·실행 이미지 == NEXT·DB epoch와 Updater `schema_epoch` 그대로·이름 집합 5종이 전과 정확히 같음·`e2e_fault_marker` 없음·행 수 4종 ≥ 이전·경보 없음·edit-lock 해제 |
+| `test_g2_no_external[site-a·site-b]` | 둘 | 맨 끝(모든 시나리오 뒤) | 부팅 이후 누적 외부 접속 카운터 0(`field_fwd`는 따로)·카운터를 잃은 복원 없음 |
+
+- "10분 안"(G2-6 ②③): 시도 시간(기록 `seconds`)은 **스테이징 직전부터 수렴 확인 끝까지**다.
+  `pureiron-site apply`는 동기라 시도 전체(검증·적용·health 대기·롤백)가 스테이징 안에서 끝나고, 수렴
+  확인은 probe 한 번(기록 `converge_s`)이다. 시나리오 스테이징의 원격 시간 제한은 900초(한도 600초
+  + 300초)라 600~900초에 끝난 시도는 시간 초과(infra)가 아니라 판정 거짓(product)으로 잡힌다. 900초도
+  넘으면 시간 초과 → infra다. `run.py`의 스테이징 시간 제한(600초)은 그대로다.
+- `rolling_back` 구간: Updater 보고 `phase_durations_s.rolling_back`(진입부터 다음 phase 진입까지).
+  Updater는 직전 이미지를 띄우고 ready를 확인한 뒤에야 `failed`로 들어가므로 이 구간이 "롤백 시작부터
+  직전 이미지 + ready까지"다. 전체 적용 시간(스테이징부터 수렴까지)으로 대신하지 않는다.
+- infra 재시도 묶음(`order.retry_closure`): 재시도는 새 세션(새 VM, c0 새로)이라, 한 현장의 시나리오
+  시험이 다시 돌면 그 현장의 `test_g2_no_external[site]`를 함께 돌리고(다시 돈 시나리오의 외부 접속을
+  본다), `test_g2_no_external[site]`가 다시 돌면 그 현장의 시나리오 시험 전부를 함께 돌린다(시나리오
+  없는 세션의 카운터로 통과하지 않게). 처음 대상 기준으로 한 번만 더하고(연쇄 없음), 현장은 순서 표에서
+  읽는다. 합친 결과에서 다시 돈 시험은 재시도 결과로 바뀐다 — 첫 세션에서 통과한 외부 접속 0도
+  재시도에서 실패하면 실패로 남는다.
+- 실행 순서: `harness/order.py`의 표 하나가 정한다(G2-1 → site-a → site-b → 외부 접속 0). 표에 없는
+  `test_g2_*.py`는 수집 오류다 — M6-3b의 거부(site-b)·draft(site-b)·crash(site-a) 자리가 표에 주석으로
+  있다.
+- FAULT 2종(nightly 쌍, `release_pair.nightly`): `fault` = `n<sha7>h`(버전 `<NEXT 버전>.fh`, epoch =
+  NEXT) — collector만 `sleep`(세션을 맺지 않음 → `/readyz` 503 → `E_HEALTH`), core·web은 NEXT 이미지
+  그대로(digest 같음). `fault_migrate` = `n<sha7>m`(`.fm`) — core = `FROM pureiron/core:<NEXT>` + NEXT
+  이미지에서 꺼낸 migration 사본 + `NNNN_e2e_fault_marker.sql`(다음 번호, 표지 테이블을 만든 뒤
+  `SELECT 1 / 0`, 트랜잭션) + `epochs.yaml`에 NEXT epoch + 1 한 줄(`load_catalog`로 다시 읽어 확인).
+  기록 schema는 epoch·app_expected = NEXT + 1, app_max_compatible = NEXT + 2. collector·web은 NEXT
+  그대로. NEXT epoch는 상수가 아니다 — HEAD가 migration을 더하면 FAULT-m도 따라 오른다. WSL
+  `bundles.py nightly-faults`가 `work-nightly/{releases,store}`에만 만들고, prepare가 파생 규칙(바뀌는
+  서비스 하나만 NEXT와 digest가 다름·envelope)을 다시 확인한다. nightly prune은 NEXT와 파생(h·m)을 한
+  묶음으로 지운다(store 디렉터리·docker 태그).
+- 트리: NEXT·FAULT-h·FAULT-m 번들은 G2 100태그 트리에서 태그 `line1/temp_sp`의 description만 바꾼
+  트리(`bundles.release_tree(source=…)`)를 싣는다. 판정 기대값(`trees.tree_expect`)도 같은 디렉터리에서
+  읽는다.
+- 스키마 자동 판정(D9): prepare가 WSL `bundles.py expected-schema`로 임시 TimescaleDB(그 run의 site-db
+  이미지, 신뢰 인증, **호스트 포트 없음** — 같은 PC의 CI가 25432·25433을 쓴다)를 띄우고 NEXT core로 빈
+  DB를 끝까지 migrate한 뒤, VM probe와 **같은 SQL**(`site/probe.py` `DB_SQL` — 기대 스키마도 이것을
+  import한다)로 이름 집합 5종(tables·columns·indexes·caggs·realtime_caggs)과 epoch를 읽어 결과
+  디렉터리 `expected-schema.json`에 남긴다. 컨테이너·네트워크는 성공·실패 모두 지우고, 시작할 때 표지
+  label이 붙은 남은 것도 지운다. 시간 제한: DB 기동 180초, migrate 600초, 전체 1200초. 분류: NEXT가 빈
+  DB에 migrate되지 않으면 product(`SchemaBuildError`), Docker 무응답·DB가 끝내 받지 않음은 infra.
+  `run.py`·`DEFAULT`의 수동 집합(`judge_c0`·`judge_next_schema`)은 그대로다.
+- 결과 파일(현장 디렉터리 밖): `expected-schema.json`, `windows-memory.json`. 현장 디렉터리:
+  `state.json`(시나리오 기록 포함), `vm-memory.json`, `restore-memory.json`.
 
 ```powershell
 $env:PUREIRON_E2E_SWITCH = "pureiron-e2e"   # setup-host.ps1 -Switch 값
 uv run python tests/e2e/gates/nightly.py preflight --judge-only   # 판단만(조치 없음)
 uv run python tests/e2e/gates/nightly.py all --dry-run            # GitHub에 쓰지 않음(VM·결과 정리는 한다)
-uv run pytest -c tests/e2e/gates/pytest.ini tests/e2e/gates -m g2 --collect-only
+uv run pytest -c tests/e2e/gates/pytest.ini tests/e2e/gates -m g2 --collect-only   # 시험 7개, 실행 순서대로
 ```
 
 결과: `C:\PureIron_e2e\results\g2-<run>\`(junit.xml·summary.json·preflight.json·publish.json·
@@ -375,6 +450,7 @@ runner `e2e`, VM 3 GiB × 2(정식 구성), 낮 시간·데스크톱 앱이 켜�
 ## 단위 테스트
 
 `tests/e2e/tests/` — 공용화 불변 조건(`test_harness_shared.py` — 항목 39개 이름·순서, `ReleasePair` 기본값 = 옛 상수, 현장 둘의 상태 파일·이름 분리, 롤백 5분 경계, VM 3 GiB)·phase 순서·상태 읽기·nft 규칙(현장 장비 `field_fwd` 규칙 위치·끝점 추출·외부 접속 판정)·seed ISO 왕복·PowerShell 인용·수렴 판정·release 쌍(BASE·NEXT 기록 대조 필수·crash 순서·항목 39개·단계 순서·c0/NEXT 스키마 집합 판정(같은 epoch 실측값, 지난 쌍 c0 교차)·전환기 경보·FAULT 트리 복원·M5 확인 판정(트리·PATCH·absorb·재적용)·gen 배정·NEXT/FAULT 트리 판정(로컬 실측 `fixtures/m4c-tree-db.json` — 같은 트리 재적용 no-op에서 ⓐ 실패, NEXT 트리에서 통과, 롤백·재시도 정의 값)·업그레이드/FAULT/재시도 배선(가짜 `apply`))·온라인 판정(`test_online.py` — 실측 `/fleet` 행으로 단계별 통과·교차 실패, CA 지문 표기, `central.py` 값·토큰을 출력에 내지 않음, 화면 비밀번호·현장 token이 명령 줄에 없고 stdin으로만 감 — `basic_auth_line`·`site_online`·`Vm.run(input=)`)·store symlink 다시 연결·`ensure_image` 적재 조건·스테이징 진단 기록(`stage_for_window`)·G2(`test_harness_g2.py` — 현장별 디렉터리·seed 바이트 동일·
-`nft_mark` site id·E10 재시도·VM 시작 직전 메모리 확보(동시·직렬), `test_nightly_pair.py`, `test_trees_g2.py`, `test_frame_g2.py`,
+`nft_mark` site id·E10 재시도·VM 시작 직전 메모리 확보(동시·직렬·자동 직렬·현장마다 새 오류), `test_nightly_pair.py`, `test_trees_g2.py`, `test_frame_g2.py`,
+M6-3a 시나리오 `test_scenarios_g2.py`(실행 순서 표·실제 수집 순서·c0 복원 직전 메모리·카운터·시작 계약·c0 기반·probe 키)·`test_rollback_g2.py`(G2-4·G2-6 ③ 흐름과 판정, 한 시험만 골라도 module fixture가 도는지)·`test_faults_g2.py`(G2-6 ②)·`test_schema_g2.py`(D9 ⓐⓑⓒ·SQL 한 곳·임시 DB 수명·분류)·`test_nightly_faults.py`(FAULT 2종 이름·버전·epoch·파생 digest·migration 형식·prune·트리)·`test_memory_g2.py`(세션 최저 메모리·preflight Hyper-V 점검), 공용 가짜 `g2_fakes.py`,
 `test_nightly_runner.py`, 실패 분류 `test_failure_split.py`, cron 늦은 시작·호스트 점검 분류·시작하지
 못한 실행 `test_nightly_cron.py`). G1 `unit`에 포함된다.

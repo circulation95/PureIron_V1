@@ -8,8 +8,11 @@
   `StartedAt`
 - `readyz`: web 경유 `/api/v1/readyz` 상태 코드와 본문, `project`: 편집 잠금(`GET /api/v1/project`).
   둘 다 무인증 경로라 r3(epoch 4)의 사용자 세션 인증 뒤에도 그대로 읽는다
-- `db`: schema epoch, CAGG 목록, 압축 chunk 수, `tag_history` 행 수, 실시간 집계 CAGG 목록,
-  현재 스키마의 테이블·인덱스·열(`테이블.열`) 목록 — 업그레이드가 더한 산출물을 직접 확인한다.
+- `db`: schema epoch, CAGG 목록, 압축 chunk 수, `tag_history`·`users`·`audit_log`·`alarm_journal`
+  행 수, 실시간 집계 CAGG 목록, 현재 스키마의 테이블·인덱스·열(`테이블.열`) 목록 — 업그레이드가 더한
+  산출물을 직접 확인한다. 스키마 이름 집합 5종(`SCHEMA_KEYS`)과 epoch의 SQL은 G2 기대 스키마
+  (`expected-schema.json`, WSL의 빈 DB에 NEXT를 migrate한 뒤 같은 SQL로 읽는다 —
+  `gates/harness/bundles.py expected-schema`)와 이 파일 하나를 같이 쓴다.
   프로젝트 정의(M5): `project_files` 행 수(epoch 5), retire되지 않은 장비 id·태그 path·알람 id 목록,
   태그·알람 정의(JSON 문자열, path·id → 정규형 정의) — 트리 적용·현장 PATCH 값을 DB에서 읽는다.
   epoch에 없는 테이블의 항목은 그 항목만 `error`다
@@ -41,6 +44,10 @@ DB_SQL = {
     "compressed_chunks": "SELECT count(*) FROM timescaledb_information.chunks "
     "WHERE hypertable_name = 'tag_history' AND is_compressed",
     "tag_history_rows": "SELECT count(*) FROM tag_history",
+    # G2-4 "users·ACK·감사·이력 행 수 ≥ 이전"(epoch 4 이후 테이블)
+    "users_rows": "SELECT count(*) FROM users",
+    "audit_log_rows": "SELECT count(*) FROM audit_log",
+    "alarm_journal_rows": "SELECT count(*) FROM alarm_journal",
     # epoch별 산출물은 이름 목록(쉼표 구분, 없으면 "")으로 내고 하네스가 집합으로 판정한다.
     # 실시간 집계 CAGG(0009)
     "realtime_caggs": "SELECT coalesce(string_agg(view_name, ',' ORDER BY view_name), '') "
@@ -68,6 +75,9 @@ DB_SQL = {
     "alarm_defs": "SELECT coalesce(json_object_agg(alarm_id, definition ORDER BY alarm_id), '{}') "
     "FROM alarms WHERE retired_at IS NULL",
 }
+
+SCHEMA_KEYS = ("tables", "columns", "indexes", "caggs", "realtime_caggs")
+"""스키마 이름 집합 5종 — `DB_SQL`의 키(값은 쉼표 구분 이름 목록). G2 자동 판정(D9)이 비교한다."""
 
 
 def _run(*cmd: str) -> str:

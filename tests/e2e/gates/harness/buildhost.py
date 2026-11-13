@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, cast
 
 from harness import bundles, golden, judges, paths
 from harness.context import E2EError, InfraError
+from harness.release_pair import fault_record_problems
 
 if TYPE_CHECKING:
     from harness.context import Context
@@ -31,6 +32,10 @@ ONLINE_TIMEOUT_S = 180
 INSTALL_TIMEOUT_S = 3600
 NIGHTLY_TIMEOUT_S = 3600
 """HEAD 이미지 빌드(core·collector·web·simulator, BuildKit 캐시 있음) + 라벨 파생 + 저장."""
+EXPECTED_SCHEMA_TIMEOUT_S = 1200
+"""기대 스키마(`bundles.py expected-schema`) 전체 — DB 기동 180초 + migrate 600초 + 조회·정리."""
+FAULTS_TIMEOUT_S = 1200
+"""nightly FAULT 2종 파생(collector `sleep`·core migration 한 겹) + 저장(이미지 tar 6개)."""
 GIT_TIMEOUT_S = 120
 RECLAIM_TIMEOUT_S = 120
 WORK = f"{paths.WSL_HOME}/work"
@@ -48,6 +53,10 @@ RUNBOOK_BOOTSTRAP = re.compile(r"bootstrap-verify\.sh sha256:\s*([0-9a-f]{64})")
 
 class HeadBuildError(E2EError):
     """HEAD가 빌드되지 않는다 — 제품 결함(`product`, D7)이다."""
+
+
+class SchemaBuildError(E2EError):
+    """NEXT가 빈 DB에 끝까지 migrate되지 않는다 — 제품 결함(`product`, D9)이다."""
 
 
 def wsl(script: str, *, timeout_s: float = 3600) -> str:
@@ -173,6 +182,58 @@ def nightly_release(
         tail = str(result.get("tail") or "")[-800:]
         raise HeadBuildError(f"HEAD {head_sha[:7]} build failed (rc {result.get('rc')}): {tail}")
     return cast(dict[str, object], result["record"])
+
+
+def nightly_faults(
+    pair: ReleasePair,
+    next_record: dict[str, object],
+    *,
+    run_wsl: Callable[..., str] | None = None,
+    work: str = NIGHTLY_WORK,
+) -> dict[str, dict[str, object]]:
+    """NEXT에서 파생한 FAULT 2종(`pair.fault` health·`pair.fault_migrate` migrate) 기록을 WSL
+    nightly 작업 디렉터리에 만들고(`bundles.py nightly-faults`) 돌려준다. 기록마다
+    `release_pair.fault_record_problems`로 다시 확인한다 — 어긋나면 `E2EError`(제품: 파생 규칙이
+    깨지면 그 밤 시나리오가 무엇을 보는지 모른다). 스크립트 실패는 `golden.WslScriptError`(제품),
+    WSL 호출 실패·Docker 무응답은 `golden.WslError`(인프라)."""
+    script = f"{bundles_py('nightly-faults', work)} --next {pair.next}"
+    raw = (run_wsl or wsl)(script, timeout_s=FAULTS_TIMEOUT_S)
+    result = cast(dict[str, object], json.loads(raw.strip().splitlines()[-1]))
+    records = cast(dict[str, dict[str, object]], result.get("records") or {})
+    for name in (pair.fault, pair.fault_migrate):
+        record = records.get(name, {})
+        problems = fault_record_problems(pair, name, record, next_record)
+        if problems:
+            raise E2EError(f"{name}: " + "; ".join(problems))
+    return {name: records[name] for name in (pair.fault, pair.fault_migrate)}
+
+
+def expected_schema(
+    out: Path,
+    pair: ReleasePair,
+    *,
+    run_wsl: Callable[..., str] | None = None,
+    work: str = NIGHTLY_WORK,
+) -> dict[str, object]:
+    """D9 기대 스키마(`bundles.py expected-schema` — WSL의 빈 TimescaleDB에 NEXT를 migrate하고
+    probe와 같은 SQL로 읽은 이름 집합 5종·epoch)를 `out`(JSON)에 남기고 돌려준다. NEXT가 migrate되지
+    않으면 `SchemaBuildError`(제품), 기대 epoch가 쌍의 NEXT epoch와 다르면 `E2EError`(제품),
+    Docker 무응답은 `golden.WslError`(인프라)."""
+    script = (
+        f"{bundles_py('expected-schema', work)} --next {pair.next} --out '{golden.wsl_path(out)}'"
+    )
+    raw = (run_wsl or wsl)(script, timeout_s=EXPECTED_SCHEMA_TIMEOUT_S)
+    result = cast(dict[str, object], json.loads(raw.strip().splitlines()[-1]))
+    if result.get("ok") is not True:
+        tail = str(result.get("tail") or "")[-800:]
+        raise SchemaBuildError(
+            f"{pair.next} does not migrate an empty DB ({result.get('stage')}, rc "
+            f"{result.get('rc')}): {tail}"
+        )
+    schema = cast(dict[str, object], result["schema"])
+    if schema.get("epoch") != str(pair.epochs[pair.next]):
+        raise E2EError(f"expected schema epoch {schema.get('epoch')!r} != {pair.epochs[pair.next]}")
+    return schema
 
 
 def build_site_bundle(

@@ -256,6 +256,13 @@ def test_window_flake_on_fault_retries_without_settling(tmp_path: Path) -> None:
 
 SIM_PATHS = sorted(trees.g2_tag_paths())
 NEXT_DIGESTS = {"core": "sha256:n1", "collector": "sha256:n2", "web": "sha256:n3"}
+C0_DB: dict[str, object] = {
+    "epoch": "5",
+    "compressed_chunks": "3",
+    "tag_history_rows": "6900",
+    **dict.fromkeys(judges.SCHEMA_SETS, "x"),
+}
+"""이력 시드 뒤 c0 기반 probe `db`(M6-3a I2) — 압축 chunk·행 > 0, epoch = 쌍의 epoch 5."""
 
 
 def g2_session(tmp_path: Path) -> g2.Session:
@@ -273,8 +280,17 @@ def g2_session(tmp_path: Path) -> g2.Session:
             pair=pair,
         )
         ctx.nft_total = dict.fromkeys(judges.AUDIT_COUNTERS, 0)
-        runs[base.site_id] = g2.SiteRun(ctx, release, c0_at=0.0)
-    return g2.Session("20261110T180000Z", "a" * 40, pair, tmp_path, tmp_path / "sim.tar", runs)
+        runs[base.site_id] = g2.SiteRun(ctx, release, c0_at=0.0, c0_db=dict(C0_DB))
+    expected = {k: C0_DB[k] for k in ("epoch", *judges.SCHEMA_SETS)}
+    return g2.Session(
+        "20261110T180000Z",
+        "a" * 40,
+        pair,
+        tmp_path,
+        tmp_path / "sim.tar",
+        runs,
+        expected_schema=expected,
+    )
 
 
 def installed(_: Vm) -> dict[str, object]:
@@ -432,7 +448,7 @@ def test_one_site_failure_is_kept_for_its_test_and_does_not_stop_the_other(
         {"PUREIRON_G2_SERIAL": serial},
         up=up,
         prepare_host=lambda: "ssh-ed25519 AAAA test",
-        room=lambda runs, env: True,
+        room=lambda runs, env: g2.MemoryGate(0.0, 9.0, 9.0, []),
     )
     assert session.sites["site-a"].error is boom
     assert session.sites["site-b"].error is None
@@ -467,7 +483,7 @@ class Host:
         return self.now
 
     def room(self) -> g2.MakeRoom:
-        def room(runs: list[g2.SiteRun], env: Mapping[str, str]) -> bool:
+        def room(runs: list[g2.SiteRun], env: Mapping[str, str]) -> g2.MemoryGate:
             self.events.append("room " + ",".join(r.ctx.site.site_id for r in runs))
             return g2.make_room(
                 runs,
@@ -523,7 +539,8 @@ def test_vms_start_only_after_reclaimed_memory_has_come_back(tmp_path: Path) -> 
     assert sorted(host.events[10:]) == ["start site-a", "start site-b"]
     for one in session.sites.values():
         assert one.error is None
-        gate = json.loads((one.ctx.out / g2.VM_MEMORY_FILE).read_text(encoding="utf-8"))
+        assert one.evidence["boot"] == "concurrent"
+        (gate,) = json.loads((one.ctx.out / g2.VM_MEMORY_FILE).read_text(encoding="utf-8"))
         assert gate["sites"] == ["site-a", "site-b"]
         assert (gate["need_gb"], gate["before_gb"], gate["after_gb"], gate["ok"]) == (
             8.0,
@@ -536,18 +553,23 @@ def test_vms_start_only_after_reclaimed_memory_has_come_back(tmp_path: Path) -> 
 
 
 def test_vms_are_not_started_when_memory_never_comes_back(tmp_path: Path) -> None:
-    """R1-1 (b): `RECLAIM_WAIT_S` 끝까지 모자라면 VM 시작 호출 0, 두 현장 모두 `InfraError`(필요·
-    실제 GB를 메시지에) — 그 현장 시험이 infra로 다시 던진다."""
+    """R1-1 (b): `RECLAIM_WAIT_S` 끝까지 모자라고 VM 한 대 몫(5 GB)도 안 되면 VM 시작 호출 0, 두
+    현장 모두 `InfraError`(필요·실제 GB를 메시지에, 현장마다 새 객체 — B-1) — 그 현장 시험이
+    infra로 다시 던진다."""
     session = session_for_bring_up(tmp_path)
-    host = Host([1.6, 6.0])
+    host = Host([1.6, 4.0])
     bring_up_with(host, session, VM_3GIB)
     assert not [e for e in host.events if e.startswith("start")]
+    assert [e for e in host.events if e.startswith("room")] == ["room site-a,site-b"]
     assert host.now >= preflight.RECLAIM_WAIT_S
     for one in session.sites.values():
         assert isinstance(one.error, InfraError)
-        assert "6.0 GB < 8.0 GB" in str(one.error)
-        gate = json.loads((one.ctx.out / g2.VM_MEMORY_FILE).read_text(encoding="utf-8"))
-        assert (gate["before_gb"], gate["after_gb"], gate["ok"]) == (1.6, 6.0, False)
+        assert "4.0 GB < 8.0 GB" in str(one.error)
+        (gate,) = json.loads((one.ctx.out / g2.VM_MEMORY_FILE).read_text(encoding="utf-8"))
+        assert (gate["before_gb"], gate["after_gb"], gate["ok"]) == (1.6, 4.0, False)
+    a, b = session.sites["site-a"].error, session.sites["site-b"].error
+    assert a is not b
+    assert str(a) == str(b)
     with pytest.raises(InfraError):
         g2.check_install(session, "site-a", probe=lambda _: pytest.fail("must not probe"))
 
@@ -574,8 +596,12 @@ def test_serial_mode_makes_room_for_each_vm_in_turn(tmp_path: Path) -> None:
     error = session.sites["site-b"].error
     assert isinstance(error, InfraError)
     assert "4.5 GB < 5.0 GB" in str(error)
-    gate_a = json.loads((session.sites["site-a"].ctx.out / g2.VM_MEMORY_FILE).read_text("utf-8"))
-    gate_b = json.loads((session.sites["site-b"].ctx.out / g2.VM_MEMORY_FILE).read_text("utf-8"))
+    gate_a = json.loads((session.sites["site-a"].ctx.out / g2.VM_MEMORY_FILE).read_text("utf-8"))[
+        -1
+    ]
+    gate_b = json.loads((session.sites["site-b"].ctx.out / g2.VM_MEMORY_FILE).read_text("utf-8"))[
+        -1
+    ]
     assert (gate_a["sites"], gate_a["need_gb"], gate_a["ok"]) == (["site-a"], 5.0, True)
     assert (gate_b["sites"], gate_b["need_gb"], gate_b["ok"]) == (["site-b"], 5.0, False)
 
@@ -589,3 +615,52 @@ def test_serial_mode_starts_both_vms_when_each_share_fits(tmp_path: Path) -> Non
     starts = [e for e in host.events if e.startswith(("room", "start"))]
     assert starts == ["room site-a", "start site-a", "room site-b", "start site-b"]
     assert "sleep" not in host.events
+
+
+def test_short_concurrent_share_switches_to_serial_when_one_vm_fits(tmp_path: Path) -> None:
+    """B-3: 두 VM 몫(8 GB)이 끝내 모자라도 한 대 몫(5 GB)이 되면 직렬로 자동 전환한다 — site-a를
+    그 몫으로 다시 재서 띄우고, site-b는 그 뒤 다시 잰 값(3.0 GB)이 모자라 띄우지 않는다."""
+    session = session_for_bring_up(tmp_path)
+    gates = iter(
+        [
+            g2.MemoryGate(8.0, 1.5, 6.0, ["both"]),
+            g2.MemoryGate(5.0, 6.0, 6.0, ["a"]),
+            g2.MemoryGate(5.0, 3.0, 3.0, ["b"]),
+        ]
+    )
+    events: list[str] = []
+
+    def room(runs: list[g2.SiteRun], env: Mapping[str, str]) -> g2.MemoryGate:
+        events.append("room " + ",".join(r.ctx.site.site_id for r in runs))
+        return next(gates)
+
+    def up(one: g2.SiteRun, s: g2.Session, pub: str) -> None:
+        events.append(f"start {one.ctx.site.site_id}")
+
+    g2.bring_up_all(
+        session, dict(VM_3GIB), up=up, prepare_host=lambda: "ssh-ed25519 AAAA test", room=room
+    )
+    assert events == ["room site-a,site-b", "room site-a", "start site-a", "room site-b"]
+    assert session.sites["site-a"].error is None
+    assert str(session.sites["site-a"].evidence["boot"]).startswith("serial (auto: 6.0 GB < 8.0 GB")
+    error = session.sites["site-b"].error
+    assert isinstance(error, InfraError)
+    assert "3.0 GB < 5.0 GB" in str(error)
+
+
+def test_concurrent_mode_stays_concurrent_when_both_fit(tmp_path: Path) -> None:
+    session = session_for_bring_up(tmp_path)
+    events: list[str] = []
+
+    def room(runs: list[g2.SiteRun], env: Mapping[str, str]) -> g2.MemoryGate:
+        events.append(f"room {len(runs)}")
+        return g2.MemoryGate(8.0, 8.5, 8.5, [])
+
+    g2.bring_up_all(
+        session,
+        dict(VM_3GIB),
+        up=lambda one, s, pub: events.append("start"),
+        prepare_host=lambda: "k",
+        room=room,
+    )
+    assert events == ["room 2", "start", "start"]

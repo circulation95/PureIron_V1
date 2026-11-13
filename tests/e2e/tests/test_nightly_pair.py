@@ -47,10 +47,16 @@ def test_nightly_version_bumps_the_last_number_and_passes_the_contract() -> None
 
 def test_nightly_pair_from_the_repository_records() -> None:
     pair = nightly(repo_records(), {"r0", "r4", "r5"}, SHA, 6)
-    assert (pair.base, pair.next, pair.fault) == ("r5", "n1a2b3c4", "")
-    assert dict(pair.releases) == {"r5": "2026.11.1", "n1a2b3c4": "2026.11.2-nightly.1a2b3c4"}
-    assert dict(pair.epochs) == {"r5": 5, "n1a2b3c4": 6}
-    # E5: G2-1은 스키마·트리 판정을 하지 않는다
+    assert (pair.base, pair.next, pair.fault, pair.fault_migrate) == (
+        "r5",
+        "n1a2b3c4",
+        "n1a2b3c4h",
+        "n1a2b3c4m",
+    )
+    assert pair.releases["r5"] == "2026.11.1"
+    assert pair.releases["n1a2b3c4"] == "2026.11.2-nightly.1a2b3c4"
+    assert dict(pair.epochs) == {"r5": 5, "n1a2b3c4": 6, "n1a2b3c4h": 6, "n1a2b3c4m": 7}
+    # D9: G2 스키마 판정은 자동(expected-schema.json) — 수동 집합은 비운다
     assert not (pair.caggs | pair.base_tables | pair.base_columns | pair.base_indexes)
     assert not (pair.next_tables | pair.next_indexes)
     assert DEFAULT.base == "r4"  # 손으로 쓴 쌍(run.py)은 그대로

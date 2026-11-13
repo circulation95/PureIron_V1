@@ -36,6 +36,17 @@ def log(message: str) -> None:
     print(f"{datetime.now(UTC):%H:%M:%S} {message}", flush=True)
 
 
+def say(data: object) -> None:
+    """JSON(들여쓰기·키 정렬)을 표준 출력으로 — nightly 단계 결과."""
+    print(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), flush=True)
+
+
+def write_json(path: Path, data: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True)
+    path.write_text(text + "\n", "utf-8")
+
+
 @dataclass
 class Context:
     """`site`·`pair`는 실행 설정이라 상태 파일에 쓰지 않는다(나머지 필드가 상태 파일 내용이다)."""
