@@ -134,8 +134,9 @@ function Invoke-Dispatch([switch]$Ci) {
     }
     $shown = "gh $($ghArgs -join ' ')"
     if ($WhatIf) {
-        Write-Output "date=$($Date.ToString('yyyy-MM-dd')) day=$($Date.DayOfWeek) $label"
-        Write-Output $shown
+        # Write-Host: 함수의 출력(Write-Output)은 반환값이 되어 `exit (Invoke-Dispatch)`에 삼켜진다
+        Write-Host "date=$($Date.ToString('yyyy-MM-dd')) day=$($Date.DayOfWeek) $label"
+        Write-Host $shown
         return 0
     }
     # gh 계정의 토큰을 이 프로세스에만 둔다(파일·로그·명령 줄에 남기지 않는다). 실패 줄에는 stderr만
