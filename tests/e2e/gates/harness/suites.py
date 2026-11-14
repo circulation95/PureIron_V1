@@ -38,14 +38,18 @@ class Suite:
 
 
 SUITES: dict[str, Suite] = {
-    # 평일: 지금 값 그대로(M6-2 — workflow 120분 안에 setup 10분 + run 90분 + tail 15분).
+    # 평일(M6-4a P9): 첫 pytest 105분(3b 실측 37.2분 + M6-4 추정 약 50분 = 88분 — 90분 목표에
+    # 붙으므로 시간 제한이 판정을 자르지 않게 여유), 재시도 45분(새 세션 prepare·VM 약 10분 + c1
+    # 준비 약 6분 + site-b 재시도 묶음 25~30분 — 3b 리뷰 L2), run 160분 = 105 + 복구 약 5 + 45 +
+    # preflight 여유 5, workflow 190분 = setup 10 + run 160 + tail 15 + 여유 5. "run 90분"은 시간
+    # 제한이 아니라 실측 목표다 (넘으면 사용자 결정, 계획 P11).
     "g2": Suite(
         "g2",
         "g2 and not weekly",
-        workflow_s=120 * 60,
-        run_budget_s=90 * 60,
-        pytest_timeout_s=75 * 60,
-        retry_timeout_s=30 * 60,
+        workflow_s=190 * 60,
+        run_budget_s=160 * 60,
+        pytest_timeout_s=105 * 60,
+        retry_timeout_s=45 * 60,
         retry_min_s=10 * 60,
     ),
     # 주간(추정 — 첫 주간 실측으로 다시 맞춘다): crash 한 건 5~7분(c0 복원·메모리 대기 0~2분 +
@@ -53,7 +57,9 @@ SUITES: dict[str, Suite] = {
     # 평일 몫(prepare·VM 2대·G2-1·4·5·6·8·외부 접속 0) 35~45분 → 합 125~171분. 첫 pytest 200분(추정
     # 상한의 약 1.17배 — E10 재시도는 한 건에 5~7분을 더한다). 넘기면 junit이 없어 그 주 결과가
     # `pytest` 한 줄로만 남으므로 첫 pytest에 몫을 몰고 재시도는 40분(새 세션 prepare·VM 한 대 약
-    # 10분 + crash 몇 건), run 240분 = 270 - setup 10 - tail 15 - 여유 5.
+    # 10분 + crash 몇 건), run 240분 = 270 - setup 10 - tail 15 - 여유 5. M6-4a(P9) 뒤에도 그대로:
+    # 3b 실측 94.7분 + fleet 4a 약 17분(c1 준비 6 + G2-2/3 8 + E_APPROVAL 3) + 4b 약 33분 = 약
+    # 145분 < 첫 pytest 200분, 재시도 40분은 남은 run 예산(240 - 145 = 95분) 안에 든다.
     "weekly": Suite(
         "weekly",
         "g2",
