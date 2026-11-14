@@ -121,6 +121,10 @@ def scheduled(
     before_b_row = fleet_status(remote, ISOLATED_SITE)
     host = a.ctx.site.host()
     applied = judges.updater_state(remote.probe(host)).get("applied_gen")
+    if judges.as_int(applied) < 1:
+        # 읽기 실패를 gen 계산에 넣으면 같은 gen(no-op)·gen 0(PUT 422)이 되어 제품 실패로
+        # 남는다(리뷰 L2)
+        raise InfraError(f"cannot read applied gen of {SCHEDULED_SITE}: {applied!r}")
     gen = publish_gen(fleet_status(remote, SCHEDULED_SITE).get("max_published_gen"), applied)
     pair = session.pair
     # 창은 번들을 만들기 직전부터 잰다(번들 안 window.once에 들어가야 하므로). 번들은 초 단위로

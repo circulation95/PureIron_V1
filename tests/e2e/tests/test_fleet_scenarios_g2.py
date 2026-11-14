@@ -305,6 +305,27 @@ def test_the_put_gen_follows_the_central_max(tmp_path: Path) -> None:
     assert out.g2_2["put_201"]
 
 
+def test_an_unreadable_applied_gen_is_infra_before_any_put(tmp_path: Path) -> None:
+    """리뷰 L2: site-a applied gen을 못 읽으면(probe 오류) gen을 계산하지 않고 infra — 그대로 두면
+    gen 1(같은 gen, no-op)이나 gen 0(PUT 422)이 되어 제품 실패로 남는다."""
+    f = flow(tmp_path)
+    probe = f.scenario.remote.probe
+    site_a_ip = f.session.sites["site-a"].ctx.site.ip
+
+    def broken_a(host: Vm) -> dict[str, object]:
+        if host.ip == site_a_ip:
+            return {"updater": {"error": "state.json unreadable"}}
+        return probe(host)
+
+    sc = dataclasses.replace(
+        f.scenario, remote=dataclasses.replace(f.scenario.remote, probe=broken_a)
+    )
+    with pytest.raises(InfraError, match="cannot read applied gen of site-a"):
+        fleet_scenarios.scheduled(f.session, fleet_state(f.session), sc)
+    assert f.builds == []
+    assert not any(e.startswith("central put") for e in f.fake.events)
+
+
 def test_a_put_that_is_refused_is_a_product_failure(tmp_path: Path) -> None:
     f = flow(tmp_path)
     f.fake.put_status = 409
