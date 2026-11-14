@@ -217,18 +217,47 @@ def test_expected_schema_migrates_an_empty_db_reads_it_and_removes_it(tmp_path: 
     assert started[4:6] == ("--label", bundles.SCHEMA_LABEL)
 
 
-def test_start_cleanup_leaves_the_temporary_db_of_another_running_build(tmp_path: Path) -> None:
-    """3a 리뷰 L4·변이: 시작 정리가 표지 붙은 것을 모두 지우면 같은 PC에서 동시에 도는 다른
-    expected-schema의 DB를 지운다 — 만든 프로세스가 끝난 것(이름 끝 pid)만 지운다."""
+def test_start_cleanup_leaves_the_temporary_db_of_another_running_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """3a 리뷰 L4·3b 리뷰 L5·변이: 시작 정리가 표지 붙은 것을 모두 지우면 같은 PC에서 동시에 도는
+    다른 expected-schema의 DB를 지운다 — 이 배포판이 만들었고 만든 프로세스가 끝난 것(이름 끝
+    배포판·pid)만 지운다. 다른 배포판의 pid는 여기서 볼 수 없어 남긴다."""
+    monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
     docker = Docker(
-        left=("e2e-schema-db-n1-111", "e2e-schema-migrate-n1-111", "e2e-schema-db-n2-222", "x"),
-        nets=("e2e-schema-n1-111", "e2e-schema-n2-222"),
+        left=(
+            "e2e-schema-db-n1-Ubuntu-111",
+            "e2e-schema-migrate-n1-Ubuntu-111",
+            "e2e-schema-db-n2-Ubuntu-222",
+            "e2e-schema-db-n3-Other-111",
+            "x",
+        ),
+        nets=("e2e-schema-n1-Ubuntu-111", "e2e-schema-n2-Ubuntu-222", "e2e-schema-n3-Other-111"),
     )
     run_schema(tmp_path, docker, alive=lambda pid: pid == 222)
     removed = [c for c in docker.calls if c[:2] == ("rm", "-f")]
-    assert removed[0] == ("rm", "-f", "e2e-schema-db-n1-111", "e2e-schema-migrate-n1-111")
-    assert ("network", "rm", "e2e-schema-n1-111") in docker.calls
-    assert not any("e2e-schema-db-n2-222" in c or "e2e-schema-n2-222" in c for c in docker.calls)
+    assert removed[0] == (
+        "rm",
+        "-f",
+        "e2e-schema-db-n1-Ubuntu-111",
+        "e2e-schema-migrate-n1-Ubuntu-111",
+    )
+    assert ("network", "rm", "e2e-schema-n1-Ubuntu-111") in docker.calls
+    for kept in ("n2-Ubuntu-222", "n3-Other-111"):
+        assert not any(
+            any(kept in a for a in c)
+            for c in docker.calls
+            if c[0] in ("rm", "network") and c[1] in ("-f", "rm")
+        )
+
+
+def test_temporary_names_carry_the_distro(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu-22.04")
+    assert bundles.distro_tag() == "Ubuntu_22.04"
+    docker = Docker()
+    run_schema(tmp_path, docker)
+    started = next(c for c in docker.calls if c[:2] == ("run", "-d"))
+    assert started[started.index("--name") + 1].startswith("e2e-schema-db-n1a2b3c4-Ubuntu_22.04-")
 
 
 def test_the_migrate_client_is_named_and_removed_with_the_db(tmp_path: Path) -> None:
