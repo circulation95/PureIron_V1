@@ -1076,3 +1076,151 @@ def judge_live(
         **judge_tags_good(tags, want_paths),
         **judge_device_connected(devices, device_id),
     }
+
+
+# ---------------------------------------------------------------- fleet 경로(M6-4a)
+
+SCHEDULED_APPLY_LIMIT_S = 120
+"""G2-2: `locked` → `succeeded` 상한(상위 계획 §2)."""
+
+
+def timestamp(value: object) -> datetime | None:
+    """ISO 8601 시각(시간대 포함) — 못 읽으면 None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo is not None else None
+
+
+def timeline(report: dict[str, object], phase: str) -> datetime | None:
+    """Updater 보고 `timeline`(phase → 마지막으로 들어간 시각)의 `phase` 시각."""
+    marks = report.get("timeline")
+    return timestamp(cast(dict[str, object], marks).get(phase)) if isinstance(marks, dict) else None
+
+
+def judge_baseline_publish(
+    conclusion: str | None,
+    published: dict[str, int],
+    counts: dict[str, int] | None,
+    gens: dict[str, int],
+) -> dict[str, bool]:
+    """기준선 PR의 publish run: success, 현장마다 그 gen 게시, 실패·규칙 위반 0."""
+    return {
+        "run_success": conclusion == "success",
+        **{f"published_{site}": published.get(site) == gen for site, gen in gens.items()},
+        "no_failure": counts is not None
+        and counts.get("failed") == 0
+        and counts.get("violations") == 0,
+    }
+
+
+def judge_scheduled(
+    report: dict[str, object],
+    snap: dict[str, object],
+    row: dict[str, object],
+    *,
+    gen: int,
+    window_start: datetime,
+    next_digests: dict[str, str],
+    next_version: str,
+) -> dict[str, bool]:
+    """G2-2 한 현장: 창 전에 받아 검증(`verified` < 창 시작) → 창이 열린 뒤 잠금(`locked` ≥ 창 시작)
+    → `locked`→`succeeded` ≤ 120초 → 실행 이미지 == NEXT digest·applied == gen → 중앙 `/fleet`
+    current = gen·NEXT. 시각을 못 읽으면 그 항목은 거짓이다."""
+    verified, locked = timeline(report, "verified"), timeline(report, "locked")
+    succeeded = timeline(report, "succeeded")
+    state, current = updater_state(snap), sub(row, "current")
+    took = (succeeded - locked).total_seconds() if locked and succeeded else None
+    images = running_digests(snap)
+    return {
+        "verified_before_window": verified is not None and verified < window_start,
+        "locked_in_window": locked is not None and locked >= window_start,
+        "locked_to_succeeded_120s": took is not None and 0 <= took <= SCHEDULED_APPLY_LIMIT_S,
+        "succeeded": report.get("result") == "succeeded"
+        and state.get("last_result") == "succeeded"
+        and state.get("applied_gen") == gen,
+        "images_next": bool(next_digests) and images == next_digests,
+        "fleet_current": current.get("gen") == gen and current.get("product") == next_version,
+    }
+
+
+def judge_publish_split(
+    conclusion: str | None,
+    published: dict[str, int],
+    counts: dict[str, int] | None,
+    current: frozenset[str],
+    skipped: dict[str, int],
+    *,
+    changed: str,
+    gen: int,
+    untouched: str,
+) -> dict[str, bool]:
+    """PR 하나의 publish run: `changed` 현장만 그 gen으로 게시, `untouched`는 최신·건너뜀(게시
+    없음), 실패·규칙 위반 0."""
+    return {
+        "publish_success": conclusion == "success",
+        f"published_{changed}": published.get(changed) == gen,
+        f"untouched_{untouched}": untouched not in published
+        and (untouched in current or untouched in skipped),
+        "publish_no_failure": counts is not None
+        and counts.get("failed") == 0
+        and counts.get("violations") == 0,
+    }
+
+
+ISOLATION_KEYS = ("images", "content_hash", "applied_gen", "core_started_at")
+
+
+def isolation_view(snap: dict[str, object]) -> dict[str, object]:
+    """G2-3 전후 비교 값: 실행 이미지 ID·프로젝트 content_hash·applied_gen·core `StartedAt`."""
+    return {
+        "images": running_digests(snap),
+        "content_hash": project_body(snap).get("content_hash"),
+        "applied_gen": updater_state(snap).get("applied_gen"),
+        "core_started_at": core_started_at(snap),
+    }
+
+
+def judge_isolation(before: dict[str, object], after: dict[str, object]) -> dict[str, bool]:
+    """G2-3: 다른 현장 갱신 전후 값이 모두 같다. 전 값을 못 읽었으면(빈 값·None) 같아도 거짓."""
+    return {
+        f"{key}_unchanged": before.get(key) not in (None, "", {})
+        and before.get(key) == after.get(key)
+        for key in ISOLATION_KEYS
+    }
+
+
+def judge_e_approval(
+    *,
+    run_conclusion: str | None,
+    e_approval_logged: bool,
+    signed: bool,
+    max_before: object,
+    max_after: object,
+    chain_before: str | None,
+    chain_after: str | None,
+    main_before: str,
+    main_after: str,
+    revert_conclusion: str | None,
+    revert_counts: dict[str, int] | None,
+    revert_e_approval: bool,
+) -> dict[str, bool]:
+    """`E_APPROVAL`(K14): 승인 없는 merge의 publish run이 실패하고 로그에 `E_APPROVAL`, 게시 요약
+    없음 (서명·PUT 0), 중앙 `max_published_gen`·승인 사슬 불변 → main을 merge 전으로 되돌린 publish
+    run이 success·게시 0·실패 0·`E_APPROVAL` 없음."""
+    return {
+        "run_failed": run_conclusion == "failure",
+        "e_approval_logged": e_approval_logged,
+        "not_signed": not signed,
+        "max_published_unchanged": isinstance(max_before, int) and max_before == max_after,
+        "chain_unchanged": bool(chain_before) and chain_before == chain_after,
+        "main_reverted": bool(main_before) and main_after == main_before,
+        "revert_published_nothing": revert_conclusion == "success"
+        and revert_counts is not None
+        and revert_counts.get("published") == 0
+        and revert_counts.get("failed") == 0
+        and not revert_e_approval,
+    }
