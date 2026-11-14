@@ -67,6 +67,13 @@ def build_bundle(
     )
 
 
+def seconds_after(report: dict[str, object], phase: str, moment: datetime) -> float | None:
+    """보고 `timeline`의 `phase` 시각 - `moment`(초, 소수 첫째 자리). 못 읽으면 None — 기록용(리뷰
+    L1: 첫 실측에서 `PREFETCH_ALLOWANCE_S`를 다시 맞출 값)."""
+    at = judges.timeline(report, phase)
+    return round((at - moment).total_seconds(), 1) if at is not None else None
+
+
 def publish_gen(central_max: object, applied: object) -> int:
     """게시할 gen = max(중앙 `max_published_gen`, 현장 applied gen) + 1. c1은 중앙 0·현장 1(c0 g1은
     폐쇄망 `apply`라 중앙에 없다)이라 중앙 max + 1 = 1은 Updater에게 같은 gen(no-op)이다 — `run.py
@@ -173,6 +180,9 @@ def scheduled(
         window_start=start.isoformat(),
         put_at=put_at.isoformat(),
         timeline=report.get("timeline"),
+        fetched_after_put_s=seconds_after(report, "fetched", put_at),
+        verified_after_put_s=seconds_after(report, "verified", put_at),
+        locked_after_window_s=seconds_after(report, "locked", start),
         clock_skew_s=restored.get("clock_skew_s"),
         converge_s=round(waited, 1),
         logs=None if all(g2_2.values()) else str(report.get("logs"))[-TAIL_CHARS:],

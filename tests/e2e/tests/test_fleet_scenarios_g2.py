@@ -263,6 +263,20 @@ def test_scheduled_flow_publishes_directly_and_judges_g2_2_and_g2_3(tmp_path: Pa
     assert "site-b" not in f.fake.published
 
 
+def test_the_g2_2_record_carries_the_prefetch_timings(tmp_path: Path) -> None:
+    """리뷰 L1: 첫 실측에서 45초 몫을 다시 맞추도록 G2-2 기록에 `fetched`·`verified` - PUT 시각과
+    `locked` - 창 시작이 초로 바로 남는다(판정은 그대로)."""
+    f = flow(tmp_path)
+    fleet_scenarios.scheduled(f.session, fleet_state(f.session), f.scenario)
+    results = f.session.sites["site-a"].ctx.results
+    record = next(r for r in results if r["name"] == fleet_scenarios.ITEM_G2_2)
+    # 가짜 PUT 시각 = 창 시작 - 120초, 보고 fetched -100초·verified -90초·locked +5초
+    assert record["fetched_after_put_s"] == 20.0
+    assert record["verified_after_put_s"] == 30.0
+    assert record["locked_after_window_s"] == 5.0
+    assert fleet_scenarios.seconds_after({}, "fetched", START) is None
+
+
 def test_a_site_b_that_changes_during_the_site_a_update_fails_g2_3(tmp_path: Path) -> None:
     """리뷰 M2: site-a 갱신 도중 site-b 값이 바뀌면(여기서는 applied_gen) G2-3이 흐름 수준에서
     거짓이다 — 전 스냅샷을 PUT 앞에서 찍고 뒤 스냅샷과 비교하는 배선을 고정한다. 변이: 전 스냅샷
