@@ -243,11 +243,19 @@ def wsl(
     *,
     timeout_s: float = 1800,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    user: str | None = None,
+    stdin: str | None = None,
 ) -> str:
     """WSL bash로 `script`를 돌리고 stdout을 돌려준다. 실패 종류는 `wsl_failure`, 시간 초과는
-    `subprocess.TimeoutExpired`(그대로 전파). `runner`는 단위 시험이 바꿔 끼운다."""
+    `subprocess.TimeoutExpired`(그대로 전파). `user`(예: `root`)를 주면 `wsl -u <user>`로, `stdin`은
+    스크립트의 표준 입력이다(값을 인자에 싣지 않는다). `runner`는 단위 시험이 바꿔 끼운다."""
+    as_user = ["-u", user] if user else []
     result = runner(
-        ["wsl", "-d", WSL_DISTRO, "--exec", "bash", "-c", f"echo {WSL_STARTED} >&2; {script}"],
+        [
+            *("wsl", "-d", WSL_DISTRO, *as_user, "--exec", "bash", "-c"),
+            f"echo {WSL_STARTED} >&2; {script}",
+        ],
+        input=stdin,
         capture_output=True,
         text=True,
         encoding="utf-8",
