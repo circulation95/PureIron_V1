@@ -12,7 +12,8 @@ g2만 바꾼다.
 거부마다 판정 `judges.judge_rejected`(종료 코드·거부 코드·core StartedAt·실행
 이미지·edit-lock·applied gen). 검증 순서(서명·cert → site → gen → digest → 스키마·min_updater →
 드래프트) 때문에 재료가 앞 단계에 걸리면 다른 코드가 나온다 — 그때는 재료를 고친다(판정을 느슨하게
-하지 않는다). `E_DRAFT`는 G2-8(`draft.py`), `E_APPROVAL`은 M6-4.
+하지 않는다). `E_DRAFT`는 G2-8(`draft.py`), `E_APPROVAL`은 릴리스 마감
+fleet 리허설(손 — nightly 밖, M6-4 ★P5).
 
 설치 전 변조 2건(`preinstall`)은 site-b 부팅 때 이미 돌았다 — `check_preinstall`이 그 결과를
 판정한다.

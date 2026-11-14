@@ -1101,22 +1101,6 @@ def timeline(report: dict[str, object], phase: str) -> datetime | None:
     return timestamp(cast(dict[str, object], marks).get(phase)) if isinstance(marks, dict) else None
 
 
-def judge_baseline_publish(
-    conclusion: str | None,
-    published: dict[str, int],
-    counts: dict[str, int] | None,
-    gens: dict[str, int],
-) -> dict[str, bool]:
-    """기준선 PR의 publish run: success, 현장마다 그 gen 게시, 실패·규칙 위반 0."""
-    return {
-        "run_success": conclusion == "success",
-        **{f"published_{site}": published.get(site) == gen for site, gen in gens.items()},
-        "no_failure": counts is not None
-        and counts.get("failed") == 0
-        and counts.get("violations") == 0,
-    }
-
-
 def judge_scheduled(
     report: dict[str, object],
     snap: dict[str, object],
@@ -1147,30 +1131,6 @@ def judge_scheduled(
     }
 
 
-def judge_publish_split(
-    conclusion: str | None,
-    published: dict[str, int],
-    counts: dict[str, int] | None,
-    current: frozenset[str],
-    skipped: dict[str, int],
-    *,
-    changed: str,
-    gen: int,
-    untouched: str,
-) -> dict[str, bool]:
-    """PR 하나의 publish run: `changed` 현장만 그 gen으로 게시, `untouched`는 최신·건너뜀(게시
-    없음), 실패·규칙 위반 0."""
-    return {
-        "publish_success": conclusion == "success",
-        f"published_{changed}": published.get(changed) == gen,
-        f"untouched_{untouched}": untouched not in published
-        and (untouched in current or untouched in skipped),
-        "publish_no_failure": counts is not None
-        and counts.get("failed") == 0
-        and counts.get("violations") == 0,
-    }
-
-
 ISOLATION_KEYS = ("images", "content_hash", "applied_gen", "core_started_at")
 
 
@@ -1193,34 +1153,26 @@ def judge_isolation(before: dict[str, object], after: dict[str, object]) -> dict
     }
 
 
-def judge_e_approval(
-    *,
-    run_conclusion: str | None,
-    e_approval_logged: bool,
-    signed: bool,
-    max_before: object,
-    max_after: object,
-    chain_before: str | None,
-    chain_after: str | None,
-    main_before: str,
-    main_after: str,
-    revert_conclusion: str | None,
-    revert_counts: dict[str, int] | None,
-    revert_e_approval: bool,
+def judge_published(
+    put: dict[str, object], row: dict[str, object], *, gen: int, next_version: str
 ) -> dict[str, bool]:
-    """`E_APPROVAL`(K14): 승인 없는 merge의 publish run이 실패하고 로그에 `E_APPROVAL`, 게시 요약
-    없음 (서명·PUT 0), 중앙 `max_published_gen`·승인 사슬 불변 → main을 merge 전으로 되돌린 publish
-    run이 success·게시 0·실패 0·`E_APPROVAL` 없음."""
+    """G2-2 게시(★P5 — 중앙 직접 PUT): ci 토큰 `PUT /bundles/{site}/{gen}` 201, 바로 뒤 `/fleet`
+    desired = 그 gen·NEXT이고 `max_published_gen` = gen."""
+    desired = sub(row, "desired")
     return {
-        "run_failed": run_conclusion == "failure",
-        "e_approval_logged": e_approval_logged,
-        "not_signed": not signed,
-        "max_published_unchanged": isinstance(max_before, int) and max_before == max_after,
-        "chain_unchanged": bool(chain_before) and chain_before == chain_after,
-        "main_reverted": bool(main_before) and main_after == main_before,
-        "revert_published_nothing": revert_conclusion == "success"
-        and revert_counts is not None
-        and revert_counts.get("published") == 0
-        and revert_counts.get("failed") == 0
-        and not revert_e_approval,
+        "put_201": put.get("status") == 201,
+        "desired_next": desired.get("generation") == gen
+        and desired.get("product_version") == next_version
+        and row.get("max_published_gen") == gen,
+    }
+
+
+def judge_central_unchanged(before: dict[str, object], after: dict[str, object]) -> dict[str, bool]:
+    """G2-3 중앙 쪽: 다른 현장의 게시 전후로 이 현장 `/fleet` 행의 desired·`max_published_gen`이
+    같다(c1에는 게시가 없어 둘 다 비어 있을 수 있다 — 값은 비어도 행은 양쪽 다 읽혀야 한다)."""
+    read = bool(before.get("site")) and before.get("site") == after.get("site")
+    return {
+        "central_desired_unchanged": read and before.get("desired") == after.get("desired"),
+        "central_max_unchanged": read
+        and before.get("max_published_gen") == after.get("max_published_gen"),
     }

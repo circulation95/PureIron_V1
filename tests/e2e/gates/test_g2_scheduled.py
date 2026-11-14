@@ -1,5 +1,5 @@
-"""G2-2 예약 갱신(site-a) + G2-3 격리(site-b) — fleet 묶음. 두 현장·중앙을 c1으로 되돌린 뒤 bot PR
-(site-a gen+1 NEXT, 1회 창 now+3분) → 승인 → merge → publish → 창 → 적용을 module fixture가 한 번
+"""G2-2 예약 갱신(site-a) + G2-3 격리(site-b) — fleet 묶음. 두 현장·중앙을 c1으로 되돌린 뒤
+site-a NEXT 번들(1회 창 now+2분 ~ +1시간)을 중앙에 직접 PUT → 창 → 적용을 module fixture가 한 번
 돌리고(`fleet_scenarios.scheduled`) 항목별로 단언한다."""
 
 from __future__ import annotations

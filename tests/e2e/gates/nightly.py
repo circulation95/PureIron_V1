@@ -306,8 +306,8 @@ def step_run(
 
 
 def fleet_record(out: Path) -> dict[str, object] | None:
-    """fleet 세션 기록의 사슬 대조·준비 시간(첫 세션 `first/fleet/`와 재시도 세션 `fleet/`) — 사슬
-    복구(되돌림·trust-base 사유)가 summary·이력 run 기록에 남는다. 없으면 None."""
+    """fleet 세션 기록의 c1 복원 횟수·준비 시간(첫 세션 `first/fleet/`와 재시도 세션 `fleet/`) —
+    summary·이력 run 기록에 남는다. 없으면 None."""
     found: dict[str, object] = {}
     for label, base in (("first", out / FIRST_SESSION), ("session", out)):
         try:
@@ -318,7 +318,6 @@ def fleet_record(out: Path) -> dict[str, object] | None:
             record = cast(dict[str, object], data)
             evidence = cast(dict[str, object], record.get("evidence") or {})
             found[label] = {
-                "chain": record.get("chain"),
                 "restores": record.get("restores"),
                 "prepare_s": evidence.get("prepare_s"),
             }

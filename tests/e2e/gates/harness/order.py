@@ -1,6 +1,6 @@
 """G2 시험 실행 순서(M6-3 H12) — 파일 이름 순서에 기대지 않고 이 표 하나가 정한다.
 
-G2-1(설치) → site-a 시나리오 → site-b 시나리오 → fleet(중앙·fleet-test 경로, 현장 둘 — c1 쌍) →
+G2-1(설치) → site-a 시나리오 → site-b 시나리오 → fleet(중앙 직접 게시, 현장 둘 — c1 쌍) →
 crash(site-a, 주간 16건이 길어 뒤로) → 외부 접속 0(현장별, 맨 끝). 한 파일 안에서는 정의 순서
 그대로다. 표에 없는 `test_g2_*.py`는 수집에서 멈춘다 — 새 시나리오 파일은 여기에 자리를
 잡아야 돈다. `conftest.pytest_collection_modifyitems`가 부른다.
@@ -23,9 +23,8 @@ FILES: tuple[tuple[str, str], ...] = (
     ("test_g2_rejections.py", "site-b"),  # G2-5 거부(설치 전 변조 2건 + c0·g2 거부 8건)
     ("test_g2_faults.py", "site-b"),  # G2-6 ② migrate 실패
     ("test_g2_draft.py", "site-b"),  # G2-8 드래프트 회수(PR 전) + 그 뒤 롤백
-    # ---- fleet(c1 쌍 — 중앙 + 두 현장 온라인, M6-4a). E_APPROVAL이 맨 앞: 그 되돌림 publish의
-    # "게시 0"은 main 현장 gen == c1 중앙 max일 때만 성립한다(G2-2가 main을 앞으로 민다).
-    ("test_g2_approval.py", "fleet"),  # E_APPROVAL(K14) — VM 없음, 중앙만 c1
+    # ---- fleet(c1 쌍 — 중앙 + 두 현장 온라인, M6-4a). GitHub 승인 경로(E_APPROVAL 등)는 nightly
+    # 밖 — 릴리스 마감 fleet 리허설(★P5)
     ("test_g2_scheduled.py", "fleet"),  # G2-2 예약 갱신(site-a) + G2-3 격리(site-b)
     # ---- crash(site-a) — G2-6 ④⑤ 2건 + 주간 16건(`weekly`), 매 건 c0 복원
     ("test_g2_crash.py", "crash"),
@@ -42,8 +41,7 @@ GROUP_SITES: dict[str, tuple[str, ...]] = {
     FLEET: ("site-a", "site-b"),
     CRASH: ("site-a",),
 }
-"""시나리오 묶음 → 그 묶음이 쓰는 현장. fleet은 c1 쌍이 두 현장을 함께 온라인으로 만든다(현장을
-되돌리지 않는 `E_APPROVAL`도 같은 c1을 쓴다)."""
+"""시나리오 묶음 → 그 묶음이 쓰는 현장. fleet은 c1 쌍이 두 현장을 함께 온라인으로 만든다."""
 CENTRAL_GROUPS = frozenset({FLEET})
 """중앙(c1 쌍)이 필요한 묶음 — 이 묶음 시험이 하나도 없으면 중앙을 띄우지 않는다."""
 

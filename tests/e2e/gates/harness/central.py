@@ -8,7 +8,6 @@
     uv run --no-sync python tests/e2e/gates/harness/central.py stop-web | start-web | status | down
     uv run --no-sync python tests/e2e/gates/harness/central.py dump --name c1-<token>
     uv run --no-sync python tests/e2e/gates/harness/central.py restore --name c1-<token>
-    uv run --no-sync python tests/e2e/gates/harness/central.py publish-viewer-token  # 원문
 
 `m2d/run.py online`(Windows 호스트)이 `golden.wsl`로 부른다. 운영 절차(deploy/central/README.md)를
 그대로 밟는다: **`up`은 항상 새로 시작한다**(같은 compose 프로젝트를 볼륨째 내리고) → 비밀 파일
@@ -37,8 +36,6 @@
   — 부른 쪽이 VM 체크포인트를 되돌린 뒤 `start-web`한다(되돌리기 전의 VM이 복원된 중앙에 보고하지
   않게). 번들 파일(볼륨 `control-data`)은 되돌리지 않는다: DB에 없는 gen 파일은 쓰이지 않고 같은
   gen을 다시 게시하면 덮어쓴다. `up`이 작업 디렉터리를 지우므로 덤프는 그 세션 것뿐이다.
-- `publish-viewer-token`: publish 호스트 동기화(`publish_host.sync`)가 fleet-test secret
-  `PUREIRON_FLEET_VIEWER_TOKEN`에 넣을 원문(파이프 전용, `site-token`과 같은 규칙).
 - `down`은 compose를 볼륨째 내리고 작업 디렉터리(비밀 포함)를 지운다. 15분 실측(코디네이터)은
   `run.py online --keep-central`로 남긴 중앙을 그대로 쓰고 끝나면 `down`.
 """
@@ -535,7 +532,7 @@ def main(argv: list[str] | None = None) -> int:
     fleet_cmd = sub.add_parser("fleet")
     fleet_cmd.add_argument("--site", default=None)
     fleet_cmd.add_argument("--direct", action="store_true", help="control-api 컨테이너 안에서 조회")
-    for name in ("stop-web", "start-web", "status", "down", "publish-viewer-token"):
+    for name in ("stop-web", "start-web", "status", "down"):
         sub.add_parser(name)
     for name in ("dump", "restore"):
         sub.add_parser(name).add_argument("--name", required=True)
@@ -543,9 +540,6 @@ def main(argv: list[str] | None = None) -> int:
     os.chdir(ROOT)
     if args.command == "site-token":
         sys.stdout.write(read_secret(f"{args.site}.token") + "\n")
-        return 0
-    if args.command == "publish-viewer-token":
-        sys.stdout.write(read_secret("publish_viewer_token") + "\n")
         return 0
     print(json.dumps(run_command(args), ensure_ascii=False, sort_keys=True))
     return 0
@@ -557,7 +551,7 @@ def stop_web() -> dict[str, object]:
 
 
 def run_command(args: argparse.Namespace) -> dict[str, object]:
-    """JSON을 내는 명령(토큰 원문을 내는 `site-token`·`publish-viewer-token`은 `main`에서)."""
+    """JSON을 내는 명령(토큰 원문을 내는 `site-token`은 `main`에서)."""
     commands: dict[str, Callable[[], dict[str, object]]] = {
         "up": lambda: up(args.ca_out),
         "register": lambda: register(args.enrollment),

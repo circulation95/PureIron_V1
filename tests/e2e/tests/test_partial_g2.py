@@ -18,7 +18,6 @@ from harness.context import E2EError
 from harness.failures import INFRA, PRODUCT
 from harness.publish import PYTEST_TEST, PYTEST_TIMED_OUT
 
-APPROVAL = "test_g2_approval.py::test_e_approval[run_failed]"
 SCHEDULED = "test_g2_scheduled.py::test_g2_2_scheduled_update[succeeded]"
 ISOLATION = "test_g2_scheduled.py::test_g2_3_isolation[images_unchanged]"
 ROLLBACK = "test_g2_rollback.py::test_g2_4_rollback"
@@ -26,7 +25,7 @@ FAULTS = "test_g2_faults.py::test_g2_6_2_migrate_failure"
 CRASH = "test_g2_crash.py::test_g2_6_crash[reset@switching]"
 NO_EXT_A = "test_g2_no_external.py::test_g2_no_external[site-a]"
 NO_EXT_B = "test_g2_no_external.py::test_g2_no_external[site-b]"
-EVERY = [ROLLBACK, FAULTS, APPROVAL, SCHEDULED, ISOLATION, CRASH, NO_EXT_A, NO_EXT_B]
+EVERY = [ROLLBACK, FAULTS, SCHEDULED, ISOLATION, CRASH, NO_EXT_A, NO_EXT_B]
 
 
 def line(test_id: str, when: str, outcome: str, cls: str | None = None) -> str:
@@ -171,18 +170,18 @@ def test_the_conftest_hook_writes_one_line_per_finished_phase(tmp_path: Path) ->
 # ---------------------------------------------------------------- fleet 묶음
 
 
-def test_fleet_runs_after_site_b_and_before_crash_with_e_approval_first() -> None:
+def test_fleet_runs_after_site_b_and_before_crash() -> None:
     backwards = [n for n, _ in reversed(order.FILES)]
     ranked = [backwards[i] for i in order.sort_order(backwards)]
     names = [n for n, _ in order.FILES]
     assert ranked == names
-    assert names.index("test_g2_draft.py") < names.index("test_g2_approval.py")
-    assert names.index("test_g2_approval.py") < names.index("test_g2_scheduled.py")
+    assert names.index("test_g2_draft.py") < names.index("test_g2_scheduled.py")
+    assert "test_g2_approval.py" not in names  # E_APPROVAL은 릴리스 마감 fleet 리허설(★P5)
     assert names.index("test_g2_scheduled.py") < names.index("test_g2_crash.py")
 
 
 def test_fleet_tests_need_both_sites_and_the_central() -> None:
-    assert order.sites_needed([APPROVAL]) == {"site-a", "site-b"}
+    assert order.sites_needed([ISOLATION]) == {"site-a", "site-b"}
     assert order.needs_central([ROLLBACK, SCHEDULED])
     assert not order.needs_central([ROLLBACK, FAULTS, CRASH, NO_EXT_A, NO_EXT_B])
 
@@ -192,9 +191,9 @@ def test_fleet_tests_need_both_sites_and_the_central() -> None:
     [
         # fleet 시험 → 두 현장의 외부 접속 0
         ([SCHEDULED], [SCHEDULED, NO_EXT_A, NO_EXT_B]),
-        ([APPROVAL], [APPROVAL, NO_EXT_A, NO_EXT_B]),
+        ([ISOLATION], [ISOLATION, NO_EXT_A, NO_EXT_B]),
         # 외부 접속 0[site-b] → site-b를 쓰는 시나리오 전부(fleet 포함)
-        ([NO_EXT_B], [FAULTS, APPROVAL, SCHEDULED, ISOLATION, NO_EXT_B]),
+        ([NO_EXT_B], [FAULTS, SCHEDULED, ISOLATION, NO_EXT_B]),
         # c0 시나리오만 → 중앙이 필요 없다
         ([ROLLBACK], [ROLLBACK, NO_EXT_A]),
     ],
@@ -204,7 +203,7 @@ def test_retry_closure_bundles_fleet_tests_with_both_sites(
 ) -> None:
     got = order.retry_closure(targets, EVERY)
     assert got == want
-    assert order.needs_central(got) is any(t in got for t in (APPROVAL, SCHEDULED, ISOLATION))
+    assert order.needs_central(got) is any(t in got for t in (SCHEDULED, ISOLATION))
 
 
 def test_an_unprepared_site_is_a_clear_error(tmp_path: Path) -> None:
@@ -218,10 +217,10 @@ def test_an_unprepared_site_is_a_clear_error(tmp_path: Path) -> None:
 
 def test_keep_first_session_moves_the_fleet_record(tmp_path: Path) -> None:
     (tmp_path / "fleet").mkdir()
-    (tmp_path / "fleet" / "session.json").write_text(json.dumps({"chain": [{"action": "none"}]}))
+    (tmp_path / "fleet" / "session.json").write_text(
+        json.dumps({"restores": 2, "evidence": {"prepare_s": 230.5}})
+    )
     (tmp_path / "site-a").mkdir()
     moved = nightly.keep_first_session(tmp_path, [])
     assert moved == ["site-a", "fleet"]
-    assert nightly.fleet_record(tmp_path) == {
-        "first": {"chain": [{"action": "none"}], "restores": None, "prepare_s": None}
-    }
+    assert nightly.fleet_record(tmp_path) == {"first": {"restores": 2, "prepare_s": 230.5}}

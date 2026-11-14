@@ -172,9 +172,6 @@ class Session:
     """NEXT·FAULT 2종의 번들 트리 — G2 트리에서 태그 `pair.tree_tag`의 description만 바꾼 것
     (`bundles.release_tree(source=tree)`). 판정 기대값(`trees.tree_expect`)도 같은 디렉터리에서
     읽는다."""
-    records: dict[str, dict[str, object]] = field(default_factory=dict[str, dict[str, object]])
-    """NEXT·FAULT 2종의 release 기록(WSL nightly 작업 디렉터리 `releases/<이름>.json`과 같은 내용) —
-    fleet 도구 브랜치(`fleet_session.update_tool_branch`)가 `deploy/releases`에 커밋한다."""
 
     def tree_of(self, release: str) -> Path:
         """`release` 번들이 싣는 트리 — BASE(c0 g1)는 G2 트리, 나머지는 `release_trees`."""
@@ -253,7 +250,6 @@ def prepare(run_id: str, sha: str, only: Collection[str] | None = None) -> Sessi
         runs,
         expected_schema=expected,
         release_trees=release_trees,
-        records={pair.next: next_record, **faults},
     )
 
 

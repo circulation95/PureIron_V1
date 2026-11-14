@@ -1,20 +1,19 @@
-"""fleet 시나리오(M6-4a A6) — G2-2 예약 갱신·G2-3 격리·E_APPROVAL의 판정(순수 함수)과 시나리오 흐름
-(가짜 GitHub·중앙·VM). 변이 대상: verified < 창 시작, locked→succeeded ≤ 120초, 실행 이미지 == NEXT,
-G2-3 비교 항목, E_APPROVAL 문자열·max 불변·되돌림."""
+"""fleet 시나리오(M6-4a A6, ★P5) — G2-2 예약 갱신·G2-3 격리의 판정(순수 함수)과 시나리오 흐름
+(가짜 중앙·VM, 중앙 직접 PUT). 변이 대상: verified < 창 시작, locked→succeeded ≤ 120초, 실행 이미지
+== NEXT, G2-3 비교 항목·중앙 site-b 불변, 게시 gen."""
 
 from __future__ import annotations
 
 import dataclasses
-import subprocess
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import cast
 
 import pytest
-from fleet_fakes import FakeGitHub, FakeRemote, Publish, repos, site_yaml
+from fleet_fakes import FakeRemote
 from g2_fakes import digests, scenario_session
-from harness import fleet, fleet_scenarios, fleet_session, g2, judges
-from harness.context import InfraError
+from harness import fleet_scenarios, fleet_session, g2, judges
+from harness.context import Context, E2EError, InfraError
 from harness.vm import Vm
 
 START = datetime(2026, 11, 15, 3, 3, tzinfo=UTC)
@@ -109,22 +108,6 @@ def test_g2_2_fleet_current_and_applied_gen() -> None:
     assert scenarios_failed(row) == ["fleet_current"]
 
 
-def test_publish_split_needs_site_a_published_and_site_b_untouched() -> None:
-    def split(
-        published: dict[str, int], current: frozenset[str], counts: dict[str, int] | None
-    ) -> dict[str, bool]:
-        return judges.judge_publish_split(
-            "success", published, counts, current, {}, changed="site-a", gen=7, untouched="site-b"
-        )
-
-    counts = {"published": 1, "skipped": 0, "current": 1, "failed": 0, "violations": 0}
-    assert all(split({"site-a": 7}, frozenset({"site-b"}), counts).values())
-    assert not split({"site-a": 7, "site-b": 2}, frozenset(), counts)["untouched_site-b"]
-    assert not split({"site-a": 7}, frozenset(), counts)["untouched_site-b"]  # 읽지 못함
-    assert not split({"site-a": 7}, frozenset({"site-b"}), None)["publish_no_failure"]
-    assert not split({"site-a": 6}, frozenset({"site-b"}), counts)["published_site-a"]
-
-
 @pytest.mark.parametrize("key", judges.ISOLATION_KEYS)
 def test_g2_3_each_compared_value_matters(key: str) -> None:
     """변이: 비교 항목 하나를 빼면 그 값만 바뀐 site-b를 놓친다."""
@@ -142,64 +125,59 @@ def test_g2_3_unread_values_are_not_unchanged() -> None:
     assert not any(judges.judge_isolation(blank, blank).values())
 
 
-def approval(change: dict[str, object]) -> dict[str, bool]:
-    v = {**APPROVAL_OK, **change}
-    return judges.judge_e_approval(
-        run_conclusion=cast(str | None, v["run_conclusion"]),
-        e_approval_logged=bool(v["e_approval_logged"]),
-        signed=bool(v["signed"]),
-        max_before=v["max_before"],
-        max_after=v["max_after"],
-        chain_before=cast(str | None, v["chain_before"]),
-        chain_after=cast(str | None, v["chain_after"]),
-        main_before=str(v["main_before"]),
-        main_after=str(v["main_after"]),
-        revert_conclusion=cast(str | None, v["revert_conclusion"]),
-        revert_counts=cast(dict[str, int] | None, v["revert_counts"]),
-        revert_e_approval=bool(v["revert_e_approval"]),
-    )
+B_ROW: dict[str, object] = {"site": "site-b", "desired": None, "max_published_gen": 0}
 
 
-APPROVAL_OK: dict[str, object] = {
-    "run_conclusion": "failure",
-    "e_approval_logged": True,
-    "signed": False,
-    "max_before": 6,
-    "max_after": 6,
-    "chain_before": "a" * 40,
-    "chain_after": "a" * 40,
-    "main_before": "b" * 40,
-    "main_after": "b" * 40,
-    "revert_conclusion": "success",
-    "revert_counts": {"published": 0, "skipped": 0, "current": 2, "failed": 0, "violations": 0},
-    "revert_e_approval": False,
-}
+def test_g2_3_central_row_of_site_b_must_not_move() -> None:
+    """변이: 중앙 site-b desired 불변을 빼면 site-a 게시가 site-b에도 게시본을 남겨도(VM은 아직
+    받지 않아 그대로) 통과한다."""
+    assert all(judges.judge_central_unchanged(B_ROW, B_ROW).values())
+    moved = {**B_ROW, "desired": {"generation": 2}}
+    assert scenarios_failed(judges.judge_central_unchanged(B_ROW, moved)) == [
+        "central_desired_unchanged"
+    ]
+    bumped = {**B_ROW, "max_published_gen": 2}
+    assert scenarios_failed(judges.judge_central_unchanged(B_ROW, bumped)) == [
+        "central_max_unchanged"
+    ]
+    # 행을 못 읽었으면(빈 행) 둘 다 비어 같아도 통과가 아니다
+    assert not any(judges.judge_central_unchanged({}, {}).values())
+    assert not any(judges.judge_central_unchanged(B_ROW, {}).values())
+
+
+def test_g2_2_publish_needs_201_and_the_next_desired() -> None:
+    row: dict[str, object] = {
+        "desired": {"generation": 2, "product_version": "2026.11.2-nightly.aaaaaaa"},
+        "max_published_gen": 2,
+    }
+
+    def judged(put: dict[str, object], r: dict[str, object]) -> dict[str, bool]:
+        return judges.judge_published(put, r, gen=2, next_version="2026.11.2-nightly.aaaaaaa")
+
+    assert all(judged({"status": 201}, row).values())
+    assert scenarios_failed(judged({"status": 409}, row)) == ["put_201"]
+    assert scenarios_failed(judged({"status": 201}, {**row, "max_published_gen": 3})) == [
+        "desired_next"
+    ]
+    old = {**row, "desired": {"generation": 2, "product_version": "2026.11.1"}}
+    assert scenarios_failed(judged({"status": 201}, old)) == ["desired_next"]
 
 
 @pytest.mark.parametrize(
-    ("change", "broken"),
+    ("central_max", "applied", "gen"),
     [
-        ({"e_approval_logged": False}, "e_approval_logged"),  # 실패만 보고 E_APPROVAL을 무시
-        ({"run_conclusion": "success"}, "run_failed"),
-        ({"max_after": 7}, "max_published_unchanged"),
-        ({"max_before": None, "max_after": None}, "max_published_unchanged"),
-        ({"chain_after": "c" * 40}, "chain_unchanged"),
-        ({"chain_before": None, "chain_after": None}, "chain_unchanged"),
-        ({"signed": True}, "not_signed"),
-        ({"main_after": "d" * 40}, "main_reverted"),
-        ({"revert_conclusion": "failure"}, "revert_published_nothing"),
-        ({"revert_counts": None}, "revert_published_nothing"),
-        (
-            {"revert_counts": {"published": 1, "failed": 0}},
-            "revert_published_nothing",
-        ),
-        ({"revert_e_approval": True}, "revert_published_nothing"),
+        (0, 1, 2),  # c1: 중앙 게시 없음, 현장 c0 g1 — max + 1 = 1은 같은 gen(no-op)
+        (None, 1, 2),
+        (5, 1, 6),  # 중앙이 앞서 있으면 중앙 max + 1
+        (5, 7, 8),
     ],
 )
-def test_e_approval_checks(change: dict[str, object], broken: str) -> None:
-    assert all(approval({}).values())
-    checks = approval(change)
-    assert scenarios_failed(checks) == [broken]
+def test_publish_gen_is_above_both_the_central_and_the_site(
+    central_max: object, applied: object, gen: int
+) -> None:
+    """변이: 게시 gen을 고정값으로 두면 중앙이 앞서 있을 때 PUT이 거부되거나(낮은 gen) 현장이
+    no-op으로 넘긴다."""
+    assert fleet_scenarios.publish_gen(central_max, applied) == gen
 
 
 # ---------------------------------------------------------------- 시나리오 흐름
@@ -211,160 +189,113 @@ def fleet_state(s: g2.Session) -> fleet_session.FleetSession:
         c1_name="c1-x",
         ca=Path("ca"),
         ca_sha256="AB",
-        project_version="v1000000000000001",
-        baseline_sha="",
-        gens={"site-a": 6, "site-b": 1},
-        c1_fleet={"site-a": {"max_published_gen": 6}, "site-b": {"max_published_gen": 1}},
+        c1_fleet={"site-a": {"max_published_gen": 0}, "site-b": {"max_published_gen": 0}},
         c1_nft={"site-a": {}, "site-b": {}},
     )
 
 
-def flow(
-    tmp_path: Path, publish: Publish
-) -> tuple[g2.Session, FakeGitHub, FakeRemote, fleet_scenarios.Scenario, list[str]]:
+@dataclass
+class Flow:
+    session: g2.Session
+    fake: FakeRemote
+    scenario: fleet_scenarios.Scenario
+    restores: list[str] = field(default_factory=list[str])
+    builds: list[tuple[str, int, str, tuple[datetime, datetime], Path]] = field(
+        default_factory=list[tuple[str, int, str, tuple[datetime, datetime], Path]]
+    )
+
+
+def flow(tmp_path: Path) -> Flow:
     s = scenario_session(tmp_path)
+    s.pair = dataclasses.replace(
+        s.pair, releases={**s.pair.releases, s.pair.next: "2026.11.2-nightly.aaaaaaa"}
+    )
     for run in s.sites.values():
         run.ctx.digests = {**run.ctx.digests, s.pair.next: NEXT}
-    gh = FakeGitHub(publish=publish)
-    gh.seed(
-        fleet.FLEET_REPO,
-        {"sites/site-a.yaml": site_yaml("site-a", 6), "sites/site-b.yaml": site_yaml("site-b", 1)},
-    )
     fake = FakeRemote(s, now=START - timedelta(seconds=fleet_scenarios.WINDOW_LEAD_S))
-    restores: list[str] = []
+    out = Flow(s, fake, fleet_scenarios.Scenario(fake.remote()))
 
     def restore(
         session: g2.Session, fs: object, sites: tuple[str, ...], **_: object
     ) -> dict[str, object]:
-        restores.append(",".join(sites) or "central")
+        out.restores.append(",".join(sites))
         return {}
 
-    sc = fleet_scenarios.Scenario(
-        fake.remote(), repos(gh), restore=restore, report=lambda h, sha: report()
+    def build(
+        ctx: Context, gen: int, release: str, window: tuple[datetime, datetime], tree: Path
+    ) -> Path:
+        out.builds.append((ctx.site.site_id, gen, release, window, tree))
+        return tmp_path / f"pureiron-{ctx.site.site_id}-g{gen}-{release}.pib"
+
+    def probe(host: Vm) -> dict[str, object]:
+        """site-a는 수렴 전 c0 g1, site-b는 전후 같은 스냅샷(갱신되지 않았다)."""
+        site = next(k for k, r in s.sites.items() if r.ctx.site.ip == host.ip)
+        return snap(gen=fake.current.get(site, 1))
+
+    def converge(host: Vm, gen: int) -> tuple[dict[str, object], float]:
+        fake.current["site-a"] = gen
+        fake.fleet_rows["site-a"] = {
+            "current": {"gen": gen, "product": s.pair.releases[s.pair.next]}
+        }
+        return snap(gen), 30.0
+
+    remote = dataclasses.replace(fake.remote(), probe=probe, converge=converge)
+    out.scenario = fleet_scenarios.Scenario(
+        remote, restore=restore, build=build, report=lambda h, pib: report()
     )
-    return s, gh, fake, sc, restores
+    return out
 
 
-def scheduled_publish(repo: str, sha: str, event: str) -> tuple[str, str]:
-    lines = [
-        "::notice::site-a gen 7 게시(x.pib, 1 bytes)",
-        "::notice::게시본이 최신인 현장(변경 없음): site-b",
-        "publish: 게시 1, 건너뜀 0, 최신 1, 실패 0, 규칙 위반 0",
-    ]
-    return "success", "\n".join(lines)
-
-
-def converged(host: Vm, gen: int) -> tuple[dict[str, object], float]:
-    return snap(gen), 30.0
-
-
-def site_b_probe(host: Vm) -> dict[str, object]:
-    """site-b 전후 같은 스냅샷(갱신되지 않았다)."""
-    return snap(gen=1)
-
-
-def test_scheduled_flow_judges_g2_2_and_g2_3(tmp_path: Path) -> None:
-    s, gh, fake, sc, restores = flow(tmp_path, scheduled_publish)
-    sc = dataclasses.replace(
-        sc, remote=dataclasses.replace(sc.remote, probe=site_b_probe, converge=converged)
-    )
-    current: dict[str, object] = {"gen": 7, "product": "2026.11.2-nightly.aaaaaaa"}
-    fake.fleet_rows = {"site-a": {"desired": {"sha256": "sha256:" + "d" * 64}, "current": current}}
-    s.pair = dataclasses.replace(
-        s.pair, releases={**s.pair.releases, s.pair.next: "2026.11.2-nightly.aaaaaaa"}
-    )
-    out = fleet_scenarios.scheduled(s, fleet_state(s), sc)
-    assert restores == ["site-a,site-b"]
+def test_scheduled_flow_publishes_directly_and_judges_g2_2_and_g2_3(tmp_path: Path) -> None:
+    f = flow(tmp_path)
+    s = f.session
+    out = fleet_scenarios.scheduled(s, fleet_state(s), f.scenario)
+    assert f.restores == ["site-a,site-b"]
     assert all(out.g2_2.values()), out.g2_2
     assert all(out.g2_3.values()), out.g2_3
-    pulled = gh.pulls[(fleet.FLEET_REPO, 1)]
-    assert str(pulled["title"]).startswith(f"[g2-nightly {s.run_id}] G2-2")
-    content = gh.files_at(fleet.FLEET_REPO, gh.refs[(fleet.FLEET_REPO, "heads/main")])
-    assert b'start: "2026-11-15T03:03:00Z"' in content["sites/site-a.yaml"]
-    head = cast(dict[str, object], pulled["head"])["sha"]
-    assert gh.reviews[(fleet.FLEET_REPO, 1)][0]["commit_id"] == head
+    # 게시 gen = max(중앙 0, 현장 1) + 1, 창 = 번들을 만들기 직전 now + 2분 ~ +1시간
+    assert f.builds == [
+        ("site-a", 2, s.pair.next, (START, START + timedelta(hours=1)), s.tree_of(s.pair.next))
+    ]
+    puts = [e for e in f.fake.events if e.startswith("central put")]
+    assert puts == ["central put --site site-a"]
+    assert f.fake.published["site-a"]["max_published_gen"] == 2
+    assert "site-b" not in f.fake.published
 
 
-def test_a_publish_that_ends_too_close_to_the_window_is_infra(tmp_path: Path) -> None:
-    s, _, _, sc, _ = flow(tmp_path, scheduled_publish)
-    clock = iter([START - timedelta(seconds=180), START - timedelta(seconds=10)])
-    sc = dataclasses.replace(sc, remote=dataclasses.replace(sc.remote, now=lambda: next(clock)))
+def test_the_put_gen_follows_the_central_max(tmp_path: Path) -> None:
+    """중앙이 앞서 있으면(max 5) 게시 gen은 6이다 — 고정값이 아니다."""
+    f = flow(tmp_path)
+    f.fake.fleet_rows["site-a"] = {"max_published_gen": 5}
+    out = fleet_scenarios.scheduled(f.session, fleet_state(f.session), f.scenario)
+    assert f.builds[0][1] == 6
+    assert f.fake.published["site-a"]["max_published_gen"] == 6
+    assert out.g2_2["put_201"]
+
+
+def test_a_put_that_is_refused_is_a_product_failure(tmp_path: Path) -> None:
+    f = flow(tmp_path)
+    f.fake.put_status = 409
+    with pytest.raises(E2EError, match="PUT /bundles/site-a/2 -> 409"):
+        fleet_scenarios.scheduled(f.session, fleet_state(f.session), f.scenario)
+
+
+def test_a_put_that_ends_too_close_to_the_window_is_infra(tmp_path: Path) -> None:
+    f = flow(tmp_path)
+    lead = timedelta(seconds=fleet_scenarios.WINDOW_LEAD_S)
+    clock = iter([START - lead, START - timedelta(seconds=10)])
+    remote = dataclasses.replace(f.scenario.remote, now=lambda: next(clock))
+    sc = dataclasses.replace(f.scenario, remote=remote)
     with pytest.raises(InfraError, match="too close to the window start"):
-        fleet_scenarios.scheduled(s, fleet_state(s), sc)
-
-
-def test_e_approval_flow_merges_unapproved_then_reverts(tmp_path: Path) -> None:
-    main: dict[str, str] = {}
-
-    def publish(repo: str, sha: str, event: str) -> tuple[str, str]:
-        if sha == main["before"]:
-            return "success", "publish: 게시 0, 건너뜀 0, 최신 2, 실패 0, 규칙 위반 0"
-        return "failure", "::error::E_APPROVAL PR #1 유효 승인 0건(리뷰 없음)\npublish: x 승인 거부"
-
-    s, gh, fake, sc, restores = flow(tmp_path, publish)
-    main["before"] = gh.refs[(fleet.FLEET_REPO, "heads/main")]
-    fake.chain = ["a" * 40]
-    fake.fleet_rows = {"site-a": {"max_published_gen": 6}}
-    checks = fleet_scenarios.e_approval(s, fleet_state(s), sc)
-    assert restores == ["central"]  # VM은 되돌리지 않는다
-    assert all(checks.values()), checks
-    assert gh.refs[(fleet.FLEET_REPO, "heads/main")] == main["before"]
-    assert gh.reviews[(fleet.FLEET_REPO, 1)] == []  # 승인 없이 merge
-    patched = gh.writes("PATCH", "git/refs/heads/main")
-    assert len(patched) == 1  # 되돌림 — 변이: 생략하면 main_reverted가 거짓
-
-
-def test_e_approval_without_the_revert_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def publish(repo: str, sha: str, event: str) -> tuple[str, str]:
-        return "failure", "::error::E_APPROVAL x"
-
-    s, _, fake, sc, _ = flow(tmp_path, publish)
-    fake.chain = ["a" * 40]
-    fake.fleet_rows = {"site-a": {"max_published_gen": 6}}
-    checks = fleet_scenarios.e_approval(s, fleet_state(s), sc)
-    assert not checks["revert_published_nothing"]
-
-
-def test_e_approval_flags_a_main_ahead_of_c1(tmp_path: Path) -> None:
-    def publish(repo: str, sha: str, event: str) -> tuple[str, str]:
-        return "success", "publish: 게시 0, 건너뜀 0, 최신 2, 실패 0, 규칙 위반 0"
-
-    s, _, fake, sc, _ = flow(tmp_path, publish)
-    fs = fleet_state(s)
-    fs.c1_fleet["site-a"]["max_published_gen"] = 5
-    fake.chain = ["a" * 40]
-    checks = fleet_scenarios.e_approval(s, fs, sc)
-    assert not checks["main_matches_c1"]
-
-
-def test_reports_are_found_by_the_published_bundle_sha() -> None:
-    class Host:
-        def __init__(self) -> None:
-            self.command = ""
-
-        def run(
-            self, command: str, *, check: bool = True, timeout_s: float = 600
-        ) -> subprocess.CompletedProcess[str]:
-            self.command = command
-            return subprocess.CompletedProcess[str]([], 0, '{"result": "succeeded"}', "")
-
-    host = Host()
-    found = fleet_scenarios.report_for_sha(host, "sha256:" + "e" * 64)
-    assert found == {"result": "succeeded"}
-    assert "*-eeeeeeeeeeee.json" in host.command
-    assert fleet_scenarios.report_for_sha(host, "short") == {}
+        fleet_scenarios.scheduled(f.session, fleet_state(f.session), sc)
+    assert not any(e.startswith("converge") for e in f.fake.events)
 
 
 def test_the_g2_test_items_are_exactly_the_judged_keys() -> None:
     """시험 파일의 항목 목록(parametrize)과 판정 함수가 내는 키가 같다 — 판정 하나를 빼면(또는 키
     이름을 바꾸면) 그 시험 항목이 조용히 사라지거나 늘 실패하지 않게."""
     view = judges.isolation_view(snap(gen=1))
-    g2_3 = {**judges.judge_isolation(view, view), "not_published": True}
+    g2_3 = {**judges.judge_isolation(view, view), **judges.judge_central_unchanged(B_ROW, B_ROW)}
     assert tuple(g2_3) == fleet_scenarios.G2_3_ITEMS
-    split = judges.judge_publish_split(
-        "success", {}, None, frozenset(), {}, changed="site-a", gen=7, untouched="site-b"
-    )
-    assert (*scheduled(report()), *split) == fleet_scenarios.G2_2_ITEMS
-    assert ("main_matches_c1", *approval({})) == fleet_scenarios.E_APPROVAL_ITEMS
+    published = judges.judge_published({}, {}, gen=2, next_version="x")
+    assert (*published, *scheduled(report())) == fleet_scenarios.G2_2_ITEMS
