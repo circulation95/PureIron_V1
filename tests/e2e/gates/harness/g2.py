@@ -172,6 +172,9 @@ class Session:
     """NEXT·FAULT 2종의 번들 트리 — G2 트리에서 태그 `pair.tree_tag`의 description만 바꾼 것
     (`bundles.release_tree(source=tree)`). 판정 기대값(`trees.tree_expect`)도 같은 디렉터리에서
     읽는다."""
+    records: dict[str, dict[str, object]] = field(default_factory=dict[str, dict[str, object]])
+    """NEXT·FAULT 2종의 release 기록(WSL nightly 작업 디렉터리 `releases/<이름>.json`과 같은 내용) —
+    fleet 도구 브랜치(`fleet_session.update_tool_branch`)가 `deploy/releases`에 커밋한다."""
 
     def tree_of(self, release: str) -> Path:
         """`release` 번들이 싣는 트리 — BASE(c0 g1)는 G2 트리, 나머지는 `release_trees`."""
@@ -182,10 +185,12 @@ class Session:
         return f"pureiron/simulator:{self.pair.next}-src"
 
 
-def prepare(run_id: str, sha: str) -> Session:
+def prepare(run_id: str, sha: str, only: Collection[str] | None = None) -> Session:
     """WSL 동기화 → HEAD 빌드(NEXT 기록·시뮬레이터 tar) → FAULT 2종(NEXT 파생, 기록·digest 확인)
-    → 설치 번들 → 100태그 트리와 NEXT·FAULT 트리 → 현장별 g1 번들. HEAD 빌드 실패는
-    `HeadBuildError`(제품)로 멈춘다."""
+    → 설치 번들 → 100태그 트리와 NEXT·FAULT 트리 → 현장별 `Context`·g1 번들. `only`(현장 id)를 주면
+    그 현장만 `Context`·g1 번들을 만든다(재시도 세션이 고르지 않은 현장의 빈 `state.json`을 만들지
+    않게, M6-3b 리뷰 L6) — 나머지 현장은 `Session.sites`에 없다(`site_up`이 `E2EError`). HEAD 빌드
+    실패는 `HeadBuildError`(제품)로 멈춘다."""
     out = bundles_dir(run_id)
     pair = repo_pair(sha)
     buildhost.sync_repo()
@@ -214,6 +219,8 @@ def prepare(run_id: str, sha: str) -> Session:
     }
     runs: dict[str, SiteRun] = {}
     for base_site, _ in SITE_ROLES:
+        if only is not None and base_site.site_id not in only:
+            continue
         release = site_release(pair, base_site.site_id)
         state = results_dir(run_id) / base_site.site_id / "state.json"
         ctx = Context(
@@ -246,6 +253,7 @@ def prepare(run_id: str, sha: str) -> Session:
         runs,
         expected_schema=expected,
         release_trees=release_trees,
+        records={pair.next: next_record, **faults},
     )
 
 
@@ -597,13 +605,45 @@ def restore_c0(
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
 ) -> MemoryGate:
-    """G2 시나리오의 시작: 그 현장 VM을 체크포인트 c0로 되돌린다. 순서: 외부 접속 카운터 표시(복원이
-    카운터를 c0 값으로 되돌리므로 그 전 구간을 누적 — VM이 꺼져 있으면 표시할 수 없어
+    """G2 시나리오의 시작: 그 현장 VM을 체크포인트 c0로 되돌린다(`restore_checkpoint`, 카운터 기준 =
+    c0 값 `ctx.nft_c0`). `run.py`의 `site.restore_c0`(회수만 하고 기다리지 않는다)는 그대로다."""
+    return restore_checkpoint(
+        run,
+        "c0",
+        run.ctx.nft_c0,
+        environ,
+        state=state,
+        mark=mark,
+        restore=restore,
+        wait_ssh=wait_ssh,
+        mem_now=mem_now,
+        reclaim=reclaim,
+        sleep=sleep,
+        clock=clock,
+    )
+
+
+def restore_checkpoint(
+    run: SiteRun,
+    snapshot: str,
+    counters: Mapping[str, int],
+    environ: Mapping[str, str] | None = None,
+    *,
+    state: Callable[[str], str | None] = hyperv.vm_state,
+    mark: Callable[[Context, Vm], None] = site.nft_mark,
+    restore: Callable[[str, str], None] = hyperv.restore,
+    wait_ssh: Callable[[Vm], object] = lambda host: host.wait_ssh(),
+    mem_now: Callable[[], float | None] | None = None,
+    reclaim: Callable[[], None] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> MemoryGate:
+    """현장 VM을 체크포인트 `snapshot`(c0·c1)으로 되돌린다. 순서: 외부 접속 카운터 표시(복원이
+    카운터를 그 체크포인트 값으로 되돌리므로 그 전 구간을 누적 — VM이 꺼져 있으면 표시할 수 없어
     `unmarked_restores`를 올린다) → 메모리 확보(`restore_need_gb`, `secure_memory`) → 복원 →
-    카운터 기준을 c0 값으로 → ssh 대기. 메모리가 끝까지 모자라면 복원하지 않고 `InfraError`(현장마다
-    새 객체). 회수 전·후 값은 현장 로그와 `RESTORE_MEMORY_FILE`에 남긴다. `run.py`의
-    `site.restore_c0`(회수만 하고 기다리지 않는다)는 그대로다. Hyper-V·ssh·메모리 조작은 단위 시험이
-    가짜로 바꾼다."""
+    카운터 기준을 체크포인트 때 값(`counters`)으로 → ssh 대기. 메모리가 끝까지 모자라면 복원하지
+    않고 `InfraError`(현장마다 새 객체). 회수 전·후 값은 현장 로그와 `RESTORE_MEMORY_FILE`에
+    남긴다. Hyper-V·ssh·메모리 조작은 단위 시험이 가짜로 바꾼다."""
     ctx = run.ctx
     host = ctx.site.host()
     env = os.environ if environ is None else environ
@@ -619,15 +659,15 @@ def restore_c0(
     )
     for note in gate.notes:
         ctx.log(note)
-    _append_json(ctx.out / RESTORE_MEMORY_FILE, gate.as_dict(vm_state=vm_state))
+    _append_json(ctx.out / RESTORE_MEMORY_FILE, gate.as_dict(vm_state=vm_state, snapshot=snapshot))
     if not gate.ok:
         raise InfraError(
             f"windows available memory {gate.after_gb} GB < {gate.need_gb} GB needed to restore "
-            f"{ctx.site.vm_name} (vm {vm_state}) to c0 after reclaiming WSL page cache"
+            f"{ctx.site.vm_name} (vm {vm_state}) to {snapshot} after reclaiming WSL page cache"
         )
-    ctx.log("restore c0")
-    restore(ctx.site.vm_name, "c0")
-    ctx.nft_last = dict(ctx.nft_c0)  # 복원은 카운터(메모리)도 c0 시점으로 되돌린다
+    ctx.log(f"restore {snapshot}")
+    restore(ctx.site.vm_name, snapshot)
+    ctx.nft_last = dict(counters)  # 복원은 카운터(메모리)도 체크포인트 시점으로 되돌린다
     ctx.save()
     wait_ssh(host)
     return gate
@@ -635,8 +675,10 @@ def restore_c0(
 
 def site_up(session: Session, site_id: str) -> SiteRun:
     """`site_id`의 `SiteRun` — 부팅·설치가 실패한 현장이면 그 예외를 다시 던진다(분류는 예외
-    종류)."""
-    run = session.sites[site_id]
+    종류). 이 세션이 준비하지 않은 현장(`prepare(only=)`)이면 `E2EError`."""
+    run = session.sites.get(site_id)
+    if run is None:
+        raise E2EError(f"{site_id} not prepared: no selected test uses it")
     if run.error is not None:
         raise run.error
     return run

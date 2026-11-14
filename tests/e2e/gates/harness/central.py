@@ -6,6 +6,9 @@
     uv run --no-sync python tests/e2e/gates/harness/central.py put --site site-a --gen 2 --pib PATH
     uv run --no-sync python tests/e2e/gates/harness/central.py fleet [--site site-a] [--direct]
     uv run --no-sync python tests/e2e/gates/harness/central.py stop-web | start-web | status | down
+    uv run --no-sync python tests/e2e/gates/harness/central.py dump --name c1-<token>
+    uv run --no-sync python tests/e2e/gates/harness/central.py restore --name c1-<token>
+    uv run --no-sync python tests/e2e/gates/harness/central.py publish-viewer-token  # 원문
 
 `m2d/run.py online`(Windows 호스트)이 `golden.wsl`로 부른다. 운영 절차(deploy/central/README.md)를
 그대로 밟는다: **`up`은 항상 새로 시작한다**(같은 compose 프로젝트를 볼륨째 내리고) → 비밀 파일
@@ -26,6 +29,16 @@
   비밀), `admin_token`·`ci_token`(publish `PUT /bundles`)·`publish_viewer_token`(publish·
   check-gen `GET /fleet`)·`ui_password`(control-web 화면 basic auth 원문)·`<site>.token`(현장
   token, `register`가 씀).
+- `dump`·`restore`(M6-4a ★P1 c1 쌍): control-db 전체를 `pg_dump -Fc`로
+  `~/pureiron-e2e-central/dumps/<이름>.dump`(0600, 디렉터리 0700 — 비밀 디렉터리와 같은 규칙, 토큰
+  해시가 들어 있다)에, 그때의 `/fleet` 요약(`fleet_view`)을 `<이름>.fleet.json`에 둔다. `restore`는
+  control-web·control-api를 멈추고 `pg_restore --clean --single-transaction` → control-api만 시작 →
+  `/fleet`(control-api 직접)이 덤프 때 요약과 같은지 본다(다르면 실패). control-web은 멈춘 채로 둔다
+  — 부른 쪽이 VM 체크포인트를 되돌린 뒤 `start-web`한다(되돌리기 전의 VM이 복원된 중앙에 보고하지
+  않게). 번들 파일(볼륨 `control-data`)은 되돌리지 않는다: DB에 없는 gen 파일은 쓰이지 않고 같은
+  gen을 다시 게시하면 덮어쓴다. `up`이 작업 디렉터리를 지우므로 덤프는 그 세션 것뿐이다.
+- `publish-viewer-token`: publish 호스트 동기화(`publish_host.sync`)가 fleet-test secret
+  `PUREIRON_FLEET_VIEWER_TOKEN`에 넣을 원문(파이프 전용, `site-token`과 같은 규칙).
 - `down`은 compose를 볼륨째 내리고 작업 디렉터리(비밀 포함)를 지운다. 15분 실측(코디네이터)은
   `run.py online --keep-central`로 남긴 중앙을 그대로 쓰고 끝나면 `down`.
 """
@@ -36,6 +49,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import secrets
 import shutil
 import ssl
@@ -45,6 +59,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 from typing import BinaryIO, cast
 
@@ -77,6 +92,21 @@ TOKENS = {
     "publish_viewer": ("viewer", "publish-viewer"),
 }
 """파일 이름 접두(`<접두>_token`) → (역할, 토큰 이름). Caddy용 viewer(`viewer_token`)는 따로."""
+DUMPS = WORK / "dumps"
+DB_SERVICE = "control-db"
+DB_USER = "pureiron"
+DB_NAME = "pureiron_control"
+DUMP_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,80}")
+FLEET_FIELDS = (
+    ("desired", "generation"),
+    ("desired", "sha256"),
+    ("", "max_published_gen"),
+    ("current", "gen"),
+    ("current", "product"),
+    ("", "last_heartbeat_seq"),
+    ("", "last_report_seq"),
+)
+"""`/fleet` 행에서 복원 일치를 보는 값 — 게시·반영·수위(시각·연결 상태는 흐르므로 뺀다)."""
 READY_TIMEOUT_S = 120.0
 COMMAND_TIMEOUT_S = 600.0
 HTTP_TIMEOUT_S = 30.0
@@ -100,10 +130,10 @@ def compose_env() -> dict[str, str]:
     }
 
 
-def compose(*args: str, stdin: bytes | None = None, check: bool = True) -> str:
-    """`docker compose -p pureiron-e2e-central -f deploy/central/compose.yml <args>`. 실패하면
-    명령과 stderr를 담아 멈춘다 — 토큰을 출력하는 명령(`token create`·`site register`)은
-    `_cli_json`만 부르고 그 출력은 오류 메시지에 넣지 않는다."""
+def compose_raw(*args: str, stdin: bytes | None = None, check: bool = True) -> bytes:
+    """`docker compose -p pureiron-e2e-central -f deploy/central/compose.yml <args>`의 stdout(바이트
+    — `pg_dump`). 실패하면 명령과 stderr를 담아 멈춘다 — 토큰을 출력하는 명령(`token create`·
+    `site register`)은 `_cli_json`만 부르고 그 출력은 오류 메시지에 넣지 않는다."""
     result = subprocess.run(
         ["docker", "compose", "-p", PROJECT, "-f", str(COMPOSE_FILE), *args],
         env=compose_env(),
@@ -112,11 +142,14 @@ def compose(*args: str, stdin: bytes | None = None, check: bool = True) -> str:
         timeout=COMMAND_TIMEOUT_S,
         check=False,
     )
-    out = result.stdout.decode("utf-8", "replace")
     if check and result.returncode != 0:
         err = result.stderr.decode("utf-8", "replace")
         raise CentralError(f"docker compose {' '.join(args)} exited {result.returncode}\n{err}")
-    return out
+    return result.stdout
+
+
+def compose(*args: str, stdin: bytes | None = None, check: bool = True) -> str:
+    return compose_raw(*args, stdin=stdin, check=check).decode("utf-8", "replace")
 
 
 def _cli_json(*args: str, stdin: bytes | None = None) -> dict[str, object]:
@@ -368,6 +401,121 @@ def start_web() -> dict[str, object]:
     raise CentralError(f"control-web did not come back within {READY_TIMEOUT_S}s")
 
 
+def fleet_view(reply: dict[str, object]) -> dict[str, dict[str, object]]:
+    """`/fleet` 응답(200) → 현장 → `FLEET_FIELDS` 값. 200이 아니거나 행이 없으면 빈 dict."""
+    body = reply.get("body")
+    if reply.get("status") != 200 or not isinstance(body, list):
+        return {}
+    view: dict[str, dict[str, object]] = {}
+    for raw in cast(list[object], body):
+        if not isinstance(raw, dict):
+            continue
+        row = cast(dict[str, object], raw)
+        values: dict[str, object] = {}
+        for part, key in FLEET_FIELDS:
+            source = cast(dict[str, object], row.get(part) or {}) if part else row
+            values[f"{part}.{key}" if part else key] = source.get(key)
+        view[str(row.get("site"))] = values
+    return view
+
+
+def fleet_mismatch(
+    saved: dict[str, dict[str, object]], now: dict[str, dict[str, object]]
+) -> list[str]:
+    """복원 뒤 `/fleet` 요약이 덤프 때와 다른 항목(`<현장>.<값>`, 한쪽에만 있는 현장). 덤프 때
+    요약이 비었으면 그것 자체가 불일치다 — 못 읽은 값이 일치가 되지 않게."""
+    if not saved:
+        return ["<saved view empty>"]
+    diff = sorted(set(saved) ^ set(now))
+    for site in sorted(set(saved) & set(now)):
+        diff += [f"{site}.{k}" for k in saved[site] if saved[site][k] != now[site].get(k)]
+    return diff
+
+
+def _dump_paths(name: str) -> tuple[Path, Path]:
+    if DUMP_NAME.fullmatch(name) is None:
+        raise CentralError(f"dump name must match {DUMP_NAME.pattern}: {name!r}")
+    return DUMPS / f"{name}.dump", DUMPS / f"{name}.fleet.json"
+
+
+def dump(name: str) -> dict[str, object]:
+    """control-db 전체(`pg_dump -Fc`)와 그때의 `/fleet` 요약. 부른 쪽이 control-web을 먼저 멈춰
+    둔다(요약과 덤프 사이에 현장 보고가 끼지 않게)."""
+    data_file, view_file = _dump_paths(name)
+    started = time.monotonic()
+    view = fleet_view(fleet_direct(None))
+    if not view:
+        raise CentralError("cannot read /fleet before dump")
+    data = compose_raw("exec", "-T", DB_SERVICE, "pg_dump", "-U", DB_USER, "-d", DB_NAME, "-Fc")
+    DUMPS.mkdir(parents=True, mode=0o700, exist_ok=True)
+    DUMPS.chmod(0o700)
+    fd = os.open(data_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(data)
+    view_file.write_text(json.dumps(view, sort_keys=True), encoding="utf-8")
+    return {
+        "name": name,
+        "file": str(data_file),
+        "bytes": len(data),
+        "seconds": round(time.monotonic() - started, 1),
+        "fleet": view,
+    }
+
+
+def wait_api() -> dict[str, object]:
+    """control-api가 `/fleet`(직접) 200을 낼 때까지(control-web은 멈춘 채)."""
+    deadline = time.monotonic() + READY_TIMEOUT_S
+    last = ""
+    while time.monotonic() < deadline:
+        try:
+            reply = fleet_direct(None)
+            if reply.get("status") == 200:
+                return reply
+            last = f"status {reply.get('status')}"
+        except (CentralError, ValueError, IndexError) as exc:
+            last = str(exc)[-200:]
+        time.sleep(1)
+    raise CentralError(f"control-api not ready within {READY_TIMEOUT_S}s after restore ({last})")
+
+
+def restore(name: str) -> dict[str, object]:
+    """control-web·control-api 멈춤 → `pg_restore --clean --if-exists --single-transaction` →
+    control-api 시작 → `/fleet`(직접)이 덤프 때 요약과 같은지(`fleet_mismatch`, 다르면
+    `CentralError`). control-web은 멈춘 채 둔다(부른 쪽이 VM 복원 뒤 `start-web`)."""
+    data_file, view_file = _dump_paths(name)
+    if not data_file.is_file() or not view_file.is_file():
+        raise CentralError(f"no dump {name!r} in {DUMPS} — dumps exist for this session only")
+    saved = cast(dict[str, dict[str, object]], json.loads(view_file.read_text(encoding="utf-8")))
+    started = time.monotonic()
+    compose("stop", "control-web", "control-api")
+    compose_raw(
+        "exec",
+        "-T",
+        DB_SERVICE,
+        "pg_restore",
+        "-U",
+        DB_USER,
+        "-d",
+        DB_NAME,
+        "--clean",
+        "--if-exists",
+        "--no-owner",
+        "--single-transaction",
+        stdin=data_file.read_bytes(),
+    )
+    compose("start", "control-api")
+    now = fleet_view(wait_api())
+    mismatch = fleet_mismatch(saved, now)
+    if mismatch:
+        raise CentralError(f"/fleet after restore differs from the dump: {mismatch}")
+    return {
+        "name": name,
+        "seconds": round(time.monotonic() - started, 1),
+        "fleet": now,
+        "fleet_match": True,
+    }
+
+
 def down() -> dict[str, object]:
     compose("down", "-v", "--remove-orphans")
     shutil.rmtree(WORK, ignore_errors=True)
@@ -387,33 +535,42 @@ def main(argv: list[str] | None = None) -> int:
     fleet_cmd = sub.add_parser("fleet")
     fleet_cmd.add_argument("--site", default=None)
     fleet_cmd.add_argument("--direct", action="store_true", help="control-api 컨테이너 안에서 조회")
-    for name in ("stop-web", "start-web", "status", "down"):
+    for name in ("stop-web", "start-web", "status", "down", "publish-viewer-token"):
         sub.add_parser(name)
+    for name in ("dump", "restore"):
+        sub.add_parser(name).add_argument("--name", required=True)
     args = parser.parse_args(argv)
     os.chdir(ROOT)
     if args.command == "site-token":
         sys.stdout.write(read_secret(f"{args.site}.token") + "\n")
         return 0
-    result: dict[str, object]
-    if args.command == "up":
-        result = up(args.ca_out)
-    elif args.command == "register":
-        result = register(args.enrollment)
-    elif args.command == "put":
-        result = put(args.site, args.gen, args.pib)
-    elif args.command == "fleet":
-        result = fleet_direct(args.site) if args.direct else fleet_https(args.site)
-    elif args.command == "stop-web":
-        compose("stop", "control-web")
-        result = {"stopped": "control-web"}
-    elif args.command == "start-web":
-        result = start_web()
-    elif args.command == "status":
-        result = status()
-    else:
-        result = down()
-    print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    if args.command == "publish-viewer-token":
+        sys.stdout.write(read_secret("publish_viewer_token") + "\n")
+        return 0
+    print(json.dumps(run_command(args), ensure_ascii=False, sort_keys=True))
     return 0
+
+
+def stop_web() -> dict[str, object]:
+    compose("stop", "control-web")
+    return {"stopped": "control-web"}
+
+
+def run_command(args: argparse.Namespace) -> dict[str, object]:
+    """JSON을 내는 명령(토큰 원문을 내는 `site-token`·`publish-viewer-token`은 `main`에서)."""
+    commands: dict[str, Callable[[], dict[str, object]]] = {
+        "up": lambda: up(args.ca_out),
+        "register": lambda: register(args.enrollment),
+        "put": lambda: put(args.site, args.gen, args.pib),
+        "fleet": lambda: fleet_direct(args.site) if args.direct else fleet_https(args.site),
+        "stop-web": stop_web,
+        "start-web": start_web,
+        "status": status,
+        "dump": lambda: dump(args.name),
+        "restore": lambda: restore(args.name),
+        "down": down,
+    }
+    return commands[args.command]()
 
 
 if __name__ == "__main__":
