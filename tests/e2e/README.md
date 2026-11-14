@@ -518,12 +518,16 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
 
 | 시험(실행 순서) | 현장 | 흐름 | 판정(모두 참) |
 |---|---|---|---|
-| `test_g2_2_scheduled_update[…]`·`test_g2_3_isolation[…]` | site-a·site-b | 둘 다 c1 → site-b 스냅샷(VM 값 + 중앙 행) → site-a NEXT 번들(`window.once` = 번들을 만들기 직전 now + 2분 ~ +1시간) 빌드 → PUT → 창 → 적용 수렴 → 중앙 current | G2-2: PUT 201 · 바로 뒤 `/fleet` desired = gen·NEXT, `max_published_gen` = gen · 보고 `timeline`의 `verified` < 창 시작 · `locked` ≥ 창 시작 · `locked`→`succeeded` ≤ 120초 · `succeeded`·applied == gen · 실행 이미지 == NEXT digest · `/fleet` current = gen·NEXT. G2-3: site-b 실행 이미지 ID·content_hash·applied_gen·core StartedAt 전후 같음(못 읽은 값은 거짓) · 중앙 site-b desired·`max_published_gen` 전후 같음(행을 못 읽으면 거짓) |
+| `test_g2_2_scheduled_update[…]`·`test_g2_3_isolation[…]` | site-a·site-b | 둘 다 c1 → site-b 스냅샷(VM 값 + 중앙 행) → site-a NEXT 번들(`window.once` = 번들을 만들기 직전 now + 4분 ~ +1시간) 빌드 → PUT → 창 → 적용 수렴 → 중앙 current | G2-2: PUT 201 · 바로 뒤 `/fleet` desired = gen·NEXT, `max_published_gen` = gen · 보고 `timeline`의 `verified` < 창 시작 · `locked` ≥ 창 시작 · `locked`→`succeeded` ≤ 120초 · `succeeded`·applied == gen · 실행 이미지 == NEXT digest · `/fleet` current = gen·NEXT. G2-3: site-b 실행 이미지 ID·content_hash·applied_gen·core StartedAt 전후 같음(못 읽은 값은 거짓) · 중앙 site-b desired·`max_published_gen` 전후 같음(행을 못 읽으면 거짓) |
 
-- 창 여유 2분(`fleet_scenarios.WINDOW_LEAD_S`): 번들을 만들기 직전부터 잰다. 그 안에 빌드(G2 번들 약
-  16초 — M6-3 실측) + PUT(로컬 HTTPS, 0.8GB 안팎)이 끝나고, Updater가 poll(10초)로 받아 검증까지 마칠
-  몫 45초(`PREFETCH_ALLOWANCE_S` — M4 마감 실측 시도 시작 → succeeded 24초)가 남아야 한다. PUT이 창 시작
-  45초 전보다 늦게 끝나면 `verified` < 창 시작을 볼 수 없어 infra(빌드 호스트가 느린 것)다.
+- 창 여유 4분(`fleet_scenarios.WINDOW_LEAD_S` 240초 = 빌드 85 + PUT 20 + 받아 검증할 몫 45 + 여유 90):
+  번들을 만들기 직전부터 잰다. 첫 VM 실측(run 43617245939)에서 Windows 하네스 경로의 빌드가 73.6·82.6초,
+  PUT 완료가 120초 창의 시작 −17초였다(빌드 + PUT ≈ 103초 — WSL 네이티브 경로에서 잰 빌드 23초와
+  다르다 — 번들을 `C:\PureIron_e2ebundles`(`/mnt/c`)에 쓰고 PUT도 그 파일을 읽는다). 그 안에 빌드·PUT이
+  끝나고 Updater가 poll(10초)로 받아 검증까지 마칠 몫 45초(`PREFETCH_ALLOWANCE_S` — M4 마감 실측 시도
+  시작 → succeeded 24초)가 남아야 한다. PUT이 창 시작 45초 전보다 늦게 끝나면 `verified` < 창 시작을 볼
+  수 없어 infra(빌드 호스트가 느린 것)다. G2-2 기록·로그에 `build_s`·`put_s`가 따로 남는다(늦은 PUT
+  infra의 예외 문구에도).
 - 기록: 시나리오 기록은 현장 `state.json`(G2-2는 site-a, G2-3은 site-b), 세션 기록은
   `<결과>/fleet/session.json`(c1 이름·덤프 때 `/fleet` 요약·복원 횟수·준비 시간 — 비밀값 없음, 재시도 전
   `first/fleet/`로 옮긴다).
