@@ -25,13 +25,17 @@ def test_weekday_suite_leaves_weekly_cases_out_and_weekly_runs_everything() -> N
 
 def test_suite_budgets() -> None:
     g2, weekly = suites.SUITES["g2"], suites.SUITES["weekly"]
-    assert (g2.workflow_s, g2.run_budget_s, g2.pytest_timeout_s) == (120 * 60, 90 * 60, 75 * 60)
+    assert (g2.workflow_s, g2.run_budget_s, g2.pytest_timeout_s) == (
+        190 * 60,
+        160 * 60,
+        105 * 60,
+    )
     assert (weekly.workflow_s, weekly.run_budget_s, weekly.pytest_timeout_s) == (
         270 * 60,
         240 * 60,
         200 * 60,
     )
-    assert (g2.retry_timeout_s, weekly.retry_timeout_s) == (30 * 60, 40 * 60)
+    assert (g2.retry_timeout_s, weekly.retry_timeout_s) == (45 * 60, 40 * 60)
 
 
 @pytest.mark.parametrize(
@@ -85,7 +89,8 @@ def script() -> str:
 def test_registration_runs_daily_at_0317_and_picks_weekly_on_sunday() -> None:
     text = script()
     assert "[string]$At = '03:17'" in text
-    assert "New-ScheduledTaskTrigger -Daily -At $At" in text
+    assert "New-ScheduledTaskTrigger -Daily -At $Time" in text
+    assert "Register-One $TaskName $At '-Dispatch' $copy $bin" in text
     assert "$WeeklyDay = [System.DayOfWeek]::Sunday" in text
     assert re.search(r"if \(\$Day\.DayOfWeek -eq \$WeeklyDay\) \{ return 'weekly' \}", text)
     assert "return 'g2'" in text
@@ -108,7 +113,8 @@ def test_registration_runs_only_in_the_logon_session_and_skips_missed_runs() -> 
     assert "-LogonType Interactive" in text
     assert "$settings.StartWhenAvailable = $false" in text
     assert "-MultipleInstances IgnoreNew" in text
-    assert "Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false" in text
+    assert "foreach ($name in @($TaskName, $CiTaskName)) {" in text
+    assert "Unregister-ScheduledTask -TaskName $name -Confirm:$false" in text
     assert "if ($WhatIf) {" in text  # 요일 → suite를 gh 없이 확인하는 모드
 
 
@@ -139,6 +145,41 @@ def test_registration_calls_gh_only_outside_the_stop_context() -> None:
     assert "$auth = Invoke-Gh @('auth', 'token', '-u', $GhUser)" in text
     assert "$run = Invoke-Gh $ghArgs" in text
     assert "[string]$Gh = 'gh'" in text
+
+
+def test_foundation_ci_night_run_is_a_second_task_at_0147() -> None:
+    """M6-4a P9: foundation-ci 밤 실행은 같은 등록 스크립트의 둘째 작업(01:47, master,
+    workflow_dispatch)이다 — 주간 G2가 05:45까지 가도 겹치지 않는다. 같은 `Invoke-Dispatch`(토큰은
+    프로세스 환경변수, 로그 줄)를 거친다."""
+    text = script()
+    assert "[string]$CiAt = '01:47'" in text
+    assert "[string]$CiTaskName = 'PureIron foundation-ci nightly'" in text
+    assert "$CiWorkflow = 'foundation-ci.yml'" in text
+    assert "return @('workflow', 'run', $CiWorkflow, '--ref', $Ref, '-R', $Repo)" in text
+    assert "Register-One $CiTaskName $CiAt '-DispatchCi' $copy $bin" in text
+    assert "exit (Invoke-Dispatch -Ci)" in text
+
+
+def test_foundation_ci_has_no_schedule_and_dispatch_runs_the_conditional_jobs() -> None:
+    """변이: schedule을 되살리면 GitHub cron(늦게 만들어짐)과 작업 스케줄러가 같이 뜬다. 조건부
+    job(n-minus-1·repro-build)은 plan job의 출력만 보고, plan은 pull_request가 아닌 이벤트를 모두
+    전체 실행으로 본다 — workflow_dispatch(작업 스케줄러)도 schedule과 같은 조건이다."""
+    text = (paths.REPO / ".github" / "workflows" / "foundation-ci.yml").read_text(encoding="utf-8")
+    assert "schedule:" not in text
+    assert "cron:" not in text
+    assert "  workflow_dispatch:\n" in text
+    assert 'if [ "$EVENT" != "pull_request" ] || [ "$FULL_GATE" = "true" ]; then' in text
+    assert "if: needs.plan.outputs.n_minus_1 == 'true'" in text
+    assert "if: needs.plan.outputs.repro_build == 'true'" in text
+    assert "event_name == 'schedule'" not in text
+
+
+def test_setup_host_script_is_utf8_with_bom() -> None:
+    """BOM이 없으면 Windows PowerShell 5.1이 한글 주석을 CP949로 읽는다(register-nightly.ps1과 같은
+    처리)."""
+    raw = (paths.REPO / "tests" / "e2e" / "infra" / "setup-host.ps1").read_bytes()
+    assert raw.startswith(b"\xef\xbb\xbf")
+    assert raw[3:].decode("utf-8").startswith("#Requires -RunAsAdministrator")
 
 
 def test_nightly_workflow_has_no_schedule() -> None:

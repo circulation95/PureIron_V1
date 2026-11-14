@@ -2,6 +2,8 @@
 .SYNOPSIS
   G2 nightly 시작(M6-3 ★H13) — Windows 작업 스케줄러가 매일 03:17(이 PC 로컬 시각 = KST)에
   `gh workflow run nightly.yml`을 부르게 등록한다. 일요일은 suite=weekly, 나머지는 g2.
+  둘째 작업(M6-4a P9): 매일 01:47에 `gh workflow run foundation-ci.yml --ref master`(G1 밤 전체 실행 —
+  조건부 job 포함). foundation-ci.yml의 GitHub schedule을 지웠다(늦게 만들어져 03:17 G2와 겹쳤다).
 
 .DESCRIPTION
   GitHub schedule 이벤트는 이 저장소에서 매번 3시간 30분~7시간 30분 늦게 만들어져(nightly.yml에서
@@ -11,13 +13,16 @@
                  깨지지 않게) 그 사본을 -Dispatch로 부르는 작업을 만든다. 조건: 사용자 로그온
                  세션에서만(gh는 Windows 자격 증명 관리자 keyring의 토큰을 쓴다), PC가 꺼져 있어
                  놓친 예약은 나중에 실행하지 않음, 동시에 둘 이상 실행하지 않음, 10분 제한.
-  -Unregister    작업을 지운다(복사한 사본·로그는 남긴다).
+  -Unregister    두 작업을 지운다(복사한 사본·로그는 남긴다).
   -Dispatch      작업이 부르는 모드: 요일로 suite를 고르고 gh workflow run을 부른다. 실행 기록은
                  <E2E 루트>\logs\nightly-dispatch.log에 한 줄씩(시각·suite·명령·종료 코드·gh 출력)
                  남긴다. 토큰은 이 프로세스 환경변수(GH_TOKEN)에만 두고 파일·로그에 쓰지 않는다.
                  -WhatIf면 gh를 부르지 않고 고른 suite와 명령만 출력한다(-Date로 날짜를 바꿔 본다).
                  gh가 실패하면(로그인 안 됨·keyring 잠김·네트워크·HTTP 4xx) 종료 코드와 출력 끝부분을
                  로그 한 줄로 남기고 0이 아닌 코드로 끝난다(작업 스케줄러 "마지막 실행 결과").
+
+  -DispatchCi    둘째 작업이 부르는 모드: gh workflow run foundation-ci.yml --ref <Ref>. 로그·토큰·
+                 -WhatIf 규칙은 -Dispatch와 같다(로그 줄은 workflow=foundation-ci.yml).
 
   -Gh            gh 실행 파일 이름·경로(기본 gh). 실패 경로를 가짜 명령으로 확인할 때 쓴다.
 
@@ -32,6 +37,10 @@
   powershell -ExecutionPolicy Bypass -File tests\e2e\infra\register-nightly.ps1 -Dispatch -WhatIf -Date 2026-11-15
 
 .EXAMPLE
+  # foundation-ci 밤 실행 명령 확인(gh를 부르지 않는다)
+  powershell -ExecutionPolicy Bypass -File tests\e2e\infra\register-nightly.ps1 -DispatchCi -WhatIf
+
+.EXAMPLE
   # 등록 해제
   powershell -ExecutionPolicy Bypass -File tests\e2e\infra\register-nightly.ps1 -Unregister
 #>
@@ -42,8 +51,11 @@ param(
     [string]$Ref = 'master',
     [string]$At = '03:17',
     [string]$TaskName = 'PureIron G2 nightly',
+    [string]$CiAt = '01:47',
+    [string]$CiTaskName = 'PureIron foundation-ci nightly',
     [string]$Gh = 'gh',
     [switch]$Dispatch,
+    [switch]$DispatchCi,
     [switch]$Unregister,
     [switch]$WhatIf,
     [datetime]$Date = (Get-Date)
@@ -51,6 +63,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $Workflow = 'nightly.yml'
+$CiWorkflow = 'foundation-ci.yml'
 $WeeklyDay = [System.DayOfWeek]::Sunday
 $TimeLimitMinutes = 10
 
@@ -67,6 +80,10 @@ function Get-Suite([datetime]$Day) {
 
 function Get-DispatchArgs([string]$Suite) {
     return @('workflow', 'run', $Workflow, '--ref', $Ref, '-R', $Repo, '-f', "ref=$Ref", '-f', "suite=$Suite")
+}
+
+function Get-CiDispatchArgs {
+    return @('workflow', 'run', $CiWorkflow, '--ref', $Ref, '-R', $Repo)
 }
 
 function Write-DispatchLog([string]$Line) {
@@ -106,12 +123,18 @@ function Invoke-Gh([string[]]$GhArgs) {
     return [pscustomobject]@{ Code = $code; Out = $out.ToArray(); Err = $err.ToArray() }
 }
 
-function Invoke-Dispatch {
-    $suite = Get-Suite $Date
-    $ghArgs = Get-DispatchArgs $suite
+function Invoke-Dispatch([switch]$Ci) {
+    if ($Ci) {
+        $label = "workflow=$CiWorkflow"
+        $ghArgs = Get-CiDispatchArgs
+    } else {
+        $suite = Get-Suite $Date
+        $label = "suite=$suite"
+        $ghArgs = Get-DispatchArgs $suite
+    }
     $shown = "gh $($ghArgs -join ' ')"
     if ($WhatIf) {
-        Write-Output "date=$($Date.ToString('yyyy-MM-dd')) day=$($Date.DayOfWeek) suite=$suite"
+        Write-Output "date=$($Date.ToString('yyyy-MM-dd')) day=$($Date.DayOfWeek) $label"
         Write-Output $shown
         return 0
     }
@@ -121,7 +144,7 @@ function Invoke-Dispatch {
     $token = ($auth.Out -join '').Trim()
     if ($auth.Code -ne 0 -or -not $token) {
         $code = if ($auth.Code -ne 0) { $auth.Code } else { 1 }
-        Write-DispatchLog "suite=$suite FAILED: no gh token for $GhUser exit=$code (gh auth login, user logon session) :: $(Get-Tail $auth.Err)"
+        Write-DispatchLog "$label FAILED: no gh token for $GhUser exit=$code (gh auth login, user logon session) :: $(Get-Tail $auth.Err)"
         return $code
     }
     $env:GH_TOKEN = $token
@@ -132,22 +155,17 @@ function Invoke-Dispatch {
         Remove-Item Env:\GH_TOKEN -ErrorAction SilentlyContinue
     }
     $status = if ($run.Code -eq 0) { 'ok' } else { 'FAILED' }
-    Write-DispatchLog "suite=$suite $status exit=$($run.Code) $shown :: $(Get-Tail (@($run.Out) + @($run.Err)))"
+    Write-DispatchLog "$label $status exit=$($run.Code) $shown :: $(Get-Tail (@($run.Out) + @($run.Err)))"
     return $run.Code
 }
 
-function Register-Nightly {
-    $root = Get-E2ERoot
-    $bin = Join-Path $root 'bin'
-    New-Item -ItemType Directory -Force -Path $bin | Out-Null
-    $copy = Join-Path $bin 'nightly-dispatch.ps1'
-    Copy-Item -Path $PSCommandPath -Destination $copy -Force
+function Register-One([string]$Name, [string]$Time, [string]$Mode, [string]$Copy, [string]$Bin, [string]$Text) {
     $arguments = @(
-        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', "`"$copy`"",
-        '-Dispatch', '-Repo', $Repo, '-GhUser', $GhUser, '-Ref', $Ref, '-Gh', "`"$Gh`""
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', "`"$Copy`"",
+        $Mode, '-Repo', $Repo, '-GhUser', $GhUser, '-Ref', $Ref, '-Gh', "`"$Gh`""
     ) -join ' '
-    $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arguments -WorkingDirectory $bin
-    $trigger = New-ScheduledTaskTrigger -Daily -At $At
+    $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arguments -WorkingDirectory $Bin
+    $trigger = New-ScheduledTaskTrigger -Daily -At $Time
     # 로그온 세션에서만(gh keyring) — 암호를 저장하지 않는 Interactive 작업.
     $user = "$env:USERDOMAIN\$env:USERNAME"
     $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
@@ -159,23 +177,38 @@ function Register-Nightly {
         -AllowStartIfOnBatteries `
         -DontStopIfGoingOnBatteries
     $settings.StartWhenAvailable = $false
-    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal `
-        -Settings $settings -Description "G2 nightly: gh workflow run $Workflow (Sunday = weekly)" -Force | Out-Null
-    Write-Output "registered '$TaskName': daily $At (local time), $Repo@$Ref as $GhUser, script $copy"
+    Register-ScheduledTask -TaskName $Name -Action $action -Trigger $trigger -Principal $principal `
+        -Settings $settings -Description $Text -Force | Out-Null
+    Write-Output "registered '$Name': daily $Time (local time), $Repo@$Ref as $GhUser, script $Copy $Mode"
+}
+
+function Register-Nightly {
+    $root = Get-E2ERoot
+    $bin = Join-Path $root 'bin'
+    New-Item -ItemType Directory -Force -Path $bin | Out-Null
+    $copy = Join-Path $bin 'nightly-dispatch.ps1'
+    Copy-Item -Path $PSCommandPath -Destination $copy -Force
+    Register-One $TaskName $At '-Dispatch' $copy $bin "G2 nightly: gh workflow run $Workflow (Sunday = weekly)"
+    Register-One $CiTaskName $CiAt '-DispatchCi' $copy $bin "G1 nightly: gh workflow run $CiWorkflow (full run incl. conditional jobs)"
     Write-Output "log: $(Join-Path $root 'logs\nightly-dispatch.log')"
     return 0
 }
 
 if ($Unregister) {
-    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
-        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-        Write-Output "unregistered '$TaskName'"
-    } else {
-        Write-Output "no task '$TaskName'"
+    foreach ($name in @($TaskName, $CiTaskName)) {
+        if (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue) {
+            Unregister-ScheduledTask -TaskName $name -Confirm:$false
+            Write-Output "unregistered '$name'"
+        } else {
+            Write-Output "no task '$name'"
+        }
     }
     exit 0
 }
 if ($Dispatch) {
     exit (Invoke-Dispatch)
+}
+if ($DispatchCi) {
+    exit (Invoke-Dispatch -Ci)
 }
 exit (Register-Nightly)
