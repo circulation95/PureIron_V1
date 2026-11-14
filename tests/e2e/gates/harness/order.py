@@ -1,8 +1,8 @@
 """G2 시험 실행 순서(M6-3 H12) — 파일 이름 순서에 기대지 않고 이 표 하나가 정한다.
 
-G2-1(설치) → site-a 시나리오 → site-b 시나리오 → crash(site-a, 주간 16건이 길어 뒤로) → 외부 접속
-0(현장별, 맨 끝). 한 파일 안에서는
-정의 순서 그대로다. 표에 없는 `test_g2_*.py`는 수집에서 멈춘다 — 새 시나리오 파일은 여기에 자리를
+G2-1(설치) → site-a 시나리오 → site-b 시나리오 → fleet(중앙·fleet-test 경로, 현장 둘 — c1 쌍) →
+crash(site-a, 주간 16건이 길어 뒤로) → 외부 접속 0(현장별, 맨 끝). 한 파일 안에서는 정의 순서
+그대로다. 표에 없는 `test_g2_*.py`는 수집에서 멈춘다 — 새 시나리오 파일은 여기에 자리를
 잡아야 돈다. `conftest.pytest_collection_modifyitems`가 부른다.
 """
 
@@ -23,6 +23,10 @@ FILES: tuple[tuple[str, str], ...] = (
     ("test_g2_rejections.py", "site-b"),  # G2-5 거부(설치 전 변조 2건 + c0·g2 거부 8건)
     ("test_g2_faults.py", "site-b"),  # G2-6 ② migrate 실패
     ("test_g2_draft.py", "site-b"),  # G2-8 드래프트 회수(PR 전) + 그 뒤 롤백
+    # ---- fleet(c1 쌍 — 중앙 + 두 현장 온라인, M6-4a). E_APPROVAL이 맨 앞: 그 되돌림 publish의
+    # "게시 0"은 main 현장 gen == c1 중앙 max일 때만 성립한다(G2-2가 main을 앞으로 민다).
+    ("test_g2_approval.py", "fleet"),  # E_APPROVAL(K14) — VM 없음, 중앙만 c1
+    ("test_g2_scheduled.py", "fleet"),  # G2-2 예약 갱신(site-a) + G2-3 격리(site-b)
     # ---- crash(site-a) — G2-6 ④⑤ 2건 + 주간 16건(`weekly`), 매 건 c0 복원
     ("test_g2_crash.py", "crash"),
     # ---- 맨 끝: 모든 시나리오를 거친 누적 카운터
@@ -30,9 +34,18 @@ FILES: tuple[tuple[str, str], ...] = (
 )
 """(시험 파일, 묶음) — 이 순서대로 돈다."""
 CRASH = "crash"
-GROUPS = (FIRST, "site-a", "site-b", CRASH, LAST)
-GROUP_SITE = {"site-a": "site-a", "site-b": "site-b", CRASH: "site-a"}
-"""시나리오 묶음 → 그 묶음이 쓰는 현장."""
+FLEET = "fleet"
+GROUPS = (FIRST, "site-a", "site-b", FLEET, CRASH, LAST)
+GROUP_SITES: dict[str, tuple[str, ...]] = {
+    "site-a": ("site-a",),
+    "site-b": ("site-b",),
+    FLEET: ("site-a", "site-b"),
+    CRASH: ("site-a",),
+}
+"""시나리오 묶음 → 그 묶음이 쓰는 현장. fleet은 c1 쌍이 두 현장을 함께 온라인으로 만든다(현장을
+되돌리지 않는 `E_APPROVAL`도 같은 c1을 쓴다)."""
+CENTRAL_GROUPS = frozenset({FLEET})
+"""중앙(c1 쌍)이 필요한 묶음 — 이 묶음 시험이 하나도 없으면 중앙을 띄우지 않는다."""
 
 
 def rank(file_name: str) -> int:
@@ -63,16 +76,16 @@ SITE_PARAM = re.compile(r"\[([^\]]+)\]$")
 """맨 끝 묶음 시험 id의 현장 매개변수(`test_g2_no_external[site-a]` → `site-a`)."""
 
 
-def _site_of(test_id: str) -> tuple[str, str] | None:
-    """시험 id(`<파일>::<이름>`)의 (묶음 종류, 현장): 현장 묶음이면 ("scenario", 현장), 맨 끝
-    묶음이면 ("last", 매개변수 현장), 그 밖(G2-1·표에 없음)은 None."""
+def _sites_of(test_id: str) -> tuple[str, frozenset[str]] | None:
+    """시험 id(`<파일>::<이름>`)의 (묶음 종류, 현장들): 시나리오 묶음이면 ("scenario", 그 묶음의
+    현장들), 맨 끝 묶음이면 ("last", {매개변수 현장}), 그 밖(G2-1·표에 없음)은 None."""
     file_name, _, name = test_id.partition("::")
     group = dict(FILES).get(file_name)
     if group == LAST:
         found = SITE_PARAM.search(name)
-        return ("last", found[1]) if found else None
-    if group in GROUP_SITE:
-        return ("scenario", GROUP_SITE[group])
+        return ("last", frozenset({found[1]})) if found else None
+    if group in GROUP_SITES:
+        return ("scenario", frozenset(GROUP_SITES[group]))
     return None
 
 
@@ -81,7 +94,7 @@ SITES = ("site-a", "site-b")
 
 def sites_needed(test_ids: Sequence[str]) -> set[str]:
     """선택된 시험(`<파일>::<이름>`)이 쓰는 현장 — 세션 fixture가 이 현장만 올린다(3a 리뷰 L3: crash
-    재시도가 site-b까지 띄우지 않게). 시나리오 묶음은 `GROUP_SITE`, G2-1·맨 끝 묶음은 매개변수
+    재시도가 site-b까지 띄우지 않게). 시나리오 묶음은 `GROUP_SITES`, G2-1·맨 끝 묶음은 매개변수
     현장(`[site-a]`)이다. 현장을 정할 수 없는 시험(표에 없음·매개변수 없음)이 하나라도 있으면 둘
     다."""
     needed: set[str] = set()
@@ -89,8 +102,8 @@ def sites_needed(test_ids: Sequence[str]) -> set[str]:
         file_name, _, name = test_id.partition("::")
         group = dict(FILES).get(file_name)
         found = SITE_PARAM.search(name)
-        if group in GROUP_SITE:
-            needed.add(GROUP_SITE[group])
+        if group in GROUP_SITES:
+            needed |= set(GROUP_SITES[group])
         elif group in (FIRST, LAST) and found is not None and found[1] in SITES:
             needed.add(found[1])
         else:
@@ -105,7 +118,21 @@ def retry_closure(targets: Sequence[str], every: Sequence[str]) -> list[str]:
     시험이 대상이면 그 현장의 시나리오 시험 전부를 더한다(시나리오 없는 세션의 카운터로 통과하지
     않게). 현장은 `FILES` 표에서 읽는다 — 시험을 더하면 묶음이 따라온다. `every`(첫 실행의 시험 id
     전부)에서 고르고 그 순서로 돌려준다."""
-    found = [f for t in targets if (f := _site_of(t)) is not None]
-    want = {("last" if kind == "scenario" else "scenario", site) for kind, site in found}
-    chosen = set(targets) | {t for t in every if _site_of(t) in want}
+    found = [f for t in targets if (f := _sites_of(t)) is not None]
+    want = {
+        ("last" if kind == "scenario" else "scenario", s) for kind, sites in found for s in sites
+    }
+
+    def wanted(test_id: str) -> bool:
+        own = _sites_of(test_id)
+        return own is not None and any((own[0], s) in want for s in own[1])
+
+    chosen = set(targets) | {t for t in every if wanted(t)}
     return [t for t in every if t in chosen] + [t for t in targets if t not in every]
+
+
+def needs_central(test_ids: Sequence[str]) -> bool:
+    """선택된 시험 중 중앙(c1 쌍)이 필요한 묶음(`CENTRAL_GROUPS`)의 것이 있는가 — 없으면 fleet
+    세션을 만들지 않는다(c0 시나리오만 고른 재시도가 중앙을 띄우지 않게)."""
+    groups = dict(FILES)
+    return any(groups.get(t.partition("::")[0]) in CENTRAL_GROUPS for t in test_ids)

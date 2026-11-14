@@ -6,12 +6,19 @@ c0), 실행 순서(`harness.order` 표 — G2-1 → site-a 시나리오 → site
 기대지 않으므로 nightly의 infra 재시도가 실패한 시험만 골라 새 pytest로 돌려도 된다. 판정 여러 개를
 내는 시나리오는 module fixture가 한 번 돌리고 시험들이 항목별로 단언한다.
 
+fleet 묶음(M6-4a)은 세션 fixture `fleet_c1`(중앙 + 두 현장 온라인 + 기준선 PR → c1 쌍,
+`harness.fleet_session`)을 쓴다 — fleet 시험이 골라졌을 때만 만들고 세션 끝에 중앙을 내린다.
+
+시험마다 결과를 `--junitxml` 옆 `<이름>.jsonl`에 한 줄씩 바로 쓴다(`pytest_runtest_logreport`) —
+pytest가 시간 초과로 죽어 junit이 없어도 끝난 시험의 결과가 남는다(`nightly.read_results`).
+
 G2 시험(`test_g2_*.py`)은 `tests/e2e/gates/pytest.ini`로 실행할 때만 수집한다 — 루트 설정으로 도는
 G1 `unit`(`pytest … tests/e2e`)에는 skip이 아니라 수집 자체가 빠진다(실제 VM이 필요하다).
 """
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from collections.abc import Generator
@@ -21,7 +28,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from harness import failures, g2, memwatch, order
+from harness import failures, fleet_session, g2, memwatch, order
 from harness.context import E2EError
 
 GATES_INI = Path(__file__).resolve().parent / "pytest.ini"
@@ -65,10 +72,68 @@ def windows_memory(g2_run_id: str) -> Generator[None]:
 def g2_session(request: pytest.FixtureRequest, g2_run_id: str) -> g2.Session:
     """`PUREIRON_G2_SHA`(제품 커밋)가 없으면 저장소 HEAD를 쓴다. 이 세션에서 돌 시험(표지·노드 id로
     고른 뒤)이 쓰는 현장만 올린다(`order.sites_needed`, 3a 리뷰 L3)."""
-    session = g2.prepare(g2_run_id, os.environ.get("PUREIRON_G2_SHA") or g2.head_sha())
-    selected = [f"{item.path.name}::{item.name}" for item in request.session.items]
-    g2.bring_up_all(session, only=order.sites_needed(selected))
+    selected = selected_ids(request)
+    only = order.sites_needed(selected)
+    session = g2.prepare(g2_run_id, os.environ.get("PUREIRON_G2_SHA") or g2.head_sha(), only=only)
+    g2.bring_up_all(session, only=only)
     return session
+
+
+def selected_ids(request: pytest.FixtureRequest) -> list[str]:
+    """이 세션에서 돌 시험(표지·노드 id로 고른 뒤)의 `<파일>::<이름>`."""
+    return [f"{item.path.name}::{item.name}" for item in request.session.items]
+
+
+@pytest.fixture(scope="session")
+def fleet_c1(
+    request: pytest.FixtureRequest, g2_session: g2.Session
+) -> Generator[fleet_session.FleetSession]:
+    """fleet 묶음의 출발점 c1 쌍(`fleet_session.prepare_c1`). 세션 끝에 중앙을 내린다(실패해도 —
+    준비가 실패하면 `prepare_c1`이 이미 내렸다)."""
+    fs = fleet_session.open_fleet(g2_session, selected_ids(request))
+    if fs is None:
+        raise E2EError("fleet_c1 requested but no fleet test is selected (harness/order.py)")
+    try:
+        yield fs
+    finally:
+        fleet_session.close()
+
+
+def results_jsonl(config: pytest.Config) -> Path | None:
+    """`--junitxml <x>.xml`이면 `<x>.jsonl`(G2 실행만)."""
+    xml = getattr(config.option, "xmlpath", None)
+    if config.inipath != GATES_INI or not xml:
+        return None
+    return Path(str(xml)).with_suffix(".jsonl")
+
+
+JSONL: dict[str, Path | None] = {"path": None}
+"""이 pytest 실행의 jsonl 경로(`pytest_sessionstart`가 정한다)."""
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    path = JSONL["path"] = results_jsonl(session.config)
+    if path is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
+
+
+def pytest_runtest_logreport(report: pytest.TestReport) -> None:
+    """단계(setup·call·teardown)마다 결과를 한 줄씩 — 실패한 단계와 call 결과만(통과한 setup·
+    teardown은 쓰지 않는다). 분류는 `failure_class` 속성."""
+    path = JSONL["path"]
+    if path is None or (report.when != "call" and report.passed):
+        return
+    classes = [v for k, v in report.user_properties if k == "failure_class"]
+    line = {
+        "test_id": report.nodeid,
+        "when": report.when,
+        "outcome": report.outcome,
+        "failure_class": classes[-1] if classes else None,
+        "seconds": round(report.duration, 3),
+    }
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(line, ensure_ascii=False) + "\n")
 
 
 @pytest.hookimpl(wrapper=True)
