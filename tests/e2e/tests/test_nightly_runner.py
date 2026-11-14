@@ -14,13 +14,14 @@ from typing import cast
 
 import nightly
 import pytest
-from harness import collect, flake, preflight, publish, report
+from harness import collect, flake, preflight, publish, report, suites
 from harness.context import E2EError, write_json
-from harness.github import DryRun
+from harness.github import HISTORY_FILE, DryRun
 
 SHA = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d"
 CASE_A = "test_g2_install.py::test_g2_1_install_and_100_tags_good[site-a]"
 CASE_B = "test_g2_install.py::test_g2_1_install_and_100_tags_good[site-b]"
+G2 = suites.SUITES["g2"]
 TODAY = date(2026, 11, 10)
 
 
@@ -99,11 +100,46 @@ def test_history_line_format() -> None:
     )
     assert lines[1] == (
         '{"class": "infra", "date": "2026-11-10", "outcome": "fail", '
-        f'"product_sha": "{SHA}", "run": "20261110T180000Z", "seconds": 1.0, '
-        f'"test_id": "{CASE_B}"}}'
+        f'"product_sha": "{SHA}", "quarantined": false, "run": "20261110T180000Z", '
+        f'"seconds": 1.0, "suite": "g2", "test_id": "{CASE_B}"}}'
     )
     assert json.loads(lines[0])["class"] is None
     assert json.loads(lines[0])["outcome"] == "pass"
+
+
+def quarantined_night(run: str, failure_class: str) -> list[dict[str, object]]:
+    summary = report.summary(
+        run_id=run,
+        date="2026-11-10",
+        product_sha=SHA,
+        results=results((CASE_A, "passed", None), (CASE_B, "failed", failure_class)),
+        quarantined=frozenset({CASE_B}),
+    )
+    return report.parse_history("\n".join(report.history_lines(summary)))
+
+
+@pytest.mark.parametrize("failure_class", ["product", "infra"])
+def test_quarantined_failures_do_not_count_as_two_in_a_row(failure_class: str) -> None:
+    """2a 리뷰 L4·변이: 격리된 실패를 세면 알려진 flake가 이틀마다 이슈를 연다."""
+    rows = quarantined_night("R1", failure_class) + quarantined_night("R2", failure_class)
+    assert [r["quarantined"] for r in rows] == [False, True, False, True]
+    assert report.failed_tests(rows, failure_class) == set[str]()
+    assert not report.needs_issue(rows)
+    assert report.repeated_infra(rows) == []
+    unheld = [{**r, "quarantined": False} for r in rows]
+    assert report.failed_tests(unheld, failure_class) == {CASE_B}
+
+
+def test_history_lines_carry_the_suite_and_old_lines_read_as_g2() -> None:
+    """주간 run은 평일 시간 판정(run 90분)에서 빠진다 — 이력 줄의 `suite`로 가른다. M6-3b 전 줄
+    (리허설·3a)에는 `suite`가 없고 모두 평일 묶음이다."""
+    weekly = {**summary_of("R1", (CASE_A, "passed", None)), "suite": "weekly"}
+    (line,) = report.history_lines(weekly)
+    assert report.suite_of(json.loads(line)) == "weekly"
+    old = '{"class": null, "date": "2026-11-10", "outcome": "pass", "run": "R0", "test_id": "x"}'
+    assert [report.suite_of(row) for row in report.parse_history(old)] == ["g2"]
+    assert report.status_description(weekly).startswith("G2 weekly passed: 1/1")
+    assert report.status_description(summary_of("R2")).startswith("G2 nightly ")
 
 
 def test_status_state_and_description() -> None:
@@ -570,14 +606,23 @@ def test_missing_junit_is_infra_and_reruns_everything(tmp_path: Path) -> None:
 
 
 class FakeGitHub:
-    def __init__(self, history: str = "", open_issue: int | None = None) -> None:
-        self.history = history
+    """`history`는 예전 `history.jsonl`의 내용, `files`는 그 밖의 이력 파일(월별)."""
+
+    def __init__(
+        self,
+        history: str = "",
+        open_issue: int | None = None,
+        files: dict[str, str] | None = None,
+    ) -> None:
+        self.files = {HISTORY_FILE: history, **(files or {})}
         self.issue = open_issue
         self.calls: list[tuple[str, object]] = []
         self.appends: list[tuple[str, str, str]] = []
+        self.reads: list[str] = []
 
     def read_file(self, branch: str, path: str) -> str | None:
-        return self.history or None
+        self.reads.append(path)
+        return self.files.get(path) or None
 
     def append_file(self, branch: str, path: str, text: str, message: str) -> None:
         self.calls.append(("append", branch))
@@ -602,6 +647,56 @@ class FakeGitHub:
         self.calls.append(("delete", name))
 
 
+def test_history_goes_to_the_month_file_and_reads_last_month_and_the_old_file() -> None:
+    """2a 리뷰 L5·변이: 지난달 파일을 읽지 않으면 월초(1일)의 "2연속"이 지난달 마지막 실행을
+    놓친다."""
+    day1 = report.summary(
+        run_id="20261201T181700Z",
+        date="2026-12-01",
+        product_sha=SHA,
+        results=results((CASE_B, "failed", "product")),
+    )
+    nov = json.dumps(rows("20261130T181700Z", "fail", "product")) + "\n"
+    gh = FakeGitHub(files={"history-2026-11.jsonl": nov})
+    out = publish.step_publish(day1, gh, date(2026, 12, 1))
+    assert gh.reads == ["history.jsonl", "history-2026-11.jsonl", "history-2026-12.jsonl"]
+    assert [path for _, path, _ in gh.appends] == ["history-2026-12.jsonl"]
+    assert out["history_file"] == "history-2026-12.jsonl"
+    assert out["issue"] == "created"  # 11-30(지난달 파일) + 12-01 = 2연속
+
+
+def test_history_month_follows_the_run_date_and_january_reads_december() -> None:
+    assert publish.history_reads(date(2027, 1, 15)) == [
+        "history.jsonl",
+        "history-2026-12.jsonl",
+        "history-2027-01.jsonl",
+    ]
+    late: dict[str, object] = {"date": "2026-11-30"}
+    assert publish.history_file(publish.run_day(late, date(2026, 12, 1))) == "history-2026-11.jsonl"
+    assert publish.run_day({"date": "x"}, date(2026, 12, 1)) == date(2026, 12, 1)
+
+
+def test_publish_writes_to_the_run_date_month_and_never_twice() -> None:
+    """리뷰 L4(변이 R6 생존): runner가 10-31 run의 summary를 11-01에 다시 publish하면 이력은 run
+    날짜의 달(10월 파일)에 쓰고, 이미 있으면 다시 쓰지 않는다 — 오늘의 달에 쓰면 중복 판단이
+    지난달 파일까지 읽느냐에 기댄다."""
+    late = report.summary(
+        run_id="20261031T181700Z",
+        date="2026-10-31",
+        product_sha=SHA,
+        results=results((CASE_A, "passed", None)),
+    )
+    gh = FakeGitHub()
+    out = publish.step_publish(late, gh, date(2026, 11, 1))
+    ((_, path, text),) = gh.appends
+    assert path == out["history_file"] == "history-2026-10.jsonl"
+    assert gh.reads == ["history.jsonl", "history-2026-09.jsonl", "history-2026-10.jsonl"]
+    again = FakeGitHub(files={"history-2026-10.jsonl": text})
+    out = publish.step_publish(late, again, date(2026, 11, 1))
+    assert again.appends == []
+    assert out["history_lines"] == 0
+
+
 def previous_product_run() -> str:
     return json.dumps(rows("20261109T180000Z", "fail", "product")) + "\n"
 
@@ -615,7 +710,7 @@ def test_publish_appends_history_and_sets_status() -> None:
     )
     assert [name for name, _ in gh.calls] == ["append", "status"]
     ((branch, path, text),) = gh.appends
-    assert (branch, path) == ("e2e-history", "history.jsonl")
+    assert (branch, path) == ("e2e-history", "history-2026-11.jsonl")
     assert text.count("\n") == 2
     assert gh.calls[1] == ("status", (SHA, "success", "g2/nightly"))
     assert out["issue"] is None
@@ -886,16 +981,14 @@ def test_run_ids_that_could_leave_the_run_directory_are_refused(bad: str) -> Non
     assert raised.value.code == 2
 
 
-ON_TIME = datetime(2026, 11, 10, 18, 20, tzinfo=UTC)
-"""cron(18:17 UTC) 직후 — 실행기 시험이 늦은 시작 가드에 걸리지 않는 고정 시각(L8)."""
-
-
 def test_runner_failure_is_reported_as_infra_and_exits_2(tmp_path: Path) -> None:
     """L2: 실행기 자신의 예상 밖 예외는 product 종료 코드(1)가 아니라 infra(2)로, status를
     남긴다."""
     gh = FakeGitHub()
 
-    def broken(run_id: str, sha: str, today: date, out: Path, client: object) -> int:
+    def broken(
+        run_id: str, sha: str, today: date, out: Path, client: object, *, suite: object
+    ) -> int:
         raise RuntimeError("hyperv remove failed during recovery")
 
     code = nightly.step_all(
@@ -907,7 +1000,6 @@ def test_runner_failure_is_reported_as_infra_and_exits_2(tmp_path: Path) -> None
         today=TODAY,
         out_dir=lambda run_id: tmp_path / run_id,
         environ={},
-        now=lambda: ON_TIME,
     )
     assert code == 2
     out = tmp_path / "20261110T180000Z"
@@ -925,7 +1017,9 @@ def test_runner_failure_survives_a_failing_publish(tmp_path: Path) -> None:
     def no_github(dry_run: bool) -> FakeGitHub:
         raise RuntimeError("gh: network unreachable")
 
-    def body(run_id: str, sha: str, today: date, out: Path, client: object) -> int:
+    def body(
+        run_id: str, sha: str, today: date, out: Path, client: object, *, suite: object
+    ) -> int:
         pytest.fail("body must not run without a GitHub client")
 
     code = nightly.step_all(
@@ -937,7 +1031,6 @@ def test_runner_failure_survives_a_failing_publish(tmp_path: Path) -> None:
         today=TODAY,
         out_dir=lambda run_id: tmp_path / run_id,
         environ={},
-        now=lambda: ON_TIME,
     )
     assert code == 2
     published = json.loads((tmp_path / "20261110T180000Z" / "publish.json").read_text("utf-8"))
@@ -1099,25 +1192,29 @@ def test_retry_timeout_is_capped_by_the_time_left(tmp_path: Path) -> None:
         recover_env=lambda: (True, []),
         today=TODAY,
         quarantine=[],
-        deadline=nightly.RUN_BUDGET_S,
+        deadline=G2.run_budget_s,
         clock=clock,
     )
-    assert fake.timeouts == [nightly.PYTEST_TIMEOUT_S, nightly.RUN_BUDGET_S - 70 * 60]
+    assert fake.timeouts == [G2.pytest_timeout_s, G2.run_budget_s - 70 * 60]
     assert summary["verdict"] == "passed"
 
 
-def test_time_budget_fits_the_workflow_timeout() -> None:
-    """R2-H1: workflow `timeout-minutes`를 넘기면 Actions가 job을 죽여 status·이력이 남지 않는다 —
-    준비(checkout·uv sync) + run 예산(preflight·첫 실행·복구·재시도, 실행 중 남은 시간으로 자른다)
-    + 뒷정리(collect 최악·publish·cleanup)가 120분보다 작아야 한다."""
+@pytest.mark.parametrize("name", sorted(suites.SUITES))
+def test_time_budget_fits_the_workflow_timeout(name: str) -> None:
+    """R2-H1: workflow 시간을 넘기면 Actions가 job을 죽여 status·이력이 남지 않는다 — 준비
+    (checkout·uv sync) + 묶음의 run 예산(preflight·첫 실행·복구·재시도, 실행 중 남은 시간으로
+    자른다) + 뒷정리(collect 최악·publish·cleanup)가 묶음의 workflow 시간보다 작고, 그것이 yml
+    `timeout-minutes`(가장 긴 묶음) 이하여야 한다."""
+    suite = suites.SUITES[name]
     workflow = (nightly.paths.REPO / ".github" / "workflows" / "nightly.yml").read_text("utf-8")
     assert f"timeout-minutes: {nightly.WORKFLOW_TIMEOUT_S // 60}\n" in workflow
-    total = nightly.SETUP_RESERVE_S + nightly.RUN_BUDGET_S + nightly.TAIL_RESERVE_S
-    assert total < nightly.WORKFLOW_TIMEOUT_S
+    assert suite.workflow_s <= nightly.WORKFLOW_TIMEOUT_S
+    total = nightly.SETUP_RESERVE_S + suite.run_budget_s + nightly.TAIL_RESERVE_S
+    assert total < suite.workflow_s
     collect_worst = len(nightly.G2_SITES) * len(collect.REMOTE_LOGS) * collect.COLLECT_TIMEOUT_S
     assert collect_worst + nightly.PUBLISH_RESERVE_S <= nightly.TAIL_RESERVE_S
-    assert nightly.RETRY_MIN_S < nightly.RETRY_TIMEOUT_S < nightly.PYTEST_TIMEOUT_S
-    assert nightly.PYTEST_TIMEOUT_S < nightly.RUN_BUDGET_S
+    assert suite.retry_min_s < suite.retry_timeout_s < suite.pytest_timeout_s
+    assert suite.pytest_timeout_s < suite.run_budget_s
 
 
 def test_publish_does_not_append_the_same_run_twice() -> None:
@@ -1137,7 +1234,9 @@ def test_runner_failure_keeps_the_real_summary_and_publishes_it(tmp_path: Path) 
     gh = FakeGitHub()
     real = summary_of(DAY2, (CASE_B, "failed", "product"))
 
-    def body(run_id: str, sha: str, today: date, out: Path, client: object) -> int:
+    def body(
+        run_id: str, sha: str, today: date, out: Path, client: object, *, suite: object
+    ) -> int:
         write_json(out / "summary.json", real)
         raise RuntimeError("gh: status call failed")
 
@@ -1150,7 +1249,6 @@ def test_runner_failure_keeps_the_real_summary_and_publishes_it(tmp_path: Path) 
         today=TODAY,
         out_dir=lambda run_id: tmp_path / run_id,
         environ={},
-        now=lambda: ON_TIME,
     )
     assert code == 2
     out = tmp_path / DAY2
@@ -1164,3 +1262,99 @@ def test_runner_failure_keeps_the_real_summary_and_publishes_it(tmp_path: Path) 
     published = json.loads((out / "publish.json").read_text("utf-8"))
     assert published["published_summary"] == "summary.json"
     assert "status call failed" in str(published["runner_error"])
+
+
+# ---------------------------------------------------------------- fix-r1 M2: 시험 단위 2연속
+
+WEEKLY_CASE = "test_g2_crash.py::test_g2_crash_weekly[kill@committed]"
+
+
+def night(
+    run: str, suite: str, *cases: tuple[str, str, str | None], quarantined: bool = False
+) -> list[dict[str, object]]:
+    """한 실행의 이력 줄 — `cases`는 (시험 id, pass·fail, 분류)."""
+    return [
+        {
+            **rows(run, outcome, klass),
+            "suite": suite,
+            "test_id": test_id,
+            "quarantined": quarantined,
+        }
+        for test_id, outcome, klass in cases
+    ]
+
+
+def weekly_chain(failure_class: str, middle_sunday: str | None) -> list[dict[str, object]]:
+    """일요일(주간) 주간 전용 시험 실패 → 월~토(평일, 그 시험 없음·통과) → [가운데 일요일] →
+    월~토 → 마지막 일요일 같은 시험 실패."""
+    weekdays = [f"r{n:02d}" for n in range(2, 8)]
+    history = night("r01", "weekly", (CASE_A, "pass", None), (WEEKLY_CASE, "fail", failure_class))
+    for run in weekdays:
+        history += night(run, "g2", (CASE_A, "pass", None))
+    last = "r08"
+    if middle_sunday is not None:
+        history += night(
+            "r08", "weekly", (CASE_A, "pass", None), (WEEKLY_CASE, middle_sunday, None)
+        )
+        for n in range(9, 15):
+            history += night(f"r{n:02d}", "g2", (CASE_A, "pass", None))
+        last = "r15"
+    return history + night(
+        last, "weekly", (CASE_A, "pass", None), (WEEKLY_CASE, "fail", failure_class)
+    )
+
+
+def test_a_weekly_only_test_failing_two_sundays_in_a_row_opens_an_issue() -> None:
+    """M2·변이: 직전 실행(토요일 평일 묶음)에는 주간 전용 시험이 없다. 실행 단위로만 보면 매주
+    실패해도 이슈가 영영 열리지 않는다."""
+    history = weekly_chain("product", None)
+    assert report.repeated_by_test(history, "product") == {WEEKLY_CASE}
+    assert report.needs_issue(history)
+    infra = weekly_chain("infra", None)
+    assert report.repeated_infra(infra) == [WEEKLY_CASE]
+
+
+def test_a_passing_sunday_in_between_breaks_the_weekly_chain() -> None:
+    assert not report.needs_issue(weekly_chain("product", "pass"))
+    assert report.repeated_infra(weekly_chain("infra", "pass")) == []
+
+
+def test_a_crashed_or_quarantined_previous_sunday_does_not_count() -> None:
+    """직전 주간 실행이 그 시험 없이 깨졌으면(`pytest` 줄만) 끊기고, 격리 중이던 실패는 세지 않는다
+    (지금 규칙 그대로). 시작하지 못한 일요일은 건너뛴다."""
+    first = night("r01", "weekly", (WEEKLY_CASE, "fail", "product"))
+    last = night("r09", "weekly", (CASE_A, "fail", "product"), (WEEKLY_CASE, "fail", "product"))
+    weekday = night("r05", "g2", (CASE_A, "pass", None))
+    crashed = night("r08", "weekly", ("pytest", "fail", "infra"))
+    stopped = night("r08", "weekly", ("preflight", "fail", "infra"))
+    held = night("r01", "weekly", (WEEKLY_CASE, "fail", "product"), quarantined=True)
+    assert report.repeated_by_test(first + weekday + crashed + last, "product") == set[str]()
+    assert report.repeated_by_test(first + weekday + stopped + last, "product") == {WEEKLY_CASE}
+    assert report.repeated_by_test(held + weekday + last, "product") == set[str]()
+
+
+def test_weekday_tests_still_need_the_run_right_before() -> None:
+    """평일 시험은 두 묶음 모두에 있으므로 바로 앞 실행과만 잇는다 — 앞 실행(일요일 주간)이
+    통과였으면 토·월 실패는 2연속이 아니다. 실행 단위 규칙(시험이 달라도 product 2연속이면
+    이슈)은 그대로다."""
+    sat = night("r1", "g2", (CASE_A, "fail", "product"))
+    sun = night("r2", "weekly", (CASE_A, "pass", None), (WEEKLY_CASE, "pass", None))
+    mon = night("r3", "g2", (CASE_A, "fail", "product"))
+    assert not report.needs_issue(sat + sun + mon)
+    different = night("r1", "g2", (CASE_A, "fail", "product")) + night(
+        "r2", "g2", (CASE_A, "pass", None), (CASE_B, "fail", "product")
+    )
+    assert report.repeated_by_test(different, "product") == set[str]()
+    assert report.needs_issue(different)
+
+
+def test_publish_opens_the_issue_for_a_weekly_only_test() -> None:
+    history = weekly_chain("product", None)
+    *older, _ = report.by_run(history).values()
+    old = "".join(json.dumps(row) + "\n" for rows_ in older for row in rows_)
+    sunday = {
+        **summary_of("r08", (CASE_A, "passed", None), (WEEKLY_CASE, "failed", "product")),
+        "suite": "weekly",
+    }
+    out = publish.step_publish(sunday, FakeGitHub(history=old), TODAY)
+    assert out["issue"] == "created"

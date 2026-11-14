@@ -51,6 +51,9 @@ release 쌍(`BASE`·`NEXT`·`FAULT`)은 `release_pair.py`가 정한다 — 함�
   복사한다). nightly 기록·이미지는 최근 `NIGHTLY_KEEP`개만 남긴다. HEAD 빌드가 실패하면 exit 0으로
   `{"ok": false, ...}`를 낸다(제품 실패, D7) — 빌드 뒤 Docker가 응답하지 않으면 `INFRA_EXIT`(75,
   인프라 실패)이다. 그 밖의 0 아닌 종료(빌드가 성공한 뒤의 예외 포함)는 제품 스크립트 실패다.
+  단계마다 시간 제한이 있다(`HEAD_BUILD_TIMEOUT_S`·`DOCKER_BUILD_TIMEOUT_S`·`DOCKER_SAVE_TIMEOUT_S`·
+  `GIT_TIMEOUT_S`, M6-3b N3): 시간 초과 때 Docker가 답하면 제품(빌드 초과는 `{"ok": false, "rc":
+  "timeout"}`, 그 뒤 단계는 exit 1), 답하지 않으면 인프라(75)다.
   prune은 NEXT와 그 FAULT 파생(`<NEXT>h`·`<NEXT>m`)을 한 묶음으로 남기고 지운다(store
   디렉터리·docker 태그).
 - `nightly-faults`(G2 nightly FAULT 2종, M6-3 H9): 같은 run의 NEXT 기록에서 health
@@ -65,6 +68,14 @@ release 쌍(`BASE`·`NEXT`·`FAULT`)은 `release_pair.py`가 정한다 — 함�
 
     uv run --no-sync python tests/e2e/gates/harness/bundles.py expected-schema --work W \\
         --next n1a2b3c4 --out <expected-schema.json>
+- `reject-materials`(G2-5 거부, M6-3b J1): `W/rejects`에 `E_SIG` 재료(root가 인증하지 않은
+  release key와 그 키를 인증한 다른 root·cert)와 `E_SCHEMA` 재료(NEXT 이미지 그대로에 스키마만
+  NEXT epoch + 2인 가짜 기록·store)를 새로 만든다(`reject_materials`). `site`는 서명 재료
+  (`--release-key`·`--cert-dir`·`--root-pub`)·`--min-updater`·기록
+  디렉터리(`--releases`·`--store`)를 받는다 — 기본값은 그대로(시험 키·`--work`의 기록).
+
+    uv run --no-sync python tests/e2e/gates/harness/bundles.py reject-materials --work W \\
+        --next n1a2b3c4
 """
 
 from __future__ import annotations
@@ -79,6 +90,7 @@ import sys
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
@@ -97,6 +109,8 @@ from harness.release_pair import (
     ReleasePair,
     fault_record_problems,
 )
+from pureiron_bundle import keys, trust
+from pureiron_bundle.pib import CERT_FILE, CERT_SIG
 from pureiron_core.platform.migrate import load_catalog
 from pureiron_project import canonical
 from pureiron_project.project import load_project
@@ -123,6 +137,16 @@ NIGHTLY_KEEP = 3
 """WSL에 남기는 nightly 기록·이미지 수(디스크, 상위 계획 R8)."""
 BUILD_TAIL_CHARS = 4000
 DOCKER_INFO_TIMEOUT_S = 60
+HEAD_BUILD_TIMEOUT_S = 40 * 60
+"""`build_images.sh`(core·collector·web·simulator) 한 번 — BuildKit 캐시 적중이면 1분 안(M6-3a
+실측 34초), 캐시가 없어도 의존성 설치 몇 분이다. 넘기면(Docker가 답하는데) HEAD가 빌드에서 멈춘
+것으로 본다(제품)."""
+DOCKER_BUILD_TIMEOUT_S = 5 * 60
+"""라벨 파생·FAULT 파생 `docker build` 하나(`FROM` 한 겹 — 보통 몇 초)."""
+DOCKER_SAVE_TIMEOUT_S = 10 * 60
+"""`docker save` 하나(이미지 tar 수백 MB)."""
+DOCKER_RM_TIMEOUT_S = 2 * 60
+GIT_TIMEOUT_S = 60
 INFRA_EXIT = 75
 """실행 환경 탓으로 멈출 때의 종료 코드(EX_TEMPFAIL) — Windows 쪽 `golden.wsl`이 `WslError`(infra)로
 바꾼다(`golden.WSL_INFRA_EXIT`와 같다). 그 밖의 0 아닌 종료는 제품 스크립트 실패(product)다."""
@@ -134,8 +158,8 @@ def infra_exit(message: str) -> SystemExit:
     return SystemExit(INFRA_EXIT)
 
 
-def _run(*cmd: str, cwd: Path = ROOT) -> None:
-    subprocess.run(cmd, cwd=cwd, check=True)
+def _run(*cmd: str, cwd: Path = ROOT, timeout_s: float | None = None) -> None:
+    subprocess.run(cmd, cwd=cwd, check=True, timeout=timeout_s)
 
 
 def local_digest(tag: str, scratch: Path) -> str | None:
@@ -290,7 +314,7 @@ def _docker_ok() -> bool:
 
 
 def _save(tag: str, tar: Path) -> dict[str, str]:
-    _run("docker", "save", "-o", str(tar), tag)
+    _run("docker", "save", "-o", str(tar), tag, timeout_s=DOCKER_SAVE_TIMEOUT_S)
     return {"tag": tag, "config_digest": config_digest_from_tar(tar)}
 
 
@@ -306,7 +330,11 @@ def nightly_images(
         dockerfile = NIGHTLY_DOCKERFILE.format(svc=svc, source=f"{name}-src", sha=sha)
         tag = f"pureiron/{svc}:{name}"
         subprocess.run(
-            ("docker", "build", "-q", "-t", tag, "-"), input=dockerfile, text=True, check=True
+            ("docker", "build", "-q", "-t", tag, "-"),
+            input=dockerfile,
+            text=True,
+            check=True,
+            timeout=DOCKER_BUILD_TIMEOUT_S,
         )
         images[svc] = _save(tag, target / f"{svc}.tar")
     lock = read_lock(src / "deploy" / "releases" / "site-db.lock")
@@ -326,7 +354,11 @@ def nightly_images(
 
 def _git_head(src: Path) -> str:
     return subprocess.run(
-        ("git", "-C", str(src), "rev-parse", "HEAD"), capture_output=True, text=True, check=True
+        ("git", "-C", str(src), "rev-parse", "HEAD"),
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=GIT_TIMEOUT_S,
     ).stdout.strip()
 
 
@@ -338,6 +370,7 @@ def _build_head(src: Path, name: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         check=False,
+        timeout=HEAD_BUILD_TIMEOUT_S,
     )
 
 
@@ -355,15 +388,30 @@ def nightly_release(
     docker_ok: Callable[[], bool] = _docker_ok,
     store_root: Callable[[], Path] = image_store,
     records: Path = ROOT / "deploy" / "releases",
+    link: Callable[[Path, Path], None] = relink,
+    finish: Callable[..., dict[str, dict[str, str]]] | None = None,
 ) -> dict[str, object]:
     """HEAD(`src`) 빌드 → 라벨 파생 → `W/releases/<name>.json`·`W/store/<name>/`·시뮬레이터 tar.
     빌드 실패는 `{"ok": false}`(제품 실패), 사본 커밋 불일치·빌드 뒤 Docker 무응답·BASE 기록/store
-    없음은 `INFRA_EXIT`(인프라 실패), 빌드가 성공한 뒤의 다른 예외는 exit 1(제품 실패)이다.
-    `git_head`·`build_head`·`docker_ok`·`store_root`·`records`는 단위 시험이 바꿔 끼운다."""
-    head = git_head(src)
+    없음은 `INFRA_EXIT`(인프라 실패), 빌드가 성공한 뒤의 다른 예외는 exit 1(제품 실패)이다. 시간
+    초과(N3): git = 인프라(사본 문제), 빌드 = Docker가 답하면 `{"ok": false, "rc": "timeout"}`(제품
+    — HEAD가 빌드에서 멈춤) 아니면 인프라, 빌드 뒤 파생·저장 = Docker가 답하면 exit 1(제품 스크립트
+    실패, nightly-faults와 같은 규칙) 아니면 인프라. `git_head`·`build_head`·`docker_ok`·
+    `store_root`·`records`·`link`·`finish`(빌드 뒤 단계 — 기본 `finish_release`)는 단위 시험이 바꿔
+    끼운다."""
+    try:
+        head = git_head(src)
+    except subprocess.TimeoutExpired:
+        raise infra_exit(f"git rev-parse in {src} timed out after {GIT_TIMEOUT_S}s") from None
     if head != sha:
         raise infra_exit(f"{src} is at {head}, not {sha}")
-    build = build_head(src, name)
+    try:
+        build = build_head(src, name)
+    except subprocess.TimeoutExpired:
+        if not docker_ok():
+            raise infra_exit("docker is not responding after the HEAD build timed out") from None
+        tail = f"build_images.sh did not finish in {HEAD_BUILD_TIMEOUT_S}s (docker answers)"
+        return {"ok": False, "stage": "build", "rc": "timeout", "tail": tail}
     if build.returncode != 0:
         if not docker_ok():
             raise infra_exit("docker is not responding after the HEAD build failed")
@@ -375,9 +423,16 @@ def nightly_release(
         raise infra_exit(f"BASE {base}: record or image store {real_store / base} missing")
     reset_records(releases)
     store.mkdir(parents=True, exist_ok=True)
-    relink(store / base, real_store / base)
+    link(store / base, real_store / base)
     base_record = cast(dict[str, object], json.loads(base_path.read_text(encoding="utf-8")))
-    images = nightly_images(store, real_store, src, name=name, sha=sha, base_record=base_record)
+    try:
+        images = (finish or finish_release)(
+            store, real_store, src, name=name, sha=sha, base_record=base_record, sim_out=sim_out
+        )
+    except subprocess.TimeoutExpired as exc:
+        if not docker_ok():
+            raise infra_exit(f"docker is not responding after {exc.cmd} timed out") from None
+        raise SystemExit(f"{exc.cmd} timed out after {exc.timeout}s (docker answers)") from None
     catalog = load_catalog(src / "services" / "core" / "migrations")
     record = {
         "name": name,
@@ -393,15 +448,46 @@ def nightly_release(
     }
     path = releases / f"{name}.json"
     path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return {"ok": True, "name": name, "record": record, "simulator_tar": str(sim_out)}
+
+
+def finish_release(
+    store: Path,
+    real_store: Path,
+    src: Path,
+    *,
+    name: str,
+    sha: str,
+    base_record: dict[str, object],
+    sim_out: Path,
+) -> dict[str, dict[str, str]]:
+    """HEAD 빌드 뒤 단계: 라벨 파생·이미지 저장(`nightly_images`) → 시뮬레이터 tar → 오래된 nightly
+    묶음 prune(이미지 지우기는 최선 노력 — 시간 초과도 넘긴다). 이미지 기록을 돌려준다."""
+    images = nightly_images(store, real_store, src, name=name, sha=sha, base_record=base_record)
     sim_out.parent.mkdir(parents=True, exist_ok=True)
-    _run("docker", "save", "-o", str(sim_out), f"pureiron/simulator:{name}-src")
+    _run(
+        "docker",
+        "save",
+        "-o",
+        str(sim_out),
+        f"pureiron/simulator:{name}-src",
+        timeout_s=DOCKER_SAVE_TIMEOUT_S,
+    )
     nightly = {d.name: d.stat().st_mtime for d in store.glob("n*") if d.is_dir()}
     for old in nightly_prune(nightly, name):
         shutil.rmtree(store / old)
         for svc in NIGHTLY_BUILD:
             for tag in (f"pureiron/{svc}:{old}", f"pureiron/{svc}:{old}-src"):
-                subprocess.run(("docker", "image", "rm", tag), capture_output=True, check=False)
-    return {"ok": True, "name": name, "record": record, "simulator_tar": str(sim_out)}
+                try:
+                    subprocess.run(
+                        ("docker", "image", "rm", tag),
+                        capture_output=True,
+                        check=False,
+                        timeout=DOCKER_RM_TIMEOUT_S,
+                    )
+                except subprocess.TimeoutExpired:
+                    continue  # 디스크 정리일 뿐이다 — 다음 run의 prune이 다시 지운다
+    return images
 
 
 FAULT_MIGRATE_SQL = """\
@@ -504,7 +590,7 @@ def nightly_faults(
     그대로 다시 던진다(제품 스크립트 실패, exit 1)."""
     try:
         return build_faults(work, next_name, image_migrations=image_migrations)
-    except subprocess.CalledProcessError as exc:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         if not docker_ok():
             raise infra_exit(f"docker is not responding after {exc.cmd} failed") from None
         raise
@@ -566,7 +652,15 @@ def build_faults(
             epoch = write_fault_migrations(source, build_dir / "migrations")
             dockerfile = FAULT_MIGRATE_DOCKERFILE.format(source=next_name)
         (build_dir / "Dockerfile").write_text(dockerfile, encoding="utf-8")
-        _run("docker", "build", "-q", "-t", f"pureiron/{changed}:{name}", str(build_dir))
+        _run(
+            "docker",
+            "build",
+            "-q",
+            "-t",
+            f"pureiron/{changed}:{name}",
+            str(build_dir),
+            timeout_s=DOCKER_BUILD_TIMEOUT_S,
+        )
         images: dict[str, dict[str, str]] = {}
         for svc in APP_SERVICES:
             tag = f"pureiron/{svc}:{name}"
@@ -615,14 +709,45 @@ def _docker(args: Sequence[str], timeout_s: float) -> subprocess.CompletedProces
     )
 
 
-def _remove_labeled(docker: DockerRun) -> None:
-    """`SCHEMA_LABEL`이 붙은 컨테이너·네트워크를 지운다(이전 실행이 시간 초과로 죽어 남긴 것)."""
-    found = docker(("ps", "-aq", "--filter", f"label={SCHEMA_LABEL}"), SCHEMA_DOCKER_S)
-    if found.stdout.split():
-        docker(("rm", "-f", *found.stdout.split()), SCHEMA_DOCKER_S)
-    found = docker(("network", "ls", "-q", "--filter", f"label={SCHEMA_LABEL}"), SCHEMA_DOCKER_S)
-    if found.stdout.split():
-        docker(("network", "rm", *found.stdout.split()), SCHEMA_DOCKER_S)
+OWNER_PID = re.compile(r"-(\d+)$")
+"""임시 컨테이너·네트워크 이름 끝의 만든 프로세스 pid(`e2e-schema-db-<NEXT>-<pid>`)."""
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # 다른 사용자의 살아 있는 프로세스
+    return True
+
+
+def stale_names(names: Sequence[str], alive: Callable[[int], bool]) -> list[str]:
+    """`names` 중 만든 프로세스(이름 끝 pid)가 이미 끝난 것 — 지금 도는 다른 expected-schema(같은
+    PC의
+    수동 WSL 빌드)의 것은 남긴다(3a 리뷰 L4). pid가 없는 이름은 누구 것인지 몰라 남긴다."""
+    stale: list[str] = []
+    for name in names:
+        found = OWNER_PID.search(name)
+        if found is not None and not alive(int(found[1])):
+            stale.append(name)
+    return stale
+
+
+def _remove_labeled(docker: DockerRun, alive: Callable[[int], bool]) -> None:
+    """`SCHEMA_LABEL`이 붙은 컨테이너·네트워크 중 만든 프로세스가 끝난 것(이전 실행이 시간 초과로
+    죽어
+    남긴 것)만 지운다."""
+    label = ("--filter", f"label={SCHEMA_LABEL}")
+    found = docker(("ps", "-a", *label, "--format", "{{.Names}}"), SCHEMA_DOCKER_S)
+    stale = stale_names(found.stdout.split(), alive)
+    if stale:
+        docker(("rm", "-f", *stale), SCHEMA_DOCKER_S)
+    found = docker(("network", "ls", *label, "--format", "{{.Name}}"), SCHEMA_DOCKER_S)
+    stale = stale_names(found.stdout.split(), alive)
+    if stale:
+        docker(("network", "rm", *stale), SCHEMA_DOCKER_S)
 
 
 @dataclass(frozen=True)
@@ -635,6 +760,8 @@ class SchemaDb:
     docker: DockerRun
     sleep: Callable[[float], None]
     clock: Callable[[], float]
+    migrator: str = ""
+    """migrate 클라이언트 컨테이너 이름 — 시간 초과로 클라이언트만 죽어도 `remove`가 지운다(L4)."""
 
     def start(self) -> None:
         """네트워크 → TimescaleDB(신뢰 인증, 호스트 포트 없음) → TCP로 받을 때까지. 실패는
@@ -666,7 +793,11 @@ class SchemaDb:
     def migrate(self, core: str) -> subprocess.CompletedProcess[str] | None:
         """`core` 이미지로 빈 DB를 끝까지 migrate한다(시간 초과면 None)."""
         dsn = f"PUREIRON_DB_DSN=postgresql://pureiron@{self.name}:5432/pureiron"
-        cmd = ("run", "--rm", "--label", SCHEMA_LABEL, "--network", self.net, "-e", dsn, core)
+        named = ("--name", self.migrator) if self.migrator else ()
+        cmd = (
+            *("run", "--rm", *named, "--label", SCHEMA_LABEL, "--network", self.net),
+            *("-e", dsn, core),
+        )
         try:
             return self.docker((*cmd, "migrate", "up"), SCHEMA_MIGRATE_S)
         except subprocess.TimeoutExpired:
@@ -684,7 +815,8 @@ class SchemaDb:
         return schema
 
     def remove(self) -> None:
-        for cleanup in (("rm", "-f", self.name), ("network", "rm", self.net)):
+        containers = (self.name, self.migrator) if self.migrator else (self.name,)
+        for cleanup in (("rm", "-f", *containers), ("network", "rm", self.net)):
             try:
                 self.docker(cleanup, SCHEMA_DOCKER_S)
             except subprocess.TimeoutExpired:
@@ -700,6 +832,7 @@ def expected_schema(
     docker_ok: Callable[[], bool] = _docker_ok,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
+    alive: Callable[[int], bool] = _pid_alive,
 ) -> dict[str, object]:
     """D9 기대 스키마(M6-3 H8): 그 run의 site-db 이미지로 임시 TimescaleDB를 띄우고(호스트 포트
     없음 — 같은 PC의 CI가 25432·25433을 쓴다) NEXT core 이미지로 빈 DB를 끝까지 migrate한 뒤, VM
@@ -711,13 +844,21 @@ def expected_schema(
     images = cast(dict[str, dict[str, str]], json.loads(path.read_text("utf-8"))["images"])
     core, image = images["core"]["tag"], images["site-db"]["tag"]
     suffix = f"{next_name}-{os.getpid()}"
-    db = SchemaDb(f"e2e-schema-db-{suffix}", f"e2e-schema-{suffix}", image, docker, sleep, clock)
+    db = SchemaDb(
+        f"e2e-schema-db-{suffix}",
+        f"e2e-schema-{suffix}",
+        image,
+        docker,
+        sleep,
+        clock,
+        migrator=f"e2e-schema-migrate-{suffix}",
+    )
     try:
         if docker(("image", "inspect", image), SCHEMA_DOCKER_S).returncode:
             tar = work / "store" / next_name / "site-db.tar"
             if docker(("load", "-q", "-i", str(tar)), SCHEMA_DOCKER_S).returncode:
                 raise infra_exit(f"cannot load {image} from {tar}")
-        _remove_labeled(docker)
+        _remove_labeled(docker, alive)
         db.start()
         migrated = db.migrate(core)
         if migrated is None or migrated.returncode:
@@ -736,6 +877,16 @@ def expected_schema(
     return {"ok": True, "schema": schema, "path": str(out), "image": core}
 
 
+@dataclass(frozen=True)
+class Signing:
+    """번들 서명 재료 — 기본은 시험 키(`KEYS`). G2-5 `E_SIG`는 root가 인증하지 않은 release key와
+    그 키를 인증한 다른 root(`reject_materials`)를 넘긴다(빌더의 자체 검증은 그 root로 통과한다)."""
+
+    release_key: Path = KEYS / "release.key"
+    cert_dir: Path = KEYS
+    root_pub: Path = KEYS / "test-root.pub"
+
+
 def site(
     work: Path,
     out: Path,
@@ -746,7 +897,15 @@ def site(
     end: str,
     site_id: str,
     project_dir: Path = FIXTURE,
+    signing: Signing | None = None,
+    min_updater: str | None = None,
+    releases: Path | None = None,
+    store: Path | None = None,
 ) -> Path:
+    """fleet 현장 파일을 쓰고 `build_bundle.py`로 서명 번들을 만든다. 기본은 `work`의 기록·store와
+    시험 키다. G2-5 거부 재료는 서명(`signing`)·`min_updater`·기록 디렉터리(`releases`·`store`)를
+    바꾼다."""
+    keys_used = signing or Signing()
     fleet = work / "sites" / f"{site_id}-g{gen}.yaml"
     fleet.parent.mkdir(parents=True, exist_ok=True)
     fleet.write_text(
@@ -756,6 +915,7 @@ def site(
         encoding="utf-8",
     )
     out.mkdir(parents=True, exist_ok=True)
+    extra = ("--min-updater", min_updater) if min_updater is not None else ()
     _run(
         "uv",
         "run",
@@ -767,21 +927,114 @@ def site(
         "--project-dir",
         str(project_dir),
         "--release-key",
-        str(KEYS / "release.key"),
+        str(keys_used.release_key),
         "--cert-dir",
-        str(KEYS),
+        str(keys_used.cert_dir),
         "--root-pub",
-        str(KEYS / "test-root.pub"),
+        str(keys_used.root_pub),
         "--fleet-commit",
         "e2e0000",
         "--out",
         str(out),
         "--releases",
-        str(work / "releases"),
+        str(releases or work / "releases"),
         "--store",
-        str(work / "store"),
+        str(store or work / "store"),
+        *extra,
     )
     return out / f"pureiron-{site_id}-g{gen}.pib"
+
+
+REJECTS = "rejects"
+"""G2-5 거부 재료 디렉터리(`W/rejects`) — 부를 때마다 새로 만든다. nightly 작업 디렉터리에만
+둔다."""
+SCHEMA_JUMP = "s"
+"""가짜 스키마 기록 이름 접미사(`<NEXT>s`) — FAULT 묶음 정규식(`h`·`m`) 밖이고 `W/rejects`에만
+있다."""
+SCHEMA_JUMP_EPOCHS = 2
+"""가짜 기록의 epoch = NEXT + 2 — 현장(NEXT epoch)에서 두 epoch를 건너뛰므로 `E_SCHEMA`다(+ 1이면
+MIGRATE로 받아들여진다)."""
+ROGUE_CERT_DAYS = 30
+
+
+def schema_jump_record(next_record: dict[str, object]) -> dict[str, object]:
+    """`E_SCHEMA` 재료: NEXT 기록의 이미지 그대로(digest 검사를 통과한다)에 스키마만 NEXT epoch +
+    `SCHEMA_JUMP_EPOCHS`인 가짜 release 기록. 버전 `<NEXT 버전>.fs` — 접미사 없는 버전이면
+    `<버전>-fs`(fleet 버전 형식 `YYYY.M.N(-[0-9A-Za-z.]+)?` 안, WSL 실확인에서 찾음)."""
+    epoch = cast(dict[str, int], next_record["schema"])["epoch"] + SCHEMA_JUMP_EPOCHS
+    name = f"{next_record['name']}{SCHEMA_JUMP}"
+    version = str(next_record["version"])
+    return {
+        "name": name,
+        "release": name,
+        "version": f"{version}{'.' if '-' in version else '-'}f{SCHEMA_JUMP}",
+        "commit": next_record["commit"],
+        "images": json.loads(json.dumps(next_record["images"])),
+        "schema": {"epoch": epoch, "app_expected": epoch, "app_max_compatible": epoch + 1},
+    }
+
+
+def reject_materials(
+    work: Path,
+    next_name: str,
+    *,
+    now: datetime,
+    link: Callable[[Path, Path], None] = relink,
+) -> dict[str, object]:
+    """G2-5 거부 재료를 `W/rejects`에 새로 만든다:
+
+    - `E_SIG`(`rogue/`): 새 root key와 새 release key, 그 root가 release key에 발급한 cert
+      (`not_before` = `now` - 1일). 현장의 진짜 root로는 cert 서명이 맞지 않는다 — payload digest는
+      정상이다.
+    - `E_SCHEMA`(`releases/`·`store/`): `schema_jump_record` 하나와 그 이미지(NEXT store tar를
+    가리키는
+      symlink).
+
+    `E_UPDATER`(`--min-updater`)·`E_SITE`·`E_DIGEST`는 재료가 따로 없다. 결과 JSON(WSL 경로)."""
+    root = work / REJECTS
+    if root.exists():
+        shutil.rmtree(root)
+    rogue = root / "rogue"
+    rogue.mkdir(parents=True)
+    root_seed, release_seed = keys.generate_seed(), keys.generate_seed()
+    keys.write_private_key(rogue / "release.key", release_seed)
+    keys.write_public_key(rogue / "root.pub", keys.public_key(root_seed))
+    cert, cert_sig = trust.issue_cert(
+        root_seed,
+        keys.public_key(release_seed),
+        1,
+        now - timedelta(days=1),
+        days=ROGUE_CERT_DAYS,
+    )
+    (rogue / CERT_FILE).write_bytes(cert)
+    (rogue / CERT_SIG).write_bytes(cert_sig)
+    next_path = work / "releases" / f"{next_name}.json"
+    if not next_path.is_file():
+        raise SystemExit(f"{next_path} missing (bundles.py nightly-release)")
+    record = schema_jump_record(cast(dict[str, object], json.loads(next_path.read_text("utf-8"))))
+    releases, store = root / "releases", root / "store" / str(record["name"])
+    releases.mkdir(parents=True)
+    store.mkdir(parents=True)
+    (releases / f"{record['name']}.json").write_text(
+        json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    for svc in (*APP_SERVICES, "site-db"):
+        link(store / f"{svc}.tar", (work / "store" / next_name / f"{svc}.tar").resolve())
+    schema = cast(dict[str, int], record["schema"])
+    return {
+        "ok": True,
+        "rogue": {
+            "release_key": str(rogue / "release.key"),
+            "cert_dir": str(rogue),
+            "root_pub": str(rogue / "root.pub"),
+        },
+        "schema": {
+            "version": record["version"],
+            "epoch": schema["epoch"],
+            "releases": str(releases),
+            "store": str(root / "store"),
+        },
+    }
 
 
 def unabsorbed_copy(source: Path, dest: Path) -> Path:
@@ -833,9 +1086,20 @@ def _tool(*cmd: str) -> dict[str, object]:
     return {"rc": done.returncode, "stdout": done.stdout[-2000:], "stderr": done.stderr[-2000:]}
 
 
-def absorb(work: Path, draft: Path, site_key: Path, site_id: str) -> dict[str, object]:
-    """ⓓ: 아직 absorb하지 않은 repo 사본에 현장 드래프트를 회수하고 게이트를 사전 점검한다."""
-    repo, absorbed = work / "m5" / "repo", work / "m5" / "absorbed"
+def absorb(
+    work: Path,
+    draft: Path,
+    site_key: Path,
+    site_id: str,
+    *,
+    repo: Path | None = None,
+    dest: Path | None = None,
+) -> dict[str, object]:
+    """ⓓ: 아직 absorb하지 않은 repo 사본에 현장 드래프트를 회수하고 게이트를 사전 점검한다. 기본
+    repo·결과는 `W/m5/repo`·`W/m5/absorbed`(run.py). G2-8은 G2 트리(`--repo`)를 `--dest`에 복사해
+    회수한다."""
+    repo = repo or work / "m5" / "repo"
+    absorbed = dest or work / "m5" / "absorbed"
     if not repo.is_dir():
         raise SystemExit(f"{repo} missing (bundles.py m5-project)")
     if absorbed.exists():
@@ -897,6 +1161,15 @@ def main(argv: list[str] | None = None) -> int:
     site_cmd.add_argument("--window-end", required=True)
     site_cmd.add_argument("--site", default="site-a")
     site_cmd.add_argument("--project-dir", type=Path, default=FIXTURE)
+    site_cmd.add_argument("--release-key", type=Path, default=None, help="기본: 시험 키")
+    site_cmd.add_argument("--cert-dir", type=Path, default=None, help="기본: 시험 키 디렉터리")
+    site_cmd.add_argument("--root-pub", type=Path, default=None, help="빌더 자체 검증용 root")
+    site_cmd.add_argument("--min-updater", default=None, help="manifest min_updater")
+    site_cmd.add_argument("--releases", type=Path, default=None, help="기본: --work/releases")
+    site_cmd.add_argument("--store", type=Path, default=None, help="기본: --work/store")
+    rejects_cmd = sub.add_parser("reject-materials")
+    rejects_cmd.add_argument("--work", type=Path, required=True)
+    rejects_cmd.add_argument("--next", required=True, help="NEXT 이름 n<sha7>")
     m5 = sub.add_parser("m5-project")
     m5.add_argument("--work", type=Path, required=True)
     absorb_cmd = sub.add_parser("absorb")
@@ -904,6 +1177,8 @@ def main(argv: list[str] | None = None) -> int:
     absorb_cmd.add_argument("--draft", type=Path, required=True)
     absorb_cmd.add_argument("--site-key", type=Path, required=True)
     absorb_cmd.add_argument("--site", default="site-a")
+    absorb_cmd.add_argument("--repo", type=Path, default=None, help="기본: --work/m5/repo")
+    absorb_cmd.add_argument("--dest", type=Path, default=None, help="기본: --work/m5/absorbed")
     install_cmd = sub.add_parser("install")
     install_cmd.add_argument("--work", type=Path, required=True)
     install_cmd.add_argument("--out", type=Path, required=True)
@@ -928,6 +1203,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "fault-release":
         print(fault_release(args.work, DEFAULT))
     elif args.command == "site":
+        default = Signing()
+        signing = Signing(
+            args.release_key or default.release_key,
+            args.cert_dir or default.cert_dir,
+            args.root_pub or default.root_pub,
+        )
         print(
             site(
                 args.work,
@@ -938,12 +1219,22 @@ def main(argv: list[str] | None = None) -> int:
                 end=args.window_end,
                 site_id=args.site,
                 project_dir=args.project_dir,
+                signing=signing,
+                min_updater=args.min_updater,
+                releases=args.releases,
+                store=args.store,
             )
         )
+    elif args.command == "reject-materials":
+        found = reject_materials(args.work, args.next, now=datetime.now(UTC))
+        print(json.dumps(found, sort_keys=True))
     elif args.command == "m5-project":
         print(m5_project(args.work))
     elif args.command == "absorb":
-        print(json.dumps(absorb(args.work, args.draft, args.site_key, args.site)))
+        absorbed = absorb(
+            args.work, args.draft, args.site_key, args.site, repo=args.repo, dest=args.dest
+        )
+        print(json.dumps(absorbed))
     elif args.command == "nightly-release":
         result = nightly_release(
             args.work,

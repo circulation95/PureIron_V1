@@ -205,10 +205,11 @@ class Docker:
         self.calls: list[tuple[str, ...]] = []
         self.built: set[str] = set()
 
-    def run(self, *cmd: str, cwd: Path = paths.REPO) -> None:
+    def run(self, *cmd: str, cwd: Path = paths.REPO, timeout_s: float | None = None) -> None:
         del cwd
         self.calls.append(cmd)
         if cmd[:2] == ("docker", "build"):
+            assert timeout_s == bundles.DOCKER_BUILD_TIMEOUT_S  # N3: 파생 빌드도 시간 제한
             self.built.add(cmd[cmd.index("-t") + 1])
 
     def save(self, tag: str, tar: Path) -> dict[str, str]:

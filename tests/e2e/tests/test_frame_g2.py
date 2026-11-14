@@ -8,7 +8,7 @@ import sys
 from typing import Any, cast
 
 import pytest
-from harness import buildhost, failures, g2, paths, schedule
+from harness import buildhost, failures, g2, paths, suites
 from harness.context import E2EError, InfraError
 from harness.golden import WslError
 from harness.hyperv import HyperVError
@@ -89,16 +89,21 @@ def workflow(name: str) -> dict[str, Any]:
     return cast(dict[str, Any], canonical.load(text, name))
 
 
-def test_nightly_workflow_runs_by_cron_and_by_hand_on_the_e2e_runner() -> None:
-    """E1·M6-2b A1: cron 하나(`schedule.CRON`과 같은 값 — 다르면 늦은 시작 판단이 엉뚱한 시각을
-    잰다) + 수동 실행. runner·시간·동시 실행·권한·action 고정."""
+def test_nightly_workflow_runs_only_by_dispatch_on_the_e2e_runner() -> None:
+    """★H13: schedule(cron) 없음 — 시작은 이 PC의 작업 스케줄러가 부르는 workflow_dispatch뿐이다.
+    suite 선택지 = `harness.suites`(g2·weekly), 그 값이 `PUREIRON_G2_SUITE`로 nightly.py에 간다.
+    runner·시간(가장 긴 묶음)·동시 실행·권한·action 고정."""
     flow = workflow("nightly.yml")
-    assert list(flow["on"]) == ["schedule", "workflow_dispatch"]
-    assert flow["on"]["schedule"] == [{"cron": schedule.CRON}]
-    assert set(flow["on"]["workflow_dispatch"]["inputs"]) == {"ref", "suite"}
+    assert list(flow["on"]) == ["workflow_dispatch"]
+    inputs = flow["on"]["workflow_dispatch"]["inputs"]
+    assert set(inputs) == {"ref", "suite"}
+    assert inputs["suite"]["options"] == ["g2", "weekly"] == sorted(suites.SUITES)
+    assert inputs["suite"]["default"] == "g2"
     job = flow["jobs"]["g2"]
     assert job["runs-on"] == ["self-hosted", "e2e"]
-    assert job["timeout-minutes"] == 120
+    assert job["timeout-minutes"] == 270 == suites.SUITES["weekly"].workflow_s // 60
+    (nightly_step,) = [s for s in job["steps"] if "nightly.py all" in str(s.get("run", ""))]
+    assert nightly_step["env"]["PUREIRON_G2_SUITE"] == "${{ inputs.suite }}"
     assert flow["concurrency"] == {"group": "g2-nightly", "cancel-in-progress": False}
     # M1: actions: read가 없으면 GITHUB_TOKEN으로 foundation-ci 진행 여부(gh run list)를 못 본다
     assert flow["permissions"] == {
@@ -119,6 +124,5 @@ def test_nightly_workflow_runs_by_cron_and_by_hand_on_the_e2e_runner() -> None:
         assert action in ci  # foundation-ci와 같은 고정 값
     runs = [str(step.get("run", "")) for step in job["steps"]]
     assert any("tests/e2e/gates/nightly.py all" in run for run in runs)
-    # schedule 실행에서는 inputs가 빈 값이다 — step 이름이 `nightly ()`가 되지 않게
     names = [str(step.get("name", "")) for step in job["steps"]]
-    assert "nightly (${{ inputs.suite || 'g2' }})" in names
+    assert "nightly (${{ inputs.suite }})" in names

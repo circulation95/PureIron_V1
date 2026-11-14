@@ -440,6 +440,234 @@ def judge_migrate_failure(
     }
 
 
+# ---------------------------------------------------------------- G2-5 거부(M6-3b J1)
+
+
+def judge_rejected(
+    before: dict[str, object],
+    after: dict[str, object],
+    report: dict[str, object],
+    *,
+    exit_code: int,
+    want_exit: int,
+    want_code: str | None,
+    want_digests: dict[str, str],
+) -> dict[str, bool]:
+    """적용되면 안 되는 번들(거부·같은 gen no-op): CLI 종료 코드, 보고의 거부 코드(no-op은 보고
+    없음 = None), core `StartedAt` 불변(전 값을 못 읽었으면 거짓), 실행 이미지 == 그 현장의 지금
+    release, edit-lock 해제, applied gen 불변(전 값이 정수일 때만 참). run.py의
+    `site.stage_untouched`는 그대로 두고 G2는 이것을 쓴다(edit-lock·applied gen 추가, M6-3 F13)."""
+    started = core_started_at(before)
+    applied = updater_state(before).get("applied_gen")
+    return {
+        "exit": exit_code == want_exit,
+        "code": report.get("code") == want_code,
+        "core_not_restarted": started is not None and core_started_at(after) == started,
+        "images_match": bool(want_digests) and running_digests(after) == want_digests,
+        "edit_unlocked": edit_unlocked(after),
+        "applied_gen_kept": isinstance(applied, int)
+        and updater_state(after).get("applied_gen") == applied,
+    }
+
+
+def judge_no_op(
+    before: dict[str, object],
+    after: dict[str, object],
+    report: dict[str, object],
+    *,
+    report_files: int | None,
+) -> dict[str, bool]:
+    """같은 gen no-op이 "재적용"이 아니었는가(M6-3b 리뷰 L1): Updater는 NO_OP이면 보고를 쓰지 않고
+    시도를 지운다. 같은 gen을 결함으로 다시 적용하면 성공 보고(`code` None)가 생기고, 같은 이미지라
+    core가 다시 만들어지지 않으면 `judge_rejected` 여섯 항목이 모두 참일 수 있다. 그래서 보고가 없다
+    — 그 번들 sha의 보고 파일 수가 0(못 읽은 None은 거짓)이고 보고 dict도 비었다 — 와
+    `last_attempted_gen` 불변(전 값이 정수일 때만 참)을 더 본다."""
+    attempted = updater_state(before).get("last_attempted_gen")
+    return {
+        "no_report": report_files == 0 and report == {},
+        "attempted_gen_kept": isinstance(attempted, int)
+        and updater_state(after).get("last_attempted_gen") == attempted,
+    }
+
+
+SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+BOOTSTRAP_MEMBER = "bootstrap/bootstrap-verify.sh"
+PAYLOAD_MISMATCH = "payload sha256 mismatch"
+"""`bootstrap-verify.sh` ④ 단계가 내는 실패 문구 — 변조된 deb는 여기서 멈춰야 한다."""
+BOOTSTRAP_FAIL_EXIT = 1
+
+
+def _tampered_member(found: dict[str, object]) -> str:
+    tamper = found.get("tamper")
+    member = cast(dict[str, object], tamper).get("member") if isinstance(tamper, dict) else None
+    return member if isinstance(member, str) else ""
+
+
+def _seen_sha(found: dict[str, object]) -> str | None:
+    seen = found.get("sha256")
+    return seen if isinstance(seen, str) and SHA256_HEX.fullmatch(seen) else None
+
+
+def judge_script_tamper(found: dict[str, object], runbook_sha: str) -> dict[str, bool]:
+    """설치 전 ①: 설치 번들 사본의 `bootstrap-verify.sh`만 바꾸면 runbook의 sha256 대조에서 멈추고
+    (읽은 sha256이 runbook 값과 다르다 — 못 읽었으면 거짓) 스크립트를 실행하지 않으며, docker가
+    설치되지 않았고 탐침 디렉터리가 지워졌다."""
+    seen = _seen_sha(found)
+    return {
+        "tampered_copy": _tampered_member(found) == BOOTSTRAP_MEMBER,
+        "runbook_stops": seen is not None and seen != runbook_sha,
+        "bootstrap_not_run": "bootstrap" not in found,
+        "docker_absent": found.get("docker") == "absent",
+        "probe_removed": found.get("removed") is True,
+    }
+
+
+def judge_deb_tamper(found: dict[str, object], runbook_sha: str) -> dict[str, bool]:
+    """설치 전 ②: 설치 번들 사본의 `debs/*.deb` 하나만 바꾸면 정품 `bootstrap-verify.sh`(sha256이
+    runbook 값과 같다)가 payload 대조에서 종료 코드 1로 멈추고, docker가 설치되지 않았으며 탐침
+    디렉터리가 지워졌다."""
+    member = _tampered_member(found)
+    bootstrap = found.get("bootstrap")
+    run = cast(dict[str, object], bootstrap) if isinstance(bootstrap, dict) else {}
+    return {
+        "tampered_copy": member.startswith("debs/") and member.endswith(".deb"),
+        "genuine_script": _seen_sha(found) == runbook_sha,
+        "bootstrap_fails": run.get("rc") == BOOTSTRAP_FAIL_EXIT
+        and PAYLOAD_MISMATCH in str(run.get("stderr") or ""),
+        "docker_absent": found.get("docker") == "absent",
+        "probe_removed": found.get("removed") is True,
+    }
+
+
+# ---------------------------------------------------------------- G2-8 드래프트 회수(M6-3b J2)
+
+DRAFT_ALARM = "temp-low"
+DRAFT_ALARM_BODY: dict[str, object] = {"setpoint": 6.5}
+"""G2-8의 세 번째 PATCH — fixture `setpoint: 5`의 운영 값 변경."""
+DRAFT_PATCHES = 3
+"""G2-8 PATCH 수(태그 하나·알람 둘) — 하나마다 site_rev +1."""
+
+
+def draft_patch_kept(db: dict[str, object]) -> bool:
+    """G2-8 PATCH 값 셋이 DB 정의에 그대로 있는가(`patch_kept` + 세 번째 알람)."""
+    alarm = definitions(db, "alarm_defs").get(DRAFT_ALARM, {})
+    return patch_kept(db) and all(alarm.get(k) == v for k, v in DRAFT_ALARM_BODY.items())
+
+
+def judge_draft_patch(out: dict[str, object], db: dict[str, object]) -> dict[str, bool]:
+    """G2-8 현장 PATCH 3회: web 경유 로그인 → 태그·알람·알람이 각각 200이고 site_rev를 하나씩
+    올리며(전 + 1·+ 2·+ 3), 끝난 뒤 site_rev = 전 + `DRAFT_PATCHES`·base_site_rev 그대로, DB
+    정의 = PATCH 값 셋. 전 값을 못 읽었으면 PATCH 판정이 모두 거짓이다."""
+    before = revs(reply(out, "project_before")[1])
+    after = revs(reply(out, "project_after")[1])
+    login, _ = reply(out, "login")
+    rev0 = before[0] if before is not None else None
+
+    def patched(key: str, step: int) -> bool:
+        status, body = reply(out, key)
+        site_rev = cast(dict[str, object], body).get("site_rev") if isinstance(body, dict) else None
+        return rev0 is not None and status == 200 and site_rev == rev0 + step
+
+    return {
+        "login": login == 200 and out.get("session_cookie") is True,
+        "tag_patch": patched("tag", 1),
+        "alarm_patch": patched("alarm", 2),
+        "alarm2_patch": patched("alarm2", DRAFT_PATCHES),
+        "site_rev": before is not None
+        and after is not None
+        and after == (before[0] + DRAFT_PATCHES, before[1]),
+        "readback": draft_patch_kept(db),
+    }
+
+
+def judge_draft_reapplied(
+    snap: dict[str, object], want_rev: int, content_hash: str | None
+) -> dict[str, bool]:
+    """G2-8 흡수 트리 재적용 뒤: 흡수한 트리(content_hash, absorb 출력 — 못 읽었으면 거짓)가
+    적용됐고 `base_site_rev == site_rev == want_rev`이며 PATCH 값 셋이 DB 정의에 남았다."""
+    body = project_body(snap)
+    return {
+        "content_hash": content_hash is not None and body.get("content_hash") == content_hash,
+        "base_site_rev": revs(body) == (want_rev, want_rev),
+        "patch_kept": draft_patch_kept(db_of(snap)),
+    }
+
+
+def judge_draft_rollback(
+    before: dict[str, object],
+    after: dict[str, object],
+    report: dict[str, object],
+    *,
+    want_digests: dict[str, str],
+    want_rev: int,
+    content_hash: str | None,
+) -> dict[str, bool]:
+    """G2-8 뒤 FAULT-h(리뷰 L1): site_rev·base_site_rev가 0이 아닌 상태(`want_rev`)에서 health
+    실패로 롤백하면 `failed`·`E_HEALTH`·실행 이미지 == 그 전 release·applied gen 그대로·경보 없음·
+    edit-lock 해제이고, site_rev·base_site_rev·PATCH 값 셋·content_hash(흡수 트리)가 그대로다 —
+    롤백이 드래프트 기준점을 0으로 되돌리는 결함을 잡는다."""
+    applied = updater_state(before).get("applied_gen")
+    checks = judge_attempt(
+        after,
+        report,
+        expect="failed",
+        want_digests=want_digests,
+        want_applied=cast(int | None, applied),
+        expect_code=FAULT_CODE,
+    )
+    return {
+        **checks,
+        "revs_kept": want_rev > 0 and revs(project_body(after)) == (want_rev, want_rev),
+        "patch_kept": draft_patch_kept(db_of(after)),
+        "content_hash_kept": content_hash is not None
+        and project_body(after).get("content_hash") == content_hash,
+    }
+
+
+# ---------------------------------------------------------------- G2-6 ④⑤·주간 crash(M6-3b J3)
+
+
+def judge_crash(
+    before: dict[str, object],
+    after: dict[str, object],
+    report: dict[str, object],
+    *,
+    expect: str,
+    gen: int,
+    want_digests: dict[str, str],
+    hit: bool,
+    staged_before_window: bool | None,
+    effect: dict[str, bool],
+    seconds: float,
+) -> dict[str, bool]:
+    """crash 한 건(run.py `crash_once`와 같은 항목): 끝난 시도(`judge_attempt` — 결과·경보 없음·
+    applied gen·실행 이미지·edit-lock), 감시자가 그 phase에서 멈췄는지(`hit`), 서비스 대상이면 CLI
+    스테이징이 창 전에 끝났는지(`staged_before_window`), 주입 효과(`effect` — 재부팅 또는 서비스
+    재시작), 행 수 4종 ≥ c0, 그리고 주입 뒤 `CONVERGE_LIMIT_S` 안에 그 gen이 끝났는지
+    (`converged_in_time` — 시도 잔류 없음). 실패 기대(`rolling_back`)면 applied gen은 c0 값이다."""
+    applied = updater_state(before).get("applied_gen")
+    checks = judge_attempt(
+        after,
+        report,
+        expect=expect,
+        want_digests=want_digests,
+        want_applied=gen if expect == "succeeded" else cast(int | None, applied),
+    )
+    checks["hit"] = hit
+    if staged_before_window is not None:
+        checks["staged_before_window"] = staged_before_window
+    checks |= effect
+    state = updater_state(after)
+    return {
+        **checks,
+        **rows_kept(db_of(before), db_of(after)),
+        "converged_in_time": "attempt" in state
+        and state["attempt"] is None
+        and state.get("last_attempted_gen") == gen
+        and 0 <= seconds <= CONVERGE_LIMIT_S,
+    }
+
+
 # ---------------------------------------------------------------- 외부 접속(nftables·resolved)
 
 

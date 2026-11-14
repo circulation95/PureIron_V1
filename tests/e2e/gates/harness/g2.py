@@ -16,7 +16,7 @@ import os
 import re
 import subprocess
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -31,6 +31,7 @@ from harness import (
     judges,
     paths,
     preflight,
+    preinstall,
     release_pair,
     site,
     sites,
@@ -141,6 +142,10 @@ class SiteRun:
     unmarked_restores: int = 0
     """외부 접속 카운터를 표시하지 못하고(VM이 꺼져 있었다) 복원한 횟수 — 그 구간의 카운터는
     잃었으므로 맨 끝 판정(`check_no_external`)이 거짓이 된다."""
+    preinstall: dict[str, dict[str, object]] = field(default_factory=dict[str, dict[str, object]])
+    """G2-5 설치 전 변조 탐침 결과(`preinstall.run_probes`, site-b만) — 판정은 그 시험이 한다."""
+    preinstall_errors: dict[str, BaseException] = field(default_factory=dict[str, BaseException])
+    """탐침마다의 예외 — 그 시험이 다시 던진다(실제 설치는 막지 않는다)."""
 
 
 @dataclass(frozen=True)
@@ -366,6 +371,7 @@ def bring_up(run: SiteRun, session: Session, ssh_pub: str) -> None:
         site_id=ctx.site.site_id,
         runbook_fpr=ctx.runbook_fpr,
         runbook_bootstrap=ctx.runbook_bootstrap,
+        after_upload=preinstall_hook(run, host),
     )
     run.evidence["install_s"] = round(install_s, 1)
     site.start_simulator(host, session.simulator, session.sim_image)
@@ -381,6 +387,28 @@ def bring_up(run: SiteRun, session: Session, ssh_pub: str) -> None:
     run.c0_at = time.monotonic()
     ctx.save()
     run.live = watch_live(run)
+
+
+def preinstall_hook(
+    run: SiteRun, host: preinstall.Shell, *, probes: preinstall.Probes = preinstall.run_probes
+) -> Callable[[], None] | None:
+    """`preinstall.PREINSTALL_SITE`(site-b)이면 설치 번들을 올린 직후 부를 탐침(결과·예외를
+    `run.preinstall`·`preinstall_errors`에 두고 설치를 계속한다), 다른 현장이면 None."""
+    ctx = run.ctx
+    if ctx.site.site_id != preinstall.PREINSTALL_SITE:
+        return None
+    book = preinstall.Runbook(
+        f"{site.INCOMING}/{Path(ctx.install_pib).name}", ctx.runbook_fpr, ctx.runbook_bootstrap
+    )
+
+    def hook() -> None:
+        ctx.log("pre-install tamper probes (copies of the install bundle)")
+        run.preinstall, run.preinstall_errors = probes(host, book)
+        errors = run.preinstall_errors
+        for name, exc in errors.items():
+            ctx.log(f"pre-install probe {name} failed: {exc!r}")
+
+    return hook
 
 
 def watch_live(
@@ -422,6 +450,17 @@ def host_key() -> str:
     return golden.ensure_ssh_key(paths.SSH_DIR).read_text(encoding="utf-8")
 
 
+def selected_runs(session: Session, only: Collection[str] | None) -> list[SiteRun]:
+    """`only`(없으면 전부)의 `SiteRun` — 고르지 않은 현장에는 `E2EError`를 둔다."""
+    runs: list[SiteRun] = []
+    for site_id, run in session.sites.items():
+        if only is None or site_id in only:
+            runs.append(run)
+        else:
+            run.error = E2EError(f"{site_id} not brought up: no selected test uses it")
+    return runs
+
+
 def bring_up_all(
     session: Session,
     environ: dict[str, str] | None = None,
@@ -429,15 +468,20 @@ def bring_up_all(
     up: BringUp = bring_up,
     prepare_host: Callable[[], str] = host_key,
     room: MakeRoom = make_room,
+    only: Collection[str] | None = None,
 ) -> None:
     """두 현장을 스레드로 동시에 올린다. VM을 시작하기 전에 `room`(`make_room`)으로 메모리를
     확보한다 — 동시 모드는 두 VM 몫으로 스레드를 띄우기 전에 한 번. 그 몫이 끝내 모자라도 VM 한
     대 몫(`vm_start_need_gb(1)`)은 되면 **직렬로 자동 전환**한다(B-3): 한 대 몫을 다시 재서
     띄우고, 다음 VM도 다시 잰다(앞 VM이 메모리를 잡은 뒤의 값). `PUREIRON_G2_SERIAL=1`이면 처음부터
     VM마다 그 몫으로 차례로(R1). 모자란 현장은 올리지 않는다(`SiteRun.error` = 현장마다 새
-    `InfraError`). 어떻게 올렸는지는 현장 증거 `boot`에 남는다(G2-1 기록)."""
+    `InfraError`). 어떻게 올렸는지는 현장 증거 `boot`에 남는다(G2-1 기록). `only`(현장 id)를 주면
+    그 현장만 올린다 — 나머지는 `E2EError`를 두어 그 현장 시험이 돌면 바로 드러난다(3a 리뷰 L3:
+    재시도·일부만 고른 실행이 쓰지 않는 VM을 띄우지 않게, `order.sites_needed`)."""
+    runs = selected_runs(session, only)
+    if not runs:
+        return
     pub = prepare_host()
-    runs = list(session.sites.values())
     env = environ if environ is not None else dict(os.environ)
     mode = "serial (PUREIRON_G2_SERIAL=1)"
     if env.get("PUREIRON_G2_SERIAL") != "1":

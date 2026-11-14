@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
+from typing import cast
 
 import nightly
 import pytest
@@ -40,6 +41,42 @@ def test_retry_bundles_scenarios_with_their_site_no_external(
     assert order.retry_closure(targets, EVERY) == want
 
 
+def test_crash_cases_are_bundled_with_site_a() -> None:
+    """crash 묶음은 site-a를 쓴다 — crash 재시도에는 외부 접속 0[site-a]가 따라온다."""
+    crash = "test_g2_crash.py::test_g2_6_crash[reset@switching]"
+    every = [*EVERY[:5], crash, *EVERY[5:]]
+    assert order.retry_closure([crash], every) == [crash, NO_EXT_A]
+    assert order.retry_closure([NO_EXT_A], every) == [
+        ROLLBACK_4,
+        ROLLBACK_63,
+        crash,
+        NO_EXT_A,
+    ]
+
+
+CRASH = "test_g2_crash.py::test_g2_6_crash[kill@verified]"
+
+
+@pytest.mark.parametrize(
+    ("selected", "want"),
+    [
+        ([CRASH, NO_EXT_A], {"site-a"}),  # 주간 crash 재시도 — site-b를 띄우지 않는다
+        ([FAULTS_62, NO_EXT_B], {"site-b"}),
+        ([INSTALL_A], {"site-a"}),
+        ([ROLLBACK_4, FAULTS_62], {"site-a", "site-b"}),
+        (EVERY, {"site-a", "site-b"}),
+        (["test_g2_install.py::test_g2_1_install_and_100_tags_good"], {"site-a", "site-b"}),
+        (["test_g2_unknown.py::test_x"], {"site-a", "site-b"}),
+    ],
+)
+def test_only_the_sites_of_the_selected_tests_are_brought_up(
+    selected: list[str], want: set[str]
+) -> None:
+    """3a 리뷰 L3·변이: 재시도가 현장 둘을 다 올리면 메모리가 모자라 실패한 현장을 같은 조건으로 또
+    띄운다(약 7분·VM 한 대 몫)."""
+    assert order.sites_needed(selected) == want
+
+
 def test_bundles_follow_the_order_table(monkeypatch: pytest.MonkeyPatch) -> None:
     """3b가 표에 현장 시험 파일을 더하면 묶음이 따라온다(표에서 현장을 읽는다)."""
     crash = "test_g2_crash.py::test_g2_crash[reset-switching]"
@@ -67,6 +104,79 @@ def junit(*cases: tuple[str, str]) -> str:
         )
         body.append(f'<testcase file="{file_name}" name="{name}" time="1">{fail}</testcase>')
     return f'<testsuites><testsuite name="pytest">{"".join(body)}</testsuite></testsuites>'
+
+
+def test_retry_moves_the_first_session_records_aside(tmp_path: Path) -> None:
+    """리뷰 L2·변이: 재시도 세션이 `<site>/state.json`을 다시 만들면 첫 세션(infra로 실패한
+    시나리오의
+    로그 꼬리·phase)이 사라진다 — 재시도 전에 `first/<site>/`로 옮긴다."""
+    first = [(t, "infra" if t == FAULTS_62 else "pass") for t in EVERY]
+    calls: list[list[str]] = []
+
+    def run_pytest(path: Path, targets: list[str], timeout_s: float) -> int:
+        calls.append(targets)
+        site_b = tmp_path / "site-b"
+        site_b.mkdir(exist_ok=True)
+        (site_b / "state.json").write_text(f"session {len(calls)}", encoding="utf-8")
+        path.write_text(junit(*(first if len(calls) == 1 else [(FAULTS_62, "pass")])), "utf-8")
+        return 1
+
+    summary = nightly.step_run(
+        "20261113T181700Z",
+        "a" * 40,
+        tmp_path,
+        run_pytest=run_pytest,
+        recover_env=lambda: (True, []),
+        today=date(2026, 11, 13),
+        quarantine=[],
+    )
+    assert (tmp_path / "first" / "site-b" / "state.json").read_text("utf-8") == "session 1"
+    assert (tmp_path / "site-b" / "state.json").read_text("utf-8") == "session 2"
+    retry = summary["retry"]
+    assert isinstance(retry, dict)
+    assert retry["first_session"] == ["site-b"]
+
+
+def test_a_first_session_move_that_fails_does_not_stop_the_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """리뷰 L3·변이: Windows에서 rename이 `PermissionError`(백신·인덱서가 파일을 잡음)를 내도
+    재시도는 돌고, 오류는 summary `retry.first_session_error`에 남는다 — 예외가 step_run 밖으로
+    나가면 그날이 `runner` 한 줄이 된다."""
+    first = [(t, "infra" if t == FAULTS_62 else "pass") for t in EVERY]
+    calls: list[list[str]] = []
+
+    def run_pytest(path: Path, targets: list[str], timeout_s: float) -> int:
+        calls.append(targets)
+        for site_id in ("site-a", "site-b"):
+            (tmp_path / site_id).mkdir(exist_ok=True)
+        path.write_text(junit(*(first if len(calls) == 1 else [(FAULTS_62, "pass")])), "utf-8")
+        return 1
+
+    real_rename = Path.rename
+
+    def rename(self: Path, target: Path) -> Path:
+        if self.name == "site-a":
+            raise PermissionError(32, "being used by another process", str(self))
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", rename)
+    summary = nightly.step_run(
+        "20261113T181700Z",
+        "a" * 40,
+        tmp_path,
+        run_pytest=run_pytest,
+        recover_env=lambda: (True, []),
+        today=date(2026, 11, 13),
+        quarantine=[],
+    )
+    assert len(calls) == 2
+    assert summary["verdict"] == "passed"
+    retry = summary["retry"]
+    assert isinstance(retry, dict)
+    assert retry["first_session"] == ["site-b"]
+    (error,) = cast(list[str], retry["first_session_error"])
+    assert error.startswith("site-a: PermissionError")
 
 
 def test_step_run_retries_the_bundle_and_keeps_a_failed_retry_of_an_added_test(

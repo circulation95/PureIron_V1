@@ -155,16 +155,33 @@ def wait_ready(
     return snap
 
 
+RUNBOOK_META = (
+    "manifest.json manifest.sig release-cert.json release-cert.sig keys/root.pub "
+    "keys/root.pem bootstrap/bootstrap-verify.sh"
+)
+"""runbook 2단계가 전용 디렉터리에 이름으로 푸는 설치 번들 메타데이터(`bootstrap-verify.sh` ⓪)."""
+
+
 def install_runbook(
-    host: Vm, install: Path, g1: Path, *, site_id: str, runbook_fpr: str, runbook_bootstrap: str
+    host: Vm,
+    install: Path,
+    g1: Path,
+    *,
+    site_id: str,
+    runbook_fpr: str,
+    runbook_bootstrap: str,
+    after_upload: Callable[[], object] | None = None,
 ) -> float:
     """설치 번들 runbook(2단계 메타데이터 추출·지문 대조 → `install.sh --offline-time-confirmed`)
-    → enroll → g1 apply → 서비스 시작. 걸린 초. 판정은 호출자가 한다."""
+    → enroll → g1 apply → 서비스 시작. 걸린 초(업로드 뒤부터). 판정은 호출자가 한다.
+    `after_upload`는 번들을 올린 직후·설치 전에 부른다(G2-5 설치 전 변조 탐침 — 올린 번들을 다시
+    올리지 않는다). run.py는 넘기지 않는다."""
     for bundle in (install, g1):
         host.put(bundle, f"{INCOMING}/{bundle.name}")
+    if after_upload is not None:
+        after_upload()
     remote_install = f"{INCOMING}/{install.name}"
-    meta = "manifest.json manifest.sig release-cert.json release-cert.sig keys/root.pub "
-    meta += "keys/root.pem bootstrap/bootstrap-verify.sh"
+    meta = RUNBOOK_META
     started = time.monotonic()
     # runbook 2단계는 root 셸에서 친다(/root는 700, bootstrap-verify ⓪은 추출물이
     # 실행 사용자 소유인지 본다).
@@ -297,11 +314,16 @@ def converge(
     return snap, clock() - started
 
 
+def bundle_sha12(pib: Path) -> str:
+    """보고 파일 이름에 들어가는 번들 sha256 앞 12자."""
+    with pib.open("rb") as f:
+        return hashlib.file_digest(f, "sha256").hexdigest()[:12]
+
+
 def report_for(host: Vm, pib: Path) -> dict[str, object]:
     """그 번들의 최근 보고. 파일 이름 `<started>-g<gen>-<sha256 12자>.json`에서 sha로 찾는다 —
     커밋 전 거부는 gen을 믿지 않아 `g unknown`이므로 gen으로는 못 찾는다."""
-    with pib.open("rb") as f:
-        sha12 = hashlib.file_digest(f, "sha256").hexdigest()[:12]
+    sha12 = bundle_sha12(pib)
     out = host.run(
         f"sudo sh -c 'ls -t /var/lib/pureiron/state/reports/*-{sha12}.json "
         f"/var/lib/pureiron/state/reports/exported/*-{sha12}.json 2>/dev/null | head -1 | "
@@ -309,6 +331,20 @@ def report_for(host: Vm, pib: Path) -> dict[str, object]:
         check=False,
     ).stdout
     return cast(dict[str, object], json.loads(out)) if out.strip() else {}
+
+
+def report_count(host: Vm, pib: Path) -> int | None:
+    """그 번들(sha256 12자)의 보고 파일 수(`reports`·`reports/exported`). 못 읽으면 None —
+    `report_for`의 빈 dict는 "보고 없음"과 "못 읽음"이 같아서, 같은 gen no-op(보고를 쓰지 않는다)을
+    가를 때는 이 수가 0인지 본다(M6-3b 리뷰 L1)."""
+    sha12 = bundle_sha12(pib)
+    done = host.run(
+        f"sudo sh -c 'ls /var/lib/pureiron/state/reports/*-{sha12}.json "
+        f"/var/lib/pureiron/state/reports/exported/*-{sha12}.json 2>/dev/null | wc -l'",
+        check=False,
+    )
+    text = done.stdout.strip()
+    return int(text) if done.returncode == 0 and text.isdigit() else None
 
 
 def apply_and_check(
@@ -453,9 +489,12 @@ def stage_for_window(
 # ---------------------------------------------------------------- M5 현장 PATCH·온라인 전환
 
 
-def site_patch(host: Vm) -> tuple[dict[str, object], dict[str, object]]:
+def site_patch(
+    host: Vm, *, alarm2: tuple[str, dict[str, object]] | None = None
+) -> tuple[dict[str, object], dict[str, object]]:
     """e2e admin(CLI 전용 계정, VM에서 만든 비밀번호)을 만들고 web 경유로 태그·알람을 PATCH한다.
-    (site_api 출력, 계정 생성 결과)."""
+    (site_api 출력, 계정 생성 결과). `alarm2`(알람 id, 본문)를 주면 알람 PATCH를 하나 더 한다(G2-8
+    PATCH 3회 — run.py는 넘기지 않는다)."""
     created = host.run(
         as_root(
             "umask 077 && python3 -c 'import secrets; print(secrets.token_urlsafe(24))' "
@@ -473,12 +512,15 @@ def site_patch(host: Vm) -> tuple[dict[str, object], dict[str, object]]:
     if created.returncode != 0:
         return {}, admin
     host.put(paths.REPO / "tests" / "e2e" / "site" / "site_api.py", f"{REMOTE}/site_api.py")
+    extra = ""
+    if alarm2 is not None:
+        extra = f" --alarm2 {alarm2[0]} --alarm2-body {shlex.quote(json.dumps(alarm2[1]))}"
     try:
         out = host.json(
             f"sudo python3 {REMOTE}/site_api.py patch --username {E2E_ADMIN} "
             f"--password-file {ADMIN_PASSWORD} --tag {PATCH_TAG} "
             f"--tag-body {shlex.quote(json.dumps(PATCH_TAG_BODY))} --alarm {PATCH_ALARM} "
-            f"--alarm-body {shlex.quote(json.dumps(PATCH_ALARM_BODY))}"
+            f"--alarm-body {shlex.quote(json.dumps(PATCH_ALARM_BODY))}{extra}"
         )
     except (*REMOTE_ERRORS, ValueError) as exc:
         return {"error": str(exc)[-TAIL_CHARS:]}, admin

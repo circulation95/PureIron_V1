@@ -17,6 +17,7 @@ from typing import Protocol, cast
 GH_TIMEOUT_S = 60
 HISTORY_BRANCH = "e2e-history"
 HISTORY_FILE = "history.jsonl"
+"""M6-3b 전 이력 파일(리허설·3a 줄) — 더 쓰지 않고 읽기만 한다(`publish.history_reads`)."""
 TEMP_BRANCH_PREFIX = "e2e-tmp/"
 """M6-4 fleet 경로가 만드는 임시 브랜치 접두 — preflight가 7일 넘은 것을 지운다."""
 

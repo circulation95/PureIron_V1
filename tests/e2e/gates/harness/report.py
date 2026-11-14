@@ -11,6 +11,12 @@
 flake 비율에서 빠진다(`not_started`, M6-2b ★G2·L8). 그런 밤은 PC를 끄거나 앱을 켜 둔 밤과 같은
 종류라 이력 줄·commit status `error`·exit 2만 남기고 이슈는 열지 않는다. 시험 id `runner`·`pytest`
 줄은 시작한 뒤 깨진 실행이라 그대로 센다.
+
+"2연속"은 두 가지를 함께 본다(어느 하나면 이슈, M6-3b 리뷰 M2): ① 실행 단위 — 시작한 실행 중 가장
+최근 두 개(product는 시험이 달라도 된다, infra는 같은 시험 id) ② 시험 단위 — 이번에 실패한 시험마다,
+그 시험을 돌리는 묶음의 직전 실행에서도 같은 분류로 실패했는가(`repeated_by_test`). ②가 없으면
+일요일에만 도는 crash 16건은 직전 실행(토요일 평일 묶음)에 그 시험이 없어 매주 실패해도 이슈가
+열리지 않는다.
 """
 
 from __future__ import annotations
@@ -37,6 +43,14 @@ INFRA_ISSUE_TITLE = "G2 nightly: the same test failed as infra in 2 consecutive 
 DESCRIPTION_CHARS = 140
 PREFLIGHT_TEST = "preflight"
 """preflight에서 멈춘 실행의 시험 id(infra) — 시험을 시작하지 못했다."""
+DEFAULT_SUITE = "g2"
+
+
+def suite_of(entry: Mapping[str, object]) -> str:
+    """summary·이력 줄의 묶음 이름(`suite`). 없으면 `g2` — M6-3b 전 이력 줄(리허설·3a)은 모두 평일
+    묶음이다. 주간 run은 평일 시간 판정(run 90분)에서 이것으로 뺀다."""
+    suite = entry.get("suite")
+    return suite if isinstance(suite, str) and suite else DEFAULT_SUITE
 
 
 @dataclass(frozen=True)
@@ -122,19 +136,24 @@ def test_rows(summary_: Mapping[str, object]) -> list[dict[str, object]]:
 
 
 def history_lines(summary_: Mapping[str, object]) -> list[str]:
-    """`e2e-history/history.jsonl`에 더할 줄 — 시험마다 `{date, run, product_sha, test_id, outcome,
-    class, seconds}`(키 정렬 JSON 한 줄). outcome은 `pass`·`fail`·`skip`, class는 실패일 때만."""
+    """`e2e-history`에 더할 줄 — 시험마다 `{date, run, suite, product_sha, test_id, outcome, class,
+    seconds, quarantined}`(키 정렬 JSON 한 줄). outcome은 `pass`·`fail`·`skip`, class는 실패일
+    때만, suite는 `suite_of`, quarantined는 그 run에서 격리(quarantine.yaml) 중이던 시험인가."""
+    held = summary_.get("quarantined")
+    quarantined = set(cast(list[object], held)) if isinstance(held, list) else set[object]()
     lines: list[str] = []
     for row in test_rows(summary_):
         outcome = str(row.get("outcome"))
         line = {
             "date": summary_.get("date"),
             "run": summary_.get("run"),
+            "suite": suite_of(summary_),
             "product_sha": summary_.get("product_sha"),
             "test_id": row.get("test_id"),
             "outcome": {PASSED: "pass", FAILED: "fail"}.get(outcome, "skip"),
             "class": row.get("failure_class") if outcome == FAILED else None,
             "seconds": row.get("seconds"),
+            "quarantined": row.get("test_id") in quarantined,
         }
         lines.append(json.dumps(line, sort_keys=True, ensure_ascii=False))
     return lines
@@ -180,34 +199,83 @@ def last_two_started(
 
 
 def failed_tests(rows: Iterable[Mapping[str, object]], failure_class: str) -> set[str]:
+    """`failure_class`로 실패한 시험 id — 격리 중이던 실패(`quarantined`, 2a 리뷰 L4)는 뺀다. 격리는
+    알려진 product flake를 이슈 없이 지켜보는 것이라 "2연속" 이슈에 세지 않는다(실행 판정에서
+    빠지는 것과 같다). `quarantined`가 없는 예전 줄은 격리되지 않은 것으로 읽는다."""
     return {
         str(row.get("test_id"))
         for row in rows
-        if row.get("outcome") == "fail" and row.get("class") == failure_class
+        if row.get("outcome") == "fail"
+        and row.get("class") == failure_class
+        and row.get("quarantined") is not True
     }
 
 
+def is_case(test_id: str) -> bool:
+    """pytest 시험 id(`<파일>::<이름>`)인가 — `preflight`·`runner`·`pytest` 줄은 시험이 아니다."""
+    return "::" in test_id
+
+
+def repeated_by_test(history: Iterable[Mapping[str, object]], failure_class: str) -> set[str]:
+    """가장 최근 실행(시작한 실행)에서 `failure_class`로 실패한 시험 중, 그 시험을 돌리는 묶음의
+    직전 실행에서도 같은 분류로 실패한 시험 id(M6-3b 리뷰 M2).
+
+    "그 시험을 돌리는 묶음" = 이력에서 그 시험 줄이 나온 실행들의 `suite` 집합이다. 주간 전용 시험
+    (평일 묶음에 없다)은 직전 주간 실행과, 평일 시험(두 묶음 모두에 있다)은 바로 앞 실행과 잇는다 —
+    그래서 평일 시험은 지금과 같고(앞 실행이 시험 없이 깨졌으면 끊긴다), 주간 전용 시험은 사이의
+    평일 실행을 건너뛴다. 시작하지 못한 실행은 건너뛰고(`last_two_started`와 같다), 격리 중이던
+    실패는 실패로 세지 않는다(`failed_tests`). 시험이 아닌 줄(`is_case` 거짓)은 실행 단위
+    판단만 쓴다."""
+    runs = by_run(history)
+    order = sorted(runs)
+    if not order or not_started(runs[order[-1]]):
+        return set()
+    started = [runs[r] for r in order if not not_started(runs[r])]
+    latest, earlier = started[-1], started[:-1]
+    repeated: set[str] = set()
+    for test_id in failed_tests(latest, failure_class):
+        if not is_case(test_id):
+            continue
+        suites = {
+            suite_of(row) for rows in started for row in rows if row.get("test_id") == test_id
+        }
+        previous = next((rows for rows in reversed(earlier) if suite_of(rows[0]) in suites), None)
+        if previous is not None and test_id in failed_tests(previous, failure_class):
+            repeated.add(test_id)
+    return repeated
+
+
 def needs_issue(history: Iterable[Mapping[str, object]]) -> bool:
-    """시작한 실행 중 가장 최근 두 개(`last_two_started`)가 모두 product 실패를 냈는가(E9)."""
+    """product 2연속(E9): 시작한 실행 중 가장 최근 두 개(`last_two_started`)가 모두 product 실패를
+    냈거나(시험이 달라도 된다), 이번에 product로 실패한 시험이 그 시험을 돌리는 묶음의 직전
+    실행에서도 product로 실패했다(`repeated_by_test`)."""
+    history = list(history)
     latest = last_two_started(history)
-    return len(latest) == 2 and all(failed_tests(rows, PRODUCT) for rows in latest)
+    if len(latest) == 2 and all(failed_tests(rows, PRODUCT) for rows in latest):
+        return True
+    return bool(repeated_by_test(history, PRODUCT))
 
 
 def repeated_infra(history: Iterable[Mapping[str, object]]) -> list[str]:
     """시작한 실행 중 가장 최근 두 개(`last_two_started`) 모두에서 infra로 실패한 시험 id(정렬).
     infra는 재시도 뒤의 결과이므로, 여기 남는 것은 재시도로도 낫지 않은 실행 환경 문제이거나
     infra로 분류된 제품 문제(시간 초과로 드러난 멈춤, 원격 명령 종료 코드 255)다. preflight에서
-    멈춘 밤은 세지 않는다(★G2)."""
+    멈춘 밤은 세지 않는다(★G2). 여기에 시험 단위 2연속(`repeated_by_test` — 주간 전용 시험은 직전
+    주간 실행과)을 더한다."""
+    history = list(history)
     latest = last_two_started(history)
-    if len(latest) != 2:
-        return []
-    return sorted(failed_tests(latest[0], INFRA) & failed_tests(latest[1], INFRA))
+    both = set[str]()
+    if len(latest) == 2:
+        both = failed_tests(latest[0], INFRA) & failed_tests(latest[1], INFRA)
+    return sorted(both | repeated_by_test(history, INFRA))
 
 
 def status_description(summary_: Mapping[str, object]) -> str:
     rows = test_rows(summary_)
     failed = [str(r.get("test_id")).rsplit("::", 1)[-1] for r in rows if r.get("outcome") == FAILED]
-    text = f"G2 nightly {summary_.get('verdict')}: {len(rows) - len(failed)}/{len(rows)} passed"
+    suite = suite_of(summary_)
+    label = "G2 nightly" if suite == DEFAULT_SUITE else f"G2 {suite}"
+    text = f"{label} {summary_.get('verdict')}: {len(rows) - len(failed)}/{len(rows)} passed"
     if failed:
         text += " - failed " + ", ".join(failed)
     return text[:DESCRIPTION_CHARS]

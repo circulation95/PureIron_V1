@@ -1,6 +1,7 @@
 """G2 시험 실행 순서(M6-3 H12) — 파일 이름 순서에 기대지 않고 이 표 하나가 정한다.
 
-G2-1(설치) → site-a 시나리오 → site-b 시나리오 → 외부 접속 0(현장별, 맨 끝). 한 파일 안에서는
+G2-1(설치) → site-a 시나리오 → site-b 시나리오 → crash(site-a, 주간 16건이 길어 뒤로) → 외부 접속
+0(현장별, 맨 끝). 한 파일 안에서는
 정의 순서 그대로다. 표에 없는 `test_g2_*.py`는 수집에서 멈춘다 — 새 시나리오 파일은 여기에 자리를
 잡아야 돈다. `conftest.pytest_collection_modifyitems`가 부른다.
 """
@@ -18,15 +19,20 @@ FILES: tuple[tuple[str, str], ...] = (
     ("test_g2_install.py", FIRST),  # G2-1 두 현장 설치·100태그
     # ---- site-a(BASE, c0 = 태그가 있는 최신 r*) — BASE→NEXT 방향이 필요한 것
     ("test_g2_rollback.py", "site-a"),  # G2-4(revert 전) + G2-6 ③ health 실패
-    # 3b: ("test_g2_crash.py", "site-a") — G2-6 ④⑤·주간 crash
     # ---- site-b(NEXT, c0 = HEAD) — HEAD의 PATCH·export·검증 코드를 보는 것
+    ("test_g2_rejections.py", "site-b"),  # G2-5 거부(설치 전 변조 2건 + c0·g2 거부 8건)
     ("test_g2_faults.py", "site-b"),  # G2-6 ② migrate 실패
-    # 3b: ("test_g2_rejections.py", "site-b") — G2-5, ("test_g2_draft.py", "site-b") — G2-8
+    ("test_g2_draft.py", "site-b"),  # G2-8 드래프트 회수(PR 전) + 그 뒤 롤백
+    # ---- crash(site-a) — G2-6 ④⑤ 2건 + 주간 16건(`weekly`), 매 건 c0 복원
+    ("test_g2_crash.py", "crash"),
     # ---- 맨 끝: 모든 시나리오를 거친 누적 카운터
     ("test_g2_no_external.py", LAST),
 )
 """(시험 파일, 묶음) — 이 순서대로 돈다."""
-GROUPS = (FIRST, "site-a", "site-b", LAST)
+CRASH = "crash"
+GROUPS = (FIRST, "site-a", "site-b", CRASH, LAST)
+GROUP_SITE = {"site-a": "site-a", "site-b": "site-b", CRASH: "site-a"}
+"""시나리오 묶음 → 그 묶음이 쓰는 현장."""
 
 
 def rank(file_name: str) -> int:
@@ -65,9 +71,31 @@ def _site_of(test_id: str) -> tuple[str, str] | None:
     if group == LAST:
         found = SITE_PARAM.search(name)
         return ("last", found[1]) if found else None
-    if group is not None and group not in (FIRST, LAST):
-        return ("scenario", group)
+    if group in GROUP_SITE:
+        return ("scenario", GROUP_SITE[group])
     return None
+
+
+SITES = ("site-a", "site-b")
+
+
+def sites_needed(test_ids: Sequence[str]) -> set[str]:
+    """선택된 시험(`<파일>::<이름>`)이 쓰는 현장 — 세션 fixture가 이 현장만 올린다(3a 리뷰 L3: crash
+    재시도가 site-b까지 띄우지 않게). 시나리오 묶음은 `GROUP_SITE`, G2-1·맨 끝 묶음은 매개변수
+    현장(`[site-a]`)이다. 현장을 정할 수 없는 시험(표에 없음·매개변수 없음)이 하나라도 있으면 둘
+    다."""
+    needed: set[str] = set()
+    for test_id in test_ids:
+        file_name, _, name = test_id.partition("::")
+        group = dict(FILES).get(file_name)
+        found = SITE_PARAM.search(name)
+        if group in GROUP_SITE:
+            needed.add(GROUP_SITE[group])
+        elif group in (FIRST, LAST) and found is not None and found[1] in SITES:
+            needed.add(found[1])
+        else:
+            return set(SITES)
+    return needed
 
 
 def retry_closure(targets: Sequence[str], every: Sequence[str]) -> list[str]:

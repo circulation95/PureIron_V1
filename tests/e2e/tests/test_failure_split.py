@@ -9,7 +9,7 @@ import dataclasses
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
-from typing import cast
+from typing import NoReturn, cast
 
 import pytest
 import run
@@ -426,3 +426,82 @@ def test_nightly_release_without_the_base_record_or_store_is_infra_exit(
     with pytest.raises(SystemExit) as raised:
         release(tmp_path, build_head=lambda src, name: done(0), store=store, records=records)
     assert raised.value.code == bundles.INFRA_EXIT
+
+
+def timed_out(*args: object, **kwargs: object) -> NoReturn:
+    raise subprocess.TimeoutExpired("docker save", 600)
+
+
+def release_after_build(
+    tmp_path: Path,
+    *,
+    docker_ok: Callable[[], bool],
+    git_head: Callable[[Path], str] = lambda src: SHA,
+    build_head: Callable[[Path, str], subprocess.CompletedProcess[str]] = lambda src, name: done(0),
+) -> dict[str, object]:
+    """BASE 기록·store가 있는 상태에서 빌드 뒤 단계(`finish`)가 시간 초과로 멈추는
+    nightly-release."""
+    records, store = tmp_path / "releases", tmp_path / "store"
+    (store / "r5").mkdir(parents=True)
+    records.mkdir()
+    (records / "r5.json").write_text('{"name": "r5", "images": {}}', encoding="utf-8")
+    return bundles.nightly_release(
+        tmp_path / "work-nightly",
+        tmp_path / "n1a2b3c4-src",
+        sha=SHA,
+        name="n1a2b3c4",
+        version="2026.11.1+n1a2b3c4",
+        base="r5",
+        sim_out=tmp_path / "sim.tar",
+        git_head=git_head,
+        build_head=build_head,
+        docker_ok=docker_ok,
+        store_root=lambda: store,
+        records=records,
+        link=lambda link, target: None,
+        finish=timed_out,
+    )
+
+
+def test_head_build_timeout_is_product_when_docker_answers(tmp_path: Path) -> None:
+    """N3: 빌드가 시간 제한을 넘겼는데 Docker가 답하면 HEAD가 빌드에서 멈춘 것(제품, ok false)."""
+
+    def hung(src: Path, name: str) -> NoReturn:
+        raise subprocess.TimeoutExpired("build_images.sh", bundles.HEAD_BUILD_TIMEOUT_S)
+
+    result = release(tmp_path, build_head=hung, docker_ok=lambda: True)
+    assert (result["ok"], result["stage"], result["rc"]) == (False, "build", "timeout")
+    with pytest.raises(SystemExit) as raised:
+        release(tmp_path, build_head=hung, docker_ok=lambda: False)
+    assert raised.value.code == bundles.INFRA_EXIT
+
+
+def test_a_git_timeout_in_the_copy_is_infra(tmp_path: Path) -> None:
+    def slow_git(src: Path) -> NoReturn:
+        raise subprocess.TimeoutExpired("git", bundles.GIT_TIMEOUT_S)
+
+    with pytest.raises(SystemExit) as raised:
+        release_after_build(tmp_path, docker_ok=no_docker, git_head=slow_git)
+    assert raised.value.code == bundles.INFRA_EXIT
+
+
+@pytest.mark.parametrize(("answers", "infra"), [(True, False), (False, True)])
+def test_a_timeout_after_the_build_follows_the_docker_rule(
+    tmp_path: Path, answers: bool, infra: bool
+) -> None:
+    """빌드 뒤 파생·저장의 시간 초과: Docker가 답하면 제품 스크립트 실패(exit 1), 아니면 인프라."""
+    with pytest.raises(SystemExit) as raised:
+        release_after_build(tmp_path, docker_ok=lambda: answers)
+    assert (raised.value.code == bundles.INFRA_EXIT) is infra
+    assert raised.value.code != 0
+
+
+def test_build_time_limits_fit_inside_the_wsl_call() -> None:
+    """단계 한도는 멈춘 한 단계를 잡는 것이다 — 빌드 한도가 Windows 쪽 WSL 호출 한도보다 짧아야
+    빌드 멈춤이 제품(ok false)으로 분류된다(같거나 길면 늘 WSL 시간 초과 = 인프라)."""
+    assert bundles.HEAD_BUILD_TIMEOUT_S < buildhost.NIGHTLY_TIMEOUT_S
+    assert (
+        bundles.DOCKER_BUILD_TIMEOUT_S
+        < bundles.DOCKER_SAVE_TIMEOUT_S
+        < bundles.HEAD_BUILD_TIMEOUT_S
+    )
