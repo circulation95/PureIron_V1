@@ -355,3 +355,16 @@ def test_reports_are_found_by_the_published_bundle_sha() -> None:
     assert found == {"result": "succeeded"}
     assert "*-eeeeeeeeeeee.json" in host.command
     assert fleet_scenarios.report_for_sha(host, "short") == {}
+
+
+def test_the_g2_test_items_are_exactly_the_judged_keys() -> None:
+    """시험 파일의 항목 목록(parametrize)과 판정 함수가 내는 키가 같다 — 판정 하나를 빼면(또는 키
+    이름을 바꾸면) 그 시험 항목이 조용히 사라지거나 늘 실패하지 않게."""
+    view = judges.isolation_view(snap(gen=1))
+    g2_3 = {**judges.judge_isolation(view, view), "not_published": True}
+    assert tuple(g2_3) == fleet_scenarios.G2_3_ITEMS
+    split = judges.judge_publish_split(
+        "success", {}, None, frozenset(), {}, changed="site-a", gen=7, untouched="site-b"
+    )
+    assert (*scheduled(report()), *split) == fleet_scenarios.G2_2_ITEMS
+    assert ("main_matches_c1", *approval({})) == fleet_scenarios.E_APPROVAL_ITEMS

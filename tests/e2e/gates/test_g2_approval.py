@@ -10,23 +10,12 @@ from harness import fleet_scenarios, fleet_session, g2, scenarios
 
 pytestmark = pytest.mark.g2
 
-ITEMS = (
-    "main_matches_c1",
-    "run_failed",
-    "e_approval_logged",
-    "not_signed",
-    "max_published_unchanged",
-    "chain_unchanged",
-    "main_reverted",
-    "revert_published_nothing",
-)
-
 
 @pytest.fixture(scope="module")
 def approval(g2_session: g2.Session, fleet_c1: fleet_session.FleetSession) -> dict[str, bool]:
     return fleet_scenarios.e_approval(g2_session, fleet_c1)
 
 
-@pytest.mark.parametrize("item", ITEMS)
+@pytest.mark.parametrize("item", fleet_scenarios.E_APPROVAL_ITEMS)
 def test_e_approval(approval: dict[str, bool], item: str) -> None:
     assert approval.get(item) is True, scenarios.failed(approval)

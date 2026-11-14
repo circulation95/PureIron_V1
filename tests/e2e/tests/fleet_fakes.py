@@ -300,7 +300,12 @@ class FakeGitHub:
 
 
 def repo(gh: FakeGitHub, name: str = fleet.FLEET_REPO) -> Repo:
-    return Repo(Gh(gh, environ={"PATH": "x"}), name, sleep=lambda s: None, clock=lambda: 0.0)
+    """가짜 시계는 부를 때마다 10초씩 간다 — 생기지 않는 run을 기다리면 끝없이 돌지 않고 시간 초과가
+    된다."""
+    ticks = itertools.count(0, 10)
+    return Repo(
+        Gh(gh, environ={"PATH": "x"}), name, sleep=lambda s: None, clock=lambda: float(next(ticks))
+    )
 
 
 def repos(gh: FakeGitHub) -> fleet_session.Repos:

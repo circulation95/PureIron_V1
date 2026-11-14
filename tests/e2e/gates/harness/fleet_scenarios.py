@@ -38,6 +38,23 @@ publish가 창 시작 - 이 값보다 늦게 끝나면 `verified < 창 시작`�
 대기, K3)."""
 APPLY_TIMEOUT_S = 600
 """창 시작 뒤 적용 수렴까지."""
+G2_2_ITEMS = (
+    *("verified_before_window", "locked_in_window", "locked_to_succeeded_120s", "succeeded"),
+    *("images_next", "fleet_current", "publish_success", f"published_{SCHEDULED_SITE}"),
+    *(f"untouched_{ISOLATED_SITE}", "publish_no_failure"),
+)
+"""G2-2 판정 항목(시험 `test_g2_2_scheduled_update[…]`) — `judge_scheduled` +
+`judge_publish_split`."""
+G2_3_ITEMS = (
+    *("images_unchanged", "content_hash_unchanged", "applied_gen_unchanged"),
+    *("core_started_at_unchanged", "not_published"),
+)
+"""G2-3 판정 항목(`judge_isolation` + 게시 없음)."""
+E_APPROVAL_ITEMS = (
+    *("main_matches_c1", "run_failed", "e_approval_logged", "not_signed"),
+    *("max_published_unchanged", "chain_unchanged", "main_reverted", "revert_published_nothing"),
+)
+"""`E_APPROVAL` 판정 항목(전제 + `judge_e_approval`)."""
 ITEM_G2_2 = "G2-2 scheduled update (bot PR -> publish -> window -> applied)"
 ITEM_G2_3 = "G2-3 isolation (site-b untouched by the site-a update)"
 ITEM_E_APPROVAL = "E_APPROVAL unapproved merge is not published (K14)"

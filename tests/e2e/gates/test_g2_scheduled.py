@@ -9,26 +9,6 @@ from harness import fleet_scenarios, fleet_session, g2, scenarios
 
 pytestmark = pytest.mark.g2
 
-G2_2 = (
-    "verified_before_window",
-    "locked_in_window",
-    "locked_to_succeeded_120s",
-    "succeeded",
-    "images_next",
-    "fleet_current",
-    "publish_success",
-    "published_site-a",
-    "untouched_site-b",
-    "publish_no_failure",
-)
-G2_3 = (
-    "images_unchanged",
-    "content_hash_unchanged",
-    "applied_gen_unchanged",
-    "core_started_at_unchanged",
-    "not_published",
-)
-
 
 @pytest.fixture(scope="module")
 def scheduled(
@@ -37,11 +17,11 @@ def scheduled(
     return fleet_scenarios.scheduled(g2_session, fleet_c1)
 
 
-@pytest.mark.parametrize("item", G2_2)
+@pytest.mark.parametrize("item", fleet_scenarios.G2_2_ITEMS)
 def test_g2_2_scheduled_update(scheduled: fleet_scenarios.ScheduledOutcome, item: str) -> None:
     assert scheduled.g2_2.get(item) is True, scenarios.failed(scheduled.g2_2)
 
 
-@pytest.mark.parametrize("item", G2_3)
+@pytest.mark.parametrize("item", fleet_scenarios.G2_3_ITEMS)
 def test_g2_3_isolation(scheduled: fleet_scenarios.ScheduledOutcome, item: str) -> None:
     assert scheduled.g2_3.get(item) is True, scenarios.failed(scheduled.g2_3)
