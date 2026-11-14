@@ -270,9 +270,11 @@ def test_the_g2_2_record_carries_the_prefetch_timings(tmp_path: Path) -> None:
     fleet_scenarios.scheduled(f.session, fleet_state(f.session), f.scenario)
     results = f.session.sites["site-a"].ctx.results
     record = next(r for r in results if r["name"] == fleet_scenarios.ITEM_G2_2)
-    # 가짜 PUT 시각 = 창 시작 - 120초, 보고 fetched -100초·verified -90초·locked +5초
-    assert record["fetched_after_put_s"] == 20.0
-    assert record["verified_after_put_s"] == 30.0
+    # 가짜 PUT 시각 = 창 시작 - WINDOW_LEAD_S(시간이 흐르지 않는 가짜), 보고 fetched -100초·verified
+    # -90초·locked +5초
+    lead = fleet_scenarios.WINDOW_LEAD_S
+    assert record["fetched_after_put_s"] == lead - 100.0
+    assert record["verified_after_put_s"] == lead - 90.0
     assert record["locked_after_window_s"] == 5.0
     assert fleet_scenarios.seconds_after({}, "fetched", START) is None
 
@@ -358,6 +360,64 @@ def test_a_put_that_ends_too_close_to_the_window_is_infra(tmp_path: Path) -> Non
     with pytest.raises(InfraError, match="too close to the window start"):
         fleet_scenarios.scheduled(f.session, fleet_state(f.session), sc)
     assert not any(e.startswith("converge") for e in f.fake.events)
+
+
+MEASURED_BUILD_S = 82.6
+"""첫 VM 실측(run 43617245939)의 Windows 하네스 경로 빌드 중 긴 쪽."""
+MEASURED_PUT_S = 20.0
+
+
+def measured_flow(tmp_path: Path) -> tuple[Flow, fleet_scenarios.Scenario]:
+    """빌드·PUT이 실측만큼 시간을 쓰는 흐름(가짜 시계 `now`·`clock`이 함께 흐른다)."""
+    f = flow(tmp_path)
+    fake = f.fake
+
+    def spend(seconds: float) -> None:
+        fake.now += timedelta(seconds=seconds)
+        fake.tick += seconds
+
+    build = f.scenario.build
+
+    def slow_build(
+        ctx: Context, gen: int, release: str, window: tuple[datetime, datetime], tree: Path
+    ) -> Path:
+        spend(MEASURED_BUILD_S)
+        return build(ctx, gen, release, window, tree)
+
+    central = f.scenario.remote.central
+
+    def slow_put(*args: str) -> dict[str, object]:
+        if args[0] == "put":
+            spend(MEASURED_PUT_S)
+        return central(*args)
+
+    def clock() -> float:
+        return fake.tick
+
+    remote = dataclasses.replace(f.scenario.remote, central=slow_put, clock=clock)
+    return f, dataclasses.replace(f.scenario, remote=remote, build=slow_build)
+
+
+def test_the_window_lead_covers_the_measured_build_and_put(tmp_path: Path) -> None:
+    """r2: 실측 빌드 82.6초 + PUT 20초에도 PUT이 창 시작 45초 전에 끝나 G2-2가 판정까지 간다. 기록에
+    `build_s`·`put_s`가 따로 남는다."""
+    f, sc = measured_flow(tmp_path)
+    out = fleet_scenarios.scheduled(f.session, fleet_state(f.session), sc)
+    assert all(out.g2_2.values()), out.g2_2
+    results = f.session.sites["site-a"].ctx.results
+    record = next(r for r in results if r["name"] == fleet_scenarios.ITEM_G2_2)
+    assert (record["build_s"], record["put_s"]) == (MEASURED_BUILD_S, MEASURED_PUT_S)
+
+
+def test_the_old_two_minute_lead_was_too_short_for_the_measured_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """r2: 120초 창(첫 실측의 값)이면 같은 빌드·PUT에서 늦은 PUT infra가 난다 — 실측과 같은 결말.
+    예외 문구에 빌드·PUT 시간이 들어 있다."""
+    monkeypatch.setattr(fleet_scenarios, "WINDOW_LEAD_S", 120)
+    f, sc = measured_flow(tmp_path)
+    with pytest.raises(InfraError, match=r"too close.*build 82\.6s, PUT 20\.0s"):
+        fleet_scenarios.scheduled(f.session, fleet_state(f.session), sc)
 
 
 def test_the_g2_test_items_are_exactly_the_judged_keys() -> None:

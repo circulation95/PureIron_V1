@@ -26,10 +26,12 @@ from harness.vm import Vm
 
 SCHEDULED_SITE = "site-a"
 ISOLATED_SITE = "site-b"
-WINDOW_LEAD_S = 120
-"""번들을 만들기 직전부터 창 시작까지. 그 사이에 빌드(G2 번들 약 16초 — M6-3 실측) + PUT(로컬
-HTTPS, 0.8GB 안팎 — 수 초~십여 초)이 끝나고, 남은 시간에 Updater가 poll(10초)로 받아 검증
-(`verified`)까지 마쳐야 한다(`PREFETCH_ALLOWANCE_S`)."""
+WINDOW_LEAD_S = 240
+"""번들을 만들기 직전부터 창 시작까지 = 빌드 85 + PUT 20 + `PREFETCH_ALLOWANCE_S` 45 + 여유 90초.
+근거(첫 VM 실측 run 43617245939, `ee1d8fc`): Windows 하네스 경로의 번들 빌드 `build_s` 73.6·82.6초
+(번들을 `C:/PureIron_e2e/bundles`(WSL에서 `/mnt/c`)에 쓴다 — WSL 네이티브 경로에서 잰 23초와
+다르다). 120초일 때 PUT 완료가 창 시작 -17초(두 세션 모두)였으니 빌드 + PUT ≈ 103초다. 그 안에
+빌드·PUT이 끝나고 남은 시간에 Updater가 poll(10초)로 받아 검증(`verified`)까지 마쳐야 한다."""
 WINDOW_LEN = timedelta(hours=1)
 PREFETCH_ALLOWANCE_S = 45
 """PUT 뒤 VM이 받아 검증하기까지 잡는 몫(poll 10초 + 다운로드·검증 약 30초 — M4 마감 실측 시도
@@ -138,14 +140,20 @@ def scheduled(
     # 적으므로(`build_site_bundle`) 판정도 같은 초 단위 시각을 쓴다 — 마이크로초가 남으면 창이 열린
     # 직후 같은 초 안의 lock이 "창 전"으로 잘못 판정된다(리뷰 H1).
     start = (remote.now() + timedelta(seconds=WINDOW_LEAD_S)).replace(microsecond=0)
+    began = remote.clock()
     pib = sc.build(a.ctx, gen, pair.next, (start, start + WINDOW_LEN), session.tree_of(pair.next))
+    built = remote.clock()
     put_reply = put(remote, SCHEDULED_SITE, gen, pib)
     put_at = remote.now()
+    # 어디가 느린지 바로 보게 빌드·PUT 시간을 따로 남긴다(늦은 PUT으로 멈춰도 로그·예외에 남는다)
+    timings = {"build_s": round(built - began, 1), "put_s": round(remote.clock() - built, 1)}
+    a.ctx.log(f"G2-2 bundle g{gen}: build {timings['build_s']}s, PUT {timings['put_s']}s")
     published = fleet_status(remote, SCHEDULED_SITE)
     if put_at > start - timedelta(seconds=PREFETCH_ALLOWANCE_S):
         raise InfraError(
             f"PUT g{gen} finished at {put_at.isoformat()}, too close to the window start "
-            f"{start.isoformat()} to see verified < window (slow build host)"
+            f"{start.isoformat()} to see verified < window (slow build host; "
+            f"build {timings['build_s']}s, PUT {timings['put_s']}s)"
         )
     snap, waited = remote.converge(host, gen)
     row = fleet_session.wait_row(
@@ -179,6 +187,7 @@ def scheduled(
         desired=published.get("desired"),
         window_start=start.isoformat(),
         put_at=put_at.isoformat(),
+        **timings,
         timeline=report.get("timeline"),
         fetched_after_put_s=seconds_after(report, "fetched", put_at),
         verified_after_put_s=seconds_after(report, "verified", put_at),
