@@ -6,8 +6,9 @@ c0), 실행 순서(`harness.order` 표 — G2-1 → site-a 시나리오 → site
 기대지 않으므로 nightly의 infra 재시도가 실패한 시험만 골라 새 pytest로 돌려도 된다. 판정 여러 개를
 내는 시나리오는 module fixture가 한 번 돌리고 시험들이 항목별로 단언한다.
 
-fleet 묶음(M6-4a)은 세션 fixture `fleet_c1`(중앙 + 두 현장 온라인 + 기준선 PR → c1 쌍,
-`harness.fleet_session`)을 쓴다 — fleet 시험이 골라졌을 때만 만들고 세션 끝에 중앙을 내린다.
+fleet 묶음(M6-4a)은 세션 fixture `fleet_c1`(중앙 + 두 현장 온라인 → c1 쌍,
+`harness.fleet_session`)을 쓴다 — fleet 시험이 골라졌을 때만 만들고, fleet 묶음의 마지막 시험 뒤
+(`pytest_runtest_teardown`)와 세션 끝에 중앙을 내린다.
 
 시험마다 결과를 `--junitxml` 옆 `<이름>.jsonl`에 한 줄씩 바로 쓴다(`pytest_runtest_logreport`) —
 pytest가 시간 초과로 죽어 junit이 없어도 끝난 시험의 결과가 남는다(`nightly.read_results`).
@@ -84,19 +85,25 @@ def selected_ids(request: pytest.FixtureRequest) -> list[str]:
     return [f"{item.path.name}::{item.name}" for item in request.session.items]
 
 
+LIFE = fleet_session.Lifetime()
+"""이 pytest 세션의 중앙 수명 — fixture가 `up`, 아래 훅·fixture 끝이 내린다."""
+
+
 @pytest.fixture(scope="session")
 def fleet_c1(
     request: pytest.FixtureRequest, g2_session: g2.Session
 ) -> Generator[fleet_session.FleetSession]:
-    """fleet 묶음의 출발점 c1 쌍(`fleet_session.prepare_c1`). 세션 끝에 중앙을 내린다(실패해도 —
-    준비가 실패하면 `prepare_c1`이 이미 내렸다)."""
-    fs = fleet_session.open_fleet(g2_session, selected_ids(request))
-    if fs is None:
-        raise E2EError("fleet_c1 requested but no fleet test is selected (harness/order.py)")
-    try:
+    """fleet 묶음의 출발점 c1 쌍(`fleet_session.fleet_lifetime` — 끝나면 실패해도 중앙을
+    내린다)."""
+    with fleet_session.fleet_lifetime(g2_session, selected_ids(request), LIFE) as fs:
         yield fs
-    finally:
-        fleet_session.close()
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> None:
+    """fleet 묶음의 마지막 시험 뒤에 중앙을 내린다(리뷰 M1) — crash 등 뒤 묶음이 중앙 몫 메모리
+    없이 돈다. 그 시험의 fixture 정리 뒤에 돈다(`trylast`)."""
+    LIFE.after(item.path.name, nextitem.path.name if nextitem is not None else None)
 
 
 def results_jsonl(config: pytest.Config) -> Path | None:

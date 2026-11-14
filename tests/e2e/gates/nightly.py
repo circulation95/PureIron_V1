@@ -63,6 +63,7 @@ from harness import (
     buildhost,
     collect,
     flake,
+    fleet_session,
     g2,
     hyperv,
     memwatch,
@@ -386,12 +387,18 @@ def make_github(dry_run: bool) -> GitHub:
         return DryRun()
 
 
-def cleanup_actions(gh: GitHub) -> list[str]:
+def cleanup_actions(
+    gh: GitHub, down_central: Callable[[], list[str]] = fleet_session.down_leftover
+) -> list[str]:
+    """preflight 통과 뒤 정리: 남은 VM, 지난 run이 남긴 중앙(리뷰 M1 — 시간 제한 kill이면 세션
+    끝 정리가 돌지 않는다), 오래된 결과·임시 브랜치."""
     removed = preflight.remove_vms(list(G2_SITES))
+    central = down_central()
     old = preflight.prune_results(g2.RESULTS, datetime.now(UTC).timestamp())
     branches = preflight.prune_branches(gh, datetime.now(UTC))
     return [
         *(f"removed vm {name}" for name in removed),
+        *central,
         *(f"removed results {name}" for name in old),
         *(f"deleted branch {name}" for name in branches),
     ]

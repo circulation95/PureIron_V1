@@ -129,8 +129,12 @@ def retry_closure(targets: Sequence[str], every: Sequence[str]) -> list[str]:
     return [t for t in every if t in chosen] + [t for t in targets if t not in every]
 
 
+def in_central(file_name: str | None) -> bool:
+    """시험 파일이 중앙이 필요한 묶음(`CENTRAL_GROUPS`)인가 — 파일이 없으면(세션 끝) 거짓."""
+    return file_name is not None and dict(FILES).get(file_name) in CENTRAL_GROUPS
+
+
 def needs_central(test_ids: Sequence[str]) -> bool:
     """선택된 시험 중 중앙(c1 쌍)이 필요한 묶음(`CENTRAL_GROUPS`)의 것이 있는가 — 없으면 fleet
     세션을 만들지 않는다(c0 시나리오만 고른 재시도가 중앙을 띄우지 않게)."""
-    groups = dict(FILES)
-    return any(groups.get(t.partition("::")[0]) in CENTRAL_GROUPS for t in test_ids)
+    return any(in_central(t.partition("::")[0]) for t in test_ids)

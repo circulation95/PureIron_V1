@@ -19,6 +19,11 @@ Updater가 앞 시나리오의 게시본을 스스로 적용한다(계획 F8).
 c1(덤프 이름·체크포인트)은 이 pytest 프로세스가 만든 것만 쓴다 — infra 재시도 세션은 새 VM·새 중앙
 위에 c1을 새로 만든다(`central.py up`이 지난 덤프를 지운다). 실패 분류: WSL·Hyper-V 호출과 대기
 초과는 `InfraError`, 원격 제품 명령의 실패는 그 예외 그대로(분류는 `failures`).
+
+중앙 수명(리뷰 M1, `Lifetime`): fleet 묶음의 마지막 시험 뒤에 내린다(conftest
+`pytest_runtest_teardown` — 뒤 묶음 crash가 중앙 몫 메모리 약 1 GB 없이 돈다), 세션 끝에도 한 번 더
+확인한다. `up`이 중간에 실패해도 내린다. pytest가 시간 제한으로 죽어 아무것도 못 내렸으면 다음 밤
+preflight 정리(`down_leftover`)가 멱등으로 내린다.
 """
 
 from __future__ import annotations
@@ -26,14 +31,15 @@ from __future__ import annotations
 import secrets
 import subprocess
 import time
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
 from harness import buildhost, g2, golden, hyperv, judges, order, site
-from harness.context import Context, InfraError, log, write_json
+from harness.context import Context, E2EError, InfraError, log, write_json
 from harness.vm import Vm
 
 C1 = "c1"
@@ -175,8 +181,9 @@ def prepare_c1(
     out = results or g2.results_dir(session.run_id)
     started = remote.clock()
     ca = g2.bundles_dir(session.run_id) / "fleet" / "central-root.crt"
-    status = central(remote, "up", "--ca-out", golden.wsl_path(ca))
     try:
+        # `up`부터 감싼다 — `compose up --wait` 시간 초과처럼 컨테이너가 뜬 채 실패해도 내린다
+        status = central(remote, "up", "--ca-out", golden.wsl_path(ca))
         ca_sha = str(status.get("ca_sha256") or "")
         if not ca_sha:
             raise InfraError("central.py up returned no CA fingerprint")
@@ -200,11 +207,63 @@ def prepare_c1(
 
 
 def close(remote: Remote | None = None) -> None:
-    """세션 끝(실패해도): 중앙을 내린다. c1 체크포인트는 VM과 함께 지워진다(다음 preflight)."""
+    """중앙을 내린다(실패해도 던지지 않고 남긴다). c1 체크포인트는 VM과 함께 지워진다(다음
+    preflight)."""
     try:
         (remote or Remote()).central("down")
     except (golden.WslError, golden.WslScriptError, ValueError, subprocess.TimeoutExpired) as exc:
         log(f"[fleet] central down failed: {exc}")
+
+
+def down_leftover(remote: Remote | None = None) -> list[str]:
+    """preflight 정리: 지난 run이 시간 제한 kill로 남긴 중앙(`pureiron-e2e-central` — compose
+    `restart: unless-stopped`라 WSL을 재시작해도 다시 뜬다)을 멱등으로 내린다. 없으면 그대로 끝난다.
+    실패는 정리 기록에만 남긴다(그 밤을 막지 않는다)."""
+    try:
+        (remote or Remote()).central("down")
+    except (golden.WslError, golden.WslScriptError, ValueError, subprocess.TimeoutExpired) as exc:
+        return [f"central down (leftover) failed: {exc}"]
+    return ["central down (leftover)"]
+
+
+@dataclass
+class Lifetime:
+    """이 pytest 세션에서 중앙의 수명. c1을 만들면 `up`, fleet 묶음을 벗어날 때(`after`)나 세션
+    끝(`end`)에 한 번만 내린다."""
+
+    remote: Remote | None = None
+    up: bool = False
+
+    def end(self) -> None:
+        if self.up:
+            self.up = False
+            close(self.remote)
+
+    def after(self, file_name: str, next_file: str | None) -> None:
+        """시험 하나가 끝난 뒤: 중앙 묶음 시험 다음이 중앙 묶음 밖(또는 끝)이면 내린다 — 4b에서
+        fleet 파일이 늘어도 `order.CENTRAL_GROUPS`만 보면 된다."""
+        if order.in_central(file_name) and not order.in_central(next_file):
+            self.end()
+
+
+@contextmanager
+def fleet_lifetime(
+    session: g2.Session,
+    selected: Sequence[str],
+    life: Lifetime,
+    *,
+    prepare: Callable[[g2.Session], FleetSession] = prepare_c1,
+) -> Iterator[FleetSession]:
+    """세션 fixture `fleet_c1`의 본문: c1을 만들고(`open_fleet`) 끝나면(실패해도) `life.end()`.
+    준비가 실패하면 `prepare_c1`이 이미 내렸다."""
+    fs = open_fleet(session, selected, prepare=prepare)
+    if fs is None:
+        raise E2EError("fleet_c1 requested but no fleet test is selected (harness/order.py)")
+    life.up = True
+    try:
+        yield fs
+    finally:
+        life.end()
 
 
 def restore_c1(
