@@ -31,7 +31,7 @@ from __future__ import annotations
 import secrets
 import subprocess
 import time
-from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -280,7 +280,7 @@ def fleet_lifetime(
     life: Lifetime,
     *,
     prepare: Callable[[g2.Session], FleetSession] = prepare_c1,
-) -> Iterator[FleetSession]:
+) -> Generator[FleetSession]:
     """세션 fixture `fleet_c1`의 본문: c1을 만들고(`open_fleet`) 끝나면(실패해도) `life.end()`.
     준비가 실패하면 `prepare_c1`이 이미 내렸다."""
     fs = open_fleet(session, selected, prepare=prepare)

@@ -8,6 +8,7 @@ import dataclasses
 import importlib.util
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from typing import cast
 
 import nightly
 import pytest
@@ -123,8 +124,9 @@ def test_the_conftest_teardown_hook_closes_after_the_last_fleet_test(tmp_path: P
     남는다."""
     hooks = gates_conftest()
     fake = FakeRemote(scenario_session(tmp_path))
-    life = fleet_session.Lifetime(fake.remote(), up=True)
-    hooks.LIFE = life
+    life = cast(fleet_session.Lifetime, hooks.LIFE)  # conftest의 수명 객체 그대로, 원격만 가짜
+    life.remote = fake.remote()
+    life.up = True
 
     def item(name: str) -> SimpleNamespace:
         return SimpleNamespace(path=Path(name))
@@ -136,14 +138,18 @@ def test_the_conftest_teardown_hook_closes_after_the_last_fleet_test(tmp_path: P
     assert not life.up
 
 
+def nothing(*args: object) -> list[str]:
+    return []
+
+
 def test_preflight_cleanup_brings_a_leftover_central_down(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """지난 run이 시간 제한 kill로 남긴 중앙(compose `restart: unless-stopped`)은 다음 밤 preflight
     정리가 내린다 — 실패해도 정리 기록에만 남는다."""
-    monkeypatch.setattr(preflight, "remove_vms", lambda sites: [])
-    monkeypatch.setattr(preflight, "prune_results", lambda results, now: [])
-    monkeypatch.setattr(preflight, "prune_branches", lambda gh, now: [])
+    monkeypatch.setattr(preflight, "remove_vms", nothing)
+    monkeypatch.setattr(preflight, "prune_results", nothing)
+    monkeypatch.setattr(preflight, "prune_branches", nothing)
     called: list[str] = []
 
     def down() -> list[str]:

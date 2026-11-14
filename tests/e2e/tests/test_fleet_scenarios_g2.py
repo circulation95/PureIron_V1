@@ -301,9 +301,11 @@ def test_the_window_start_is_whole_seconds_like_the_bundle(tmp_path: Path) -> No
     않게. 변이: 절삭을 빼면 판정 창 시작이 +0.6초가 되어 `locked_in_window`가 거짓이다."""
     f = flow(tmp_path)
     f.fake.now = START - timedelta(seconds=fleet_scenarios.WINDOW_LEAD_S - 0.6)
-    sc = dataclasses.replace(
-        f.scenario, report=lambda h, pib: report(locked=at(0.1), succeeded=at(60))
-    )
+
+    def locked_just_after_start(host: Vm, pib: Path) -> dict[str, object]:
+        return report(locked=at(0.1), succeeded=at(60))
+
+    sc = dataclasses.replace(f.scenario, report=locked_just_after_start)
     out = fleet_scenarios.scheduled(f.session, fleet_state(f.session), sc)
     assert f.builds[0][3][0] == START
     assert out.g2_2["locked_in_window"] is True, out.g2_2
