@@ -115,7 +115,7 @@ def scheduled(
     """G2-2 + G2-3(모듈 설명). 기록은 site-a·site-b `Context`에."""
     sc = scenario or Scenario.default()
     remote = sc.remote
-    sc.restore(session, fs, (SCHEDULED_SITE, ISOLATED_SITE), remote=remote)
+    restored = sc.restore(session, fs, (SCHEDULED_SITE, ISOLATED_SITE), remote=remote)
     a, b = g2.site_up(session, SCHEDULED_SITE), g2.site_up(session, ISOLATED_SITE)
     before_b = judges.isolation_view(remote.probe(b.ctx.site.host()))
     before_b_row = fleet_status(remote, ISOLATED_SITE)
@@ -173,6 +173,7 @@ def scheduled(
         window_start=start.isoformat(),
         put_at=put_at.isoformat(),
         timeline=report.get("timeline"),
+        clock_skew_s=restored.get("clock_skew_s"),
         converge_s=round(waited, 1),
         logs=None if all(g2_2.values()) else str(report.get("logs"))[-TAIL_CHARS:],
     )

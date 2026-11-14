@@ -40,7 +40,7 @@ from typing import cast
 
 from harness import buildhost, g2, golden, hyperv, judges, order, site
 from harness.context import Context, E2EError, InfraError, log, write_json
-from harness.vm import Vm
+from harness.vm import REMOTE_ERRORS, Vm
 
 C1 = "c1"
 SITES = ("site-a", "site-b")
@@ -56,9 +56,20 @@ ONLINE_TIMEOUT_S = 180.0
 HEARTBEAT_TIMEOUT_S = 90.0
 """복원 뒤 heartbeat가 다시 보이기까지 — poll 10초 x 3 + Updater 재시도·TLS 여유."""
 POLL_S = 5.0
+CLOCK_SKEW_LIMIT_S = 5.0
+"""복원 뒤 VM 시계 - 호스트 시계 상한(리뷰 L4). 메모리째 복원한 VM의 시계는 Hyper-V 시간 동기화가
+보통 1초 안에 맞춘다. 재는 쪽 오차는 ssh 한 번 왕복(1초 안팎)이고, 그 중간값과 비교한다. G2-2는
+호스트에서 정한 창(번들)을 VM 시계로 열고 보고 시각도 VM 시계다. 차가 s초면 늦은 PUT 규칙의 여유
+(실측 약 42초)가 s초 줄거나 는다. 5초는 잡음보다 충분히 크고 그 여유를 크게 깎지 않는 값이다. 넘으면
+시간 동기화가 깨진 실행 환경이다(InfraError)."""
 
 
 # ---------------------------------------------------------------- 원격 호출(주입)
+
+
+def read_vm_epoch(host: Vm) -> float:
+    """VM 시계(`date -u +%s.%N`, 초)."""
+    return float(host.run("date -u +%s.%N", timeout_s=30).stdout.strip())
 
 
 @dataclass(frozen=True)
@@ -78,9 +89,22 @@ class Remote:
         default=lambda host: site.wait_ready(host, g2.READY_TIMEOUT_S)
     )
     mark: Callable[[Context, Vm], None] = site.nft_mark
+    vm_epoch: Callable[[Vm], float] = read_vm_epoch
     now: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
     sleep: Callable[[float], None] = time.sleep
     clock: Callable[[], float] = time.monotonic
+
+
+def clock_skew(remote: Remote, host: Vm) -> float:
+    """VM 시계 - 호스트 시계(초, 소수 셋째 자리). 호스트 시각은 VM을 읽기 전후의 중간값이다. 못
+    읽으면 `InfraError`."""
+    before = remote.now().timestamp()
+    try:
+        vm = remote.vm_epoch(host)
+    except (*REMOTE_ERRORS, ValueError) as exc:
+        raise InfraError(f"cannot read the VM clock of {host.ip}: {exc}") from exc
+    after = remote.now().timestamp()
+    return round(vm - (before + after) / 2, 3)
 
 
 def central(remote: Remote, *args: str) -> dict[str, object]:
@@ -125,6 +149,8 @@ class FleetSession:
     """c1 체크포인트 때 현장별 외부 접속 카운터 — 복원 뒤 기준."""
     evidence: dict[str, object] = field(default_factory=dict[str, object])
     restores: int = 0
+    clock_skew: dict[str, float] = field(default_factory=dict[str, float])
+    """마지막 복원 뒤 현장별 VM 시계 - 호스트 시계(초, `clock_skew`)."""
 
     def save(self, results: Path) -> None:
         write_json(
@@ -135,6 +161,7 @@ class FleetSession:
                 "ca_sha256": self.ca_sha256,
                 "c1_fleet": self.c1_fleet,
                 "restores": self.restores,
+                "clock_skew": self.clock_skew,
                 "evidence": self.evidence,
             },
         )
@@ -274,7 +301,8 @@ def restore_c1(
     remote: Remote | None = None,
     results: Path | None = None,
 ) -> dict[str, object]:
-    """fleet 시나리오의 시작(모듈 설명). `sites`의 VM과 중앙을 함께 되돌린다."""
+    """fleet 시나리오의 시작(모듈 설명). `sites`의 VM과 중앙을 함께 되돌린다. 끝에 현장마다 VM
+    시계 차를 재서 `session.json`에 남기고, `CLOCK_SKEW_LIMIT_S`를 넘으면 `InfraError`(리뷰 L4)."""
     remote = remote or Remote()
     runs = [g2.site_up(session, s) for s in sites]
     central(remote, "stop-web")
@@ -296,9 +324,19 @@ def restore_c1(
             HEARTBEAT_TIMEOUT_S,
         )
         remote.wait_ready(run.ctx.site.host())
+        fs.clock_skew[site_id] = clock_skew(remote, run.ctx.site.host())
     fs.restores += 1
     fs.save(results or g2.results_dir(session.run_id))
-    return {"central": {k: restored.get(k) for k in ("seconds", "fleet_match")}}
+    skewed = {s: v for s, v in fs.clock_skew.items() if abs(v) > CLOCK_SKEW_LIMIT_S}
+    if skewed:
+        raise InfraError(
+            f"VM clock off the host by more than {CLOCK_SKEW_LIMIT_S:.0f}s after restoring "
+            f"{fs.c1_name}: {skewed} (Hyper-V time sync)"
+        )
+    return {
+        "central": {k: restored.get(k) for k in ("seconds", "fleet_match")},
+        "clock_skew_s": dict(fs.clock_skew),
+    }
 
 
 def open_fleet(

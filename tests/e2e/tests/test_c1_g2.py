@@ -168,7 +168,9 @@ def test_prepare_c1_builds_the_pair_in_order(
     assert fs.c1_nft == {"site-a": {"ext_out_v4": 11}, "site-b": {"ext_out_v4": 11}}
     saved = json.loads((tmp_path / "fleet" / "session.json").read_text("utf-8"))
     assert saved["c1_name"] == fs.c1_name
-    assert set(saved) == {"run_id", "c1_name", "ca_sha256", "c1_fleet", "restores", "evidence"}
+    assert set(saved) == {
+        *("run_id", "c1_name", "ca_sha256", "c1_fleet", "restores", "clock_skew", "evidence")
+    }
 
 
 @pytest.mark.parametrize(
@@ -271,6 +273,39 @@ def test_restore_c1_needs_a_matching_central_and_fresh_heartbeats(
     fake.fleet_rows = {"site-a": {"last_heartbeat_seq": 40}}  # c1 수위 그대로 — 보고가 안 들어옴
     with pytest.raises(InfraError, match="not as expected"):
         fleet_session.restore_c1(s, fs, ("site-a",), remote=fake.remote())
+
+
+def test_restore_c1_records_the_vm_clock_skew_and_refuses_a_large_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """리뷰 L4: 복원 뒤 VM 시계 - 호스트 시계를 `session.json`과 복원 결과(G2-2 기록)에 남기고,
+    상한(5초)을 넘으면 infra다 — 넘는 값도 남긴 뒤 멈춘다."""
+    s, fake, fs = prepared(tmp_path, monkeypatch)
+    fake.fleet_rows = {"site-a": {"last_heartbeat_seq": 41}, "site-b": {"last_heartbeat_seq": 42}}
+    fake.skew = {"site-a": 0.4, "site-b": -1.2}
+    done = fleet_session.restore_c1(
+        s, fs, ("site-a", "site-b"), remote=fake.remote(), results=tmp_path
+    )
+    assert done["clock_skew_s"] == {"site-a": 0.4, "site-b": -1.2}
+    saved = json.loads((tmp_path / "fleet" / "session.json").read_text("utf-8"))
+    assert saved["clock_skew"] == {"site-a": 0.4, "site-b": -1.2}
+    fake.skew = {"site-b": 6.0}
+    with pytest.raises(InfraError, match="VM clock off the host"):
+        fleet_session.restore_c1(s, fs, ("site-b",), remote=fake.remote(), results=tmp_path)
+    saved = json.loads((tmp_path / "fleet" / "session.json").read_text("utf-8"))
+    assert saved["clock_skew"]["site-b"] == 6.0
+
+
+def test_an_unreadable_vm_clock_is_infra(tmp_path: Path) -> None:
+    fake = FakeRemote(scenario_session(tmp_path))
+
+    def garbled(host: Vm) -> float:
+        raise ValueError("could not convert string to float: ''")
+
+    remote = dataclasses.replace(fake.remote(), vm_epoch=garbled)
+    host = fake.session.sites["site-a"].ctx.site.host()
+    with pytest.raises(InfraError, match="cannot read the VM clock"):
+        fleet_session.clock_skew(remote, host)
 
 
 # ---------------------------------------------------------------- 중앙을 띄울지(order)

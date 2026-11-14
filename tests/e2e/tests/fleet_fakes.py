@@ -38,6 +38,8 @@ class FakeRemote:
     """`put`이 desired에 남길 product(빈 값이면 세션 NEXT)."""
     now: datetime = datetime(2026, 11, 15, 3, 0, tzinfo=UTC)
     tick: float = 0.0
+    skew: dict[str, float] = field(default_factory=dict[str, float])
+    """현장별 VM 시계 - 가짜 호스트 시계(초, 기본 0)."""
 
     def row(self, site: str) -> dict[str, object]:
         base: dict[str, object] = {
@@ -101,6 +103,9 @@ class FakeRemote:
             gen = self.current.get(site_of(host), fleet_session.C0_GEN)
             return {"updater": {"applied_gen": gen, "last_result": "succeeded"}}
 
+        def vm_epoch(host: Vm) -> float:
+            return self.now.timestamp() + self.skew.get(site_of(host), 0.0)
+
         def checkpoint(vm: str, name: str) -> None:
             self.events.append(f"checkpoint {vm} {name}")
 
@@ -122,6 +127,7 @@ class FakeRemote:
             converge=converge,
             wait_ready=lambda host: {},
             mark=mark,
+            vm_epoch=vm_epoch,
             now=lambda: self.now,
             sleep=lambda s: None,
             clock=clock,
