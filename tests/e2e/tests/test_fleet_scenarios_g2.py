@@ -263,6 +263,20 @@ def test_scheduled_flow_publishes_directly_and_judges_g2_2_and_g2_3(tmp_path: Pa
     assert "site-b" not in f.fake.published
 
 
+def test_the_window_start_is_whole_seconds_like_the_bundle(tmp_path: Path) -> None:
+    """리뷰 H1: 번들 `window.once.start`는 초 단위로 적힌다. 지금 시각에 마이크로초가 있어도 판정의
+    창 시작이 같은 초여야 한다 — 창이 열린 직후 같은 초 안의 lock(창 시작 + 0.1초)이 "창 전"이 되지
+    않게. 변이: 절삭을 빼면 판정 창 시작이 +0.6초가 되어 `locked_in_window`가 거짓이다."""
+    f = flow(tmp_path)
+    f.fake.now = START - timedelta(seconds=fleet_scenarios.WINDOW_LEAD_S - 0.6)
+    sc = dataclasses.replace(
+        f.scenario, report=lambda h, pib: report(locked=at(0.1), succeeded=at(60))
+    )
+    out = fleet_scenarios.scheduled(f.session, fleet_state(f.session), sc)
+    assert f.builds[0][3][0] == START
+    assert out.g2_2["locked_in_window"] is True, out.g2_2
+
+
 def test_the_put_gen_follows_the_central_max(tmp_path: Path) -> None:
     """중앙이 앞서 있으면(max 5) 게시 gen은 6이다 — 고정값이 아니다."""
     f = flow(tmp_path)

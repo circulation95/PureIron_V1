@@ -123,8 +123,10 @@ def scheduled(
     applied = judges.updater_state(remote.probe(host)).get("applied_gen")
     gen = publish_gen(fleet_status(remote, SCHEDULED_SITE).get("max_published_gen"), applied)
     pair = session.pair
-    # 창은 번들을 만들기 직전부터 잰다(번들 안 window.once에 들어가야 하므로)
-    start = remote.now() + timedelta(seconds=WINDOW_LEAD_S)
+    # 창은 번들을 만들기 직전부터 잰다(번들 안 window.once에 들어가야 하므로). 번들은 초 단위로
+    # 적으므로(`build_site_bundle`) 판정도 같은 초 단위 시각을 쓴다 — 마이크로초가 남으면 창이 열린
+    # 직후 같은 초 안의 lock이 "창 전"으로 잘못 판정된다(리뷰 H1).
+    start = (remote.now() + timedelta(seconds=WINDOW_LEAD_S)).replace(microsecond=0)
     pib = sc.build(a.ctx, gen, pair.next, (start, start + WINDOW_LEN), session.tree_of(pair.next))
     put_reply = put(remote, SCHEDULED_SITE, gen, pib)
     put_at = remote.now()
