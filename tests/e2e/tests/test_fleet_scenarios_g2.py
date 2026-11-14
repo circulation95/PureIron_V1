@@ -263,6 +263,24 @@ def test_scheduled_flow_publishes_directly_and_judges_g2_2_and_g2_3(tmp_path: Pa
     assert "site-b" not in f.fake.published
 
 
+def test_a_site_b_that_changes_during_the_site_a_update_fails_g2_3(tmp_path: Path) -> None:
+    """리뷰 M2: site-a 갱신 도중 site-b 값이 바뀌면(여기서는 applied_gen) G2-3이 흐름 수준에서
+    거짓이다 — 전 스냅샷을 PUT 앞에서 찍고 뒤 스냅샷과 비교하는 배선을 고정한다. 변이: 전 스냅샷
+    대신 뒤 스냅샷끼리 비교하면 늘 참이다."""
+    f = flow(tmp_path)
+    converge = f.scenario.remote.converge
+
+    def converge_and_touch_b(host: Vm, gen: int) -> tuple[dict[str, object], float]:
+        f.fake.current["site-b"] = 3  # site-b가 (잘못) 갱신됐다
+        return converge(host, gen)
+
+    remote = dataclasses.replace(f.scenario.remote, converge=converge_and_touch_b)
+    sc = dataclasses.replace(f.scenario, remote=remote)
+    out = fleet_scenarios.scheduled(f.session, fleet_state(f.session), sc)
+    assert scenarios_failed(out.g2_3) == ["applied_gen_unchanged"]
+    assert all(out.g2_2.values()), out.g2_2
+
+
 def test_the_window_start_is_whole_seconds_like_the_bundle(tmp_path: Path) -> None:
     """리뷰 H1: 번들 `window.once.start`는 초 단위로 적힌다. 지금 시각에 마이크로초가 있어도 판정의
     창 시작이 같은 초여야 한다 — 창이 열린 직후 같은 초 안의 lock(창 시작 + 0.1초)이 "창 전"이 되지
