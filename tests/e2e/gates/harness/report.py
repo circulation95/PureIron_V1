@@ -80,6 +80,34 @@ def parse_junit(text: str) -> list[TestResult]:
     return results
 
 
+def parse_jsonl(text: str) -> list[TestResult]:
+    """conftest가 시험마다 바로 쓴 결과 줄(`{test_id, when, outcome, failure_class, seconds}`)을
+    시험마다 하나로: 한 단계라도 실패면 `failed`(분류는 실패 줄이 모두 infra일 때만 infra), 아니면
+    call의 결과(passed·skipped), call 줄이 없고 skip이면 skipped. 깨진 줄은 건너뛴다. junit이 없을
+    때 (pytest 시간 초과)만 쓴다 — 줄이 없는 시험은 결과가 없다(통과로 세지 않는다)."""
+    lines: dict[str, list[dict[str, object]]] = {}
+    for raw in text.splitlines():
+        try:
+            row = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(row, dict) and isinstance(cast(dict[str, object], row).get("test_id"), str):
+            entry = cast(dict[str, object], row)
+            lines.setdefault(str(entry["test_id"]), []).append(entry)
+    results: list[TestResult] = []
+    for test_id, rows in lines.items():
+        seconds = sum(float(str(r.get("seconds") or 0)) for r in rows)
+        failed = [r for r in rows if r.get("outcome") == FAILED]
+        if failed:
+            infra = all(r.get("failure_class") == INFRA for r in failed)
+            results.append(TestResult(test_id, FAILED, INFRA if infra else PRODUCT, seconds))
+        elif any(r.get("outcome") == SKIPPED for r in rows):
+            results.append(TestResult(test_id, SKIPPED, None, seconds))
+        else:
+            results.append(TestResult(test_id, PASSED, None, seconds))
+    return results
+
+
 def verdict(results: Iterable[TestResult], quarantined: frozenset[str] = frozenset()) -> str:
     listed = list(results)
     if not listed:
