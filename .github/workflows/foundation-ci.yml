@@ -22,7 +22,7 @@ on:
     branches: [master]
     paths: *gate-paths
   # 밤 전체 실행(조건부 job n-minus-1·repro-build 포함)은 GitHub schedule이 아니라 개발 PC의 Windows
-  # 작업 스케줄러가 01:47 KST에 `gh workflow run foundation-ci.yml --ref master`로 연다
+  # 작업 스케줄러가 00:47 KST에 `gh workflow run foundation-ci.yml --ref master`로 연다
   # (tests/e2e/infra/register-nightly.ps1, M6-4a P9) — GitHub cron은 이 저장소에서 3.5~7.5시간 늦게
   # 만들어져 03:17 G2 nightly와 겹쳤다. plan job은 pull_request가 아닌 이벤트(workflow_dispatch 포함)를
   # 모두 전체 실행으로 본다.

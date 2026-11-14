@@ -147,12 +147,12 @@ def test_registration_calls_gh_only_outside_the_stop_context() -> None:
     assert "[string]$Gh = 'gh'" in text
 
 
-def test_foundation_ci_night_run_is_a_second_task_at_0147() -> None:
-    """M6-4a P9: foundation-ci 밤 실행은 같은 등록 스크립트의 둘째 작업(01:47, master,
+def test_foundation_ci_night_run_is_a_second_task_at_0047() -> None:
+    """M6-4a P9·리뷰 L5: foundation-ci 밤 실행은 같은 등록 스크립트의 둘째 작업(00:47, master,
     workflow_dispatch)이다 — 주간 G2가 05:45까지 가도 겹치지 않는다. 같은 `Invoke-Dispatch`(토큰은
     프로세스 환경변수, 로그 줄)를 거친다."""
     text = script()
-    assert "[string]$CiAt = '01:47'" in text
+    assert "[string]$CiAt = '00:47'" in text
     assert "[string]$CiTaskName = 'PureIron foundation-ci nightly'" in text
     assert "$CiWorkflow = 'foundation-ci.yml'" in text
     assert "return @('workflow', 'run', $CiWorkflow, '--ref', $Ref, '-R', $Repo)" in text

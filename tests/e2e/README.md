@@ -272,12 +272,14 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
   세션에서만**(gh가 Windows 자격 증명 관리자 keyring의 토큰을 쓴다 — 로그오프 상태에서는 돌지 않는다),
   놓친 예약은 나중에 실행하지 않음, 동시에 하나만, 10분 제한. 저장소·gh 계정·ref·시각은 인자
   (`-Repo`·`-GhUser`·`-Ref`·`-At`, 기본 `circulation95/PureIron_V1`·`circulation95`·`master`·`03:17`).
-  같은 등록이 둘째 작업 **`PureIron foundation-ci nightly`**(매일 **01:47**, `-DispatchCi` —
+  같은 등록이 둘째 작업 **`PureIron foundation-ci nightly`**(매일 **00:47**, `-DispatchCi` —
   `gh workflow run foundation-ci.yml --ref master`, G1 밤 전체 실행)도 만든다(M6-4a P9): foundation-ci의
   GitHub schedule을 지웠다 — 늦게 만들어져(05:30~09:30 KST) 길어진 주간 G2와 겹칠 수 있었다. plan job은
   pull_request가 아닌 이벤트를 모두 전체 실행으로 보므로 조건부 job(n-minus-1·repro-build)이
   workflow_dispatch에서도 돈다. 등록을 바꾼 뒤 사용자가 한 번 다시 등록한다(`-Unregister`는 두 작업을
-  지운다, 시각은 `-CiAt`).
+  지운다, 시각은 `-CiAt`). 00:47인 이유: 최근 foundation-ci 전체 실행이 32~70분이라 01:47이면 03:17
+  preflight(foundation-ci가 돌면 G2를 거부)와 여유가 약 20분뿐이다(M6-4a 리뷰 L5). **`-Ref`를 바꿔
+  등록하면 CI 작업도 같은 ref로 돈다.**
   `-Dispatch`는 `gh auth token -u <계정>`을 그 프로세스 환경변수(`GH_TOKEN`)에만 두고 끝에 지운다 —
   토큰을 파일·로그·명령 줄에 쓰지 않는다. 실행 기록은 `<E2E 루트>\logs\nightly-dispatch.log`(시각·
   suite·명령·종료 코드·gh 출력 한 줄). `<E2E 루트>` = `PUREIRON_E2E_ROOT`(기본 `C:\PureIron_e2e`).

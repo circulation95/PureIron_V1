@@ -2,7 +2,7 @@
 .SYNOPSIS
   G2 nightly 시작(M6-3 ★H13) — Windows 작업 스케줄러가 매일 03:17(이 PC 로컬 시각 = KST)에
   `gh workflow run nightly.yml`을 부르게 등록한다. 일요일은 suite=weekly, 나머지는 g2.
-  둘째 작업(M6-4a P9): 매일 01:47에 `gh workflow run foundation-ci.yml --ref master`(G1 밤 전체 실행 —
+  둘째 작업(M6-4a P9): 매일 00:47에 `gh workflow run foundation-ci.yml --ref master`(G1 밤 전체 실행 —
   조건부 job 포함). foundation-ci.yml의 GitHub schedule을 지웠다(늦게 만들어져 03:17 G2와 겹쳤다).
 
 .DESCRIPTION
@@ -51,7 +51,7 @@ param(
     [string]$Ref = 'master',
     [string]$At = '03:17',
     [string]$TaskName = 'PureIron G2 nightly',
-    [string]$CiAt = '01:47',
+    [string]$CiAt = '00:47',
     [string]$CiTaskName = 'PureIron foundation-ci nightly',
     [string]$Gh = 'gh',
     [switch]$Dispatch,
