@@ -122,9 +122,14 @@ def bundles_py(command: str, work: str = WORK) -> str:
     return f"uv run --no-sync python {BUNDLES_PY} {command} --work {work}"
 
 
-DNS_FAILURES = ("Could not resolve", "Temporary failure resolving")
-"""apt가 미러 이름을 풀지 못했을 때의 문구 — `apt-get update`는 경고만 내고 0으로 끝나 다음
-`apt-get install`이 exit 100으로 실패하므로 종료 코드가 아니라 문구로 본다."""
+DNS_FAILURES = (
+    "Could not resolve",
+    "Temporary failure resolving",
+    "Temporary failure in name resolution",
+)
+"""이름 풀이 실패 문구(apt `Temporary failure resolving`, curl `Could not resolve`, getaddrinfo·
+docker pull·pip `Temporary failure in name resolution`) — `apt-get update`는 경고만 내고 0으로
+끝나 다음 `apt-get install`이 exit 100으로 실패하므로 종료 코드가 아니라 문구로 본다."""
 
 
 def install_bundle(out: Path, release: str, *, work: str = WORK) -> tuple[Path, str, str]:

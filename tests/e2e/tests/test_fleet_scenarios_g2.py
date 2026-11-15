@@ -378,6 +378,7 @@ def test_a_put_that_dies_in_wsl_is_product_only_when_the_central_already_has_the
 
     remote = dataclasses.replace(f.scenario.remote, central=eof_on_put)
     pib = tmp_path / "x.pib"
+    pib.write_bytes(b"bundle")  # 다시 읽은 desired에 sha가 없으니 성공으로 보지 않는다(fix r1 L4)
     with pytest.raises(error) as caught:
         fleet_scenarios.put(remote, "site-a", 2, pib)
     assert type(caught.value) is error

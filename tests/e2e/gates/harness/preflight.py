@@ -343,7 +343,11 @@ def recover_wsl() -> list[str]:
 
 
 def docker_dns_ok() -> bool:
-    """WSL에서 `docker ps`와 apt 미러 이름 풀이가 함께 되는가(빌드와 같은 셸 경로)."""
+    """WSL에서 `docker ps`와 apt 미러 이름 풀이가 함께 되는가(빌드와 같은 셸 경로). 한계: 이름
+    풀이는 WSL 배포판(`getent`, WSL resolv.conf)에서 본다. 실패했던 apt는 `docker run` 컨테이너
+    안(Docker Desktop DNS — `fetch_debs.sh`·`build_updater.sh`)에서 돈다. 둘은 보통 같이 움직이지만
+    같은 경로는 아니다 — 이미지 의존을 늘리지 않으려고 컨테이너 안에서 보지 않는다(fix r1 L5).
+    컨테이너 쪽만 흔들린 밤은 빌드의 apt 이름 풀이 실패(infra 분류)로 남는다."""
     done = _quiet(
         [
             "wsl",
@@ -531,6 +535,11 @@ def run(
     unstable: list[str] = []
 
     def settle() -> None:
+        if not wsl_alive():  # 재시작 뒤에도 WSL이 죽어 있으면 420초를 헛기다리지 않는다(fix r1 L5)
+            note = "WSL not responding: docker/DNS wait skipped"
+            actions.append(note)
+            unstable.append(f"docker desktop: {note}")
+            return
         stable, note = wait_docker(docker_ready, sleep=sleep, clock=clock)
         actions.append(note)
         if not stable:

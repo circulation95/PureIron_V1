@@ -43,7 +43,7 @@ WRITES_ITEMS = (
     *("off_rejected", "off_audited", "off_value_unchanged"),
     *("enable_put_201", "enable_succeeded"),
     *("on_confirmed", "on_readback", "on_audited", "on_tag_value"),
-    *("undeclared_rejected", "undeclared_audited", "undeclared_not_written"),
+    *("undeclared_rejected", "undeclared_audited"),
 )
 VIEW_ITEMS = ("via_control_web", "online_before", "stale_after_block", "online_after_release")
 REJECT_ITEMS = (

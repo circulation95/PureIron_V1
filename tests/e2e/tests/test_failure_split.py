@@ -523,6 +523,7 @@ APT_DNS = (
     [
         (APT_DNS, failures.INFRA),
         ("curl: (6) Could not resolve host: download.docker.com\nexit status 100", failures.INFRA),
+        ("socket.gaierror: [Errno -3] Temporary failure in name resolution", failures.INFRA),
         # 문구 없는 apt 실패(패키지 이름이 틀림 등)는 그대로 제품
         (
             "E: Unable to locate package python3.12-venv\nreturned non-zero exit status 100.",

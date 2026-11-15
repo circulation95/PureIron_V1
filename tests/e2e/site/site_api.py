@@ -53,8 +53,17 @@ BROWSER_HEADERS = {
 }
 
 
+CONFIRM_TIMEOUT_S = 30
+"""쓰기 confirm 호출 시한 — core 쓰기 시한(`PUREIRON_WRITE_TIMEOUT_S` 기본 10초)보다 길게 둬서
+core가 내는 200 `NO_RESPONSE`를 시간 초과 대신 받는다(M6-4b-1 리뷰 L3)."""
+
+
 def call(
-    method: str, path: str, body: object | None = None, cookie: str | None = None
+    method: str,
+    path: str,
+    body: object | None = None,
+    cookie: str | None = None,
+    timeout: float = 10,
 ) -> tuple[int, Any, list[str]]:
     """(상태, JSON 본문 또는 텍스트, 응답 `Set-Cookie` 헤더 전부). 비안전 메서드에는 브라우저
     헤더를 싣는다."""
@@ -64,7 +73,7 @@ def call(
     data = None if body is None else json.dumps(body).encode()
     request = urllib.request.Request(f"{WEB}{path}", data=data, method=method, headers=headers)
     try:
-        with urllib.request.urlopen(request, timeout=10) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             raw, status, got = response.read(), response.status, response.headers
     except urllib.error.HTTPError as exc:
         raw, status, got = exc.read(), exc.code, exc.headers
@@ -145,7 +154,8 @@ def write(args: argparse.Namespace, call: Call = call) -> dict[str, Any]:
     out["confirm"] = None
     if prepared[0] == 200 and isinstance(prepared[1], dict):
         write_id = urllib.parse.quote(str(cast(dict[str, Any], prepared[1]).get("write_id")))
-        out["confirm"] = call("POST", f"/api/v1/writes/{write_id}/confirm", None, token)[:2]
+        confirm = f"/api/v1/writes/{write_id}/confirm"
+        out["confirm"] = call("POST", confirm, None, token, CONFIRM_TIMEOUT_S)[:2]
     rows: list[Any] = []
     for action in AUDIT_ACTIONS:
         status, page, _ = call("GET", f"/api/v1/audit?action={action}", None, token)

@@ -34,7 +34,7 @@ from harness.judges import (
     metric,
     updater_state,
 )
-from harness.vm import REMOTE_ERRORS, Vm
+from harness.vm import REMOTE_ERRORS, SSH_FAILED, Vm, VmError
 
 REMOTE = "/home/pureiron/e2e"
 SITE_SCRIPTS = ("crash_at.py", "probe.py", "site_api.py")
@@ -701,20 +701,30 @@ def central_in_bytes(host: Vm) -> int:
     return -1
 
 
+def _stdout_or_ssh_error(host: Vm, command: str) -> str:
+    """`check=False` 원격 명령의 stdout — 다만 ssh 자체 실패(255)는 `VmError`(infra)다. 그대로
+    두면 "파일 없음·0줄"로 읽혀 제품 판정이 거짓이 된다(M6-4b-1 리뷰 L1)."""
+    done = host.run(command, check=False)
+    if done.returncode == SSH_FAILED:
+        raise VmError(f"ssh {host.ip} failed (255): {command}: {done.stderr.strip()[-200:]}")
+    return done.stdout.strip()
+
+
 def part_bytes(host: Vm) -> int | None:
-    """Updater가 받는 중인 번들(`bundles/poll-*.pib.part`) 크기. 없으면 None."""
-    out = host.run(
-        f"sudo sh -c 'stat -c %s {UPDATER_BUNDLES}/poll-*.pib.part 2>/dev/null | head -1'",
-        check=False,
-    ).stdout.strip()
+    """Updater가 받는 중인 번들(`bundles/poll-*.pib.part`) 크기. 없으면 None. ssh 실패는
+    `VmError`."""
+    out = _stdout_or_ssh_error(
+        host, f"sudo sh -c 'stat -c %s {UPDATER_BUNDLES}/poll-*.pib.part 2>/dev/null | head -1'"
+    )
     return int(out) if out.isdigit() else None
 
 
 def poll_failures(host: Vm, since_epoch: float) -> int:
-    """`since_epoch`(VM 시각) 뒤 Updater 로그의 `poll failed` 줄 수(끊긴 내려받기·중앙 무응답)."""
-    out = host.run(
+    """`since_epoch`(VM 시각) 뒤 Updater 로그의 `poll failed` 줄 수(끊긴 내려받기·중앙 무응답).
+    ssh 실패는 `VmError`."""
+    out = _stdout_or_ssh_error(
+        host,
         f"sudo journalctl -u pureiron-updater --since @{int(since_epoch)} --no-pager -o cat "
         "| grep -c 'poll failed'",
-        check=False,
-    ).stdout.strip()
+    )
     return int(out) if out.isdigit() else 0

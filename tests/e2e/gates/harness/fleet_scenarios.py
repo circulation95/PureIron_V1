@@ -24,6 +24,7 @@ M6-4b(나머지 시나리오는 창을 즉시 연다 — `publish`, 창 판정�
 
 from __future__ import annotations
 
+import hashlib
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -34,7 +35,7 @@ from typing import Protocol
 from harness import buildhost, fleet_session, g2, golden, judges, site
 from harness.context import TAIL_CHARS, Context, E2EError, InfraError
 from harness.fleet_session import FleetSession, Remote
-from harness.vm import REMOTE_ERRORS, Vm
+from harness.vm import REMOTE_ERRORS, Vm, VmError
 
 SCHEDULED_SITE = "site-a"
 ISOLATED_SITE = "site-b"
@@ -138,18 +139,35 @@ def fleet_status(remote: Remote, site_id: str) -> dict[str, object]:
     return judges.fleet_row(fleet_session.central(remote, "fleet", "--site", site_id), site_id)
 
 
+def bundle_sha256(pib: Path) -> str:
+    with pib.open("rb") as handle:
+        return hashlib.file_digest(handle, "sha256").hexdigest()
+
+
 def put(remote: Remote, site_id: str, gen: int, pib: Path) -> dict[str, object]:
     """ci 토큰 `PUT /bundles/{site}/{gen}`(`central.py put`). 201이 아니면 제품(`E2EError` — 중앙이
     서명 번들을 받지 않았다). WSL 실패는 `InfraError`이되, 그때 `/fleet`을 다시 읽어 중앙
     `max_published_gen`이 이미 gen 이상이면 제품이다(리뷰 L3): control-api는 gen ≤ 최신이면
     본문을 받기 전에 409로 연결을 닫고, `central.py`(urllib)는 0.7 GB를 보내다 SSL EOF로 죽어
-    WSL 실패로 보인다 — 같은 gen 재게시(gen 계산 회귀)를 infra 재시도로 숨기지 않게."""
+    WSL 실패로 보인다 — 같은 gen 재게시(gen 계산 회귀)를 infra 재시도로 숨기지 않게. 다만 다시
+    읽은 desired가 이 gen·이 번들 sha256이면 중앙이 받은 뒤 응답만 잃은 것이라 성공으로 보고
+    진행한다(fix r1 L4)."""
     try:
         done = fleet_session.central(
             remote, "put", "--site", site_id, "--gen", str(gen), "--pib", golden.wsl_path(pib)
         )
     except InfraError as exc:
-        published = judges.as_int(fleet_status(remote, site_id).get("max_published_gen"))
+        try:
+            row = fleet_status(remote, site_id)
+        except InfraError as again:
+            raise InfraError(
+                f"PUT /bundles/{site_id}/{gen} failed ({exc}); /fleet re-read failed too ({again})"
+            ) from exc
+        desired = judges.sub(row, "desired")
+        sha = str(desired.get("sha256") or "").removeprefix("sha256:")
+        if desired.get("generation") == gen and sha == bundle_sha256(pib):
+            return {"status": 201, "body": None, "reply_lost": str(exc)[-TAIL_CHARS:]}
+        published = judges.as_int(row.get("max_published_gen"))
         if published >= gen:
             raise E2EError(
                 f"PUT /bundles/{site_id}/{gen} failed ({exc}) while /fleet max_published_gen is "
@@ -159,6 +177,10 @@ def put(remote: Remote, site_id: str, gen: int, pib: Path) -> dict[str, object]:
     if done.get("status") != 201:
         raise E2EError(f"PUT /bundles/{site_id}/{gen} -> {done.get('status')}: {done.get('body')}")
     return done
+
+
+def logs_tail(report: dict[str, object]) -> str:
+    return str(report.get("logs"))[-TAIL_CHARS:]
 
 
 def scheduled(
@@ -172,24 +194,13 @@ def scheduled(
     before_b = judges.isolation_view(remote.probe(b.ctx.site.host()))
     before_b_row = fleet_status(remote, ISOLATED_SITE)
     host = a.ctx.site.host()
-    applied = judges.updater_state(remote.probe(host)).get("applied_gen")
-    if judges.as_int(applied) < 1:
-        # 읽기 실패를 gen 계산에 넣으면 같은 gen(no-op)·gen 0(PUT 422)이 되어 제품 실패로
-        # 남는다(리뷰 L2)
-        raise InfraError(f"cannot read applied gen of {SCHEDULED_SITE}: {applied!r}")
-    gen = publish_gen(fleet_status(remote, SCHEDULED_SITE).get("max_published_gen"), applied)
     pair = session.pair
-    # 창은 번들을 만들기 직전부터 잰다(번들 안 window.once에 들어가야 하므로). 번들은 초 단위로
-    # 적으므로(`build_site_bundle`) 판정도 같은 초 단위 시각을 쓴다 — 마이크로초가 남으면 창이 열린
-    # 직후 같은 초 안의 lock이 "창 전"으로 잘못 판정된다(리뷰 H1).
-    start = (remote.now() + timedelta(seconds=WINDOW_LEAD_S)).replace(microsecond=0)
-    began = remote.clock()
-    pib = sc.build(a.ctx, gen, pair.next, (start, start + WINDOW_LEN), session.tree_of(pair.next))
-    built = remote.clock()
-    put_reply = put(remote, SCHEDULED_SITE, gen, pib)
+    # 창은 번들을 만들기 직전부터 잰다(번들 안 window.once에 들어가야 하므로 — `publish`)
+    pub = publish(sc, session, a, pair.next, window_lead_s=WINDOW_LEAD_S)
+    gen, pib, put_reply, start = pub.gen, pub.pib, pub.put, pub.window[0]
     put_at = remote.now()
     # 어디가 느린지 바로 보게 빌드·PUT 시간을 따로 남긴다(늦은 PUT으로 멈춰도 로그·예외에 남는다)
-    timings = {"build_s": round(built - began, 1), "put_s": round(remote.clock() - built, 1)}
+    timings = {"build_s": pub.build_s, "put_s": pub.put_s}
     a.ctx.log(f"G2-2 bundle g{gen}: build {timings['build_s']}s, PUT {timings['put_s']}s")
     published = fleet_status(remote, SCHEDULED_SITE)
     if put_at > start - timedelta(seconds=PREFETCH_ALLOWANCE_S):
@@ -237,7 +248,7 @@ def scheduled(
         locked_after_window_s=seconds_after(report, "locked", start),
         clock_skew_s=restored.get("clock_skew_s"),
         converge_s=round(waited, 1),
-        logs=None if all(g2_2.values()) else str(report.get("logs"))[-TAIL_CHARS:],
+        logs=None if all(g2_2.values()) else logs_tail(report),
     )
     b.ctx.record(
         ITEM_G2_3,
@@ -268,6 +279,9 @@ class Published:
     """게시 직전 현장 applied gen(롤백이면 그대로여야 한다)."""
     pib: Path
     put: dict[str, object]
+    window: tuple[datetime, datetime]
+    build_s: float
+    put_s: float
 
 
 def publish(
@@ -278,21 +292,33 @@ def publish(
     *,
     tree: Path | None = None,
     writes: bool = False,
+    window_lead_s: float | None = None,
 ) -> Published:
-    """`run` 현장에 `release` 번들(트리 `tree`, 없으면 `session.tree_of(release)`, 창 즉시)을 직접
-    PUT한다. gen = `publish_gen`(중앙 max, 현장 applied). applied를 못 읽으면 PUT 전에
-    `InfraError`(리뷰 L2)."""
+    """`run` 현장에 `release` 번들(트리 `tree`, 없으면 `session.tree_of(release)`)을 직접 PUT한다.
+    gen = `publish_gen`(중앙 max, 현장 applied). applied를 못 읽으면 PUT 전에 `InfraError`(리뷰
+    L2). 창은 번들을 만들기 직전에 정한다: `window_lead_s`가 없으면 즉시(`IMMEDIATE`), 있으면 now
+    + 그 초(G2-2). 번들은 초 단위로 적으므로 창 시작도 같은 초 단위다 — 마이크로초가 남으면 창이
+    열린 직후 같은 초 안의 lock이 "창 전"으로 잘못 판정된다(리뷰 H1)."""
     remote = sc.remote
     site_id = run.ctx.site.site_id
     applied = judges.updater_state(remote.probe(run.ctx.site.host())).get("applied_gen")
     if judges.as_int(applied) < 1:
+        # 읽기 실패를 gen 계산에 넣으면 같은 gen(no-op)·gen 0(PUT 422)이 되어 제품 실패로
+        # 남는다(리뷰 L2)
         raise InfraError(f"cannot read applied gen of {site_id}: {applied!r}")
     gen = publish_gen(fleet_status(remote, site_id).get("max_published_gen"), applied)
-    start = (remote.now() - IMMEDIATE).replace(microsecond=0)
+    lead = -IMMEDIATE if window_lead_s is None else timedelta(seconds=window_lead_s)
+    start = (remote.now() + lead).replace(microsecond=0)
     window = (start, start + WINDOW_LEN)
+    began = remote.clock()
     pib = sc.build(run.ctx, gen, release, window, tree or session.tree_of(release), writes=writes)
+    built = remote.clock()
+    reply = put(remote, site_id, gen, pib)
+    put_s = round(remote.clock() - built, 1)
     run.ctx.log(f"publish g{gen} {release}" + (" (writes enabled)" if writes else ""))
-    return Published(gen, judges.as_int(applied), pib, put(remote, site_id, gen, pib))
+    return Published(
+        gen, judges.as_int(applied), pib, reply, window, round(built - began, 1), put_s
+    )
 
 
 def current_row(
@@ -308,10 +334,6 @@ def current_row(
         lambda r: judges.sub(r, "current").get("gen") == gen,
         fleet_session.FLEET_TIMEOUT_S,
     )
-
-
-def logs_tail(report: dict[str, object]) -> str:
-    return str(report.get("logs"))[-TAIL_CHARS:]
 
 
 # ---------------------------------------------------------------- G2-4 revert (site-a)
@@ -443,7 +465,10 @@ def wait_part(remote: Remote, host: Vm) -> tuple[int, float]:
     started = remote.clock()
     seen: int | None = None
     while True:
-        part = remote.part_bytes(host)
+        try:
+            part = remote.part_bytes(host)
+        except VmError:  # ssh 한 번 끊김 — 상한까지 다시 묻는다(fix r1 L1)
+            part = seen
         took = remote.clock() - started
         if part is not None and part > PART_MIN_BYTES:
             return part, round(took, 1)
@@ -461,13 +486,21 @@ def wait_part(remote: Remote, host: Vm) -> tuple[int, float]:
         remote.sleep(PART_POLL_S)
 
 
-def wait_failures(remote: Remote, host: Vm, since: float) -> int:
-    """차단 뒤 Updater `poll failed` 줄이 생길 때까지(상한 `BLOCK_WAIT_S`) — 마지막 줄 수."""
+def wait_failures(remote: Remote, host: Vm, since: float) -> tuple[int, float | None]:
+    """차단 뒤 Updater `poll failed` 줄이 생길 때까지(상한 `BLOCK_WAIT_S`) — (마지막 줄 수, 처음
+    보인 때까지 초 — 못 보면 None). 초는 읽기 시한 30초 가정(E1)을 실측으로 맞출 값이다(fix r1
+    L9). ssh가 한 번 끊기면 다시 묻는다(L1)."""
     started = remote.clock()
     while True:
-        count = remote.poll_failures(host, since)
-        if count >= 1 or remote.clock() - started >= BLOCK_WAIT_S:
-            return count
+        try:
+            count = remote.poll_failures(host, since)
+        except VmError:
+            count = 0
+        took = remote.clock() - started
+        if count >= 1:
+            return count, round(took, 1)
+        if took >= BLOCK_WAIT_S:
+            return count, None
         remote.sleep(FAILURE_POLL_S)
 
 
@@ -488,7 +521,7 @@ def resume(
         part_at_block, part_s = wait_part(remote, host)
         blocked_at = remote.vm_epoch(host)
         remote.nft(host, central_filter("drop"))
-        failures = wait_failures(remote, host, blocked_at)
+        failures, failure_s = wait_failures(remote, host, blocked_at)
         part_at_release = remote.part_bytes(host)
         remote.nft(host, central_filter(None))  # 해제 — 카운터만 0부터 다시 센다
         snap, waited = remote.converge(host, pub.gen)
@@ -520,6 +553,7 @@ def resume(
         part_wait_s=part_s,
         part_at_release=part_at_release,
         poll_failures=failures,
+        block_to_failure_s=failure_s,
         received_after_release=received,
         converge_s=round(waited, 1),
         logs=None if ok else logs_tail(report),
@@ -541,20 +575,58 @@ ON_VALUES = (42.5, 57.5)
 """켠 뒤 쓸 값 — c1 값(꺼짐 때 읽은 값)과 다른 첫 값. 범위 안이고 float32로 정확해 readback을
 그대로 비교한다."""
 UNDECLARED_VALUE = 7.0
-"""사인파 칸(500~1500)이 내지 않는 값."""
 TAG_GOOD_TIMEOUT_S = 180.0
-"""켠 번들 적용(core 재시작) 뒤 선언 태그가 GOOD이 되기까지(K2 — collector가 새 plan으로 보고해야
-쓴다). 넘어도 멈추지 않는다 — 그 뒤 쓰기가 `tag_good`·`plan_reported`로 거부되어 판정이 거짓이다."""
+"""선언 태그가 GOOD이 되기까지 — c1 복원 뒤(꺼짐 쓰기 전)와 켠 번들 적용(core 재시작) 뒤 둘 다(K2
+— collector가 새 plan으로 보고해야 쓴다). 넘어도 멈추지 않는다 — 그 뒤 쓰기가 일시 검사로 거부되면
+`write_settled`가 다시 묻고, 끝내 거부되면 판정이 거짓이다."""
+TRANSIENT_CHECKS = frozenset(
+    {"tag_good", "plan_reported", "single_collector_session", "device_connected"}
+)
+"""쓰기 직전 잠깐 거짓일 수 있는 검사(fix r1 M1): core 재시작·메모리 복원 직후 collector 세션이
+다시 붙고, replay batch는 값을 GOOD으로 만들지만 `reported_plan_rev`는 갱신하지 않는다(core
+`acquisition/server.py`) — 태그 GOOD만 기다려서는 `plan_reported`가 아직 거짓일 수 있다."""
+EXPECTED_REJECTS = frozenset({"writes_enabled", "declared"})
+"""시나리오가 일부러 내는 거부 — 다시 묻는 대상이 아니다."""
+WRITE_RETRY_S = 60.0
+"""일시 검사로 거부된 쓰기를 다시 묻는 상한 — 장비 poll 1초·collector 재접속·첫 live batch에
+충분하다. 넘으면 마지막 응답으로 판정한다(거짓 = product)."""
+WRITE_RETRY_POLL_S = 5.0
 VALUE_TIMEOUT_S = 30.0
 """쓴 값이 `GET /tags`에 보이기까지(장비 poll 1초 + live 읽기 간격 10초)."""
 G2_W_ITEMS = (
     *("off_rejected", "off_audited", "off_value_unchanged"),
     *("enable_put_201", "enable_succeeded"),
     *("on_confirmed", "on_readback", "on_audited", "on_tag_value"),
-    *("undeclared_rejected", "undeclared_audited", "undeclared_not_written"),
+    *("undeclared_rejected", "undeclared_audited"),
 )
 """G2-W 판정 항목(시험 `test_g2_w_writes[…]`) — `judges.judge_writes`."""
 ITEM_G2_W = "G2-W site writes (switch off -> writes.enabled bundle -> declared -> undeclared)"
+
+
+def transient_reject(out: dict[str, object]) -> bool:
+    """`site_api.py write` 응답이 일시 검사로만 거부됐는가: 409이고(confirm이 있으면 confirm,
+    없으면 prepare) 실패 검사에서 시나리오가 일부러 내는 거부(`EXPECTED_REJECTS`)를 뺀 나머지가
+    비어 있지 않고 모두 `TRANSIENT_CHECKS`다."""
+    status, body = judges.reply(out, "confirm" if out.get("confirm") else "prepare")
+    rest = set(judges.failed_checks(body)) - EXPECTED_REJECTS
+    return status == 409 and bool(rest) and rest <= TRANSIENT_CHECKS
+
+
+def write_settled(
+    remote: Remote, host: Vm, tag: str, value: float, reason: str
+) -> tuple[dict[str, object], int]:
+    """`write_tag`를 부르고, 일시 검사로만 거부되면(`transient_reject`) `WRITE_RETRY_POLL_S`마다
+    다시 부른다(상한 `WRITE_RETRY_S`). (마지막 응답, 시도 횟수). 같은 사유로 부르므로 마지막
+    응답의 감사 행에는 앞 시도의 거부 행도 들어 있다 — 판정은 결과 행을 write_id로, 거부 행을 실패
+    검사 목록으로 고르므로 그대로 맞다."""
+    started = remote.clock()
+    tries = 0
+    while True:
+        out = remote.write_tag(host, tag, value, reason)
+        tries += 1
+        if not transient_reject(out) or remote.clock() - started >= WRITE_RETRY_S:
+            return out, tries
+        remote.sleep(WRITE_RETRY_POLL_S)
 
 
 def writes(
@@ -573,21 +645,26 @@ def writes(
     def value_of(tag: str) -> object:
         return judges.tag_value(remote.live(host), tag)
 
+    def wait_good() -> float | None:
+        _, good, took = site.wait_live(
+            lambda: remote.live(host),
+            lambda out: {"good": judges.tag_value(out, WRITE_TAG) is not None},
+            TAG_GOOD_TIMEOUT_S,
+            clock=remote.clock,
+            sleep=remote.sleep,
+        )
+        return took if all(good.values()) else None
+
+    off_good_s = wait_good()  # c1 메모리 복원 직후 세션·품질이 다시 잡히기까지(fix r1 M1)
     before = value_of(WRITE_TAG)
-    off = remote.write_tag(host, WRITE_TAG, OFF_VALUE, f"{reason} off")
+    off, off_tries = write_settled(remote, host, WRITE_TAG, OFF_VALUE, f"{reason} off")
     after = value_of(WRITE_TAG)
     # c1(g1)과 같은 G2 트리에 스위치만 켠다 — NEXT 트리(태그 설명 하나가 다름)가 아니다
     pub = publish(sc, session, run, session.pair.next, tree=session.tree, writes=True)
     snap, waited = remote.converge(host, pub.gen)
-    _, good, good_s = site.wait_live(
-        lambda: remote.live(host),
-        lambda out: {"good": judges.tag_value(out, WRITE_TAG) is not None},
-        TAG_GOOD_TIMEOUT_S,
-        clock=remote.clock,
-        sleep=remote.sleep,
-    )
+    good_s = wait_good()
     value = next(v for v in ON_VALUES if v != before)
-    on = remote.write_tag(host, WRITE_TAG, value, f"{reason} on")
+    on, on_tries = write_settled(remote, host, WRITE_TAG, value, f"{reason} on")
     seen, _, seen_s = site.wait_live(
         lambda: remote.live(host),
         lambda out: {"value": judges.tag_value(out, WRITE_TAG) == value},
@@ -595,15 +672,17 @@ def writes(
         clock=remote.clock,
         sleep=remote.sleep,
     )
-    undeclared = remote.write_tag(host, UNDECLARED_TAG, UNDECLARED_VALUE, f"{reason} undeclared")
+    undeclared, undeclared_tries = write_settled(
+        remote, host, UNDECLARED_TAG, UNDECLARED_VALUE, f"{reason} undeclared"
+    )
     checks = judges.judge_writes(
         off,
         (pub.put, snap),
         on,
         undeclared,
         tags=(WRITE_TAG, UNDECLARED_TAG),
-        values=(OFF_VALUE, value, UNDECLARED_VALUE),
-        seen=(before, after, judges.tag_value(seen, WRITE_TAG), value_of(UNDECLARED_TAG)),
+        on_value=value,
+        seen=(before, after, judges.tag_value(seen, WRITE_TAG)),
         gen=pub.gen,
     )
     ok = all(checks.values())
@@ -614,7 +693,9 @@ def writes(
         gen=pub.gen,
         account={k: account.get(k) for k in ("rc", "stderr")},
         values={"before": before, "after_off": after, "written": value},
-        tag_good_s=good_s if all(good.values()) else None,
+        tries={"off": off_tries, "on": on_tries, "undeclared": undeclared_tries},
+        off_tag_good_s=off_good_s,
+        tag_good_s=good_s,
         value_seen_s=seen_s,
         converge_s=round(waited, 1),
         replies=None if ok else {"off": off, "on": on, "undeclared": undeclared},
@@ -643,10 +724,13 @@ def ui_fleet(remote: Remote) -> dict[str, object]:
 
 def wait_connection(remote: Remote, site_id: str, want: str, limit_s: float) -> float | None:
     """control-web 경로로 읽은 `site_id` 행의 `connection`이 `want`가 될 때까지(걸린 초). 상한까지
-    바뀌지 않으면 None(판정 거짓 — 중앙이 바꾸지 않은 것은 제품이다)."""
+    바뀌지 않거나 끝내 읽지 못하면(401·502·WSL 실패 = 빈 행) None — 판정 거짓."""
     started = remote.clock()
     while True:
-        row = judges.fleet_row(ui_fleet(remote), site_id)
+        try:
+            row = judges.fleet_row(ui_fleet(remote), site_id)
+        except InfraError:  # WSL 한 번 흔들림 — 빈 행으로 치고 상한까지 다시 묻는다(fix r1 L2)
+            row = {}
         took = remote.clock() - started
         if row.get("connection") == want:
             return round(took, 1)

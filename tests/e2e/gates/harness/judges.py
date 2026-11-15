@@ -1349,31 +1349,29 @@ def judge_writes(
     undeclared: dict[str, object],
     *,
     tags: tuple[str, str],
-    values: tuple[float, float, float],
-    seen: tuple[object, object, object, object],
+    on_value: float,
+    seen: tuple[object, object, object],
     gen: int,
 ) -> dict[str, bool]:
-    """G2-W(현장 쓰기 가드레일, ADR-013). `tags` = (선언 태그, 미선언 태그), `values` = (꺼짐 때
-    시도한 값, 켠 뒤 쓴 값, 미선언에 시도한 값), `seen` = `GET /tags` 값(꺼짐 전, 꺼짐 뒤, 켠 뒤 쓴
-    다음, 미선언 시도 뒤), `enable` = (스위치를 켠 번들 PUT 응답, 수렴 스냅샷).
-    ① 스위치 꺼짐: 선언 태그 prepare가 409·실패 검사 [writes_enabled]·거부 감사 행, 값 전후 같고
-    시도 값이 아니다 ② 켠 번들(`writes.enabled`) 201·`succeeded`·applied = gen ③ 선언 태그 prepare →
-    confirm `CONFIRMED`·readback == 쓴 값·결과 감사 행, `GET /tags` 값 == 쓴 값 ④ 미선언 태그 409·
-    [declared]·거부 감사 행, 값이 시도 값이 아니다(사인파 칸이라 값 자체는 늘 바뀐다)."""
+    """G2-W(현장 쓰기 가드레일, ADR-013). `tags` = (선언 태그, 미선언 태그), `on_value` = 켠 뒤 쓴
+    값, `seen` = 선언 태그의 `GET /tags` 값(꺼짐 전, 꺼짐 뒤, 켠 뒤 쓴 다음), `enable` = (스위치를
+    켠 번들 PUT 응답, 수렴 스냅샷).
+    ① 스위치 꺼짐: 선언 태그 prepare가 409·실패 검사 [writes_enabled]·거부 감사 행, 값 전후 같음
+    ② 켠 번들(`writes.enabled`) 201·`succeeded`·applied = gen ③ 선언 태그 prepare → confirm
+    `CONFIRMED`·readback == 쓴 값·결과 감사 행, `GET /tags` 값 == 쓴 값 ④ 미선언 태그 409·
+    [declared]·거부 감사 행. 미선언 태그의 값은 보지 않는다 — 사인파 칸은 읽는 순간 값을 내므로
+    쓰기가 들어가도 검출할 수 없다(fix r1 L7). 보호의 증거는 거부 응답과 감사 행이다."""
     tag, undeclared_tag = tags
-    off_value, on_value, undeclared_value = values
-    before, after, written, undeclared_after = seen
+    before, after, written = seen
     put, snap = enable
     state = updater_state(snap)
     return {
         **prefixed("off_", judge_write_rejected(off, tag, "writes_enabled")),
-        "off_value_unchanged": before is not None and before == after and after != off_value,
+        "off_value_unchanged": before is not None and before == after,
         "enable_put_201": put.get("status") == 201,
         "enable_succeeded": state.get("last_result") == "succeeded"
         and state.get("applied_gen") == gen,
         **prefixed("on_", judge_write_confirmed(on, tag, on_value)),
         "on_tag_value": written == on_value,
         **prefixed("undeclared_", judge_write_rejected(undeclared, undeclared_tag, "declared")),
-        "undeclared_not_written": undeclared_after is not None
-        and undeclared_after != undeclared_value,
     }

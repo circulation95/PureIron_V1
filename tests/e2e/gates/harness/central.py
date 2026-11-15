@@ -572,6 +572,15 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def fleet(args: argparse.Namespace) -> dict[str, object]:
+    """`fleet`: control-web 경로(`--ui`) · control-api 직접(`--direct`) · publish 토큰 HTTPS."""
+    if args.ui:
+        return fleet_ui()
+    if args.direct:
+        return fleet_direct(args.site)
+    return fleet_https(args.site)
+
+
 def stop_web() -> dict[str, object]:
     compose("stop", "control-web")
     return {"stopped": "control-web"}
@@ -583,13 +592,7 @@ def run_command(args: argparse.Namespace) -> dict[str, object]:
         "up": lambda: up(args.ca_out),
         "register": lambda: register(args.enrollment),
         "put": lambda: put(args.site, args.gen, args.pib),
-        "fleet": lambda: (
-            fleet_ui()
-            if args.ui
-            else fleet_direct(args.site)
-            if args.direct
-            else fleet_https(args.site)
-        ),
+        "fleet": lambda: fleet(args),
         "stop-web": stop_web,
         "start-web": start_web,
         "status": status,

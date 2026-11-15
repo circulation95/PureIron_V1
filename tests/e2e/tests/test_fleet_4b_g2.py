@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import hashlib
 import json
 import urllib.parse
 from dataclasses import dataclass, field
@@ -18,8 +19,8 @@ import pytest
 import site_api
 from fleet_fakes import FakeRemote
 from g2_fakes import digests, scenario_session
-from harness import bundles, central, fleet_scenarios, fleet_session, g2, judges, site
-from harness.context import Context, InfraError
+from harness import bundles, central, fleet_scenarios, fleet_session, g2, golden, judges, site
+from harness.context import Context, E2EError, InfraError
 from harness.vm import Vm, VmError
 
 MIB = 2**20
@@ -84,6 +85,10 @@ class Flow:
     writes_on: dict[str, bool] = field(default_factory=dict[str, bool])
     memory: dict[str, float] = field(default_factory=lambda: {fleet_scenarios.WRITE_TAG: 0.0})
     audit: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
+    transient: list[list[str]] = field(default_factory=list[list[str]])
+    """다음 쓰기들이 차례로 받을 일시 거부(실패 검사 이름 — 비면 정상 처리)."""
+    ui_status: int = 200
+    """control-web 경로 응답 상태(401·502 = 행 없음)."""
     stale_after: int = 2
     """차단 뒤 몇 번째 control-web 읽기부터 stale인가(0 = 바뀌지 않음)."""
     online_after: int = 1
@@ -180,6 +185,8 @@ def flow(tmp_path: Path) -> Flow:
         declared = tag == fleet_scenarios.WRITE_TAG
         enabled = f.writes_on.get(f.site_of(host), False)
         failed = [n for n, ok in (("writes_enabled", enabled), ("declared", declared)) if not ok]
+        if f.transient:
+            failed = sorted({*failed, *f.transient.pop(0)})
         out: dict[str, object] = {"login": [200, {"user": "e2e-engineer"}], "confirm": None}
         if failed:
             checks = [{"name": n, "ok": False, "detail": "no"} for n in failed]
@@ -213,7 +220,10 @@ def flow(tmp_path: Path) -> Flow:
     central = fake.central
 
     def received(host: Vm) -> int:
-        return f.received
+        """해제(`nft count`) 뒤 수렴(`converge`)이 끝나야 바이트가 쌓인다 — 그 전에 읽으면 0."""
+        marks = [i for i, e in enumerate(f.events) if e == "nft count"]
+        done = marks and any(e.startswith("converge") for e in f.events[marks[-1] :])
+        return f.received if done else 0
 
     def central_view(*args: str) -> dict[str, object]:
         """control-web 경로 읽기: 차단 뒤 `stale_after`번째부터 stale, 해제 뒤 `online_after`번째
@@ -232,6 +242,8 @@ def flow(tmp_path: Path) -> Flow:
                     "reads": reads,
                     **({"connection": state} if state else {}),
                 }
+            if f.ui_status != 200:
+                return {"status": f.ui_status, "body": "bad gateway", "via": "caddy-ui"}
         elif args[0] == "fleet":
             f.events.append(f"read {' '.join(args[1:])}")
         return central(*args)
@@ -547,7 +559,7 @@ def writes_judge(**change: object) -> dict[str, bool]:
         "off": rejected(TAG, "writes_enabled"),
         "on": confirmed(42.5),
         "undeclared": rejected(UNDECLARED, "declared"),
-        "seen": (0.0, 0.0, 42.5, 1003.0),
+        "seen": (0.0, 0.0, 42.5),
         **change,
     }
     return judges.judge_writes(
@@ -556,7 +568,7 @@ def writes_judge(**change: object) -> dict[str, bool]:
         parts["on"],
         parts["undeclared"],
         tags=(TAG, UNDECLARED),
-        values=(77.5, 42.5, 7.0),
+        on_value=42.5,
         seen=parts["seen"],
         gen=2,
     )
@@ -570,15 +582,14 @@ def writes_judge(**change: object) -> dict[str, bool]:
         # 꺼짐 거부가 다른 검사 때문(스위치를 안 봄)
         ({"off": rejected(TAG, "tag_good")}, ["off_audited", "off_rejected"]),
         ({"off": rejected(TAG, "writes_enabled", audited=False)}, ["off_audited"]),
-        ({"seen": (0.0, 77.5, 42.5, 1003.0)}, ["off_value_unchanged"]),
-        ({"seen": (None, None, 42.5, 1003.0)}, ["off_value_unchanged"]),
+        ({"seen": (0.0, 77.5, 42.5)}, ["off_value_unchanged"]),
+        ({"seen": (None, None, 42.5)}, ["off_value_unchanged"]),
         ({"on": confirmed(42.5, readback=41.0)}, ["on_readback"]),
         ({"on": confirmed(42.5, audited=False)}, ["on_audited"]),
         ({"on": rejected(TAG, "plan_reported")}, ["on_audited", "on_confirmed", "on_readback"]),
-        ({"seen": (0.0, 0.0, 0.0, 1003.0)}, ["on_tag_value"]),
+        ({"seen": (0.0, 0.0, 0.0)}, ["on_tag_value"]),
         ({"undeclared": confirmed(7.0)}, ["undeclared_audited", "undeclared_rejected"]),
         ({"undeclared": rejected(UNDECLARED, "declared", audited=False)}, ["undeclared_audited"]),
-        ({"seen": (0.0, 0.0, 42.5, 7.0)}, ["undeclared_not_written"]),
     ],
 )
 def test_writes_judge_each_check_matters(change: dict[str, object], broken: list[str]) -> None:
@@ -595,10 +606,17 @@ def test_site_api_write_prepares_confirms_and_reads_its_own_audit_rows(tmp_path:
         {"action": "tag.write", "detail": {"reason": "older"}},
     ]
 
+    timeouts: dict[str, float] = {}
+
     def call(
-        method: str, path: str, body: object | None = None, cookie: str | None = None
+        method: str,
+        path: str,
+        body: object | None = None,
+        cookie: str | None = None,
+        timeout: float = 10,
     ) -> tuple[int, object, list[str]]:
         calls.append((method, path, body))
+        timeouts[path] = timeout
         if path.endswith("/login"):
             return 200, {"user": {"name": "e2e-engineer"}}, ["pureiron_session=tok; Path=/"]
         if path == "/api/v1/writes":
@@ -625,6 +643,9 @@ def test_site_api_write_prepares_confirms_and_reads_its_own_audit_rows(tmp_path:
         ("POST", "/api/v1/auth/logout"),
     ]
     assert calls[1][2] == {"tag_path": "line1/temp_sp", "value": 42.5, "reason": "mine"}
+    # confirm만 core 쓰기 시한(10초)보다 길게 기다린다(fix r1 L3 — NO_RESPONSE를 받는다)
+    assert timeouts["/api/v1/writes/ab12/confirm"] == site_api.CONFIRM_TIMEOUT_S == 30
+    assert timeouts["/api/v1/writes"] == 10
     # VM에서는 JSON 한 줄로 나가 목록이 된다(`judges.reply`가 읽는 모양)
     assert json.loads(json.dumps(out))["confirm"] == [200, {"outcome": "CONFIRMED"}]
     assert out["audit"] == [entries[0]]  # 이 사유의 행만
@@ -795,3 +816,253 @@ def test_central_reads_the_fleet_like_control_web(monkeypatch: pytest.MonkeyPatc
     }
     args = argparse.Namespace(command="fleet", ui=True, direct=False, site=None)
     assert central.run_command(args)["via"] == "caddy-ui"
+
+
+# ---------------------------------------------------------------- fix r1
+
+
+def test_a_counter_read_before_the_download_ends_is_not_a_resume(tmp_path: Path) -> None:
+    """리뷰 M3(M1 변이): 해제 직후(수렴 전) 카운터를 읽으면 0 바이트라 처음부터 받아도 이어받기로
+    보인다 — 가짜 카운터가 수렴 뒤에만 바이트를 내므로 시나리오가 수렴 뒤에 읽는지 본다."""
+    f = resume_flow(tmp_path)
+    checks = fleet_scenarios.resume(f.session, fleet_state(f.session), f.scenario)
+    assert checks["resumed"] is True
+    record = next(
+        r for r in f.session.sites["site-a"].ctx.results if r["name"] == fleet_scenarios.ITEM_G2_6_1
+    )
+    assert record["received_after_release"] == f.received  # 0이 아니다
+    # 차단 → 첫 poll failed까지 초(fix r1 L9) — 가짜 시계는 부를 때마다 1초, 둘째 읽기에서 보인다
+    assert record["block_to_failure_s"] == 2.0
+
+
+def test_an_ssh_drop_while_waiting_for_the_part_is_asked_again(tmp_path: Path) -> None:
+    """fix r1 L1: `.part` 대기 중 ssh가 한 번 끊겨도(VmError) 다시 묻는다."""
+    f = resume_flow(tmp_path)
+    part_bytes = f.scenario.remote.part_bytes
+    dropped: list[str] = []
+
+    def flaky(host: Vm) -> int | None:
+        if not dropped:
+            dropped.append("x")
+            raise VmError("ssh 255")
+        return part_bytes(host)
+
+    remote = dataclasses.replace(f.scenario.remote, part_bytes=flaky)
+    checks = fleet_scenarios.resume(
+        f.session, fleet_state(f.session), dataclasses.replace(f.scenario, remote=remote)
+    )
+    assert all(checks.values()), failed(checks)
+    assert dropped == ["x"]
+
+
+@pytest.mark.parametrize("helper", ["part_bytes", "poll_failures"])
+def test_an_ssh_failure_is_not_read_as_no_part_or_no_failures(helper: str) -> None:
+    """fix r1 L1: `check=False` 원격 명령도 ssh 자체 실패(255)는 VmError(infra) — "파일 없음"·
+    "0줄"(제품 판정 거짓)로 읽지 않는다."""
+
+    class Host:
+        ip = "10.77.0.11"
+
+        def __init__(self, rc: int, out: str) -> None:
+            self.rc, self.out = rc, out
+
+        def run(self, command: str, **_: object) -> Any:
+            return argparse.Namespace(returncode=self.rc, stdout=self.out, stderr="reset")
+
+    def call(host: Host) -> object:
+        vm = cast(Vm, host)
+        return site.part_bytes(vm) if helper == "part_bytes" else site.poll_failures(vm, 1.0)
+
+    with pytest.raises(VmError, match="255"):
+        call(Host(255, ""))
+    assert call(Host(0, "3")) == 3
+    assert call(Host(1, "")) in (None, 0)  # grep 0줄(1)·파일 없음은 그대로
+
+
+def test_writes_retries_a_write_rejected_only_by_transient_checks(tmp_path: Path) -> None:
+    """fix r1 M1: 켠 뒤 쓰기가 일시 검사(`plan_reported` — replay batch가 GOOD을 만들지만 plan
+    보고는 아직)로 거부되면 5초 간격으로 다시 묻는다. 꺼짐 쪽도 [writes_enabled + tag_good]이면
+    다시 물어 [writes_enabled]만 남을 때 판정한다. 판정·감사 행 고르기는 그대로 맞다."""
+    f = flow(tmp_path)
+    f.transient = [["tag_good"], [], ["plan_reported"], ["plan_reported", "tag_good"]]
+    checks = fleet_scenarios.writes(f.session, fleet_state(f.session), f.scenario)
+    assert all(checks.values()), failed(checks)
+    writes = [e for e in f.events if e.startswith("write ")]
+    assert writes == [
+        "write line1/temp_sp 77.5",
+        "write line1/temp_sp 77.5",  # 꺼짐: [writes_enabled, tag_good] → 다시
+        "write line1/temp_sp 42.5",
+        "write line1/temp_sp 42.5",
+        "write line1/temp_sp 42.5",  # 켬: plan_reported, plan_reported+tag_good → 다시
+        "write sim/r001 7.0",
+    ]
+    record = next(
+        r for r in f.session.sites["site-b"].ctx.results if r["name"] == fleet_scenarios.ITEM_G2_W
+    )
+    assert record["tries"] == {"off": 2, "on": 3, "undeclared": 1}
+
+
+def test_an_expected_reject_is_never_retried(tmp_path: Path) -> None:
+    """꺼짐의 [writes_enabled]·미선언의 [declared]는 시나리오가 일부러 내는 거부라 한 번만
+    부른다."""
+    f = flow(tmp_path)
+    fleet_scenarios.writes(f.session, fleet_state(f.session), f.scenario)
+    writes = [e for e in f.events if e.startswith("write ")]
+    assert writes.count("write line1/temp_sp 77.5") == 1
+    assert writes.count("write sim/r001 7.0") == 1
+    off: dict[str, object] = {
+        "prepare": [409, {"checks": [{"name": "writes_enabled", "ok": False}]}]
+    }
+    assert not fleet_scenarios.transient_reject(off)
+    wrong: dict[str, object] = {"prepare": [409, {"checks": [{"name": "role", "ok": False}]}]}
+    assert not fleet_scenarios.transient_reject(wrong)  # 일시 검사가 아니다
+    late: dict[str, object] = {
+        "prepare": [200, {}],
+        "confirm": [409, {"checks": [{"name": "tag_good", "ok": False}]}],
+    }
+    assert fleet_scenarios.transient_reject(late)  # confirm 단계의 일시 거부도 다시 묻는다
+
+
+def test_a_write_that_stays_transiently_rejected_stops_at_the_limit(tmp_path: Path) -> None:
+    """일시 거부가 끝나지 않으면 상한(`WRITE_RETRY_S`)에서 마지막 응답으로 판정한다(거짓)."""
+    f = flow(tmp_path)
+    calls: list[str] = []
+
+    def stuck(host: Vm, tag: str, value: float, reason: str) -> dict[str, object]:
+        calls.append(tag)
+        if len(calls) > 40:
+            pytest.fail("no retry limit")
+        checks = [{"name": "plan_reported", "ok": False}]
+        return {"prepare": [409, {"checks": checks}], "confirm": None, "audit": []}
+
+    now = [0.0]
+
+    def sleep(seconds: float) -> None:
+        now[0] += seconds
+
+    remote = dataclasses.replace(
+        f.scenario.remote, write_tag=stuck, clock=lambda: now[0], sleep=sleep
+    )
+    out, tries = fleet_scenarios.write_settled(remote, Vm("10.77.0.12", Path("k")), TAG, 1.0, "r")
+    # 0·5·…·60초에 부른다 = 60 / 5 + 1번
+    want = int(fleet_scenarios.WRITE_RETRY_S / fleet_scenarios.WRITE_RETRY_POLL_S) + 1
+    assert tries == len(calls) == want
+    assert fleet_scenarios.transient_reject(out)
+
+
+def test_a_central_view_that_cannot_be_read_never_counts_as_stale(tmp_path: Path) -> None:
+    """리뷰 M3(M9 변이): control-web 경로가 502(행 없음)면 stale로 치지 않는다 — 판정 거짓."""
+    f = flow(tmp_path)
+    nft = f.scenario.remote.nft
+
+    def nft_then_502(host: Vm, script: str) -> None:
+        nft(host, script)
+        f.ui_status = 502 if nft_kind(script) == "drop" else 200
+
+    remote = dataclasses.replace(f.scenario.remote, nft=nft_then_502)
+    checks = fleet_scenarios.fleet_view(
+        f.session, fleet_state(f.session), dataclasses.replace(f.scenario, remote=remote)
+    )
+    assert failed(checks) == ["stale_after_block"]
+
+
+def test_the_block_is_lifted_before_waiting_for_online(tmp_path: Path) -> None:
+    """리뷰 M3(M10 변이): 가짜 connection은 마지막 nft 모드를 따른다 — 막힌 채로 online을 기다리면
+    online이 오지 않는다. 차단 해제가 online 대기보다 먼저인지 본다."""
+    f = flow(tmp_path)
+    fleet_scenarios.fleet_view(f.session, fleet_state(f.session), f.scenario)
+    clear = f.events.index("nft clear")
+    reads = [i for i, e in enumerate(f.events) if e == "ui-read"]
+    assert any(i > clear for i in reads)
+    row = f.fake.fleet_rows["site-b"]
+    assert (row["blocked"], row["connection"]) == (False, "online")
+
+
+def test_a_wsl_hiccup_while_watching_the_view_is_asked_again(tmp_path: Path) -> None:
+    """fix r1 L2: control-web 읽기 중 WSL 한 번 흔들림(InfraError)은 빈 행으로 치고 다시 묻는다.
+    끝내 못 읽으면 None(판정 거짓) — 시나리오 전체가 infra가 되지 않는다."""
+    f = flow(tmp_path)
+    central = f.scenario.remote.central
+    hiccups: list[str] = []
+
+    def flaky(*args: str) -> dict[str, object]:
+        if args[:2] == ("fleet", "--ui") and len(f.events) > 3 and not hiccups:
+            hiccups.append("x")
+            raise golden.WslError("wsl failed (-1): instance has terminated")
+        return central(*args)
+
+    remote = dataclasses.replace(f.scenario.remote, central=flaky)
+    checks = fleet_scenarios.fleet_view(
+        f.session, fleet_state(f.session), dataclasses.replace(f.scenario, remote=remote)
+    )
+    assert all(checks.values()), failed(checks)
+    assert hiccups == ["x"]
+
+    def dead(*args: str) -> dict[str, object]:
+        if args[:2] == ("fleet", "--ui"):
+            raise golden.WslError("wsl failed (-1)")
+        return central(*args)
+
+    remote = dataclasses.replace(f.scenario.remote, central=dead)
+    assert fleet_scenarios.wait_connection(remote, "site-b", "stale", 10.0) is None
+
+
+def put_pib(tmp_path: Path) -> tuple[Path, str]:
+    pib = tmp_path / "x.pib"
+    pib.write_bytes(b"signed bundle")
+    return pib, hashlib.sha256(b"signed bundle").hexdigest()
+
+
+def test_a_put_whose_reply_was_lost_but_whose_bundle_landed_goes_on(tmp_path: Path) -> None:
+    """fix r1 L4: PUT이 WSL에서 죽었어도 다시 읽은 desired가 이 gen·이 번들 sha256이면 중앙이 받은
+    것이다 — 성공으로 보고 진행한다(409 product가 아니다)."""
+    f = flow(tmp_path)
+    pib, sha = put_pib(tmp_path)
+    central = f.scenario.remote.central
+
+    def lost_reply(*args: str) -> dict[str, object]:
+        if args[0] == "put":
+            f.fake.fleet_rows["site-a"] = {
+                "max_published_gen": 2,
+                "desired": {"generation": 2, "sha256": f"sha256:{sha}"},
+            }
+            raise golden.WslScriptError("wsl script failed (1): ConnectionResetError", 1)
+        return central(*args)
+
+    remote = dataclasses.replace(f.scenario.remote, central=lost_reply)
+    done = fleet_scenarios.put(remote, "site-a", 2, pib)
+    assert done["status"] == 201
+    assert "ConnectionResetError" in str(done["reply_lost"])
+
+
+def test_a_put_that_died_with_another_bundle_in_place_is_a_409(tmp_path: Path) -> None:
+    f = flow(tmp_path)
+    pib, _ = put_pib(tmp_path)
+    central = f.scenario.remote.central
+
+    def other(*args: str) -> dict[str, object]:
+        if args[0] == "put":
+            f.fake.fleet_rows["site-a"] = {
+                "max_published_gen": 2,
+                "desired": {"generation": 2, "sha256": "sha256:" + "0" * 64},
+            }
+            raise golden.WslScriptError("wsl script failed (1): ssl.SSLEOFError", 1)
+        return central(*args)
+
+    remote = dataclasses.replace(f.scenario.remote, central=other)
+    with pytest.raises(E2EError, match="presumably 409"):
+        fleet_scenarios.put(remote, "site-a", 2, pib)
+
+
+def test_a_failed_reread_keeps_the_original_put_failure_in_the_message(tmp_path: Path) -> None:
+    f = flow(tmp_path)
+    pib, _ = put_pib(tmp_path)
+
+    def down(*args: str) -> dict[str, object]:
+        if args[0] == "put":
+            raise golden.WslScriptError("wsl script failed (1): ssl.SSLEOFError", 1)
+        raise golden.WslError("wsl failed (-1): instance has terminated")
+
+    remote = dataclasses.replace(f.scenario.remote, central=down)
+    with pytest.raises(InfraError, match=r"SSLEOFError.*re-read failed too.*terminated"):
+        fleet_scenarios.put(remote, "site-a", 2, pib)

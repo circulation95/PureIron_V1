@@ -265,14 +265,20 @@ def test_preflight_waits_for_ci_before_restarting_wsl() -> None:
         cleaned.append("x")
         return ["removed vm pureiron-site-a"]
 
+    restarted: list[str] = []
+
     def alive() -> bool:
         echoes.append("echo")
-        return False
+        return bool(restarted)  # 재시작 전에는 답하지 않고, 재시작 뒤에는 답한다
+
+    def restart() -> list[str]:
+        restarted.append("x")
+        return ["wsl --shutdown -> 0"]
 
     outcome = preflight.run(
         preflight.Limits(),
         measure_now=lambda: seen.pop(0),
-        recover=lambda: ["wsl --shutdown -> 0"],
+        recover=restart,
         wsl_alive=alive,
         cleanup=cleanup,
         sleep=lambda _: None,
@@ -290,7 +296,8 @@ def test_preflight_waits_for_ci_before_restarting_wsl() -> None:
         f"WSL docker and DNS stable for {preflight.DOCKER_STABLE_S}s (after 60s)",
         "removed vm pureiron-site-a",
     ]
-    assert len(echoes) == preflight.WSL_ECHO_TRIES - 1  # 측정이 1번, 재시작 전에 더 묻는다
+    # 측정이 1번, 재시작 전에 더 묻고, 재시작 뒤 안정 대기 전에 한 번 더 묻는다(fix r1 L5)
+    assert len(echoes) == preflight.WSL_ECHO_TRIES
     assert cleaned == ["x"]
 
 
@@ -1399,6 +1406,7 @@ def test_preflight_starts_a_stopped_docker_desktop_and_waits_for_stable_dns() ->
     outcome = preflight.run(
         preflight.Limits(),
         measure_now=lambda: seen.pop(0),
+        wsl_alive=lambda: True,
         sleep=time.sleep,
         clock=time.clock,
         desktop_start=start,
@@ -1426,6 +1434,7 @@ def test_preflight_gives_up_when_docker_or_dns_never_settles() -> None:
         preflight.Limits(),
         measure_now=lambda: seen.pop(0),
         cleanup=lambda: pytest.fail("cleanup must not run on a failed preflight"),
+        wsl_alive=lambda: True,
         sleep=time.sleep,
         clock=time.clock,
         desktop_start=lambda: ["docker desktop start -> 0"],
@@ -1447,3 +1456,53 @@ def test_preflight_leaves_a_running_docker_alone() -> None:
     )
     assert outcome.ok
     assert outcome.actions == []
+
+
+def test_a_wsl_restart_never_starts_docker_desktop_a_second_time() -> None:
+    """리뷰 M17: 재시작 뒤 측정에서도 WSL Docker가 아직 답하지 않아도 Desktop을 다시 시작하지
+    않는다(재시작 `recover_wsl`이 이미 `docker desktop start`를 했다) — 안정 대기만 한다."""
+    seen = [measure(wsl_ok=False), measure(docker_ok=False)]
+    restarted: list[str] = []
+    starts: list[str] = []
+
+    def start() -> list[str]:
+        starts.append("start")
+        return ["docker desktop start -> 0"]
+
+    def restart() -> list[str]:
+        restarted.append("x")
+        return ["wsl --shutdown -> 0"]
+
+    time = FakeTime()
+    outcome = preflight.run(
+        preflight.Limits(),
+        measure_now=lambda: seen.pop(0),
+        recover=restart,
+        wsl_alive=lambda: bool(restarted),
+        sleep=time.sleep,
+        clock=time.clock,
+        desktop_start=start,
+        docker_ready=lambda: True,
+    )
+    assert starts == []
+    assert restarted == ["x"]
+    assert outcome.problems == ["docker (WSL) is not responding"]
+
+
+def test_a_wsl_that_stays_dead_after_restart_skips_the_docker_wait() -> None:
+    """fix r1 L5: 재시작 뒤에도 WSL이 답하지 않으면 docker·DNS 안정 대기(최대 420초)를 건너뛰고
+    infra로 멈춘다."""
+    outcome = preflight.run(
+        preflight.Limits(),
+        measure_now=lambda: measure(wsl_ok=False),
+        recover=lambda: ["wsl --shutdown -> 0"],
+        wsl_alive=lambda: False,
+        sleep=lambda _: None,
+        clock=lambda: 0.0,
+        desktop_start=lambda: pytest.fail("the restart already started Docker Desktop"),
+        docker_ready=lambda: pytest.fail("WSL is dead: no docker/DNS wait"),
+    )
+    note = "WSL not responding: docker/DNS wait skipped"
+    assert note in outcome.actions
+    assert f"docker desktop: {note}" in outcome.problems
+    assert "WSL is not responding" in outcome.problems
