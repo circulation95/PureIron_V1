@@ -12,7 +12,12 @@ foundation-ci 상태를 읽지 못하는 것(`gh run list` 실패)도 어긴 것
 답하지 않으면 `WSL_ECHO_TRIES`번까지 다시 묻고, 그래도 무응답이며 foundation-ci가 돌지 않는 것이
 확인될 때만 `docker desktop stop` → `wsl --shutdown` → `docker desktop start` 뒤 다시 잰다(같은 PC의
 g1 job은 메모리가 빠듯할 때 WSL을 느리게 만든다 — 느린 것을 죽은 것으로 보고 살아 있는 job을 끊지
-않게). CI가 돌거나 상태를 모르면 재시작하지 않고 `infra`로 멈춘다. 그 뒤 메모리가 기준 미만이고
+않게). CI가 돌거나 상태를 모르면 재시작하지 않고 `infra`로 멈춘다. WSL은 답하는데 WSL Docker가
+답하지 않으면(Docker Desktop이 꺼져 있다 — Desktop을 끈 채 둔 밤) `docker desktop start`를
+한다. 재시작 뒤와 시작 뒤에는 둘 다 WSL `docker ps`와 `getent hosts archive.ubuntu.com`이
+`DOCKER_STABLE_S` 동안 끊김 없이 통과할 때까지(상한 `DOCKER_UP_LIMIT_S`) 기다린다 — 재시작
+직후 DNS가 몇십 초 흔들려 설치 번들 빌드의 apt가 실패했다(4b 계획 R5·K3). 끝내 안정되지
+않으면 `infra`. 그 뒤 메모리가 기준 미만이고
 WSL이 답하면 WSL 페이지 캐시를 비우고(`buildhost.reclaim_host_memory`) 최대 `RECLAIM_WAIT_S` 동안
 `RECLAIM_POLL_S`마다 다시 잰다 — WSL은 캐시를 Windows에 늦게 돌려준다(VM 실측: vmmemWSL 7.5 GB·
 가용 4.6 GB가 회수 뒤 약 1분에 3.5 GB·6.3 GB). 끝까지 기준 미만이면 `infra`. 판단만 하는 모드는
@@ -47,6 +52,14 @@ DOCKER_TIMEOUT_S = 60
 PS_TIMEOUT_S = 60
 DESKTOP_TIMEOUT_S = 300
 CI_POLL_S = 60
+DOCKER_STABLE_S = 60
+"""Docker Desktop 시작·WSL 재시작 뒤 WSL docker·DNS가 끊김 없이 통과해야 하는 시간(4b 계획 R5 —
+재시작 직후 이름 풀이가 몇십 초 흔들리다 돌아온다)."""
+DOCKER_UP_LIMIT_S = 420
+"""그 대기의 상한 = Desktop 시작(관측 1~2분) + 안정 60초 + 여유. 넘으면 `infra`."""
+DOCKER_POLL_S = 10
+DOCKER_DNS_NAME = "archive.ubuntu.com"
+"""설치 번들 빌드(`fetch_debs.sh`·`build_updater.sh`)의 apt가 처음 찾는 이름."""
 RECLAIM_WAIT_S = 120
 """WSL 페이지 캐시를 비운 뒤 Windows 가용 메모리가 기준을 넘기를 기다리는 최대 시간(실측 약 1분)."""
 RECLAIM_POLL_S = 10
@@ -329,6 +342,50 @@ def recover_wsl() -> list[str]:
     return actions
 
 
+def docker_dns_ok() -> bool:
+    """WSL에서 `docker ps`와 apt 미러 이름 풀이가 함께 되는가(빌드와 같은 셸 경로)."""
+    done = _quiet(
+        [
+            "wsl",
+            "-d",
+            golden.WSL_DISTRO,
+            "--exec",
+            "bash",
+            "-c",
+            f"docker ps -q >/dev/null && getent hosts {DOCKER_DNS_NAME} >/dev/null",
+        ],
+        DOCKER_TIMEOUT_S,
+    )
+    return done is not None and done.returncode == 0
+
+
+def start_desktop() -> list[str]:
+    done = _quiet(["docker", "desktop", "start"], DESKTOP_TIMEOUT_S)
+    return [f"docker desktop start -> {'timeout' if done is None else done.returncode}"]
+
+
+def wait_docker(
+    ready: Callable[[], bool],
+    *,
+    sleep: Callable[[float], None],
+    clock: Callable[[], float],
+) -> tuple[bool, str]:
+    """`ready`(WSL docker·DNS)가 `DOCKER_STABLE_S` 동안 끊김 없이 참일 때까지 `DOCKER_POLL_S`마다
+    묻는다(한 번 실패하면 안정 시간을 처음부터 다시 잰다). (안정됐는가, 조치 기록 한 줄)."""
+    started = clock()
+    since: float | None = None
+    while True:
+        now = clock()
+        since = (since if since is not None else now) if ready() else None
+        if since is not None and now - since >= DOCKER_STABLE_S:
+            return True, (
+                f"WSL docker and DNS stable for {DOCKER_STABLE_S}s (after {round(now - started)}s)"
+            )
+        if now - started >= DOCKER_UP_LIMIT_S:
+            return False, f"WSL docker/DNS not stable within {DOCKER_UP_LIMIT_S}s"
+        sleep(DOCKER_POLL_S)
+
+
 def wsl_answers(
     alive: Callable[[], bool], sleep: Callable[[float], None], tries: int = WSL_ECHO_TRIES
 ) -> bool:
@@ -462,28 +519,52 @@ def run(
     clock: Callable[[], float] = time.monotonic,
     reclaim: Callable[[], None] | None = None,
     mem_now: Callable[[], float | None] | None = None,
+    desktop_start: Callable[[], list[str]] = start_desktop,
+    docker_ready: Callable[[], bool] = docker_dns_ok,
 ) -> Outcome:
     """조치가 있는 preflight: foundation-ci가 돌면 최대 `limits.ci_wait_s` 기다리고, 그 뒤에도 WSL이
-    답하지 않으면 `revive_wsl`(CI가 없을 때만 재시작) 뒤 다시 재고, 메모리가 모자라면(WSL이 답할
-    때만) `reclaim_memory`로 WSL 캐시를 돌려받으며 다시 재고, 통과하면 정리(`cleanup`)한다."""
+    답하지 않으면 `revive_wsl`(CI가 없을 때만 재시작), WSL은 답하는데 Docker가 답하지 않으면 Docker
+    Desktop 시작 — 둘 다 그 뒤 WSL docker·DNS 안정(`wait_docker`)을 기다리고 다시 잰다. 메모리가
+    모자라면(WSL이 답할 때만) `reclaim_memory`로 WSL 캐시를 돌려받으며 다시 재고, 통과하면
+    정리(`cleanup`)한다."""
     actions: list[str] = []
+    unstable: list[str] = []
+
+    def settle() -> None:
+        stable, note = wait_docker(docker_ready, sleep=sleep, clock=clock)
+        actions.append(note)
+        if not stable:
+            unstable.append(f"docker desktop: {note}")
+
     seen = measure_now()
     started = clock()
     while seen.ci_running and clock() - started < limits.ci_wait_s:
         actions.append(f"waiting for {seen.ci_running} foundation-ci run(s)")
         sleep(CI_POLL_S)
         seen = measure_now()
+    restarted: list[list[str]] = []
     if not seen.wsl_ok:
         # 측정이 이미 1번 물었다 — 남은 횟수만 더 묻는다.
         last = seen
+
+        def restart() -> list[str]:
+            restarted.append(recover())
+            return restarted[-1]
+
         _, revived = revive_wsl(
             lambda: (last.ci_running, last.ci_known),
             alive=wsl_alive,
-            restart=recover,
+            restart=restart,
             sleep=sleep,
             tries=WSL_ECHO_TRIES - 1,
         )
         actions += revived
+        if restarted:  # 재시작이 Docker Desktop도 다시 띄웠다 — 시작은 하지 않고 안정만 기다린다
+            settle()
+        seen = measure_now()
+    if seen.wsl_ok and not seen.docker_ok and not restarted:
+        actions += desktop_start()
+        settle()
         seen = measure_now()
     if seen.wsl_ok and mem_short(seen, limits):
         mem_gb, freed = reclaim_memory(
@@ -496,7 +577,7 @@ def run(
         )
         actions += freed
         seen = replace(seen, mem_gb=mem_gb)
-    problems = judge(seen, limits)
+    problems = judge(seen, limits) + unstable
     if not problems and cleanup is not None:
         actions += cleanup()
     return Outcome(seen, limits, problems, actions)
