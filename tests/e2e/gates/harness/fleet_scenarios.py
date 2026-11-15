@@ -108,11 +108,23 @@ def fleet_status(remote: Remote, site_id: str) -> dict[str, object]:
 
 
 def put(remote: Remote, site_id: str, gen: int, pib: Path) -> dict[str, object]:
-    """ci 토큰 `PUT /bundles/{site}/{gen}`(`central.py put`). WSL 실패는 `InfraError`, 201이 아니면
-    제품(`E2EError` — 중앙이 서명 번들을 받지 않았다)."""
-    done = fleet_session.central(
-        remote, "put", "--site", site_id, "--gen", str(gen), "--pib", golden.wsl_path(pib)
-    )
+    """ci 토큰 `PUT /bundles/{site}/{gen}`(`central.py put`). 201이 아니면 제품(`E2EError` — 중앙이
+    서명 번들을 받지 않았다). WSL 실패는 `InfraError`이되, 그때 `/fleet`을 다시 읽어 중앙
+    `max_published_gen`이 이미 gen 이상이면 제품이다(리뷰 L3): control-api는 gen ≤ 최신이면
+    본문을 받기 전에 409로 연결을 닫고, `central.py`(urllib)는 0.7 GB를 보내다 SSL EOF로 죽어
+    WSL 실패로 보인다 — 같은 gen 재게시(gen 계산 회귀)를 infra 재시도로 숨기지 않게."""
+    try:
+        done = fleet_session.central(
+            remote, "put", "--site", site_id, "--gen", str(gen), "--pib", golden.wsl_path(pib)
+        )
+    except InfraError as exc:
+        published = judges.as_int(fleet_status(remote, site_id).get("max_published_gen"))
+        if published >= gen:
+            raise E2EError(
+                f"PUT /bundles/{site_id}/{gen} failed ({exc}) while /fleet max_published_gen is "
+                f"{published} >= {gen}: presumably 409 before the body (same or older gen)"
+            ) from exc
+        raise
     if done.get("status") != 201:
         raise E2EError(f"PUT /bundles/{site_id}/{gen} -> {done.get('status')}: {done.get('body')}")
     return done
