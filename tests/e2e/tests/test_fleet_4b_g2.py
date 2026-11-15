@@ -85,6 +85,9 @@ class Flow:
     writes_on: dict[str, bool] = field(default_factory=dict[str, bool])
     memory: dict[str, float] = field(default_factory=lambda: {fleet_scenarios.WRITE_TAG: 0.0})
     audit: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
+    settling: int = 0
+    """복원·core 재시작 직후 선언 태그가 아직 GOOD이 아닌 live 읽기 수(리뷰 M19 — 그동안 쓰면
+    `tag_good` 거부). 읽을 때마다 하나씩 준다."""
     transient: list[list[str]] = field(default_factory=list[list[str]])
     """다음 쓰기들이 차례로 받을 일시 거부(실패 검사 이름 — 비면 정상 처리)."""
     ui_status: int = 200
@@ -113,6 +116,7 @@ def flow(tmp_path: Path) -> Flow:
     ) -> dict[str, object]:
         f.restores.append(",".join(sites))
         f.events.append("restore " + ",".join(sites))
+        f.settling = 2
         return {}
 
     def build(
@@ -146,6 +150,7 @@ def flow(tmp_path: Path) -> Flow:
             f.vm[site_id] = (gen, release, "succeeded")
             f.reports[f"g{gen}"] = vm_report("succeeded")
             f.writes_on[site_id] = writes
+            f.settling = 2  # core가 다시 만들어졌다
             fake.current[site_id] = gen
             fake.fleet_rows[site_id] = {
                 **fake.fleet_rows.get(site_id, {}),
@@ -187,6 +192,8 @@ def flow(tmp_path: Path) -> Flow:
         failed = [n for n, ok in (("writes_enabled", enabled), ("declared", declared)) if not ok]
         if f.transient:
             failed = sorted({*failed, *f.transient.pop(0)})
+        if f.settling and declared:
+            failed = sorted({*failed, "tag_good"})
         out: dict[str, object] = {"login": [200, {"user": "e2e-engineer"}], "confirm": None}
         if failed:
             checks = [{"name": n, "ok": False, "detail": "no"} for n in failed]
@@ -213,7 +220,11 @@ def flow(tmp_path: Path) -> Flow:
         return out
 
     def live(host: Vm) -> dict[str, object]:
-        rows = [{"path": tag, "quality": "GOOD", "value": value} for tag, value in f.memory.items()]
+        quality = "GOOD" if not f.settling else "UNCERTAIN"
+        f.settling = max(0, f.settling - 1)
+        rows = [
+            {"path": tag, "quality": quality, "value": value} for tag, value in f.memory.items()
+        ]
         rows.append({"path": fleet_scenarios.UNDECLARED_TAG, "quality": "GOOD", "value": 1003.0})
         return {"tags": [200, {"tags": rows}]}
 
@@ -515,6 +526,11 @@ def test_writes_flow_rejects_while_off_then_writes_after_enabling(tmp_path: Path
         "write sim/r001 7.0",  # 미선언
     ]
     assert f.memory[fleet_scenarios.WRITE_TAG] == 42.5
+    # 복원·core 재시작 뒤 GOOD을 기다린 다음 써서 일시 거부 없이 한 번에 된다(리뷰 M19)
+    record = next(
+        r for r in s.sites["site-b"].ctx.results if r["name"] == fleet_scenarios.ITEM_G2_W
+    )
+    assert record["tries"] == {"off": 1, "on": 1, "undeclared": 1}
 
 
 def test_writes_picks_a_value_other_than_the_c1_value(tmp_path: Path) -> None:
