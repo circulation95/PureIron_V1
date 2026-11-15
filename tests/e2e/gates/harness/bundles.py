@@ -85,10 +85,11 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -709,8 +710,17 @@ def _docker(args: Sequence[str], timeout_s: float) -> subprocess.CompletedProces
     )
 
 
-OWNER_PID = re.compile(r"-(\d+)$")
-"""임시 컨테이너·네트워크 이름 끝의 만든 프로세스 pid(`e2e-schema-db-<NEXT>-<pid>`)."""
+OWNER_PID = re.compile(r"-([A-Za-z0-9_.]+)-(\d+)$")
+"""임시 컨테이너·네트워크 이름 끝의 (만든 WSL 배포판, 그 배포판의 pid) —
+`e2e-schema-db-<NEXT>-<배포판>-<pid>`(3b 리뷰 L5: pid는 그 배포판의 pid 공간이다)."""
+
+
+def distro_tag(environ: Mapping[str, str] | None = None) -> str:
+    """이름에 넣는 WSL 배포판(`WSL_DISTRO_NAME`, 없으면 호스트 이름) — 컨테이너 이름에 쓸 수 있는
+    문자만(`-` 등은 `_`)."""
+    source = os.environ if environ is None else environ
+    name = source.get("WSL_DISTRO_NAME") or socket.gethostname() or "host"
+    return re.sub(r"[^A-Za-z0-9_.]", "_", name)
 
 
 def _pid_alive(pid: int) -> bool:
@@ -723,14 +733,18 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
-def stale_names(names: Sequence[str], alive: Callable[[int], bool]) -> list[str]:
-    """`names` 중 만든 프로세스(이름 끝 pid)가 이미 끝난 것 — 지금 도는 다른 expected-schema(같은
-    PC의
-    수동 WSL 빌드)의 것은 남긴다(3a 리뷰 L4). pid가 없는 이름은 누구 것인지 몰라 남긴다."""
+def stale_names(
+    names: Sequence[str], alive: Callable[[int], bool], distro: str | None = None
+) -> list[str]:
+    """`names` 중 이 배포판(`distro`, 기본 `distro_tag()`)이 만들었고 만든 프로세스(이름 끝 pid)가
+    이미 끝난 것 — 지금 도는 다른 expected-schema(같은 PC의 수동 WSL 빌드)의 것은 남긴다(3a 리뷰
+    L4). 다른 배포판의 이름은 그 pid를 여기서 볼 수 없어 남긴다(3b 리뷰 L5). 배포판·pid가 없는
+    이름은 누구 것인지 몰라 남긴다."""
+    mine = distro or distro_tag()
     stale: list[str] = []
     for name in names:
         found = OWNER_PID.search(name)
-        if found is not None and not alive(int(found[1])):
+        if found is not None and found[1] == mine and not alive(int(found[2])):
             stale.append(name)
     return stale
 
@@ -843,7 +857,7 @@ def expected_schema(
     path = work / "releases" / f"{next_name}.json"
     images = cast(dict[str, dict[str, str]], json.loads(path.read_text("utf-8"))["images"])
     core, image = images["core"]["tag"], images["site-db"]["tag"]
-    suffix = f"{next_name}-{os.getpid()}"
+    suffix = f"{next_name}-{distro_tag()}-{os.getpid()}"
     db = SchemaDb(
         f"e2e-schema-db-{suffix}",
         f"e2e-schema-{suffix}",

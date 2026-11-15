@@ -272,6 +272,14 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
   세션에서만**(gh가 Windows 자격 증명 관리자 keyring의 토큰을 쓴다 — 로그오프 상태에서는 돌지 않는다),
   놓친 예약은 나중에 실행하지 않음, 동시에 하나만, 10분 제한. 저장소·gh 계정·ref·시각은 인자
   (`-Repo`·`-GhUser`·`-Ref`·`-At`, 기본 `circulation95/PureIron_V1`·`circulation95`·`master`·`03:17`).
+  같은 등록이 둘째 작업 **`PureIron foundation-ci nightly`**(매일 **00:47**, `-DispatchCi` —
+  `gh workflow run foundation-ci.yml --ref master`, G1 밤 전체 실행)도 만든다(M6-4a P9): foundation-ci의
+  GitHub schedule을 지웠다 — 늦게 만들어져(05:30~09:30 KST) 길어진 주간 G2와 겹칠 수 있었다. plan job은
+  pull_request가 아닌 이벤트를 모두 전체 실행으로 보므로 조건부 job(n-minus-1·repro-build)이
+  workflow_dispatch에서도 돈다. 등록을 바꾼 뒤 사용자가 한 번 다시 등록한다(`-Unregister`는 두 작업을
+  지운다, 시각은 `-CiAt`). 00:47인 이유: 최근 foundation-ci 전체 실행이 32~70분이라 01:47이면 03:17
+  preflight(foundation-ci가 돌면 G2를 거부)와 여유가 약 20분뿐이다(M6-4a 리뷰 L5). **`-Ref`를 바꿔
+  등록하면 CI 작업도 같은 ref로 돈다.**
   `-Dispatch`는 `gh auth token -u <계정>`을 그 프로세스 환경변수(`GH_TOKEN`)에만 두고 끝에 지운다 —
   토큰을 파일·로그·명령 줄에 쓰지 않는다. 실행 기록은 `<E2E 루트>\logs\nightly-dispatch.log`(시각·
   suite·명령·종료 코드·gh 출력 한 줄). `<E2E 루트>` = `PUREIRON_E2E_ROOT`(기본 `C:\PureIron_e2e`).
@@ -344,7 +352,10 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
 - 시간 예산(묶음마다, `harness/suites.py`): workflow 시간을 넘기면 Actions가 job을 죽여 status·이력이
   남지 않는다. 그래서 준비 10분 + run 예산(preflight 시작부터 첫 실행·복구·재시도 — pytest 시간 제한을
   남은 시간으로 줄이고, 10분도 남지 않으면 재시도를 건너뛴다) + 뒷정리 15분(collect 명령당 60초 ×
-  10·publish·cleanup)으로 나눈다. **g2**: workflow 120분 · run 90분 · 첫 pytest 75분 · 재시도 30분.
+  10·publish·cleanup)으로 나눈다. **g2**(M6-4a P9): workflow 190분 · run 160분 · 첫 pytest 105분 ·
+  재시도 45분(M6-4 fleet 묶음과 site-b 재시도 묶음이 들어갈 몫 — "평일 run 90분"은 시간 제한이 아니라
+  실측 목표다). 평일 첫 pytest 추정은 약 72분(3b 실측 37.2분 + M6-4 약 34분, 계획 ★P5)이고 105분은 첫
+  실측 전 여유다.
   **weekly**: workflow 270분 · run 240분 · 첫 pytest 200분 · 재시도 40분. 첫 pytest는 추정 125~171분
   (crash 한 건 5~7분 — c0 복원·번들 빌드·창 대기 150초·phase 진행·수렴 — × 18건 = 90~126분 + 나머지
   평일 몫 35~45분)의 상한에 약 1.17배를 둔다. 넘기면 junit이 없어 그 주 결과가 `pytest` 한 줄로만
@@ -416,10 +427,13 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
   읽는다. 합친 결과에서 다시 돈 시험은 재시도 결과로 바뀐다 — 첫 세션에서 통과한 외부 접속 0도
   재시도에서 실패하면 실패로 남는다.
 - 실행 순서: `harness/order.py`의 표 하나가 정한다(G2-1 → site-a 롤백 → site-b 거부·② 마이그레이션
-  실패·draft → crash(site-a — 주간 16건이 길어 site-b 뒤로) → 외부 접속 0). 표에 없는 `test_g2_*.py`는
+  실패·draft → fleet(G2-2·G2-3 — 중앙 직접 게시, 아래 절) → crash(site-a — 주간 16건이 길어 site-b 뒤로)
+  → 외부 접속 0). 표에 없는 `test_g2_*.py`는
   수집 오류다.
 - 올리는 현장(M6-3b, 3a 리뷰 L3): 세션은 그 pytest에서 돌 시험(표지·노드 id로 고른 뒤)이 쓰는 현장만
-  올린다(`order.sites_needed` — crash 재시도는 site-a만). 올리지 않은 현장의 시험이 돌면 `E2EError`다.
+  올린다(`order.sites_needed` — crash 재시도는 site-a만). prepare도 그 현장만 `Context`·g1 번들을
+  만든다(재시도 세션이 고르지 않은 현장의 빈 `state.json`을 만들지 않는다, 3b 리뷰 L6). 올리지 않은
+  현장의 시험이 돌면 `E2EError`다.
 - 재시도 전 첫 세션 기록(3a 리뷰 L2): 재시도 세션이 덮어쓰지 않게 `<결과>/<site>/`를
   `<결과>/first/<site>/`로 옮긴다(summary `retry.first_session`). 옮기지 못하면(Windows에서 파일을
   잡고 있는 프로세스 — `PermissionError`) summary `retry.first_session_error`에 남기고 재시도는
@@ -444,11 +458,79 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
   import한다)로 이름 집합 5종(tables·columns·indexes·caggs·realtime_caggs)과 epoch를 읽어 결과
   디렉터리 `expected-schema.json`에 남긴다. 컨테이너(DB·이름 붙은 migrate 클라이언트)·네트워크는
   성공·실패 모두 지우고, 시작할 때 표지 label이 붙은 남은 것 중 **만든 프로세스(이름 끝 pid)가 끝난
-  것만** 지운다 — 같은 PC에서 동시에 도는 다른 expected-schema를 지우지 않는다(3a 리뷰 L4). 시간 제한: DB 기동 180초, migrate 600초, 전체 1200초. 분류: NEXT가 빈
+  것만** 지운다 — 같은 PC에서 동시에 도는 다른 expected-schema를 지우지 않는다(3a 리뷰 L4). 이름에
+  만든 WSL 배포판(`WSL_DISTRO_NAME`)이 들어가고(`e2e-schema-db-<NEXT>-<배포판>-<pid>`) 다른 배포판의
+  것은 pid를 볼 수 없어 남긴다(3b 리뷰 L5). 시간 제한: DB 기동 180초, migrate 600초, 전체 1200초. 분류: NEXT가 빈
   DB에 migrate되지 않으면 product(`SchemaBuildError`), Docker 무응답·DB가 끝내 받지 않음은 infra.
   `run.py`·`DEFAULT`의 수동 집합(`judge_c0`·`judge_next_schema`)은 그대로다.
-- 결과 파일(현장 디렉터리 밖): `expected-schema.json`, `windows-memory.json`. 현장 디렉터리:
+- 결과 파일(현장 디렉터리 밖): `expected-schema.json`, `windows-memory.json`, `junit.jsonl`·
+  `junit-retry.jsonl`(시험마다 바로 쓰는 결과 — 아래), `fleet/session.json`(fleet 묶음). 현장 디렉터리:
   `state.json`(시나리오 기록 포함), `vm-memory.json`, `restore-memory.json`.
+- 시간 초과 대비 결과(M6-4a): conftest가 시험 단계가 끝날 때마다(`pytest_runtest_logreport` — call
+  결과와 실패한 setup·teardown) `--junitxml` 옆 `<이름>.jsonl`에 한 줄씩 쓴다. pytest가 시간 제한에
+  죽어 junit이 없으면 nightly는 jsonl의 결과 + 시험 id `pytest`(infra) 한 줄로 summary를 만든다 —
+  끝난 시험의 결과는 남고, 줄이 없는 시험은 결과가 없으며(통과로 세지 않는다) 실행은 통과가 될 수
+  없다. 시간 초과였으면 그날은 다시 돌리지 않고, 크래시면 전체를 1회 다시 돌린다(그 결과로 바꾼다).
+
+### fleet 묶음 (M6-4a, ★P5)
+
+중앙(WSL control-api/web)이 필요한 시나리오다. 순서 표의 묶음 `fleet`(site-b 시나리오 뒤, crash 앞)이고
+현장 둘을 쓴다(`order.sites_needed`·재시도 묶음이 둘 다 본다). 평일·주간 둘 다에서 돈다.
+
+**게시는 중앙 직접 PUT이다.** 하네스가 서명 번들(`buildhost.build_site_bundle` — G2 트리, `window.once`는
+시나리오가 정한다)을 만들어 ci 토큰 `PUT /bundles/{site}/{gen}`(`central.py put`, Caddy HTTPS — publish와
+같은 엔드포인트)으로 올린다(M4 마감 `run.py online` ②와 같은 길). nightly는 fleet-test·acme-test·publish
+호스트(`/etc/pureiron`·`/srv/pureiron`)·V1 브랜치를 건드리지 않고 GitHub에 쓰지 않는다.
+
+- **GitHub 승인 경로는 nightly 밖 — 릴리스 마감 fleet 리허설(손, 릴리스마다)**: fleet-test에서 PR →
+  check-gen → 승인 → merge → publish → 현장 적용, 승인 없는 merge가 `E_APPROVAL`로 거부되는지, revert
+  PR, 고객 PR의 absorbs 배포. 체크리스트는 M6 마감 문서에 둔다(M4-2 리허설·M4 마감 15분 실측과 같은
+  방식).
+- **이유**(2026-11-14 사용자 확정): 매일 밤 실제 PR·승인·merge를 돌리려면 무인 토큰(사람 계정의 전체
+  권한 토큰), 승인 사슬 복구, 도구 브랜치, acme-test 태그·버전 규칙, publish 호스트 동기화가 필요했고,
+  fleet-test main은 체크포인트로 되돌릴 수 없어 c1보다 앞서 나갔다(main drift). 현장이 겪는 일(예약 창·
+  격리·되돌리기·쓰기·이어받기·폐쇄망·끊김 표시)은 직접 PUT으로 GitHub 없이 본다.
+- **잃는 것**: publish 승인 코드·GitHub 연동의 회귀를 매일이 아니라 릴리스마다 본다. 그 경로가 깨지면
+  "게시가 막힌다"는 쪽으로 실패한다(잘못 배포되는 쪽이 아니다).
+
+- **출발점 c1 쌍**(★P1, `harness/fleet_session.py`): fleet 시험이 골라졌을 때만 세션 fixture
+  `fleet_c1`이 한 번 만든다(`order.needs_central` — c0 시나리오만 고른 재시도는 중앙을 띄우지 않는다).
+  새 중앙 up(`central.py up` — 새 DB·CA·토큰) → 두 현장 c0 복원 → `site.site_online`(CA 신뢰·
+  `updater.env`·등록·현장 token은 stdin) → 두 현장의 heartbeat가 `/fleet`에 보일 때까지(online·수위 > 0·
+  current = c0 g1 — c0 g1의 성공 보고가 current를 한 번 null로 덮으므로 `run.py online` ①과 같은 조건)
+  → control-web(현장이 닿는 유일한 입구)을 멈추고 중앙 DB 덤프(`central.py dump` — 그때 `/fleet` 요약
+  포함, `~/pureiron-e2e-central/dumps/`, 0600) → VM 체크포인트 c1 × 2 → control-web 시작. **c1에는 게시가
+  없다**(중앙 `max_published_gen` 0, 현장 applied = c0 g1). 덤프가 체크포인트보다 먼저라 VM의 보고 seq가
+  중앙 수위 이상이다(복원 뒤 heartbeat가 history로 밀리지 않는다). 세션 끝에 중앙을 내린다(실패해도).
+  c1 체크포인트는 VM과 함께 지워진다.
+- **fleet 시나리오의 시작**(`restore_c1`): control-web 멈춤 → VM c1 복원(c0와 같은 메모리 확보·카운터
+  표시) → 중앙 restore(`central.py restore`: control-web·control-api 멈춤 → `pg_restore --clean
+  --single-transaction` → control-api 시작 → `/fleet`(control-api 직접)이 덤프 때 요약과 같은지 — 다르면
+  실패) → control-web 시작 → 복원한 현장의 heartbeat 수위가 c1 값을 넘는지. control-web을 처음부터 끝까지
+  멈춰 두어 되돌리기 전의 VM이 복원된 중앙에, 복원된 VM이 되돌리기 전의 중앙에 닿지 않는다(VM만
+  되돌리면 중앙 desired가 남아 Updater가 앞 시나리오의 게시본을 스스로 적용한다 — 계획 F8). 번들 파일
+  볼륨은 되돌리지 않는다(DB에 없는 gen 파일은 쓰이지 않고 같은 gen을 다시 게시하면 덮어쓴다). c1(덤프
+  이름·체크포인트)은 그 pytest 프로세스가 만든 것만 쓴다 — infra 재시도 세션은 새 VM·새 중앙 위에 c1을
+  새로 만든다.
+- **게시 gen** = max(중앙 `max_published_gen`, 현장 applied gen) + 1. c1은 중앙 0·현장 1이라 "중앙 max +
+  1" = 1은 Updater에게 같은 gen(no-op)이다 — `run.py online`이 g2를 쓰는 것과 같은 이유. PUT이 201이 아니면
+  product(중앙이 서명 번들을 받지 않았다), WSL 실패는 infra.
+
+| 시험(실행 순서) | 현장 | 흐름 | 판정(모두 참) |
+|---|---|---|---|
+| `test_g2_2_scheduled_update[…]`·`test_g2_3_isolation[…]` | site-a·site-b | 둘 다 c1 → site-b 스냅샷(VM 값 + 중앙 행) → site-a NEXT 번들(`window.once` = 번들을 만들기 직전 now + 4분 ~ +1시간) 빌드 → PUT → 창 → 적용 수렴 → 중앙 current | G2-2: PUT 201 · 바로 뒤 `/fleet` desired = gen·NEXT, `max_published_gen` = gen · 보고 `timeline`의 `verified` < 창 시작 · `locked` ≥ 창 시작 · `locked`→`succeeded` ≤ 120초 · `succeeded`·applied == gen · 실행 이미지 == NEXT digest · `/fleet` current = gen·NEXT. G2-3: site-b 실행 이미지 ID·content_hash·applied_gen·core StartedAt 전후 같음(못 읽은 값은 거짓) · 중앙 site-b desired·`max_published_gen` 전후 같음(행을 못 읽으면 거짓) |
+
+- 창 여유 4분(`fleet_scenarios.WINDOW_LEAD_S` 240초 = 빌드 85 + PUT 20 + 받아 검증할 몫 45 + 여유 90):
+  번들을 만들기 직전부터 잰다. 첫 VM 실측(run 43617245939)에서 Windows 하네스 경로의 빌드가 73.6·82.6초,
+  PUT 완료가 120초 창의 시작 −17초였다(빌드 + PUT ≈ 103초 — WSL 네이티브 경로에서 잰 빌드 23초와
+  다르다 — 번들을 `C:\PureIron_e2ebundles`(`/mnt/c`)에 쓰고 PUT도 그 파일을 읽는다). 그 안에 빌드·PUT이
+  끝나고 Updater가 poll(10초)로 받아 검증까지 마칠 몫 45초(`PREFETCH_ALLOWANCE_S` — M4 마감 실측 시도
+  시작 → succeeded 24초)가 남아야 한다. PUT이 창 시작 45초 전보다 늦게 끝나면 `verified` < 창 시작을 볼
+  수 없어 infra(빌드 호스트가 느린 것)다. G2-2 기록·로그에 `build_s`·`put_s`가 따로 남는다(늦은 PUT
+  infra의 예외 문구에도).
+- 기록: 시나리오 기록은 현장 `state.json`(G2-2는 site-a, G2-3은 site-b), 세션 기록은
+  `<결과>/fleet/session.json`(c1 이름·덤프 때 `/fleet` 요약·복원 횟수·준비 시간 — 비밀값 없음, 재시도 전
+  `first/fleet/`로 옮긴다).
 
 ```powershell
 $env:PUREIRON_E2E_SWITCH = "pureiron-e2e"   # setup-host.ps1 -Switch 값
@@ -504,6 +586,10 @@ runner `e2e`, VM 3 GiB × 2(정식 구성), 낮 시간·데스크톱 앱이 켜�
 M6-3a 시나리오 `test_scenarios_g2.py`(실행 순서 표·실제 수집 순서·c0 복원 직전 메모리·카운터·시작 계약·c0 기반·probe 키)·`test_rollback_g2.py`(G2-4·G2-6 ③ 흐름과 판정, 한 시험만 골라도 module fixture가 도는지)·`test_faults_g2.py`(G2-6 ②)·`test_schema_g2.py`(D9 ⓐⓑⓒ·SQL 한 곳·임시 DB 수명·분류)·`test_nightly_faults.py`(FAULT 2종 이름·버전·epoch·파생 digest·migration 형식·prune·트리)·`test_memory_g2.py`(세션 최저 메모리·preflight Hyper-V 점검), 공용 가짜 `g2_fakes.py`,
 M6-3b `test_rejections_g2.py`(G2-5 재료·변조 도구·거부 판정 6항목·흐름·설치 전 탐침)·`test_draft_g2.py`
 (G2-8 흐름·PATCH 3회·absorbs[site-b]·재적용·롤백 뒤 기준점)·`test_crash_g2.py`(계획 18건·평일 2건·매 건
-c0·E10 1회)·`test_suites_g2.py`(묶음 표지·시간 예산·등록 스크립트 내용·yml에 schedule 없음),
+c0·E10 1회)·`test_suites_g2.py`(묶음 표지·시간 예산·등록 스크립트 내용·foundation-ci 둘째 작업·
+yml에 schedule 없음·setup-host BOM), M6-4a `test_c1_g2.py`(덤프·복원·`/fleet` 일치·준비 순서·
+heartbeat 대기·세션마다 새 c1·복원 순서·c0만이면 중앙 없음)·`test_fleet_scenarios_g2.py`(G2-2·G2-3
+판정·게시 gen·직접 PUT 흐름·창 여유 infra)·`test_partial_g2.py`(jsonl·fleet 순서·재시도 묶음), 공용 가짜
+`fleet_fakes.py`,
 `test_nightly_runner.py`(이력 월별 파일·격리 줄·suite), 실패 분류 `test_failure_split.py`(빌드 시간
 초과 분류), 시작(묶음)·호스트 점검 분류·시작하지 못한 실행 `test_nightly_cron.py`). G1 `unit`에 포함된다.

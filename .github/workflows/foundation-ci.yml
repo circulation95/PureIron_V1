@@ -21,12 +21,15 @@ on:
   push:
     branches: [master]
     paths: *gate-paths
-  schedule:
-    - cron: "0 17 * * *" # 02:00 KST nightly: 조건부 job(n-minus-1·repro-build) 포함 전체 실행
+  # 밤 전체 실행(조건부 job n-minus-1·repro-build 포함)은 GitHub schedule이 아니라 개발 PC의 Windows
+  # 작업 스케줄러가 00:47 KST에 `gh workflow run foundation-ci.yml --ref master`로 연다
+  # (tests/e2e/infra/register-nightly.ps1, M6-4a P9) — GitHub cron은 이 저장소에서 3.5~7.5시간 늦게
+  # 만들어져 03:17 G2 nightly와 겹쳤다. plan job은 pull_request가 아닌 이벤트(workflow_dispatch 포함)를
+  # 모두 전체 실행으로 본다.
   workflow_dispatch:
 
 concurrency:
-  # PR은 새 커밋이 오면 이전 실행을 취소한다. master push·nightly는 서로 취소하지 않는다.
+  # PR은 새 커밋이 오면 이전 실행을 취소한다. master push·밤 실행(workflow_dispatch)은 서로 취소하지 않는다.
   group: foundation-ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 

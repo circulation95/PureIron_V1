@@ -18,6 +18,15 @@ from harness.vm import RemoteCommandError, Vm
 GATES = paths.REPO / "tests" / "e2e" / "gates"
 VM_3GIB = {"PUREIRON_E2E_VM_GIB": "3"}
 DRAFT_ITEMS = ("patch", "draft_gate", "absorb", "reapply", "rollback_keeps_drafts")
+G2_2_ITEMS = (
+    *("put_201", "desired_next"),
+    *("verified_before_window", "locked_in_window", "locked_to_succeeded_120s", "succeeded"),
+    *("images_next", "fleet_current"),
+)
+G2_3_ITEMS = (
+    *("images_unchanged", "content_hash_unchanged", "applied_gen_unchanged"),
+    *("core_started_at_unchanged", "central_desired_unchanged", "central_max_unchanged"),
+)
 REJECT_ITEMS = (
     *("E_SITE", "E_DIGEST", "E_SIG", "E_SCHEMA", "E_UPDATER", "same_gen"),
     *("next_g2", "E_CERT", "E_GEN"),
@@ -55,11 +64,12 @@ def test_order_table_keeps_groups_in_sequence_and_no_external_last() -> None:
     order.check_table()
     assert order.FILES[0] == ("test_g2_install.py", order.FIRST)
     assert order.FILES[-1] == ("test_g2_no_external.py", order.LAST)
-    groups = ("site-a", "site-b", order.CRASH)
+    groups = ("site-a", "site-b", order.FLEET, order.CRASH)
     sites = {group: [n for n, g in order.FILES if g == group] for group in groups}
     assert sites == {
         "site-a": ["test_g2_rollback.py"],
         "site-b": ["test_g2_rejections.py", "test_g2_faults.py", "test_g2_draft.py"],
+        order.FLEET: ["test_g2_scheduled.py"],  # E_APPROVAL은 nightly 밖(★P5)
         order.CRASH: ["test_g2_crash.py"],
     }
     swapped = [order.FILES[-1], *order.FILES[:-1]]
@@ -98,7 +108,8 @@ def test_weekly_collection_adds_the_16_crash_cases_before_no_external() -> None:
 
 
 def test_real_g2_collection_follows_the_table() -> None:
-    """수집된 실제 G2 시험 id와 순서 — G2-1 → site-a(롤백) → site-b(거부·②) → 외부 접속 0(맨 끝)."""
+    """수집된 실제 G2 시험 id와 순서 — G2-1 → site-a(롤백) → site-b(거부·②·draft) → fleet
+    (G2-2·G2-3) → crash → 외부 접속 0(맨 끝)."""
     assert collected_g2() == [
         "test_g2_1_install_and_100_tags_good[site-a]",
         "test_g2_1_install_and_100_tags_good[site-b]",
@@ -109,6 +120,8 @@ def test_real_g2_collection_follows_the_table() -> None:
         *(f"test_g2_5_rejected[{item}]" for item in REJECT_ITEMS),
         "test_g2_6_2_migrate_failure",
         *(f"test_g2_8_draft_recall[{item}]" for item in DRAFT_ITEMS),
+        *(f"test_g2_2_scheduled_update[{item}]" for item in G2_2_ITEMS),
+        *(f"test_g2_3_isolation[{item}]" for item in G2_3_ITEMS),
         "test_g2_6_crash[kill@migrating]",
         "test_g2_6_crash[reset@switching]",
         "test_g2_no_external[site-a]",

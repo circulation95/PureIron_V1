@@ -55,7 +55,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import asdict
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -63,6 +63,7 @@ from harness import (
     buildhost,
     collect,
     flake,
+    fleet_session,
     g2,
     hyperv,
     memwatch,
@@ -144,7 +145,21 @@ def make_pytest(run_id: str, sha: str, suite: suites.Suite) -> RunPytest:
 
 
 def read_results(junit: Path) -> list[report.TestResult]:
-    return report.parse_junit(junit.read_text(encoding="utf-8")) if junit.is_file() else []
+    """junit의 결과. junit이 없으면(pytest가 끝나지 못함 — 시간 초과·크래시) 시험마다 바로 쓴
+    `<junit>.jsonl`의 결과 + 시험 id `pytest`(infra) 한 줄 — 끝나지 못한 실행이 통과로 세지지 않고,
+    줄이 없는 시험은 결과가 없다. 둘 다 없으면 빈 목록."""
+    if junit.is_file():
+        return report.parse_junit(junit.read_text(encoding="utf-8"))
+    partial = junit.with_suffix(".jsonl")
+    if not partial.is_file():
+        return []
+    found = report.parse_jsonl(partial.read_text(encoding="utf-8"))
+    return [*found, report.TestResult(PYTEST_TEST, report.FAILED, INFRA, 0.0)]
+
+
+def unfinished(results: list[report.TestResult]) -> bool:
+    """junit 없이 jsonl로 읽은 결과(`read_results`의 `pytest` 줄)인가."""
+    return any(r.test_id == PYTEST_TEST for r in results)
 
 
 def ci_state() -> tuple[int, bool]:
@@ -185,6 +200,8 @@ def recover(
 
 FIRST_SESSION = "first"
 """재시도 전에 첫 세션의 현장 기록(`<결과>/<site>/`)을 옮겨 두는 하위 디렉터리(리뷰 L2)."""
+FLEET_DIR = "fleet"
+"""fleet 세션 기록(`fleet_session.SESSION_FILE`의 디렉터리) — 재시도 세션은 c1을 새로 만든다."""
 
 
 def keep_first_session(out: Path, errors: list[str]) -> list[str]:
@@ -194,16 +211,16 @@ def keep_first_session(out: Path, errors: list[str]) -> list[str]:
     백신·인덱서가 파일을 잡고 있으면 `PermissionError`) 현장마다 `errors`에 남기고 넘어간다 —
     기록 하나 때문에 재시도(그날의 판정)를 잃지 않게(M6-3b 리뷰 L3)."""
     moved: list[str] = []
-    for one in G2_SITES:
-        source, target = out / one.site_id, out / FIRST_SESSION / one.site_id
+    for name in (*(one.site_id for one in G2_SITES), FLEET_DIR):
+        source, target = out / name, out / FIRST_SESSION / name
         if source.is_dir() and not target.exists():
             try:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 source.rename(target)
             except OSError as exc:
-                errors.append(f"{one.site_id}: {exc!r}")
+                errors.append(f"{name}: {exc!r}")
                 continue
-            moved.append(one.site_id)
+            moved.append(name)
     return moved
 
 
@@ -235,13 +252,16 @@ def step_run(
 
     codes = {"first": run_pytest(out / "junit.xml", [GATES_REL], left(suite.pytest_timeout_s))}
     first = read_results(out / "junit.xml")
+    partial = unfinished(first)
     # 재시도는 새 세션이다 — 시나리오와 같은 현장의 외부 접속 0을 함께 묶는다(order.retry_closure)
     again_ids = order.retry_closure(report.retry_targets(first, active), [r.test_id for r in first])
     targets = [f"{GATES_REL}/{t}" for t in again_ids]
     retry: dict[str, object] = {"targets": targets, "done": False}
-    if not first and codes["first"] == PYTEST_TIMED_OUT:
-        retry["skipped"] = "pytest timed out without results (a hang does not heal on retry)"
-    elif not first:  # 크래시 — 결과가 없으니 전체를 다시
+    if (not first or partial) and codes["first"] == PYTEST_TIMED_OUT:
+        targets = []
+        retry["targets"] = targets
+        retry["skipped"] = "pytest timed out (a hang does not heal on retry)"
+    elif not first or partial:  # 크래시 — junit이 없으니 전체를 다시
         retry["targets"] = targets = [GATES_REL]
     results = first
     if targets and left(suite.retry_timeout_s) < suite.retry_min_s:
@@ -260,7 +280,8 @@ def step_run(
             timeout_s = left(suite.retry_timeout_s)
             codes["retry"] = run_pytest(out / "junit-retry.xml", targets, timeout_s)
             again = read_results(out / "junit-retry.xml")
-            results = report.merge_retry(first, again) if first else again
+            whole = targets == [GATES_REL]
+            results = again if whole or not first else report.merge_retry(first, again)
             retry["done"] = True
     if not results:
         results = [report.TestResult(PYTEST_TEST, report.FAILED, INFRA, 0.0)]
@@ -277,10 +298,31 @@ def step_run(
             "quarantine_expired": [{**asdict(e), "added": e.added.isoformat()} for e in expired],
             "warnings": list(warnings or []),
             "windows_memory": memwatch.read(out / memwatch.MEMORY_FILE),
+            "partial_results": partial,
+            "fleet": fleet_record(out),
         },
     )
     write_json(out / "summary.json", summary)
     return summary
+
+
+def fleet_record(out: Path) -> dict[str, object] | None:
+    """fleet 세션 기록의 c1 복원 횟수·준비 시간(첫 세션 `first/fleet/`와 재시도 세션 `fleet/`) —
+    summary·이력 run 기록에 남는다. 없으면 None."""
+    found: dict[str, object] = {}
+    for label, base in (("first", out / FIRST_SESSION), ("session", out)):
+        try:
+            data: object = json.loads((base / FLEET_DIR / "session.json").read_text("utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict):
+            record = cast(dict[str, object], data)
+            evidence = cast(dict[str, object], record.get("evidence") or {})
+            found[label] = {
+                "restores": record.get("restores"),
+                "prepare_s": evidence.get("prepare_s"),
+            }
+    return found or None
 
 
 def preflight_summary(
@@ -345,12 +387,18 @@ def make_github(dry_run: bool) -> GitHub:
         return DryRun()
 
 
-def cleanup_actions(gh: GitHub) -> list[str]:
+def cleanup_actions(
+    gh: GitHub, down_central: Callable[[], list[str]] = fleet_session.down_leftover
+) -> list[str]:
+    """preflight 통과 뒤 정리: 남은 VM, 지난 run이 남긴 중앙(리뷰 M1 — 시간 제한 kill이면 세션
+    끝 정리가 돌지 않는다), 오래된 결과·임시 브랜치."""
     removed = preflight.remove_vms(list(G2_SITES))
+    central = down_central()
     old = preflight.prune_results(g2.RESULTS, datetime.now(UTC).timestamp())
     branches = preflight.prune_branches(gh, datetime.now(UTC))
     return [
         *(f"removed vm {name}" for name in removed),
+        *central,
         *(f"removed results {name}" for name in old),
         *(f"deleted branch {name}" for name in branches),
     ]

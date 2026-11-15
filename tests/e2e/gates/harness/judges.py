@@ -1076,3 +1076,103 @@ def judge_live(
         **judge_tags_good(tags, want_paths),
         **judge_device_connected(devices, device_id),
     }
+
+
+# ---------------------------------------------------------------- fleet 경로(M6-4a)
+
+SCHEDULED_APPLY_LIMIT_S = 120
+"""G2-2: `locked` → `succeeded` 상한(상위 계획 §2)."""
+
+
+def timestamp(value: object) -> datetime | None:
+    """ISO 8601 시각(시간대 포함) — 못 읽으면 None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo is not None else None
+
+
+def timeline(report: dict[str, object], phase: str) -> datetime | None:
+    """Updater 보고 `timeline`(phase → 마지막으로 들어간 시각)의 `phase` 시각."""
+    marks = report.get("timeline")
+    return timestamp(cast(dict[str, object], marks).get(phase)) if isinstance(marks, dict) else None
+
+
+def judge_scheduled(
+    report: dict[str, object],
+    snap: dict[str, object],
+    row: dict[str, object],
+    *,
+    gen: int,
+    window_start: datetime,
+    next_digests: dict[str, str],
+    next_version: str,
+) -> dict[str, bool]:
+    """G2-2 한 현장: 창 전에 받아 검증(`verified` < 창 시작) → 창이 열린 뒤 잠금(`locked` ≥ 창 시작)
+    → `locked`→`succeeded` ≤ 120초 → 실행 이미지 == NEXT digest·applied == gen → 중앙 `/fleet`
+    current = gen·NEXT. 시각을 못 읽으면 그 항목은 거짓이다."""
+    verified, locked = timeline(report, "verified"), timeline(report, "locked")
+    succeeded = timeline(report, "succeeded")
+    state, current = updater_state(snap), sub(row, "current")
+    took = (succeeded - locked).total_seconds() if locked and succeeded else None
+    images = running_digests(snap)
+    return {
+        "verified_before_window": verified is not None and verified < window_start,
+        "locked_in_window": locked is not None and locked >= window_start,
+        "locked_to_succeeded_120s": took is not None and 0 <= took <= SCHEDULED_APPLY_LIMIT_S,
+        "succeeded": report.get("result") == "succeeded"
+        and state.get("last_result") == "succeeded"
+        and state.get("applied_gen") == gen,
+        "images_next": bool(next_digests) and images == next_digests,
+        "fleet_current": current.get("gen") == gen and current.get("product") == next_version,
+    }
+
+
+ISOLATION_KEYS = ("images", "content_hash", "applied_gen", "core_started_at")
+
+
+def isolation_view(snap: dict[str, object]) -> dict[str, object]:
+    """G2-3 전후 비교 값: 실행 이미지 ID·프로젝트 content_hash·applied_gen·core `StartedAt`."""
+    return {
+        "images": running_digests(snap),
+        "content_hash": project_body(snap).get("content_hash"),
+        "applied_gen": updater_state(snap).get("applied_gen"),
+        "core_started_at": core_started_at(snap),
+    }
+
+
+def judge_isolation(before: dict[str, object], after: dict[str, object]) -> dict[str, bool]:
+    """G2-3: 다른 현장 갱신 전후 값이 모두 같다. 전 값을 못 읽었으면(빈 값·None) 같아도 거짓."""
+    return {
+        f"{key}_unchanged": before.get(key) not in (None, "", {})
+        and before.get(key) == after.get(key)
+        for key in ISOLATION_KEYS
+    }
+
+
+def judge_published(
+    put: dict[str, object], row: dict[str, object], *, gen: int, next_version: str
+) -> dict[str, bool]:
+    """G2-2 게시(★P5 — 중앙 직접 PUT): ci 토큰 `PUT /bundles/{site}/{gen}` 201, 바로 뒤 `/fleet`
+    desired = 그 gen·NEXT이고 `max_published_gen` = gen."""
+    desired = sub(row, "desired")
+    return {
+        "put_201": put.get("status") == 201,
+        "desired_next": desired.get("generation") == gen
+        and desired.get("product_version") == next_version
+        and row.get("max_published_gen") == gen,
+    }
+
+
+def judge_central_unchanged(before: dict[str, object], after: dict[str, object]) -> dict[str, bool]:
+    """G2-3 중앙 쪽: 다른 현장의 게시 전후로 이 현장 `/fleet` 행의 desired·`max_published_gen`이
+    같다(c1에는 게시가 없어 둘 다 비어 있을 수 있다 — 값은 비어도 행은 양쪽 다 읽혀야 한다)."""
+    read = bool(before.get("site")) and before.get("site") == after.get("site")
+    return {
+        "central_desired_unchanged": read and before.get("desired") == after.get("desired"),
+        "central_max_unchanged": read
+        and before.get("max_published_gen") == after.get("max_published_gen"),
+    }

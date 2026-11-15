@@ -1178,8 +1178,10 @@ def test_deadline_shortens_pytest_and_skips_a_retry_that_cannot_finish(tmp_path:
 def test_retry_timeout_is_capped_by_the_time_left(tmp_path: Path) -> None:
     clock = Clock(0.0)
 
+    used = G2.run_budget_s - 20 * 60  # 첫 실행이 남긴 시간(20분)이 재시도 제한(45분)보다 짧다
+
     def tick() -> None:
-        clock.now += 70 * 60
+        clock.now += used
 
     fake = FakePytest(
         junit(case(NAME_A), case(NAME_B, "error", "infra")), junit(case(NAME_B)), on_call=tick
@@ -1195,7 +1197,8 @@ def test_retry_timeout_is_capped_by_the_time_left(tmp_path: Path) -> None:
         deadline=G2.run_budget_s,
         clock=clock,
     )
-    assert fake.timeouts == [G2.pytest_timeout_s, G2.run_budget_s - 70 * 60]
+    assert G2.run_budget_s - used < G2.retry_timeout_s
+    assert fake.timeouts == [G2.pytest_timeout_s, G2.run_budget_s - used]
     assert summary["verdict"] == "passed"
 
 

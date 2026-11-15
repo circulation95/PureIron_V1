@@ -1,4 +1,4 @@
-#Requires -RunAsAdministrator
+﻿#Requires -RunAsAdministrator
 <#
 .SYNOPSIS
   e2e 호스트 1회 준비(PD-24): Hyper-V Administrators 그룹, 내부 전용 vSwitch, 호스트 쪽 IP.
