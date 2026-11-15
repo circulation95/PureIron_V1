@@ -122,13 +122,26 @@ def bundles_py(command: str, work: str = WORK) -> str:
     return f"uv run --no-sync python {BUNDLES_PY} {command} --work {work}"
 
 
+DNS_FAILURES = ("Could not resolve", "Temporary failure resolving")
+"""apt가 미러 이름을 풀지 못했을 때의 문구 — `apt-get update`는 경고만 내고 0으로 끝나 다음
+`apt-get install`이 exit 100으로 실패하므로 종료 코드가 아니라 문구로 본다."""
+
+
 def install_bundle(out: Path, release: str, *, work: str = WORK) -> tuple[Path, str, str]:
     """설치 번들 실빌드(`bundles.py install`, 이미지는 싣지 않는다 — `release`는 manifest·파일
-    이름에만). (번들, runbook root 지문, bootstrap-verify.sh sha256)."""
-    wsl(
-        f"{bundles_py('install', work)} --out '{golden.wsl_path(out)}' --release {release}",
-        timeout_s=INSTALL_TIMEOUT_S,
-    )
+    이름에만). (번들, runbook root 지문, bootstrap-verify.sh sha256). 빌드(`fetch_debs.sh`·
+    `build_updater.sh`의 apt) 실패에 이름 풀이 실패 문구(`DNS_FAILURES`)가 있으면 `InfraError`다 —
+    WSL·Docker Desktop 재시작 직후 DNS가 흔들린 것이다(4b 계획 R5). 문구 없는 실패는 그대로
+    제품(`WslScriptError`)."""
+    try:
+        wsl(
+            f"{bundles_py('install', work)} --out '{golden.wsl_path(out)}' --release {release}",
+            timeout_s=INSTALL_TIMEOUT_S,
+        )
+    except golden.WslScriptError as exc:
+        if any(phrase in str(exc) for phrase in DNS_FAILURES):
+            raise InfraError(f"install bundle build could not resolve names (apt): {exc}") from exc
+        raise
     pib = out / f"pureiron-install-{release}.pib"
     runbook = pib.with_name(pib.stem + ".runbook.txt").read_text(encoding="utf-8")
     fpr, boot = RUNBOOK_FPR.search(runbook), RUNBOOK_BOOTSTRAP.search(runbook)
