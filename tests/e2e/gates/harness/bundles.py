@@ -915,17 +915,19 @@ def site(
     min_updater: str | None = None,
     releases: Path | None = None,
     store: Path | None = None,
+    writes_enabled: bool = False,
 ) -> Path:
     """fleet 현장 파일을 쓰고 `build_bundle.py`로 서명 번들을 만든다. 기본은 `work`의 기록·store와
     시험 키다. G2-5 거부 재료는 서명(`signing`)·`min_updater`·기록 디렉터리(`releases`·`store`)를
-    바꾼다."""
+    바꾼다. `writes_enabled`면 현장 쓰기 스위치(`writes: { enabled: true }`, G2-W)를 싣는다."""
     keys_used = signing or Signing()
     fleet = work / "sites" / f"{site_id}-g{gen}.yaml"
     fleet.parent.mkdir(parents=True, exist_ok=True)
     fleet.write_text(
         f"site: {site_id}\ngeneration: {gen}\nproduct: {product}\n"
         "project: { repo: pureiron-project-acme, version: v1 }\n"
-        f'window: {{ once: {{ start: "{start}", end: "{end}" }} }}\n',
+        f'window: {{ once: {{ start: "{start}", end: "{end}" }} }}\n'
+        + ("writes: { enabled: true }\n" if writes_enabled else ""),
         encoding="utf-8",
     )
     out.mkdir(parents=True, exist_ok=True)
@@ -1181,6 +1183,7 @@ def main(argv: list[str] | None = None) -> int:
     site_cmd.add_argument("--min-updater", default=None, help="manifest min_updater")
     site_cmd.add_argument("--releases", type=Path, default=None, help="기본: --work/releases")
     site_cmd.add_argument("--store", type=Path, default=None, help="기본: --work/store")
+    site_cmd.add_argument("--writes-enabled", action="store_true", help="현장 쓰기 스위치(G2-W)")
     rejects_cmd = sub.add_parser("reject-materials")
     rejects_cmd.add_argument("--work", type=Path, required=True)
     rejects_cmd.add_argument("--next", required=True, help="NEXT 이름 n<sha7>")
@@ -1237,6 +1240,7 @@ def main(argv: list[str] | None = None) -> int:
                 min_updater=args.min_updater,
                 releases=args.releases,
                 store=args.store,
+                writes_enabled=args.writes_enabled,
             )
         )
     elif args.command == "reject-materials":

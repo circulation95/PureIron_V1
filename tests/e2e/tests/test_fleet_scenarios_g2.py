@@ -222,8 +222,15 @@ def flow(tmp_path: Path) -> Flow:
         return {}
 
     def build(
-        ctx: Context, gen: int, release: str, window: tuple[datetime, datetime], tree: Path
+        ctx: Context,
+        gen: int,
+        release: str,
+        window: tuple[datetime, datetime],
+        tree: Path,
+        *,
+        writes: bool = False,
     ) -> Path:
+        assert not writes  # G2-2는 쓰기 스위치를 켜지 않는다
         out.builds.append((ctx.site.site_id, gen, release, window, tree))
         return tmp_path / f"pureiron-{ctx.site.site_id}-g{gen}-{release}.pib"
 
@@ -406,10 +413,16 @@ def measured_flow(tmp_path: Path) -> tuple[Flow, fleet_scenarios.Scenario]:
     build = f.scenario.build
 
     def slow_build(
-        ctx: Context, gen: int, release: str, window: tuple[datetime, datetime], tree: Path
+        ctx: Context,
+        gen: int,
+        release: str,
+        window: tuple[datetime, datetime],
+        tree: Path,
+        *,
+        writes: bool = False,
     ) -> Path:
         spend(MEASURED_BUILD_S)
-        return build(ctx, gen, release, window, tree)
+        return build(ctx, gen, release, window, tree, writes=writes)
 
     central = f.scenario.remote.central
 

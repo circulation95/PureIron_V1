@@ -1176,3 +1176,204 @@ def judge_central_unchanged(before: dict[str, object], after: dict[str, object])
         "central_max_unchanged": read
         and before.get("max_published_gen") == after.get("max_published_gen"),
     }
+
+
+# ---------------------------------------------------------------- fleet 경로(M6-4b)
+
+
+Attempted = tuple[dict[str, object], dict[str, object], dict[str, object]]
+"""게시 한 번의 (PUT 응답, 수렴 스냅샷, Updater 보고)."""
+
+
+def judge_revert(
+    fault: Attempted,
+    revert: Attempted,
+    row: dict[str, object],
+    *,
+    c1_applied: int,
+    revert_gen: int,
+    base_digests: dict[str, str],
+    base_version: str,
+) -> dict[str, bool]:
+    """G2-4 revert(중앙 경로): FAULT-h 게시(201) → `failed`·보고 `E_HEALTH`·applied 그대로·실행
+    이미지 BASE(자동 롤백) → BASE 다시 게시(201) → `succeeded`·applied = revert gen·이미지 BASE →
+    중앙 `/fleet` current = revert gen·BASE 버전. 두 시도의 판정은 `judge_attempt`(경보 없음·
+    edit-lock 해제 포함)."""
+    fault_put, fault_snap, fault_report = fault
+    revert_put, revert_snap, revert_report = revert
+    rolled = judge_attempt(
+        fault_snap,
+        fault_report,
+        expect="failed",
+        want_digests=base_digests,
+        want_applied=c1_applied,
+        expect_code=FAULT_CODE,
+    )
+    again = judge_attempt(
+        revert_snap,
+        revert_report,
+        expect="succeeded",
+        want_digests=base_digests,
+        want_applied=revert_gen,
+    )
+    current = sub(row, "current")
+    return {
+        "fault_put_201": fault_put.get("status") == 201,
+        **prefixed("rollback_", rolled),
+        "revert_put_201": revert_put.get("status") == 201,
+        **prefixed("revert_", again),
+        "fleet_current": current.get("gen") == revert_gen
+        and current.get("product") == base_version,
+    }
+
+
+def judge_resume(
+    put: dict[str, object],
+    snap: dict[str, object],
+    *,
+    gen: int,
+    next_digests: dict[str, str],
+    part_at_block: int,
+    part_at_release: int | None,
+    poll_failures: int,
+    received: int,
+    size: int,
+    converge_s: float,
+) -> dict[str, bool]:
+    """G2-6 ① 내려받기 이어받기: 끊긴 동안 Updater가 실패를 남기고(`poll failed` ≥ 1) `.part`를
+    지키며(해제 때 크기 ≥ 차단 때), 해제 뒤 받은 바이트(VM nft 카운터)가 번들 크기 - `.part`/2보다
+    작다(처음부터 받았다면 번들 크기 이상이다), 그리고 `succeeded`·applied = gen·실행 이미지 NEXT를
+    해제 뒤 `CONVERGE_LIMIT_S`(10분) 안에. 카운터를 못 읽으면(-1) 이어받기는 거짓."""
+    state = updater_state(snap)
+    return {
+        "put_201": put.get("status") == 201,
+        "interrupted_logged": poll_failures >= 1,
+        "part_kept": part_at_release is not None and part_at_release >= part_at_block,
+        "resumed": part_at_release is not None
+        and size > 0
+        and 0 <= received < size - part_at_release / 2,
+        "succeeded": state.get("last_result") == "succeeded" and state.get("applied_gen") == gen,
+        "images_next": bool(next_digests) and running_digests(snap) == next_digests,
+        "within_10min": converge_s <= CONVERGE_LIMIT_S,
+    }
+
+
+WRITE_CONFIRMED = "CONFIRMED"
+WRITE_ACTION = "tag.write"
+WRITE_REJECTED_ACTION = "tag.write_rejected"
+
+
+def failed_checks(body: object) -> list[str]:
+    """`POST /writes` 거부(409) 본문의 실패한 검사 이름(정렬)."""
+    checks = cast(dict[str, object], body).get("checks") if isinstance(body, dict) else None
+    items = cast(list[object], checks) if isinstance(checks, list) else []
+    return sorted(
+        str(cast(dict[str, object], c).get("name"))
+        for c in items
+        if isinstance(c, dict) and cast(dict[str, object], c).get("ok") is False
+    )
+
+
+def audit_rows(out: dict[str, object], action: str, tag: str) -> list[dict[str, object]]:
+    """`site_api.py write` 출력의 감사 행 중 `action`·대상 `tag`인 것의 `detail`."""
+    rows = out.get("audit")
+    items = cast(list[object], rows) if isinstance(rows, list) else []
+    return [
+        sub(cast(dict[str, object], r), "detail")
+        for r in items
+        if isinstance(r, dict)
+        and cast(dict[str, object], r).get("action") == action
+        and cast(dict[str, object], r).get("target") == tag
+    ]
+
+
+def judge_write_rejected(out: dict[str, object], tag: str, check: str) -> dict[str, bool]:
+    """prepare가 409이고 실패한 검사가 정확히 `check` 하나이며, 같은 검사 이름의 거부 감사 행이
+    있다."""
+    status, body = reply(out, "prepare")
+    audited = audit_rows(out, WRITE_REJECTED_ACTION, tag)
+    return {
+        "rejected": status == 409 and failed_checks(body) == [check],
+        "audited": any(d.get("failed") == [check] for d in audited),
+    }
+
+
+def judge_write_confirmed(out: dict[str, object], tag: str, value: float) -> dict[str, bool]:
+    """prepare 200 → confirm 200·`CONFIRMED`, readback == 쓴 값, 같은 write_id의 결과 감사 행
+    `CONFIRMED`."""
+    status, body = reply(out, "confirm")
+    result = cast(dict[str, object], body) if isinstance(body, dict) else {}
+    write_id = result.get("write_id")
+    audited = audit_rows(out, WRITE_ACTION, tag)
+    return {
+        "confirmed": status == 200 and result.get("outcome") == WRITE_CONFIRMED,
+        "readback": result.get("readback") == value,
+        "audited": write_id is not None
+        and any(
+            d.get("write_id") == write_id and d.get("outcome") == WRITE_CONFIRMED for d in audited
+        ),
+    }
+
+
+def tag_value(out: dict[str, object], path: str) -> object:
+    """`site_api.py live` 출력의 `GET /tags`에서 `path`의 값(GOOD일 때만, 아니면 None)."""
+    rows = [r for r in tag_rows(reply(out, "tags")[1]) if r.get("path") == path]
+    row = rows[0] if len(rows) == 1 else {}
+    return row.get("value") if row.get("quality") == "GOOD" else None
+
+
+def judge_fleet_view(
+    first: dict[str, object],
+    site_id: str,
+    stale_s: float | None,
+    online_s: float | None,
+    *,
+    stale_limit_s: float,
+    online_limit_s: float,
+) -> dict[str, bool]:
+    """G2-9: control-web 경로(Caddy basic auth → `/ui/fleet`)로 읽은 응답이 200이고 차단 전
+    `site_id`가 online, 차단 뒤 `stale_limit_s` 안에 stale, 해제 뒤 `online_limit_s` 안에 online.
+    초를 못 쟀으면(None — 상한까지 바뀌지 않음) 그 항목은 거짓."""
+    return {
+        "via_control_web": first.get("via") == "caddy-ui" and first.get("status") == 200,
+        "online_before": fleet_row(first, site_id).get("connection") == "online",
+        "stale_after_block": stale_s is not None and stale_s <= stale_limit_s,
+        "online_after_release": online_s is not None and online_s <= online_limit_s,
+    }
+
+
+def judge_writes(
+    off: dict[str, object],
+    enable: tuple[dict[str, object], dict[str, object]],
+    on: dict[str, object],
+    undeclared: dict[str, object],
+    *,
+    tags: tuple[str, str],
+    values: tuple[float, float, float],
+    seen: tuple[object, object, object, object],
+    gen: int,
+) -> dict[str, bool]:
+    """G2-W(현장 쓰기 가드레일, ADR-013). `tags` = (선언 태그, 미선언 태그), `values` = (꺼짐 때
+    시도한 값, 켠 뒤 쓴 값, 미선언에 시도한 값), `seen` = `GET /tags` 값(꺼짐 전, 꺼짐 뒤, 켠 뒤 쓴
+    다음, 미선언 시도 뒤), `enable` = (스위치를 켠 번들 PUT 응답, 수렴 스냅샷).
+    ① 스위치 꺼짐: 선언 태그 prepare가 409·실패 검사 [writes_enabled]·거부 감사 행, 값 전후 같고
+    시도 값이 아니다 ② 켠 번들(`writes.enabled`) 201·`succeeded`·applied = gen ③ 선언 태그 prepare →
+    confirm `CONFIRMED`·readback == 쓴 값·결과 감사 행, `GET /tags` 값 == 쓴 값 ④ 미선언 태그 409·
+    [declared]·거부 감사 행, 값이 시도 값이 아니다(사인파 칸이라 값 자체는 늘 바뀐다)."""
+    tag, undeclared_tag = tags
+    off_value, on_value, undeclared_value = values
+    before, after, written, undeclared_after = seen
+    put, snap = enable
+    state = updater_state(snap)
+    return {
+        **prefixed("off_", judge_write_rejected(off, tag, "writes_enabled")),
+        "off_value_unchanged": before is not None and before == after and after != off_value,
+        "enable_put_201": put.get("status") == 201,
+        "enable_succeeded": state.get("last_result") == "succeeded"
+        and state.get("applied_gen") == gen,
+        **prefixed("on_", judge_write_confirmed(on, tag, on_value)),
+        "on_tag_value": written == on_value,
+        **prefixed("undeclared_", judge_write_rejected(undeclared, undeclared_tag, "declared")),
+        "undeclared_not_written": undeclared_after is not None
+        and undeclared_after != undeclared_value,
+    }

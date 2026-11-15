@@ -18,6 +18,15 @@
 `live`(G2-1): viewer로 로그인해 `GET /api/v1/tags`(태그 현재값·품질)·`GET /api/v1/devices`(장비
 통신 상태 — 태그가 아니다)를 읽고 로그아웃한다. 출력 `login`·`tags`·`devices`(HTTP 상태와 본문),
 판정은 하네스(`judges.judge_tags_good`·`judge_device_connected`)가 한다.
+
+`write`(G2-W): engineer로 로그인해 사람 확인 2단계 쓰기 — `POST /api/v1/writes`(prepare: 검사만,
+보내지 않음) → 200이면 `POST /api/v1/writes/{write_id}/confirm`(재검사·감사 의도 행·전송·readback)
+→ 이 `--reason`의 감사 행(`GET /api/v1/audit?action=tag.write`·`tag.write_rejected`, engineer 이상)
+→ 로그아웃. 출력 `login`·`prepare`·`confirm`(없으면 null)·`audit`(그 사유의 행 목록), 판정은
+하네스(`judges.judge_writes`)가 한다.
+
+    python3 site_api.py write --username e2e-engineer --password-file PW \
+        --tag line1/temp_sp --value 42.5 --reason 'e2e G2-W on'
 """
 
 from __future__ import annotations
@@ -123,6 +132,39 @@ def live(args: argparse.Namespace, call: Call = call) -> dict[str, Any]:
     return out
 
 
+AUDIT_ACTIONS = ("tag.write", "tag.write_rejected")
+
+
+def write(args: argparse.Namespace, call: Call = call) -> dict[str, Any]:
+    out, token = login(args, call)
+    if token is None:
+        return out
+    body = {"tag_path": args.tag, "value": args.value, "reason": args.reason}
+    prepared = call("POST", "/api/v1/writes", body, token)[:2]
+    out["prepare"] = prepared
+    out["confirm"] = None
+    if prepared[0] == 200 and isinstance(prepared[1], dict):
+        write_id = urllib.parse.quote(str(cast(dict[str, Any], prepared[1]).get("write_id")))
+        out["confirm"] = call("POST", f"/api/v1/writes/{write_id}/confirm", None, token)[:2]
+    rows: list[Any] = []
+    for action in AUDIT_ACTIONS:
+        status, page, _ = call("GET", f"/api/v1/audit?action={action}", None, token)
+        entries = cast(dict[str, Any], page).get("entries") if isinstance(page, dict) else None
+        if status != 200 or not isinstance(entries, list):
+            rows.append({"error": [status, page]})
+            continue
+        rows += [
+            e
+            for e in cast(list[Any], entries)
+            if isinstance(e, dict)
+            and cast(dict[str, Any], cast(dict[str, Any], e).get("detail") or {}).get("reason")
+            == args.reason
+        ]
+    out["audit"] = rows
+    out["logout"] = call("POST", "/api/v1/auth/logout", None, token)[0]
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="site_api")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -138,8 +180,15 @@ def main() -> int:
     live_cmd = sub.add_parser("live")
     live_cmd.add_argument("--username", required=True)
     live_cmd.add_argument("--password-file", required=True)
+    write_cmd = sub.add_parser("write")
+    write_cmd.add_argument("--username", required=True)
+    write_cmd.add_argument("--password-file", required=True)
+    write_cmd.add_argument("--tag", required=True)
+    write_cmd.add_argument("--value", type=float, required=True)
+    write_cmd.add_argument("--reason", required=True)
     args = parser.parse_args()
-    out = patch(args) if args.command == "patch" else live(args)
+    commands = {"patch": patch, "live": live, "write": write}
+    out = commands[args.command](args)
     print(json.dumps(out, sort_keys=True, ensure_ascii=False))
     return 0
 

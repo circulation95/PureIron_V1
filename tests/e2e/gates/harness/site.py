@@ -574,6 +574,10 @@ SIM_START_TIMEOUT_S = 600
 E2E_VIEWER = "e2e-viewer"
 VIEWER_PASSWORD = f"{REMOTE}/e2e-viewer.pw"
 """VM에서 만든 e2e viewer 비밀번호(root 0600, 호스트로 나가지 않는다)."""
+E2E_ENGINEER = "e2e-engineer"
+ENGINEER_PASSWORD = f"{REMOTE}/e2e-engineer.pw"
+"""G2-W 계정(engineer — 선언 role operator 이상이라 쓸 수 있고, `GET /audit`(engineer 이상)도
+읽는다)의 비밀번호(VM 안 root 0600)."""
 LIVE_POLL_S = 10
 
 
@@ -594,14 +598,15 @@ def start_simulator(host: Vm, tar: Path, image: str) -> None:
     )
 
 
-def add_viewer(host: Vm) -> dict[str, object]:
-    """e2e viewer(태그·장비 읽기 전용 계정, VM에서 만든 비밀번호)를 만든다. 결과 기록용 dict."""
+def add_user(host: Vm, username: str, role: str, password_file: str) -> dict[str, object]:
+    """e2e 계정(VM에서 만든 비밀번호 — root 0600 파일, 호스트로 나가지 않는다)을 만든다. 결과
+    기록용 dict."""
     created = host.run(
         as_root(
             "umask 077 && python3 -c 'import secrets; print(secrets.token_urlsafe(24))' "
-            f"> {VIEWER_PASSWORD} && cid={compose_core()} && "
-            f'docker exec -i "$cid" pureiron-core users add {E2E_VIEWER} --role viewer --json '
-            f"< {VIEWER_PASSWORD}"
+            f"> {password_file} && cid={compose_core()} && "
+            f'docker exec -i "$cid" pureiron-core users add {username} --role {role} --json '
+            f"< {password_file}"
         ),
         check=False,
     )
@@ -610,6 +615,11 @@ def add_viewer(host: Vm) -> dict[str, object]:
         "stdout": created.stdout[-TAIL_CHARS:],
         "stderr": created.stderr[-TAIL_CHARS:],
     }
+
+
+def add_viewer(host: Vm) -> dict[str, object]:
+    """e2e viewer(태그·장비 읽기 전용 계정)."""
+    return add_user(host, E2E_VIEWER, "viewer", VIEWER_PASSWORD)
 
 
 def live(host: Vm) -> dict[str, object]:
@@ -648,3 +658,63 @@ def wait_live(
             break
         sleep(LIVE_POLL_S)
     return reply, checks, round(clock() - started, 1)
+
+
+def write_tag(host: Vm, tag: str, value: float, reason: str) -> dict[str, object]:
+    """web 경유 engineer 로그인 → `POST /writes`(prepare) → 200이면 `POST /writes/{id}/confirm` →
+    이 사유의 감사 행(`site/site_api.py write`, G2-W)."""
+    return host.json(
+        f"sudo python3 {REMOTE}/site_api.py write --username {E2E_ENGINEER} "
+        f"--password-file {ENGINEER_PASSWORD} --tag {shlex.quote(tag)} --value {value!r} "
+        f"--reason {shlex.quote(reason)}"
+    )
+
+
+# ---------------------------------------------------------------- 중앙 응답 필터(G2-6 ①·G2-9)
+
+FLEET_NFT = "e2e_fleet"
+"""fleet 시나리오가 잠시 두는 nft 표 — 외부 접속 카운터(`e2e_audit`)와 따로다."""
+CENTRAL_HOST = "10.77.0.1"
+CENTRAL_PORT = 28443
+"""중앙 Caddy 주소(`CENTRAL_URL`과 같다) — 필터가 이 출발지의 수신만 건드린다(ssh는 그대로)."""
+CENTRAL_IN = "central_in"
+"""중앙(10.77.0.1:28443) → VM 수신을 세는 규칙 comment."""
+UPDATER_BUNDLES = "/var/lib/pureiron/bundles"
+
+
+def nft_apply(host: Vm, script: str) -> None:
+    """`nft -f -`(표 하나를 통째로 바꾸는 스크립트 — `fleet_scenarios.central_filter`)."""
+    host.run("sudo nft -f -", input=script)
+
+
+def central_in_bytes(host: Vm) -> int:
+    """`e2e_fleet` 표의 `central_in` 카운터 바이트(IP 패킷 길이 합). 없으면 -1."""
+    out = host.run(f"sudo nft -j list table inet {FLEET_NFT}").stdout
+    for entry in cast(list[dict[str, object]], json.loads(out)["nftables"]):
+        rule = cast(dict[str, object] | None, entry.get("rule"))
+        if rule is None or rule.get("comment") != CENTRAL_IN:
+            continue
+        for expr in cast(list[dict[str, object]], rule.get("expr", [])):
+            counter = cast(dict[str, int] | None, expr.get("counter"))
+            if counter is not None:
+                return counter["bytes"]
+    return -1
+
+
+def part_bytes(host: Vm) -> int | None:
+    """Updater가 받는 중인 번들(`bundles/poll-*.pib.part`) 크기. 없으면 None."""
+    out = host.run(
+        f"sudo sh -c 'stat -c %s {UPDATER_BUNDLES}/poll-*.pib.part 2>/dev/null | head -1'",
+        check=False,
+    ).stdout.strip()
+    return int(out) if out.isdigit() else None
+
+
+def poll_failures(host: Vm, since_epoch: float) -> int:
+    """`since_epoch`(VM 시각) 뒤 Updater 로그의 `poll failed` 줄 수(끊긴 내려받기·중앙 무응답)."""
+    out = host.run(
+        f"sudo journalctl -u pureiron-updater --since @{int(since_epoch)} --no-pager -o cat "
+        "| grep -c 'poll failed'",
+        check=False,
+    ).stdout.strip()
+    return int(out) if out.isdigit() else 0

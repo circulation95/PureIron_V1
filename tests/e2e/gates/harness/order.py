@@ -26,6 +26,10 @@ FILES: tuple[tuple[str, str], ...] = (
     # ---- fleet(c1 쌍 — 중앙 + 두 현장 온라인, M6-4a). GitHub 승인 경로(E_APPROVAL 등)는 nightly
     # 밖 — 릴리스 마감 fleet 리허설(★P5)
     ("test_g2_scheduled.py", "fleet"),  # G2-2 예약 갱신(site-a) + G2-3 격리(site-b)
+    ("test_g2_revert.py", "fleet"),  # G2-4 revert(site-a, FAULT-h → 롤백 → BASE 다시 게시)
+    ("test_g2_resume.py", "fleet"),  # G2-6 ① 내려받기 이어받기(site-a)
+    ("test_g2_writes.py", "fleet"),  # G2-W 현장 쓰기 가드레일(site-b)
+    ("test_g2_fleet_view.py", "fleet"),  # G2-9 중앙 화면 stale → online(site-b)
     # ---- crash(site-a) — G2-6 ④⑤ 2건 + 주간 16건(`weekly`), 매 건 c0 복원
     ("test_g2_crash.py", "crash"),
     # ---- 맨 끝: 모든 시나리오를 거친 누적 카운터

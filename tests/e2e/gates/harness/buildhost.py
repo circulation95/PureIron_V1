@@ -259,20 +259,23 @@ def build_site_bundle(
     *,
     work: str = WORK,
     window_close_at: datetime | None = None,
+    writes_enabled: bool = False,
 ) -> Path:
     """`ctx.site`의 g`gen` 번들(`release`)을 만든다. `project_dir`(WSL 경로)가 없으면 fixture
     `acme` 트리를 싣는다. `work`는 WSL 기록·store 디렉터리(G2는 `NIGHTLY_WORK`). 창 끝
-    (`window_close_at`)을 주지 않으면 시작 + 30일이다."""
+    (`window_close_at`)을 주지 않으면 시작 + 30일이다. `writes_enabled`면 현장 쓰기 스위치를
+    켠다(G2-W)."""
     site = ctx.site.site_id
     out = ctx.work
     start = window_open_at.strftime("%Y-%m-%dT%H:%M:%SZ")
     close_at = window_close_at or window_open_at + timedelta(days=30)
     end = close_at.strftime("%Y-%m-%dT%H:%M:%SZ")
     project = f" --project-dir '{project_dir}'" if project_dir else ""
+    writes = " --writes-enabled" if writes_enabled else ""
     wsl(
         f"{bundles_py('site', work)} "
         f"--out '{golden.wsl_path(out)}' --gen {gen} --product {ctx.pair.releases[release]} "
-        f"--window-start {start} --window-end {end} --site {site}{project}"
+        f"--window-start {start} --window-end {end} --site {site}{project}{writes}"
     )
     built = out / f"pureiron-{site}-g{gen}.pib"
     metrics = json.loads(built.with_name(built.stem + ".bundle-metrics.json").read_text("utf-8"))
