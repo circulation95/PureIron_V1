@@ -115,22 +115,21 @@ def sites_needed(test_ids: Sequence[str]) -> set[str]:
 
 def retry_closure(targets: Sequence[str], every: Sequence[str]) -> list[str]:
     """infra 재시도 대상 묶기 — 재시도는 새 세션(새 VM, c0 새로)이라 외부 접속 0의 뜻이 바뀐다.
-    처음 대상(`targets`) 기준으로 한 번만 더한다(연쇄하지 않는다): 한 현장의 시나리오 시험이
-    대상이면 그 현장의 맨 끝 시험(외부 접속 0)을 더하고(다시 돈 시나리오의 외부 접속을 본다), 맨 끝
-    시험이 대상이면 그 현장의 시나리오 시험 전부를 더한다(시나리오 없는 세션의 카운터로 통과하지
-    않게). 현장은 `FILES` 표에서 읽는다 — 시험을 더하면 묶음이 따라온다. `every`(첫 실행의 시험 id
-    전부)에서 고르고 그 순서로 돌려준다."""
-    found = [f for t in targets if (f := _sites_of(t)) is not None]
-    want = {
-        ("last" if kind == "scenario" else "scenario", s) for kind, sites in found for s in sites
-    }
+    한 현장의 시나리오 시험이 대상이면 그 현장의 맨 끝 시험(외부 접속 0)을 더한다(다시 돈
+    시나리오의 외부 접속을 본다). 맨 끝 시험 자체의 infra 실패는 다시 돌리지 않고 infra로만
+    남긴다(M6-4b-1 리뷰 M2 ⓑ — 카운터를 못 읽은 것이지 시나리오가 깨진 것이 아니다. 그 현장의
+    시나리오 전부·fleet 묶음을 끌고 오면 재시도 시간 제한을 넘는다). 현장은 `FILES` 표에서 읽는다
+    — 시험을 더하면 묶음이 따라온다. `every`(첫 실행의 시험 id 전부)에서 고르고 그 순서로
+    돌려준다. 연쇄하지 않는다."""
+    kept = [t for t in targets if dict(FILES).get(t.partition("::")[0]) != LAST]
+    sites = {s for t in kept if (f := _sites_of(t)) is not None for s in f[1]}
 
     def wanted(test_id: str) -> bool:
         own = _sites_of(test_id)
-        return own is not None and any((own[0], s) in want for s in own[1])
+        return own is not None and own[0] == "last" and bool(own[1] & sites)
 
-    chosen = set(targets) | {t for t in every if wanted(t)}
-    return [t for t in every if t in chosen] + [t for t in targets if t not in every]
+    chosen = set(kept) | {t for t in every if wanted(t)}
+    return [t for t in every if t in chosen] + [t for t in kept if t not in every]
 
 
 def in_central(file_name: str | None) -> bool:

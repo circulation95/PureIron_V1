@@ -207,10 +207,10 @@ def test_fleet_tests_need_both_sites_and_the_central() -> None:
         ([ISOLATION], [ISOLATION, NO_EXT_A, NO_EXT_B]),
         ([WRITES], [WRITES, NO_EXT_A, NO_EXT_B]),
         ([REVERT, VIEW], [REVERT, VIEW, NO_EXT_A, NO_EXT_B]),
-        # 외부 접속 0[site-b] → site-b를 쓰는 시나리오 전부(fleet 묶음 전부 포함)
-        ([NO_EXT_B], [FAULTS, *FLEET, NO_EXT_B]),
-        # 외부 접속 0[site-a] → site-a 시나리오 + fleet 묶음 + crash
-        ([NO_EXT_A], [ROLLBACK, *FLEET, CRASH, NO_EXT_A]),
+        # 외부 접속 0의 infra 실패는 다시 돌리지 않는다 — fleet 묶음을 끌고 오지 않는다(리뷰 M2 ⓑ)
+        ([NO_EXT_B], []),
+        ([NO_EXT_A], []),
+        ([NO_EXT_A, VIEW], [VIEW, NO_EXT_A, NO_EXT_B]),
         # c0 시나리오만 → 중앙이 필요 없다
         ([ROLLBACK], [ROLLBACK, NO_EXT_A]),
     ],
