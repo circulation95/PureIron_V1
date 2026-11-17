@@ -20,6 +20,13 @@ M6-4b(나머지 시나리오는 창을 즉시 연다 — `publish`, 창 판정�
   미선언 태그 거부(`judges.judge_writes`).
 - `fleet_view`(G2-9, site-b c1): VM nft로 중앙 차단 → control-web 경로(`central.py fleet --ui`)로
   stale → 해제 → online.
+
+M6-4b-2:
+- `airgap`(G2-7, site-b **c0** + 중앙 c1 DB): seq 정렬 → VM nft로 10.77.0.1 쪽 ssh 외 전부 차단·
+  카운터 → NEXT gen+1 번들을 USB 대용 디스크로 → `pureiron-site apply`(현장 USB 절차) → 같은
+  디스크를 rw로 다시 마운트해 `report export` → 떼고 WSL에서 꺼냄 → 호스트
+  `POST /offline-imports`(admin) → `/fleet`·control-web 경로 반영. 중앙 PUT 없음. nft 표·USB는
+  끝에 반드시 치운다.
 """
 
 from __future__ import annotations
@@ -32,7 +39,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Protocol
 
-from harness import buildhost, fleet_session, g2, golden, judges, site
+from harness import buildhost, fleet_session, g2, golden, judges, site, usb
 from harness.context import TAIL_CHARS, Context, E2EError, InfraError
 from harness.fleet_session import FleetSession, Remote
 from harness.vm import REMOTE_ERRORS, Vm, VmError
@@ -121,6 +128,7 @@ class Scenario:
 
     remote: Remote
     restore: Callable[..., dict[str, object]] = fleet_session.restore_c1
+    restore_airgap: Callable[..., dict[str, object]] = fleet_session.restore_airgap
     build: Build = build_bundle
     report: Callable[[Vm, Path], dict[str, object]] = site.report_for
 
@@ -396,8 +404,13 @@ def revert(
 
 # ---------------------------------------------------------------- 중앙 응답 필터(VM nft)
 
-CLEAR_FILTER = f"table inet {site.FLEET_NFT}\ndelete table inet {site.FLEET_NFT}\n"
-"""필터 표를 지운다(없어도 된다 — 먼저 만들고 지우는 한 트랜잭션)."""
+
+def clear_table(name: str) -> str:
+    """nft 표 `inet <name>`을 지운다(없어도 된다 — 먼저 만들고 지우는 한 트랜잭션)."""
+    return f"table inet {name}\ndelete table inet {name}\n"
+
+
+CLEAR_FILTER = clear_table(site.FLEET_NFT)
 
 
 def central_filter(drop: str | None) -> str:
@@ -421,13 +434,13 @@ def central_filter(drop: str | None) -> str:
     )
 
 
-def clear_filter(remote: Remote, host: Vm, ctx: Context) -> bool:
-    """필터 표를 지운다. 실패는 로그만 남기고 거짓 — 이미 다른 예외가 올라가는 중일 수 있고, 다음
-    c1·c0 복원이 VM 커널 상태(nft 포함)를 되돌린다."""
+def clear_filter(remote: Remote, host: Vm, ctx: Context, script: str = CLEAR_FILTER) -> bool:
+    """필터 표를 지운다(`script` — 기본 `e2e_fleet`). 실패는 로그만 남기고 거짓 — 이미 다른 예외가
+    올라가는 중일 수 있고, 다음 c1·c0 복원이 VM 커널 상태(nft 포함)를 되돌린다."""
     try:
-        remote.nft(host, CLEAR_FILTER)
+        remote.nft(host, script)
     except (*REMOTE_ERRORS, subprocess.TimeoutExpired) as exc:
-        ctx.log(f"nft table {site.FLEET_NFT} not cleared: {exc}")
+        ctx.log(f"nft table not cleared ({script.splitlines()[0]}): {exc}")
         return False
     return True
 
@@ -773,5 +786,173 @@ def fleet_view(
         via=first.get("via"),
         block_to_stale_s=stale_s,
         release_to_online_s=online_s,
+    )
+    return checks
+
+
+# ---------------------------------------------------------------- G2-7 폐쇄망 (site-b c0)
+
+AIRGAP_SITE = "site-b"
+AIRGAP_NFT = "e2e_airgap"
+"""G2-7이 잠시 두는 nft 표 — `e2e_fleet`(G2-6 ①·G2-9)·외부 접속 카운터(`e2e_audit`)와 따로다."""
+AIRGAP_COUNTERS = ("airgap_in", "airgap_out", "airgap_fwd_in", "airgap_fwd_out")
+"""중앙(10.77.0.1)으로 가는/오는 패킷 중 ssh(VM:22) 외를 세고 버리는 규칙 comment — 모두 0이어야
+한다(계획 F9: 외부 접속 카운터는 내부 망을 세지 않아 따로 둔다)."""
+AIRGAP_CLEAR = clear_table(AIRGAP_NFT)
+SSH_PORT = 22
+REPORTS_DIR = "reports"
+"""USB 디스크 안 보고 묶음 디렉터리(`report export --out <마운트>/reports`)."""
+G2_7_ITEMS = (
+    *("no_central_traffic", "succeeded", "applied_gen", "images_next"),
+    *("import_201", "import_applied", "fleet_last_attempt", "fleet_current"),
+    *("via_control_web", "control_web_last_attempt"),
+)
+"""G2-7 판정 항목(시험 `test_g2_7_airgap[…]`) — `judges.judge_airgap`."""
+ITEM_G2_7 = "G2-7 airgap (USB update -> report export -> offline import -> fleet)"
+
+
+def airgap_filter() -> str:
+    """VM `e2e_airgap` 표를 통째로 바꾸는 nft 스크립트. 체인마다 ssh(호스트 → VM:22와 그 응답)를
+    먼저 통과시키고(accept는 이 체인만 끝낸다) 나머지 10.77.0.1 쪽은 세고 버린다. forward는 컨테이너
+    (core·collector)가 중앙으로 가는 길이다."""
+    host = site.CENTRAL_HOST
+
+    def chain(name: str, hook: str, rules: list[str]) -> list[str]:
+        return [
+            f"    chain {name} {{",
+            f"        type filter hook {hook} priority -5; policy accept;",
+            *(f"        {rule}" for rule in rules),
+            "    }",
+        ]
+
+    return AIRGAP_CLEAR + "\n".join(
+        [
+            f"table inet {AIRGAP_NFT} {{",
+            *chain(
+                "airgap_in",
+                "input",
+                [
+                    f"ip saddr {host} tcp dport {SSH_PORT} accept",
+                    f'ip saddr {host} counter drop comment "airgap_in"',
+                ],
+            ),
+            *chain(
+                "airgap_out",
+                "output",
+                [
+                    f"ip daddr {host} tcp sport {SSH_PORT} accept",
+                    f'ip daddr {host} counter drop comment "airgap_out"',
+                ],
+            ),
+            *chain(
+                "airgap_fwd",
+                "forward",
+                [
+                    f'ip saddr {host} counter drop comment "airgap_fwd_in"',
+                    f'ip daddr {host} counter drop comment "airgap_fwd_out"',
+                ],
+            ),
+            "}",
+            "",
+        ]
+    )
+
+
+def aligned_seq(fs: FleetSession, site_id: str) -> tuple[int, dict[str, object]]:
+    """G2-7 시험 정렬 값(코디네이터 확정): N = max(c1 덤프 때 `/fleet` 요약의 `last_heartbeat_seq`,
+    `last_report_seq`) + 1. 그 요약이 없으면 추정하지 않고 `E2EError`(시험 오류). (N, 기록)."""
+    summary = fs.c1_fleet.get(site_id, {})
+    marks = {key: summary.get(key) for key in ("last_heartbeat_seq", "last_report_seq")}
+    if any(not isinstance(value, int) or isinstance(value, bool) for value in marks.values()):
+        raise E2EError(
+            f"no c1 seq marks for {site_id} in the central dump summary: {marks} "
+            "(fleet/session.json c1_fleet) — cannot align the c0 report_seq counter"
+        )
+    next_seq = max(judges.as_int(v) for v in marks.values()) + 1
+    return next_seq, {
+        "next_seq": next_seq,
+        "source": f"fleet/session.json c1_fleet[{site_id}] (central dump summary)",
+        **marks,
+        "reason": (
+            "test alignment: the c0 VM counter restarts below the c1 central marks (c1 went "
+            "online); a real airgap site has central marks 0"
+        ),
+    }
+
+
+def airgap(
+    session: g2.Session, fs: FleetSession, scenario: Scenario | None = None
+) -> dict[str, bool]:
+    """G2-7(모듈 설명). 기록은 site-b `Context`에(USB 시각·seq 정렬·카운터·반입 응답)."""
+    sc = scenario or Scenario.default()
+    remote = sc.remote
+    restored = sc.restore_airgap(session, fs, AIRGAP_SITE, remote=remote)
+    run = g2.site_up(session, AIRGAP_SITE)
+    ctx = run.ctx
+    host = ctx.site.host()
+    sh = remote.shell(host)
+    pair = session.pair
+    next_seq, seq_note = aligned_seq(fs, AIRGAP_SITE)
+    site.align_seq(sh, AIRGAP_SITE, next_seq)
+    applied = judges.updater_state(remote.probe(host)).get("applied_gen")
+    if judges.as_int(applied) < 1:
+        raise InfraError(f"cannot read applied gen of {AIRGAP_SITE}: {applied!r}")
+    gen = publish_gen(fleet_status(remote, AIRGAP_SITE).get("max_published_gen"), applied)
+    start = (remote.now() - IMMEDIATE).replace(microsecond=0)
+    record: dict[str, object] = {}
+    notes: dict[str, object] = {}
+    ops = remote.usb_ops
+    remote.nft(host, airgap_filter())
+    try:
+        pib = sc.build(ctx, gen, pair.next, (start, start + WINDOW_LEN), session.tree_of(pair.next))
+        with usb.image(ctx.run_id, AIRGAP_SITE, "airgap", [pib], record, ops=ops) as stick:
+            with usb.attached(sh, ctx.site.vm_name, stick, record, ops=ops) as mount:
+                done = site.busy_retry(sh, f"sudo pureiron-site apply {mount}/{pib.name}")
+                notes["apply"] = {"rc": done.returncode, "stderr": done.stderr[-TAIL_CHARS:]}
+                snap, waited = remote.converge(host, gen)
+                usb.remount_rw(sh)
+                out = site.busy_retry(
+                    sh, f"sudo pureiron-site report export --out {mount}/{REPORTS_DIR}"
+                )
+                notes["export"] = {"rc": out.returncode, "stdout": out.stdout[-TAIL_CHARS:]}
+                if out.returncode != 0:
+                    raise E2EError(f"report export exited {out.returncode}: {out.stderr[-800:]}")
+            counters = remote.table_counters(host, AIRGAP_NFT)
+            files = usb.read_dir(stick, REPORTS_DIR, ctx.work / "airgap", ops=ops)
+    finally:
+        notes["filter_cleared"] = clear_filter(remote, host, ctx, AIRGAP_CLEAR)
+    imports = [
+        fleet_session.central(remote, "offline-import", "--file", golden.wsl_path(f)) for f in files
+    ]
+    row = fleet_status(remote, AIRGAP_SITE)
+    ui = ui_fleet(remote)
+    checks = judges.judge_airgap(
+        counters,
+        snap,
+        imports,
+        row,
+        ui,
+        site_id=AIRGAP_SITE,
+        gen=gen,
+        next_digests=ctx.digests[pair.next],
+        want_counters=AIRGAP_COUNTERS,
+    )
+    ok = all(checks.values())
+    ctx.record(
+        ITEM_G2_7,
+        ok,
+        checks=checks,
+        gen=gen,
+        restored=restored,
+        seq_alignment=seq_note,
+        usb=record,
+        counters=counters,
+        exported=[f.name for f in files],
+        imports=[{k: i.get(k) for k in ("status", "body", "file")} for i in imports],
+        last_attempt=row.get("last_attempt"),
+        current=row.get("current"),
+        ui_last_attempt=judges.fleet_row(ui, AIRGAP_SITE).get("last_attempt"),
+        converge_s=round(waited, 1),
+        **notes,
     )
     return checks

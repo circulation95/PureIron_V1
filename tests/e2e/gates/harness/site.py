@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import cast
+from typing import Protocol, cast
 
 from harness import buildhost, golden, hyperv, judges, paths
 from harness.context import TAIL_CHARS, Context, E2EError
@@ -224,8 +224,9 @@ def install_runbook(
 # ---------------------------------------------------------------- 외부 접속 카운터
 
 
-def nft_counters(host: Vm) -> dict[str, int]:
-    out = host.run("sudo nft -j list table inet e2e_audit").stdout
+def nft_counters(host: Vm, table: str = "e2e_audit") -> dict[str, int]:
+    """nft 표 `inet <table>` 규칙의 comment → 카운터 패킷 수(기본 외부 접속 카운터 `e2e_audit`)."""
+    out = host.run(f"sudo nft -j list table inet {table}").stdout
     counters: dict[str, int] = {}
     for entry in cast(list[dict[str, object]], json.loads(out)["nftables"]):
         rule = cast(dict[str, object] | None, entry.get("rule"))
@@ -279,17 +280,50 @@ def stage(
     """번들을 VM에 올리고 `pureiron-site apply`(동기 — 시도 전체가 이 명령 안에서 끝난다). 원격
     명령 하나의 시간 제한은 `timeout_s`(기본 `Vm.run`과 같은 600초 — run.py 경로)."""
     host.put(pib, f"{INCOMING}/{pib.name}")
-    result = subprocess.CompletedProcess[str]([], 2, "", "busy")
-    for _ in range(30):  # 서비스 tick이 잠금을 잡고 있으면 exit 2 — 잠시 뒤 다시
-        result = host.run(
-            f"sudo pureiron-site apply {INCOMING}/{pib.name}", check=False, timeout_s=timeout_s
-        )
-        if result.returncode != 2:
-            break
-        time.sleep(2)
+    result = busy_retry(
+        host, f"sudo pureiron-site apply {INCOMING}/{pib.name}", timeout_s=timeout_s
+    )
     if check and result.returncode != 0:
         raise E2EError(f"apply {pib.name} exited {result.returncode}: {result.stderr[-800:]}")
     return result
+
+
+class Shell(Protocol):
+    """VM 원격 셸 — `vm.Vm`이 만족한다(단위 시험은 가짜)."""
+
+    def run(
+        self, command: str, *, timeout_s: float = 600, check: bool = True, input: str | None = None
+    ) -> subprocess.CompletedProcess[str]: ...
+
+
+BUSY_TRIES = 30
+BUSY_EXIT = 2
+"""`pureiron-site` 종료 코드 2 = 다른 Updater 실행 중(서비스 tick이 잠금을 잡고 있다)."""
+
+
+def busy_retry(
+    host: Shell,
+    command: str,
+    *,
+    timeout_s: float = STAGE_TIMEOUT_S,
+    sleep: Callable[[float], None] = time.sleep,
+) -> subprocess.CompletedProcess[str]:
+    """`pureiron-site` 명령(`check=False`) — exit 2(잠금)면 잠시 뒤 다시(최대 `BUSY_TRIES`번)."""
+    result = subprocess.CompletedProcess[str]([], BUSY_EXIT, "", "busy")
+    for _ in range(BUSY_TRIES):
+        result = host.run(command, check=False, timeout_s=timeout_s)
+        if result.returncode != BUSY_EXIT:
+            break
+        sleep(2)
+    return result
+
+
+def align_seq(host: Shell, site_id: str, next_seq: int) -> None:
+    """현장 `report_seq` 카운터를 `next_seq`로 올린다(`pureiron-site enroll --next-seq` — 키는
+    그대로, 단조 증가만. 벤더 rekey 응답 반영과 같은 제품 명령). G2-7 시험 정렬: c0 VM + c1 중앙
+    조합에서 VM 카운터가 중앙 수위 아래라 보고가 이력으로만 남는 것을 막는다(실제 폐쇄망 현장은
+    수위 0)."""
+    host.run(f"sudo pureiron-site enroll --site {site_id} --next-seq {next_seq}")
 
 
 def converge(
