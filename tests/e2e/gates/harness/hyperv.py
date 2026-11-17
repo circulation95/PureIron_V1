@@ -131,6 +131,36 @@ def restore(name: str, snapshot: str) -> None:
     )
 
 
+def attach_disk(name: str, vhdx: Path) -> None:
+    """실행 중 VM의 SCSI 컨트롤러에 VHDX를 붙인다(hot-add, M6-0 탐침 ② — 위치는 Hyper-V가 빈 곳을
+    고른다). USB 대용 디스크(`usb`)."""
+    run_ps(
+        f"Add-VMHardDiskDrive -VMName {ps_quote(name)} -ControllerType SCSI "
+        f"-Path {ps_quote(str(vhdx))}"
+    )
+
+
+def detach_disk(name: str, vhdx: Path) -> int:
+    """`vhdx`를 붙인 VM 드라이브를 뗀다(hot-remove). 뗀 드라이브 수(붙어 있지 않았으면 0)."""
+    out = run_ps(
+        f"$d = @(Get-VMHardDiskDrive -VMName {ps_quote(name)} | "
+        f"Where-Object {{ $_.Path -eq {ps_quote(str(vhdx))} }}); "
+        "$d | Remove-VMHardDiskDrive; $d.Count"
+    )
+    return int(out) if out.isdigit() else 0
+
+
+def detach_under(directory: Path) -> list[str]:
+    """모든 VM에서 `directory` 아래 VHDX를 붙인 드라이브를 뗀다(preflight 정리 — 지난 run이 남긴
+    USB 대용 디스크). 뗀 것마다 `<VM> <경로>`."""
+    pattern = ps_quote(str(directory).rstrip("\\") + "\\*")
+    out = run_ps(
+        f"Get-VM | Get-VMHardDiskDrive | Where-Object {{ $_.Path -like {pattern} }} | "
+        "ForEach-Object { $_.VMName + ' ' + $_.Path; $_ | Remove-VMHardDiskDrive }"
+    )
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
 def turn_off(name: str) -> None:
     run_ps(f"Stop-VM -Name {ps_quote(name)} -TurnOff -Force")
 

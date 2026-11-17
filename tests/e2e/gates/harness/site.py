@@ -171,16 +171,21 @@ def install_runbook(
     runbook_fpr: str,
     runbook_bootstrap: str,
     after_upload: Callable[[], object] | None = None,
+    bundle_dir: str | None = None,
 ) -> float:
     """설치 번들 runbook(2단계 메타데이터 추출·지문 대조 → `install.sh --offline-time-confirmed`)
     → enroll → g1 apply → 서비스 시작. 걸린 초(업로드 뒤부터). 판정은 호출자가 한다.
     `after_upload`는 번들을 올린 직후·설치 전에 부른다(G2-5 설치 전 변조 탐침 — 올린 번들을 다시
-    올리지 않는다). run.py는 넘기지 않는다."""
-    for bundle in (install, g1):
-        host.put(bundle, f"{INCOMING}/{bundle.name}")
+    올리지 않는다). run.py는 넘기지 않는다. `bundle_dir`(VM 경로)을 주면 번들이 이미 거기 있다(USB
+    대용 디스크 마운트, ★P4) — 올리지 않고 같은 명령을 그 경로에서 친다. 없으면 scp로
+    `INCOMING`에."""
+    if bundle_dir is None:
+        bundle_dir = INCOMING
+        for bundle in (install, g1):
+            host.put(bundle, f"{INCOMING}/{bundle.name}")
     if after_upload is not None:
         after_upload()
-    remote_install = f"{INCOMING}/{install.name}"
+    remote_install = f"{bundle_dir}/{install.name}"
     meta = RUNBOOK_META
     started = time.monotonic()
     # runbook 2단계는 root 셸에서 친다(/root는 700, bootstrap-verify ⓪은 추출물이
@@ -211,7 +216,7 @@ def install_runbook(
         "echo PUREIRON_POLL_INTERVAL_S=10 | sudo tee -a /etc/pureiron/updater.env >/dev/null && "
         f"sudo pureiron-site enroll --site {site_id}"
     )
-    host.run(f"sudo pureiron-site apply {INCOMING}/{g1.name}", timeout_s=1800)
+    host.run(f"sudo pureiron-site apply {bundle_dir}/{g1.name}", timeout_s=1800)
     host.run("sudo systemctl start pureiron-updater")
     return time.monotonic() - started
 

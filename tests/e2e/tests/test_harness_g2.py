@@ -265,6 +265,14 @@ C0_DB: dict[str, object] = {
 """이력 시드 뒤 c0 기반 probe `db`(M6-3a I2) — 압축 chunk·행 > 0, epoch = 쌍의 epoch 5."""
 
 
+def installed_by(site_id: str) -> dict[str, object]:
+    """bring-up이 남기는 설치 매체 기록(★P4) — site-b는 USB를 붙였다 떼고 지웠다."""
+    if g2.install_media(site_id) == g2.SSH_MEDIA:
+        return {"media": "ssh"}
+    usb = {"hot_added_at": "t1", "mounted_at": "t2", "removed": True, "deleted": True}
+    return {"media": "usb", "usb": usb}
+
+
 def g2_session(tmp_path: Path) -> g2.Session:
     pair = nightly({"r5": {"version": "2026.11.1", "schema": {"epoch": 5}}}, {"r5"}, "a" * 40, 5)
     runs: dict[str, g2.SiteRun] = {}
@@ -280,7 +288,9 @@ def g2_session(tmp_path: Path) -> g2.Session:
             pair=pair,
         )
         ctx.nft_total = dict.fromkeys(judges.AUDIT_COUNTERS, 0)
-        runs[base.site_id] = g2.SiteRun(ctx, release, c0_at=0.0, c0_db=dict(C0_DB))
+        runs[base.site_id] = g2.SiteRun(
+            ctx, release, c0_at=0.0, c0_db=dict(C0_DB), evidence=installed_by(base.site_id)
+        )
     expected = {k: C0_DB[k] for k in ("epoch", *judges.SCHEMA_SETS)}
     return g2.Session(
         "20261110T180000Z",

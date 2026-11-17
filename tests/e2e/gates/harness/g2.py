@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import cast
+from typing import Protocol, cast
 
 from harness import (
     buildhost,
@@ -36,6 +36,7 @@ from harness import (
     site,
     sites,
     trees,
+    usb,
 )
 from harness.context import Context, E2EError, InfraError
 from harness.release_pair import ReleasePair
@@ -368,16 +369,7 @@ def bring_up(run: SiteRun, session: Session, ssh_pub: str) -> None:
     ctx.nft_total = dict.fromkeys(ctx.nft_before, 0)
     ctx.nft_mark_at, _ = site.resolved_lookups(host, 0, ctx.site.site_id)
     ctx.log(f"install + g1 {run.release}")
-    install_s = site.install_runbook(
-        host,
-        Path(ctx.install_pib),
-        buildhost.site_bundle(ctx, 1, run.release),
-        site_id=ctx.site.site_id,
-        runbook_fpr=ctx.runbook_fpr,
-        runbook_bootstrap=ctx.runbook_bootstrap,
-        after_upload=preinstall_hook(run, host),
-    )
-    run.evidence["install_s"] = round(install_s, 1)
+    run.evidence["install_s"] = round(install(run, host), 1)
     site.start_simulator(host, session.simulator, session.sim_image)
     site.wait_ready(host, READY_TIMEOUT_S)
     ctx.log("seed history (compressed chunks)")
@@ -393,16 +385,82 @@ def bring_up(run: SiteRun, session: Session, ssh_pub: str) -> None:
     run.live = watch_live(run)
 
 
+USB_MEDIA = "usb"
+SSH_MEDIA = "ssh"
+
+
+def install_media(site_id: str) -> str:
+    """G2-1 설치 번들이 VM에 오는 길(★P4): `usb.INSTALL_SITE`(site-b)는 USB 대용 디스크, 나머지는
+    ssh(scp)."""
+    return USB_MEDIA if site_id == usb.INSTALL_SITE else SSH_MEDIA
+
+
+class InstallHost(Protocol):
+    """설치에 쓰는 VM 셸(`usb.Shell` + `preinstall.Shell`) — `vm.Vm`이 만족한다(시험은 가짜)."""
+
+    def run(
+        self, command: str, *, timeout_s: float = 600, check: bool = True, input: str | None = None
+    ) -> subprocess.CompletedProcess[str]: ...
+
+    def put(self, local: Path, remote: str, *, timeout_s: float = 1800) -> None: ...
+
+
+def install(
+    run: SiteRun,
+    host: InstallHost,
+    *,
+    runbook: Callable[..., float] | None = None,
+    ops: usb.Ops | None = None,
+) -> float:
+    """설치 runbook(`site.install_runbook`)을 그 현장의 매체(`install_media`)로. USB면 설치 번들·g1
+    번들을 담은 VHDX → hot-add·ro 마운트 → 마운트 경로에서 같은 명령 → umount·hot-remove → VHDX
+    삭제(예외 경로 포함, `usb`). 매체·hot-add·마운트·제거 시각은 `run.evidence`(G2-1 기록 →
+    state.json)에. `runbook`·`ops`는 단위 시험이 바꾼다."""
+    ctx = run.ctx
+    go: Callable[..., float] = runbook or site.install_runbook
+    bundles = (Path(ctx.install_pib), buildhost.site_bundle(ctx, 1, run.release))
+    media = run.evidence["media"] = install_media(ctx.site.site_id)
+
+    def runbook_at(bundle_dir: str | None) -> float:
+        return go(
+            host,
+            *bundles,
+            site_id=ctx.site.site_id,
+            runbook_fpr=ctx.runbook_fpr,
+            runbook_bootstrap=ctx.runbook_bootstrap,
+            after_upload=preinstall_hook(run, host, bundle_dir=bundle_dir or site.INCOMING),
+            bundle_dir=bundle_dir,
+        )
+
+    if media == SSH_MEDIA:
+        return runbook_at(None)
+    record: dict[str, object] = {}
+    run.evidence["usb"] = record
+    try:
+        with (
+            usb.image(ctx.run_id, ctx.site.site_id, "install", bundles, record, ops=ops) as stick,
+            usb.attached(host, ctx.site.vm_name, stick, record, ops=ops) as mount,
+        ):
+            return runbook_at(mount)
+    finally:
+        ctx.log(f"install media usb: {record}")
+
+
 def preinstall_hook(
-    run: SiteRun, host: preinstall.Shell, *, probes: preinstall.Probes = preinstall.run_probes
+    run: SiteRun,
+    host: preinstall.Shell,
+    *,
+    probes: preinstall.Probes = preinstall.run_probes,
+    bundle_dir: str = site.INCOMING,
 ) -> Callable[[], None] | None:
     """`preinstall.PREINSTALL_SITE`(site-b)이면 설치 번들을 올린 직후 부를 탐침(결과·예외를
-    `run.preinstall`·`preinstall_errors`에 두고 설치를 계속한다), 다른 현장이면 None."""
+    `run.preinstall`·`preinstall_errors`에 두고 설치를 계속한다), 다른 현장이면 None. 탐침은
+    `bundle_dir`(USB 마운트면 그 경로)의 설치 번들을 사본으로 쓴다."""
     ctx = run.ctx
     if ctx.site.site_id != preinstall.PREINSTALL_SITE:
         return None
     book = preinstall.Runbook(
-        f"{site.INCOMING}/{Path(ctx.install_pib).name}", ctx.runbook_fpr, ctx.runbook_bootstrap
+        f"{bundle_dir}/{Path(ctx.install_pib).name}", ctx.runbook_fpr, ctx.runbook_bootstrap
     )
 
     def hook() -> None:
@@ -544,6 +602,7 @@ def check_install(
     out, live_s = watch.reply, watch.seconds
     checks |= watch.checks
     checks["live_in_time"] = live_s <= LIVE_TIMEOUT_S
+    checks |= judges.judge_install_media(run.evidence, install_media(site_id))
     mark(ctx, host)
     checks["no_external"] = judges.no_external(ctx.nft_total)
     tags_body = judges.reply(out, "tags")[1]

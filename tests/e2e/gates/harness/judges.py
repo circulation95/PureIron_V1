@@ -1008,6 +1008,18 @@ def judge_installed(snap: dict[str, object], want_digests: dict[str, str]) -> di
     }
 
 
+def judge_install_media(evidence: dict[str, object], want: str) -> dict[str, bool]:
+    """G2-1 설치 매체(★P4): 기록된 매체(`media`)가 그 현장의 것(`want` — usb·ssh)이다. USB면 VHDX가
+    붙었다가(`hot_added_at`·`mounted_at`) 떨어지고(`removed`) 지워졌다(`deleted`)."""
+    checks = {"install_media": evidence.get("media") == want}
+    if want == "usb":
+        record = cast(dict[str, object], evidence.get("usb") or {})
+        mounted = bool(record.get("hot_added_at")) and bool(record.get("mounted_at"))
+        checks["usb_mounted"] = mounted
+        checks["usb_removed"] = record.get("removed") is True and record.get("deleted") is True
+    return checks
+
+
 def api_rows(body: object, key: str) -> list[dict[str, object]]:
     """`GET /tags`·`GET /devices` 본문의 `key` 행 목록(형식이 다르면 빈 목록)."""
     rows = cast(dict[str, object], body).get(key) if isinstance(body, dict) else None

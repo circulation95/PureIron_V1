@@ -14,7 +14,7 @@ import nightly
 import pytest
 from fleet_fakes import FakeRemote
 from g2_fakes import scenario_session
-from harness import fleet_session, order, paths, preflight
+from harness import fleet_session, order, paths, preflight, usb
 from harness.context import InfraError
 from harness.github import DryRun
 
@@ -156,7 +156,9 @@ def test_preflight_cleanup_brings_a_leftover_central_down(
         called.append("down")
         return ["central down (leftover)"]
 
-    assert nightly.cleanup_actions(DryRun(), down_central=down) == ["central down (leftover)"]
+    assert nightly.cleanup_actions(DryRun(), down_central=down, usb_leftovers=nothing) == [
+        "central down (leftover)"
+    ]
     assert called == ["down"]
     fake = FakeRemote(scenario_session(tmp_path))
     assert fleet_session.down_leftover(fake.remote()) == ["central down (leftover)"]
@@ -169,6 +171,7 @@ def test_preflight_cleanup_brings_a_leftover_central_down(
 
 
 def test_the_default_cleanup_includes_the_leftover_down() -> None:
-    """`cleanup_actions`의 기본 내림이 `down_leftover`다(실제 preflight가 부른다)."""
+    """`cleanup_actions`의 기본 내림이 `down_leftover`, USB 정리가 `usb.remove_leftovers`다(실제
+    preflight가 부른다)."""
     default = nightly.cleanup_actions.__defaults__
-    assert default == (fleet_session.down_leftover,)
+    assert default == (fleet_session.down_leftover, usb.remove_leftovers)
