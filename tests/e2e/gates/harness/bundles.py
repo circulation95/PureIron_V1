@@ -332,8 +332,7 @@ def nightly_images(
         tag = f"pureiron/{svc}:{name}"
         subprocess.run(
             ("docker", "build", "-q", "-t", tag, "-"),
-            input=dockerfile,
-            text=True,
+            input=dockerfile.encode(),  # 바이트 그대로(줄바꿈 변환 없음 — M6-4b-1 fix r2)
             check=True,
             timeout=DOCKER_BUILD_TIMEOUT_S,
         )

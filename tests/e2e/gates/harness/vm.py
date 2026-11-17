@@ -100,17 +100,24 @@ class Vm:
         넘긴다 — 비밀값(현장 token)을 명령 줄·파일에 남기지 않을 때 쓴다. 실패 메시지에는 명령과
         stderr만 실린다. `check`이면 종료 코드 255는 `VmError`(ssh 실패), 그 밖의 0 아닌 코드는
         `RemoteCommandError`(원격 명령 실패)다. `check=False`이면 코드와 상관없이 결과를
-        돌려준다."""
-        result = subprocess.run(
+        돌려준다.
+
+        `input`은 UTF-8 바이트 그대로 보낸다(M6-4b-1 fix r2): 텍스트 모드 stdin은 Windows에서
+        `\\n`을 `\\r\\n`으로 바꿔 원격 `nft -f -`가 `\\r`에서 문법 오류를 냈다(실측 run
+        44020762321). stdout·stderr는 UTF-8(`errors="replace"`)로 읽어 문자열로 돌려준다."""
+        raw = subprocess.run(
             [_tool("ssh"), *self._opts(), f"{USER}@{self.ip}", command],
             stdin=subprocess.DEVNULL if input is None else None,
-            input=input,
+            input=None if input is None else input.encode("utf-8"),
             capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
             timeout=timeout_s,
             check=False,
+        )
+        result = subprocess.CompletedProcess[str](
+            raw.args,
+            raw.returncode,
+            raw.stdout.decode("utf-8", "replace"),
+            raw.stderr.decode("utf-8", "replace"),
         )
         failure = remote_failure(command, result) if check else None
         if failure is not None:

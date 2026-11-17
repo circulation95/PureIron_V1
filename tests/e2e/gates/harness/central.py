@@ -224,14 +224,17 @@ def basic_auth_line(password: str) -> str:
     stdin이 터미널이 아니면 caddy는 첫 줄을 읽고 끝 줄바꿈을 떼어 낸다(줄바꿈이 없으면 실패 —
     v2.11.7에서 확인)."""
     image = f"pureiron/control-web:{RELEASE}"
-    hashed = subprocess.run(
-        ["docker", "run", "--rm", "-i", "--entrypoint", "caddy", image, "hash-password"],
-        input=password + "\n",
-        capture_output=True,
-        text=True,
-        timeout=COMMAND_TIMEOUT_S,
-        check=True,
-    ).stdout.strip()
+    hashed = (
+        subprocess.run(
+            ["docker", "run", "--rm", "-i", "--entrypoint", "caddy", image, "hash-password"],
+            input=(password + "\n").encode(),  # 바이트 그대로(줄바꿈 변환 없음 — M6-4b-1 fix r2)
+            capture_output=True,
+            timeout=COMMAND_TIMEOUT_S,
+            check=True,
+        )
+        .stdout.decode("utf-8", "replace")
+        .strip()
+    )
     return f"{UI_USER} {hashed}"
 
 
