@@ -931,8 +931,8 @@ def airgap(
     record: dict[str, object] = {}
     notes: dict[str, object] = {}
     ops = remote.usb_ops
-    remote.nft(host, airgap_filter())
     try:
+        remote.nft(host, airgap_filter())  # 적용 직후 ssh가 끊겨도 지우기를 한다(리뷰 L2)
         pib = sc.build(ctx, gen, pair.next, (start, start + WINDOW_LEN), session.tree_of(pair.next))
         with usb.image(ctx.run_id, AIRGAP_SITE, "airgap", [pib], record, ops=ops) as stick:
             with usb.attached(sh, ctx.site.vm_name, stick, record, ops=ops) as mount:

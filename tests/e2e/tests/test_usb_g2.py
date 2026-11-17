@@ -72,13 +72,13 @@ class FakeOps:
             self.events.append(f"attach {vm}")
             self.attached.append(vhdx)
 
-        def detach(vm: str, vhdx: Path) -> int:
+        def detach(vm: str, vhdx: Path) -> bool:
             self.events.append(f"detach {vm}")
             if self.detach_error:
                 raise hyperv.HyperVError("Remove-VMHardDiskDrive failed")
             if self.detach_timeout:
                 raise subprocess.TimeoutExpired("powershell.exe", 300)
-            return 1 if vhdx in self.attached else 0
+            return vhdx in self.attached
 
         return usb.Ops(
             wsl=wsl,
@@ -266,22 +266,27 @@ def test_new_sticks_are_per_run_and_unique(e2e_root: Path) -> None:
 def test_the_hot_add_and_remove_cmdlets(monkeypatch: pytest.MonkeyPatch) -> None:
     scripts: list[str] = []
 
+    replies = iter(["", "WARNING: the drive is in use\n0", "1", "1"])
+
     def run_ps(script: str, *, timeout_s: float = 300) -> str:
         scripts.append(script)
-        return "1"
+        return next(replies)
 
     monkeypatch.setattr(hyperv, "run_ps", run_ps)
     vhdx = Path("C:/PureIron_e2e/usb/x.vhdx")
     hyperv.attach_disk("pureiron-site-b", vhdx)
-    assert hyperv.detach_disk("pureiron-site-b", vhdx) == 1
+    assert hyperv.detach_disk("pureiron-site-b", vhdx) is True  # 마지막 줄 = 남은 0개
+    assert hyperv.detach_disk("pureiron-site-b", vhdx) is False  # 아직 붙어 있다
     assert hyperv.detach_under(Path("C:/PureIron_e2e/usb")) == ["1"]
+    scripts.pop(2)
     quoted = hyperv.ps_quote(str(vhdx))
     assert scripts[0] == (
         f"Add-VMHardDiskDrive -VMName 'pureiron-site-b' -ControllerType SCSI -Path {quoted}"
     )
     assert "Get-VMHardDiskDrive -VMName 'pureiron-site-b'" in scripts[1]
     assert f"$_.Path -eq {quoted}" in scripts[1]
-    assert "Remove-VMHardDiskDrive" in scripts[1]
+    assert "Remove-VMHardDiskDrive; @(Get-VMHardDiskDrive" in scripts[1]
+    assert scripts[1].endswith(").Count")
     assert "Get-VM | Get-VMHardDiskDrive" in scripts[2]
     assert "Remove-VMHardDiskDrive" in scripts[2]
 
@@ -334,10 +339,11 @@ def test_the_install_media_judge_each_check_matters(site_id: str) -> None:
         "removed": True,
         "deleted": True,
     }
-    good: dict[str, object] = {"media": want, "usb": record}
+    good: dict[str, object] = {"media": want, "usb": record} if want == "usb" else {"media": want}
     assert all(judges.judge_install_media(good, want).values())
-    other = "ssh" if want == "usb" else "usb"
-    assert judges.judge_install_media({**good, "media": other}, want)["install_media"] is False
+    # site-b에 USB 기록이 없다(ssh로 돌아감) · site-a에 USB 기록이 있다
+    flipped: dict[str, object] = {"media": want} if want == "usb" else {**good, "usb": record}
+    assert judges.judge_install_media(flipped, want)["install_media"] is False
     if want == "usb":
         for key, value in (("removed", False), ("deleted", False), ("mounted_at", None)):
             checks = judges.judge_install_media({**good, "usb": {**record, key: value}}, want)

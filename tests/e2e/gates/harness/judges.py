@@ -1009,9 +1009,10 @@ def judge_installed(snap: dict[str, object], want_digests: dict[str, str]) -> di
 
 
 def judge_install_media(evidence: dict[str, object], want: str) -> dict[str, bool]:
-    """G2-1 설치 매체(★P4): 기록된 매체(`media`)가 그 현장의 것(`want` — usb·ssh)이다. USB면 VHDX가
-    붙었다가(`hot_added_at`·`mounted_at`) 떨어지고(`removed`) 지워졌다(`deleted`)."""
-    checks = {"install_media": evidence.get("media") == want}
+    """G2-1 설치 매체(★P4): USB 기록(`usb`)이 그 현장의 매체(`want` — usb·ssh)대로 있거나 없다.
+    USB면 VHDX가 붙었다가(`hot_added_at`·`mounted_at`) 떨어지고(`removed`) 지워졌다(`deleted`)."""
+    used_usb = isinstance(evidence.get("usb"), dict)
+    checks = {"install_media": used_usb == (want == "usb")}
     if want == "usb":
         record = cast(dict[str, object], evidence.get("usb") or {})
         mounted = bool(record.get("hot_added_at")) and bool(record.get("mounted_at"))
@@ -1424,9 +1425,10 @@ def judge_airgap(
     return {
         "no_central_traffic": bool(want_counters)
         and all(counters.get(name) == 0 for name in want_counters),
-        "succeeded": state.get("last_result") == "succeeded",
+        "succeeded": state.get("last_result") == "succeeded"
+        and state.get("last_attempted_gen") == gen,
         "applied_gen": state.get("applied_gen") == gen,
-        "images_next": running_digests(snap) == next_digests,
+        "images_next": bool(next_digests) and running_digests(snap) == next_digests,
         "import_201": bool(imports) and all(i.get("status") == 201 for i in imports),
         "import_applied": applied >= 1,
         "fleet_last_attempt": offline_attempt(row, gen),

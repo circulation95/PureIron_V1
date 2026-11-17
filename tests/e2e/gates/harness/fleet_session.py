@@ -363,7 +363,9 @@ def restore_airgap(
     """G2-7의 시작(계획 P6): `site_id` VM은 **c0**(폐쇄망 — 온라인 설정 없음), 중앙은 **c1 DB**(현장
     등록이 있어야 `POST /offline-imports`가 받는다). `restore_c1`과 같은 순서(control-web 멈춤 → VM
     복원 → 중앙 restore → control-web 시작)이고, 폐쇄망 VM은 중앙에 보내지 않으므로 heartbeat를
-    기다리지 않는다 — ready만 본다."""
+    기다리지 않는다 — ready만 본다. 끝에 `restore_c1`처럼 VM 시계 차를 재서 한도를 넘으면
+    `InfraError`(메모리째 복원한 c0 시계가 늦으면 즉시 창이 VM 기준으로 아직 열리지 않는다 — 리뷰
+    L1)."""
     remote = remote or Remote()
     run = g2.site_up(session, site_id)
     central(remote, "stop-web")
@@ -374,10 +376,21 @@ def restore_airgap(
         central(remote, "start-web")
     if restored.get("fleet_match") is not True:
         raise InfraError(f"central restore {fs.c1_name}: /fleet does not match the dump")
-    remote.wait_ready(run.ctx.site.host())
+    host = run.ctx.site.host()
+    remote.wait_ready(host)
+    skew = fs.clock_skew[site_id] = clock_skew(remote, host)
     fs.restores += 1
     fs.save(results or g2.results_dir(session.run_id))
-    return {"central": {k: restored.get(k) for k in ("seconds", "fleet_match")}, "vm": "c0"}
+    if abs(skew) > CLOCK_SKEW_LIMIT_S:
+        raise InfraError(
+            f"VM clock off the host by {skew}s (> {CLOCK_SKEW_LIMIT_S:.0f}s) after restoring "
+            f"{site_id} to c0 (Hyper-V time sync)"
+        )
+    return {
+        "central": {k: restored.get(k) for k in ("seconds", "fleet_match")},
+        "vm": "c0",
+        "clock_skew_s": skew,
+    }
 
 
 def open_fleet(

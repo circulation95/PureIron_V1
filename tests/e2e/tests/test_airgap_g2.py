@@ -45,6 +45,8 @@ class AirgapVm:
     enroll_busy: int = 0
     """`enroll`이 Updater 잠금으로 exit 2를 낼 횟수(리뷰 M1)."""
     enroll_rc: int = 0
+    split: bool = False
+    """대기 보고 seq에 빈틈이 있어 묶음 파일이 여럿(리뷰 M10)."""
     kernel_log: list[str] = field(default_factory=list[str])
 
     def run(
@@ -53,6 +55,7 @@ class AirgapVm:
         out, rc = "", 0
         if "--next-seq" in command:
             self.events.append("vm enroll --next-seq")
+            assert "pureiron-site enroll --site site-b --next-seq " in command  # 리뷰 M7
             if self.enroll_busy:
                 self.enroll_busy -= 1
                 return subprocess.CompletedProcess[str]([], 2, "", "another updater is running")
@@ -80,16 +83,23 @@ class AirgapVm:
             assert f"--out {usb.MOUNT}/{fleet_scenarios.REPORTS_DIR}" in command
             rc = self.export_rc
             if rc == 0:
+                # `split`이면 seq 빈틈(보고마다 seq 2칸)이라 묶음이 보고마다 하나다(contiguous_runs)
+                step = 2 if self.split else 1
                 reports = [
-                    {**r, "report_seq": self.next_seq + i} for i, r in enumerate(self.pending)
+                    {**r, "report_seq": self.next_seq + step * i}
+                    for i, r in enumerate(self.pending)
                 ]
-                self.next_seq += len(reports)
-                first, last = reports[0]["report_seq"], reports[-1]["report_seq"]
-                name = f"pureiron-reports-site-b-{first:06d}-{last:06d}.json"
-                body = {"site_id": "site-b", "first_seq": first, "last_seq": last}
-                self.usb_files[name] = json.dumps({**body, "reports": reports}).encode()
+                self.next_seq += step * len(reports)
+                runs = [[r] for r in reports] if self.split else [reports]
+                lines: list[str] = []
+                for run in runs:
+                    first, last = run[0]["report_seq"], run[-1]["report_seq"]
+                    name = f"pureiron-reports-site-b-{first:06d}-{last:06d}.json"
+                    body = {"site_id": "site-b", "first_seq": first, "last_seq": last}
+                    self.usb_files[name] = json.dumps({**body, "reports": run}).encode()
+                    lines.append(f"{len(run)} report(s) → {name}")
                 self.pending = []
-                out = f"{len(reports)} report(s) → {name}\n"
+                out = "\n".join(lines) + "\n"
         elif "journalctl -k" in command:
             assert "grep -F 'e2e-airgap-'" in command
             out = "\n".join(self.kernel_log)
@@ -141,7 +151,12 @@ def airgap_flow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Airgap:
     def probe(host: Vm) -> dict[str, object]:
         images = digests(f.vm.image)
         return {
-            "updater": {"applied_gen": f.vm.applied, "last_result": "succeeded", "attempt": None},
+            "updater": {
+                "applied_gen": f.vm.applied,
+                "last_attempted_gen": f.vm.applied,
+                "last_result": "succeeded",
+                "attempt": None,
+            },
             "containers": {svc: {"image_id": d, "running": True} for svc, d in images.items()},
             "readyz": {"status": 200},
         }
@@ -207,9 +222,9 @@ def airgap_flow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Airgap:
     def attach(vm: str, vhdx: Path) -> None:
         events.append(f"attach {vm}")
 
-    def detach(vm: str, vhdx: Path) -> int:
+    def detach(vm: str, vhdx: Path) -> bool:
         events.append(f"detach {vm}")
-        return 1
+        return True
 
     def build(
         ctx: Context,
@@ -387,7 +402,7 @@ def test_the_airgap_filter_lets_ssh_through_before_counting_everything_else() ->
 def airgap_judge(**change: object) -> dict[str, bool]:
     gen = 2
     snap: dict[str, object] = {
-        "updater": {"applied_gen": gen, "last_result": "succeeded"},
+        "updater": {"applied_gen": gen, "last_attempted_gen": gen, "last_result": "succeeded"},
         "containers": {s: {"image_id": d, "running": True} for s, d in digests("next").items()},
     }
     attempt = {"source": "offline", "generation": gen, "result": "succeeded"}
@@ -434,7 +449,7 @@ ATTEMPT_G1 = {"source": "offline", "generation": 1, "result": "succeeded"}
         (
             {
                 "snap": {
-                    "updater": {"applied_gen": 2, "last_result": "failed"},
+                    "updater": {"applied_gen": 2, "last_attempted_gen": 2, "last_result": "failed"},
                     "containers": {
                         s: {"image_id": d, "running": True} for s, d in digests("next").items()
                     },
@@ -445,7 +460,11 @@ ATTEMPT_G1 = {"source": "offline", "generation": 1, "result": "succeeded"}
         (
             {
                 "snap": {
-                    "updater": {"applied_gen": 1, "last_result": "succeeded"},
+                    "updater": {
+                        "applied_gen": 1,
+                        "last_attempted_gen": 2,
+                        "last_result": "succeeded",
+                    },
                     "containers": {
                         s: {"image_id": d, "running": True} for s, d in digests("next").items()
                     },
@@ -456,13 +475,32 @@ ATTEMPT_G1 = {"source": "offline", "generation": 1, "result": "succeeded"}
         (
             {
                 "snap": {
-                    "updater": {"applied_gen": 2, "last_result": "succeeded"},
+                    "updater": {
+                        "applied_gen": 2,
+                        "last_attempted_gen": 2,
+                        "last_result": "succeeded",
+                    },
                     "containers": {
                         s: {"image_id": d, "running": True} for s, d in digests("base").items()
                     },
                 }
             },
             ["images_next"],
+        ),
+        (  # 적용이 돌지 않았다: c0 g1의 성공 결과만 남아 있다(리뷰 L3)
+            {
+                "snap": {
+                    "updater": {
+                        "applied_gen": 2,
+                        "last_attempted_gen": 1,
+                        "last_result": "succeeded",
+                    },
+                    "containers": {
+                        s: {"image_id": d, "running": True} for s, d in digests("next").items()
+                    },
+                }
+            },
+            ["succeeded"],
         ),
         (
             {"imports": [{"status": 400, "body": {"detail": "bad"}}]},
@@ -642,3 +680,34 @@ def test_bundles_that_do_not_come_off_the_usb_disk_are_infra(
     assert f.events[-2:] == ["usb read", "nft clear"]
     assert "central offline-import" not in f.events
     assert not list((tmp_path / "e2e" / "usb").glob("*.vhdx"))
+
+
+def test_every_bundle_off_the_usb_disk_is_imported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """seq 빈틈으로 묶음 파일이 둘이면 둘 다 반입한다 — 첫 파일(g1 보고)만 반입하면 `/fleet`
+    last_attempt가 g1에 머문다(리뷰 M10)."""
+    f = airgap_flow(tmp_path, monkeypatch)
+    f.vm.split = True
+    checks = fleet_scenarios.airgap(f.session, f.fs, f.scenario)
+    assert failed(checks) == []
+    assert f.events.count("central offline-import") == 2
+    imports = cast(list[dict[str, object]], last_record(f)["imports"])
+    assert [i["file"] for i in imports] == [
+        "pureiron-reports-site-b-000010-000010.json",
+        "pureiron-reports-site-b-000012-000012.json",
+    ]
+
+
+def test_a_vm_clock_left_behind_after_the_c0_restore_is_infra(tmp_path: Path) -> None:
+    """c0는 메모리째 복원된다 — 시계가 한도를 넘게 어긋나면 즉시 창이 VM 기준으로 아직 열리지
+    않으므로 infra로 멈춘다(리뷰 L1, `restore_c1`과 같은 한도)."""
+    s = scenario_session(tmp_path)
+    fake = FakeRemote(s)
+    fs = fleet_session.FleetSession(s.run_id, "c1-x", Path("ca"), "AB", c1_nft={"site-b": {}})
+    out = fleet_session.restore_airgap(s, fs, "site-b", remote=fake.remote(), results=tmp_path)
+    assert out["clock_skew_s"] == 0.0
+    fake.skew["site-b"] = -3600.0
+    with pytest.raises(InfraError, match="VM clock off the host"):
+        fleet_session.restore_airgap(s, fs, "site-b", remote=fake.remote(), results=tmp_path)
+    assert fs.clock_skew["site-b"] == -3600.0

@@ -140,14 +140,16 @@ def attach_disk(name: str, vhdx: Path) -> None:
     )
 
 
-def detach_disk(name: str, vhdx: Path) -> int:
-    """`vhdx`를 붙인 VM 드라이브를 뗀다(hot-remove). 뗀 드라이브 수(붙어 있지 않았으면 0)."""
-    out = run_ps(
-        f"$d = @(Get-VMHardDiskDrive -VMName {ps_quote(name)} | "
-        f"Where-Object {{ $_.Path -eq {ps_quote(str(vhdx))} }}); "
-        "$d | Remove-VMHardDiskDrive; $d.Count"
+def detach_disk(name: str, vhdx: Path) -> bool:
+    """`vhdx`를 붙인 VM 드라이브를 뗀다(hot-remove). 뗀 뒤 같은 경로의 드라이브를 다시 세어 0이면
+    참 — 출력의 마지막 줄만 읽는다(PowerShell 5.1은 경고 스트림을 stdout에 섞는다, 리뷰 L4)."""
+    drives = (
+        f"@(Get-VMHardDiskDrive -VMName {ps_quote(name)} | "
+        f"Where-Object {{ $_.Path -eq {ps_quote(str(vhdx))} }})"
     )
-    return int(out) if out.isdigit() else 0
+    out = run_ps(f"{drives} | Remove-VMHardDiskDrive; {drives}.Count")
+    lines = out.splitlines()
+    return bool(lines) and lines[-1].strip() == "0"
 
 
 def detach_under(directory: Path) -> list[str]:

@@ -67,7 +67,7 @@ class Ops:
         default=lambda script: golden.wsl(script, timeout_s=WSL_TIMEOUT_S)
     )
     attach: Callable[[str, Path], None] = hyperv.attach_disk
-    detach: Callable[[str, Path], int] = hyperv.detach_disk
+    detach: Callable[[str, Path], bool] = hyperv.detach_disk
     now: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
     clock: Callable[[], float] = time.monotonic
     sleep: Callable[[float], None] = time.sleep
@@ -222,7 +222,7 @@ def release(
             raise
         log(f"[usb] {stick.vhdx.name} not detached from {vm_name}: {exc}")
         return
-    record["removed"] = removed >= 1
+    record["removed"] = removed
     record["removed_at"] = stamp(ops)
 
 
