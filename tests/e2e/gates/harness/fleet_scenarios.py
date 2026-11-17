@@ -798,6 +798,11 @@ AIRGAP_NFT = "e2e_airgap"
 AIRGAP_COUNTERS = ("airgap_in", "airgap_out", "airgap_fwd_in", "airgap_fwd_out")
 """중앙(10.77.0.1)으로 가는/오는 패킷 중 ssh(VM:22) 외를 세고 버리는 규칙 comment — 모두 0이어야
 한다(계획 F9: 외부 접속 카운터는 내부 망을 세지 않아 따로 둔다)."""
+AIRGAP_LOG = "e2e-airgap-"
+"""drop 규칙의 nft `log prefix` 머리(`e2e-airgap-in ` 등 — `e2e_audit`와 같은 방식). 카운터가 0이
+아니면 VM 커널 로그의 이 줄을 기록에 남겨 출처(주소·포트)를 가린다(collect는 커널 로그를 모으지
+않는다)."""
+AIRGAP_LOG_LINES = 20
 AIRGAP_CLEAR = clear_table(AIRGAP_NFT)
 SSH_PORT = 22
 REPORTS_DIR = "reports"
@@ -813,9 +818,16 @@ ITEM_G2_7 = "G2-7 airgap (USB update -> report export -> offline import -> fleet
 
 def airgap_filter() -> str:
     """VM `e2e_airgap` 표를 통째로 바꾸는 nft 스크립트. 체인마다 ssh(호스트 → VM:22와 그 응답)를
-    먼저 통과시키고(accept는 이 체인만 끝낸다) 나머지 10.77.0.1 쪽은 세고 버린다. forward는 컨테이너
-    (core·collector)가 중앙으로 가는 길이다."""
+    먼저 통과시키고(accept는 이 체인만 끝낸다) 나머지 10.77.0.1 쪽은 세고·로그를 남기고 버린다.
+    forward는 컨테이너(core·collector)가 중앙으로 가는 길이다. input은 unicast만 센다(`meta pkttype
+    host`): 10.77.0.1은 VM의 게이트웨이·DNS(golden NETWORK_CONFIG)라 호스트 vNIC가 보내는 broadcast
+    (10.77.0.255·255.255.255.255 — NetBIOS·앱 LAN 탐색)가 LOCAL_IN에 오고, 그것은 현장이 중앙에
+    닿은 것이 아니다(M6-4b-2 리뷰 H1). 현장 → 중앙은 output·forward에서 먼저 잡힌다."""
     host = site.CENTRAL_HOST
+
+    def drop(name: str, match: str) -> str:
+        tag = name.removeprefix("airgap_").replace("_", "-")
+        return f'{match} counter log prefix "{AIRGAP_LOG}{tag} " drop comment "{name}"'
 
     def chain(name: str, hook: str, rules: list[str]) -> list[str]:
         return [
@@ -833,7 +845,7 @@ def airgap_filter() -> str:
                 "input",
                 [
                     f"ip saddr {host} tcp dport {SSH_PORT} accept",
-                    f'ip saddr {host} counter drop comment "airgap_in"',
+                    drop("airgap_in", f"ip saddr {host} meta pkttype host"),
                 ],
             ),
             *chain(
@@ -841,21 +853,35 @@ def airgap_filter() -> str:
                 "output",
                 [
                     f"ip daddr {host} tcp sport {SSH_PORT} accept",
-                    f'ip daddr {host} counter drop comment "airgap_out"',
+                    drop("airgap_out", f"ip daddr {host}"),
                 ],
             ),
             *chain(
                 "airgap_fwd",
                 "forward",
                 [
-                    f'ip saddr {host} counter drop comment "airgap_fwd_in"',
-                    f'ip daddr {host} counter drop comment "airgap_fwd_out"',
+                    drop("airgap_fwd_in", f"ip saddr {host}"),
+                    drop("airgap_fwd_out", f"ip daddr {host}"),
                 ],
             ),
             "}",
             "",
         ]
     )
+
+
+def airgap_log(sh: site.Shell) -> list[str]:
+    """VM 커널 로그(nft `log`)의 `e2e-airgap-` 줄 끝 `AIRGAP_LOG_LINES`개 — 카운터가 0이 아닐 때의
+    출처 증거. 못 읽으면 오류 한 줄."""
+    command = (
+        f"sudo journalctl -k -b --no-pager -o short-iso | grep -F '{AIRGAP_LOG}' "
+        f"| tail -n {AIRGAP_LOG_LINES}"
+    )
+    try:
+        out = sh.run(command, check=False, timeout_s=60).stdout
+    except (*REMOTE_ERRORS, subprocess.TimeoutExpired) as exc:
+        return [f"error: {exc}"]
+    return out.strip().splitlines()
 
 
 def aligned_seq(fs: FleetSession, site_id: str) -> tuple[int, dict[str, object]]:
@@ -918,6 +944,8 @@ def airgap(
                 if out.returncode != 0:
                     raise E2EError(f"report export exited {out.returncode}: {out.stderr[-800:]}")
             counters = remote.table_counters(host, AIRGAP_NFT)
+            if any(counters.get(name) != 0 for name in AIRGAP_COUNTERS):
+                notes["airgap_log"] = airgap_log(sh)
             files = usb.read_dir(stick, REPORTS_DIR, ctx.work / "airgap", ops=ops)
     finally:
         notes["filter_cleared"] = clear_filter(remote, host, ctx, AIRGAP_CLEAR)

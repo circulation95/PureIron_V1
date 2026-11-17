@@ -42,6 +42,7 @@ class AirgapVm:
     mounted: str = ""
     usb_files: dict[str, bytes] = field(default_factory=dict[str, bytes])
     export_rc: int = 0
+    kernel_log: list[str] = field(default_factory=list[str])
 
     def run(
         self, command: str, *, timeout_s: float = 600, check: bool = True, input: str | None = None
@@ -81,6 +82,9 @@ class AirgapVm:
                 self.usb_files[name] = json.dumps({**body, "reports": reports}).encode()
                 self.pending = []
                 out = f"{len(reports)} report(s) -> {name}\n"
+        elif "journalctl -k" in command:
+            assert "grep -F 'e2e-airgap-'" in command
+            out = "\n".join(self.kernel_log)
         elif "umount" in command:
             self.events.append("vm umount")
             self.mounted = ""
@@ -322,8 +326,12 @@ def test_any_packet_to_or_from_the_central_fails_g2_7(
 ) -> None:
     f = airgap_flow(tmp_path, monkeypatch)
     f.counters["airgap_out"] = 3
+    f.vm.kernel_log = [
+        "2026-11-18T03:01:00+00:00 site-b kernel: e2e-airgap-out IN= OUT=eth0 DPT=53"
+    ]
     checks = fleet_scenarios.airgap(f.session, f.fs, f.scenario)
     assert failed(checks) == ["no_central_traffic"]
+    assert last_record(f)["airgap_log"] == f.vm.kernel_log  # 출처 증거(nft log 줄)
 
 
 def test_the_airgap_filter_lets_ssh_through_before_counting_everything_else() -> None:
@@ -344,20 +352,23 @@ def test_the_airgap_filter_lets_ssh_through_before_counting_everything_else() ->
     assert chains == {
         "airgap_in": [
             "ip saddr 10.77.0.1 tcp dport 22 accept",
-            'ip saddr 10.77.0.1 counter drop comment "airgap_in"',
+            "ip saddr 10.77.0.1 meta pkttype host counter "
+            'log prefix "e2e-airgap-in " drop comment "airgap_in"',
         ],
         "airgap_out": [
             "ip daddr 10.77.0.1 tcp sport 22 accept",
-            'ip daddr 10.77.0.1 counter drop comment "airgap_out"',
+            'ip daddr 10.77.0.1 counter log prefix "e2e-airgap-out " drop comment "airgap_out"',
         ],
         "airgap_fwd": [
-            'ip saddr 10.77.0.1 counter drop comment "airgap_fwd_in"',
-            'ip daddr 10.77.0.1 counter drop comment "airgap_fwd_out"',
+            "ip saddr 10.77.0.1 counter "
+            'log prefix "e2e-airgap-fwd-in " drop comment "airgap_fwd_in"',
+            "ip daddr 10.77.0.1 counter "
+            'log prefix "e2e-airgap-fwd-out " drop comment "airgap_fwd_out"',
         ],
     }
     hooks = [line.strip() for line in script.splitlines() if "type filter hook" in line]
     assert [h.split()[3] for h in hooks] == ["input", "output", "forward"]
-    comments = {c.split('"')[1] for rules in chains.values() for c in rules if "comment" in c}
+    comments = {c.rsplit('"', 2)[1] for rules in chains.values() for c in rules if "comment" in c}
     assert comments == set(fleet_scenarios.AIRGAP_COUNTERS)
 
 
