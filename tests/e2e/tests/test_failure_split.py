@@ -505,3 +505,43 @@ def test_build_time_limits_fit_inside_the_wsl_call() -> None:
         < bundles.DOCKER_SAVE_TIMEOUT_S
         < bundles.HEAD_BUILD_TIMEOUT_S
     )
+
+
+# ---------------------------------------------------------------- 설치 번들 빌드의 apt·DNS(4b B0)
+
+APT_DNS = (
+    "W: Failed to fetch http://archive.ubuntu.com/ubuntu/dists/noble/InRelease  "
+    "Temporary failure resolving 'archive.ubuntu.com'\n"
+    "E: Unable to locate package python3.12-venv\n"
+    "subprocess.CalledProcessError: Command '('bash', 'deploy/build/build_updater.sh', "
+    "'/w/updater')' returned non-zero exit status 100."
+)
+
+
+@pytest.mark.parametrize(
+    ("stderr", "kind"),
+    [
+        (APT_DNS, failures.INFRA),
+        ("curl: (6) Could not resolve host: download.docker.com\nexit status 100", failures.INFRA),
+        ("socket.gaierror: [Errno -3] Temporary failure in name resolution", failures.INFRA),
+        # 문구 없는 apt 실패(패키지 이름이 틀림 등)는 그대로 제품
+        (
+            "E: Unable to locate package python3.12-venv\nreturned non-zero exit status 100.",
+            failures.PRODUCT,
+        ),
+    ],
+)
+def test_install_bundle_dns_failures_are_infra(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stderr: str, kind: str
+) -> None:
+    """WSL·Docker Desktop 재시작 직후 이름 풀이가 흔들리면 `apt-get update`는 경고만 내고 다음
+    `apt-get install`이 exit 100으로 실패한다 — 문구로 infra를 가른다."""
+
+    def broken_wsl(script: str, *, timeout_s: float = 0) -> str:
+        del script, timeout_s
+        raise golden.WslScriptError(f"wsl script failed (1): {stderr}", 1)
+
+    monkeypatch.setattr(buildhost, "wsl", broken_wsl)
+    with pytest.raises((InfraError, golden.WslScriptError)) as caught:
+        buildhost.install_bundle(tmp_path, "2026.11.1")
+    assert failures.classify(caught.value) == kind

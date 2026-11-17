@@ -427,9 +427,9 @@ def test_basic_auth_password_goes_through_stdin_only(monkeypatch: pytest.MonkeyP
     password = "ui-password-should-not-be-an-argument"
     seen: dict[str, object] = {}
 
-    def fake_run(argv: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+    def fake_run(argv: list[str], **kw: object) -> subprocess.CompletedProcess[bytes]:
         seen["argv"], seen["kw"] = argv, kw
-        return subprocess.CompletedProcess[str](argv, 0, "$2a$14$hash\n", "")
+        return subprocess.CompletedProcess[bytes](argv, 0, b"$2a$14$hash\n", b"")
 
     monkeypatch.setattr(central.subprocess, "run", fake_run)
     assert central.basic_auth_line(password) == f"{central.UI_USER} $2a$14$hash"
@@ -437,7 +437,8 @@ def test_basic_auth_password_goes_through_stdin_only(monkeypatch: pytest.MonkeyP
     assert not any(password in a for a in argv)
     assert "--plaintext" not in argv
     assert argv[:4] == ["docker", "run", "--rm", "-i"]
-    assert cast(dict[str, object], seen["kw"])["input"] == password + "\n"
+    # 바이트 그대로, 끝 줄바꿈은 LF 하나(M6-4b-1 fix r2 — 텍스트 모드 변환 없음)
+    assert cast(dict[str, object], seen["kw"])["input"] == (password + "\n").encode()
 
 
 class FakeVm:
@@ -502,9 +503,9 @@ def test_vm_run_feeds_input_to_ssh_stdin(monkeypatch: pytest.MonkeyPatch) -> Non
     닫는다(콘솔 stdin 공유 금지 — S4 crash). 변이 M24(input 무시)를 잡는다."""
     calls: list[tuple[list[str], dict[str, object]]] = []
 
-    def fake_run(argv: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+    def fake_run(argv: list[str], **kw: object) -> subprocess.CompletedProcess[bytes]:
         calls.append((argv, kw))
-        return subprocess.CompletedProcess[str](argv, 0, "", "")
+        return subprocess.CompletedProcess[bytes](argv, 0, b"", b"")
 
     def fake_tool(name: str) -> str:
         return name
@@ -515,7 +516,7 @@ def test_vm_run_feeds_input_to_ssh_stdin(monkeypatch: pytest.MonkeyPatch) -> Non
     host.run("sudo pureiron-site secret set control_api_token", input="vm-secret-x9\n")
     host.run("true")
     (fed_argv, fed), (_, closed) = calls
-    assert fed["input"] == "vm-secret-x9\n"
+    assert fed["input"] == b"vm-secret-x9\n"  # 현장 token: 끝 줄바꿈 LF 하나(fix r2)
     assert fed["stdin"] is None
     assert not any("vm-secret-x9" in a for a in fed_argv)
     assert closed["input"] is None
@@ -541,3 +542,33 @@ def test_online_guarded_survives_a_hung_central_down(
     run.online_guarded(ctx, keep_central=False)
     by_name = {r["name"]: r for r in ctx.results}
     assert all(by_name[name]["ok"] is False for name in run.ONLINE_ITEMS)
+
+
+STDIN_ECHO = "import sys; sys.stdout.write(sys.stdin.buffer.read().hex())"
+"""ssh 자리에 띄우는 가짜: 받은 stdin 바이트를 hex로 낸다(줄바꿈 변환이 있으면 `0d`가 보인다)."""
+
+
+def test_vm_run_sends_input_bytes_without_newline_translation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """M6-4b-1 fix r2(실측 run 44020762321): 실제 자식 프로세스로 `Vm.run(input=)`이 stdin에 보내는
+    바이트를 본다. 텍스트 모드 stdin은 Windows에서 `\\n`을 `\\r\\n`으로 바꿔 원격 `nft -f -`가
+    `\\r`에서 문법 오류를 냈다. Linux에서는 변환이 없어 이 시험은 Windows(tests/e2e가 도는
+    곳)에서만 되돌림을 잡는다. stdout은 문자열로 돌려준다(반환 타입 그대로)."""
+
+    def python(name: str) -> str:
+        return sys.executable
+
+    monkeypatch.setattr(vm, "_tool", python)
+
+    def opts(self: vm.Vm) -> list[str]:
+        return ["-c", STDIN_ECHO]
+
+    monkeypatch.setattr(vm.Vm, "_opts", opts)
+    host = vm.Vm("10.77.0.10", Path("id_ed25519"))
+    done = host.run("sudo nft -f -", input="table inet e2e_fleet\ndelete table inet e2e_fleet\n")
+    sent = bytes.fromhex(done.stdout)
+    assert sent == b"table inet e2e_fleet\ndelete table inet e2e_fleet\n"
+    assert b"\r" not in sent
+    assert isinstance(done.stdout, str)
+    assert done.returncode == 0

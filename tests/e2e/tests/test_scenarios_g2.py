@@ -27,6 +27,25 @@ G2_3_ITEMS = (
     *("images_unchanged", "content_hash_unchanged", "applied_gen_unchanged"),
     *("core_started_at_unchanged", "central_desired_unchanged", "central_max_unchanged"),
 )
+REVERT_ITEMS = (
+    "fault_put_201",
+    *("rollback_result", "rollback_code", "rollback_no_manual_alarm", "rollback_applied_gen"),
+    *("rollback_images_match", "rollback_edit_unlocked"),
+    "revert_put_201",
+    *("revert_result", "revert_no_manual_alarm", "revert_applied_gen", "revert_images_match"),
+    *("revert_edit_unlocked", "fleet_current"),
+)
+RESUME_ITEMS = (
+    *("put_201", "interrupted_logged", "part_kept", "resumed"),
+    *("succeeded", "images_next", "within_10min"),
+)
+WRITES_ITEMS = (
+    *("off_rejected", "off_audited", "off_value_unchanged"),
+    *("enable_put_201", "enable_succeeded"),
+    *("on_confirmed", "on_readback", "on_audited", "on_tag_value"),
+    *("undeclared_rejected", "undeclared_audited"),
+)
+VIEW_ITEMS = ("via_control_web", "online_before", "stale_after_block", "online_after_release")
 REJECT_ITEMS = (
     *("E_SITE", "E_DIGEST", "E_SIG", "E_SCHEMA", "E_UPDATER", "same_gen"),
     *("next_g2", "E_CERT", "E_GEN"),
@@ -69,7 +88,14 @@ def test_order_table_keeps_groups_in_sequence_and_no_external_last() -> None:
     assert sites == {
         "site-a": ["test_g2_rollback.py"],
         "site-b": ["test_g2_rejections.py", "test_g2_faults.py", "test_g2_draft.py"],
-        order.FLEET: ["test_g2_scheduled.py"],  # E_APPROVAL은 nightly 밖(★P5)
+        # G2-2/3 → G2-4 revert → G2-6 ①(site-a) → G2-W → G2-9(site-b). E_APPROVAL은 nightly 밖(★P5)
+        order.FLEET: [
+            "test_g2_scheduled.py",
+            "test_g2_revert.py",
+            "test_g2_resume.py",
+            "test_g2_writes.py",
+            "test_g2_fleet_view.py",
+        ],
         order.CRASH: ["test_g2_crash.py"],
     }
     swapped = [order.FILES[-1], *order.FILES[:-1]]
@@ -109,7 +135,7 @@ def test_weekly_collection_adds_the_16_crash_cases_before_no_external() -> None:
 
 def test_real_g2_collection_follows_the_table() -> None:
     """수집된 실제 G2 시험 id와 순서 — G2-1 → site-a(롤백) → site-b(거부·②·draft) → fleet
-    (G2-2·G2-3) → crash → 외부 접속 0(맨 끝)."""
+    (G2-2·G2-3 → G2-4 revert → G2-6 ① → G2-W → G2-9) → crash → 외부 접속 0(맨 끝)."""
     assert collected_g2() == [
         "test_g2_1_install_and_100_tags_good[site-a]",
         "test_g2_1_install_and_100_tags_good[site-b]",
@@ -122,6 +148,10 @@ def test_real_g2_collection_follows_the_table() -> None:
         *(f"test_g2_8_draft_recall[{item}]" for item in DRAFT_ITEMS),
         *(f"test_g2_2_scheduled_update[{item}]" for item in G2_2_ITEMS),
         *(f"test_g2_3_isolation[{item}]" for item in G2_3_ITEMS),
+        *(f"test_g2_4_revert[{item}]" for item in REVERT_ITEMS),
+        *(f"test_g2_6_1_resume[{item}]" for item in RESUME_ITEMS),
+        *(f"test_g2_w_writes[{item}]" for item in WRITES_ITEMS),
+        *(f"test_g2_9_fleet_view[{item}]" for item in VIEW_ITEMS),
         "test_g2_6_crash[kill@migrating]",
         "test_g2_6_crash[reset@switching]",
         "test_g2_no_external[site-a]",

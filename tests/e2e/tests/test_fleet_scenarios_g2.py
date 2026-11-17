@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from fleet_fakes import FakeRemote
 from g2_fakes import digests, scenario_session
-from harness import fleet_scenarios, fleet_session, g2, judges
+from harness import fleet_scenarios, fleet_session, g2, golden, judges
 from harness.context import Context, E2EError, InfraError
 from harness.vm import Vm
 
@@ -222,8 +222,15 @@ def flow(tmp_path: Path) -> Flow:
         return {}
 
     def build(
-        ctx: Context, gen: int, release: str, window: tuple[datetime, datetime], tree: Path
+        ctx: Context,
+        gen: int,
+        release: str,
+        window: tuple[datetime, datetime],
+        tree: Path,
+        *,
+        writes: bool = False,
     ) -> Path:
+        assert not writes  # G2-2는 쓰기 스위치를 켜지 않는다
         out.builds.append((ctx.site.site_id, gen, release, window, tree))
         return tmp_path / f"pureiron-{ctx.site.site_id}-g{gen}-{release}.pib"
 
@@ -351,6 +358,34 @@ def test_a_put_that_is_refused_is_a_product_failure(tmp_path: Path) -> None:
         fleet_scenarios.scheduled(f.session, fleet_state(f.session), f.scenario)
 
 
+@pytest.mark.parametrize(
+    ("central_max", "error"), [(2, E2EError), (5, E2EError), (1, InfraError), (None, InfraError)]
+)
+def test_a_put_that_dies_in_wsl_is_product_only_when_the_central_already_has_the_gen(
+    tmp_path: Path, central_max: int | None, error: type[Exception]
+) -> None:
+    """리뷰 L3: 같은 gen 재PUT은 control-api가 본문 전에 409로 닫아 `central.py`가 SSL EOF(WSL
+    실패)로 죽는다. 그때 `/fleet`을 다시 읽어 중앙 `max_published_gen`이 이미 gen(2) 이상이면 제품,
+    아니면 infra다."""
+    f = flow(tmp_path)
+    central = f.scenario.remote.central
+
+    def eof_on_put(*args: str) -> dict[str, object]:
+        if args[0] == "put":
+            f.fake.fleet_rows["site-a"] = {"max_published_gen": central_max}
+            raise golden.WslScriptError("wsl script failed (1): ssl.SSLEOFError: EOF", 1)
+        return central(*args)
+
+    remote = dataclasses.replace(f.scenario.remote, central=eof_on_put)
+    pib = tmp_path / "x.pib"
+    pib.write_bytes(b"bundle")  # 다시 읽은 desired에 sha가 없으니 성공으로 보지 않는다(fix r1 L4)
+    with pytest.raises(error) as caught:
+        fleet_scenarios.put(remote, "site-a", 2, pib)
+    assert type(caught.value) is error
+    if error is E2EError:
+        assert "presumably 409" in str(caught.value)
+
+
 def test_a_put_that_ends_too_close_to_the_window_is_infra(tmp_path: Path) -> None:
     f = flow(tmp_path)
     lead = timedelta(seconds=fleet_scenarios.WINDOW_LEAD_S)
@@ -379,10 +414,16 @@ def measured_flow(tmp_path: Path) -> tuple[Flow, fleet_scenarios.Scenario]:
     build = f.scenario.build
 
     def slow_build(
-        ctx: Context, gen: int, release: str, window: tuple[datetime, datetime], tree: Path
+        ctx: Context,
+        gen: int,
+        release: str,
+        window: tuple[datetime, datetime],
+        tree: Path,
+        *,
+        writes: bool = False,
     ) -> Path:
         spend(MEASURED_BUILD_S)
-        return build(ctx, gen, release, window, tree)
+        return build(ctx, gen, release, window, tree, writes=writes)
 
     central = f.scenario.remote.central
 

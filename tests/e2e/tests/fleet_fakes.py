@@ -36,6 +36,8 @@ class FakeRemote:
     put_status: int = 201
     put_product: str = ""
     """`put`이 desired에 남길 product(빈 값이면 세션 NEXT)."""
+    bundle_size: int = 700 * 2**20
+    """`put`이 desired에 남길 번들 크기(바이트)."""
     now: datetime = datetime(2026, 11, 15, 3, 0, tzinfo=UTC)
     tick: float = 0.0
     skew: dict[str, float] = field(default_factory=dict[str, float])
@@ -64,14 +66,22 @@ class FakeRemote:
         if command == "restore":
             return {**self.restore_reply, "seconds": 2.0}
         if command == "fleet":
-            return {"status": 200, "body": [self.row(args[2])]}
+            # `--ui` = control-web 경로(Caddy basic auth → /ui/fleet) — 행 전부
+            ui = args[1:] == ("--ui",)
+            sites = list(self.session.sites) if ui else [args[2]]
+            via = "caddy-ui" if ui else "caddy"
+            return {"status": 200, "body": [self.row(s) for s in sites], "via": via}
         if command == "put":
             site, gen = args[2], int(args[4])
             if self.put_status == 201:
                 pair = self.session.pair
                 product = self.put_product or pair.releases[pair.next]
                 self.published[site] = {
-                    "desired": {"generation": gen, "product_version": product},
+                    "desired": {
+                        "generation": gen,
+                        "product_version": product,
+                        "size": self.bundle_size,
+                    },
                     "max_published_gen": gen,
                 }
             return {"status": self.put_status, "body": {"site": site, "generation": gen}}

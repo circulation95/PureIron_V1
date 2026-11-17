@@ -5,6 +5,7 @@
     uv run --no-sync python tests/e2e/gates/harness/central.py site-token --site site-a  # 원문
     uv run --no-sync python tests/e2e/gates/harness/central.py put --site site-a --gen 2 --pib PATH
     uv run --no-sync python tests/e2e/gates/harness/central.py fleet [--site site-a] [--direct]
+    uv run --no-sync python tests/e2e/gates/harness/central.py fleet --ui   # control-web 경로
     uv run --no-sync python tests/e2e/gates/harness/central.py stop-web | start-web | status | down
     uv run --no-sync python tests/e2e/gates/harness/central.py dump --name c1-<token>
     uv run --no-sync python tests/e2e/gates/harness/central.py restore --name c1-<token>
@@ -43,6 +44,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -222,14 +224,17 @@ def basic_auth_line(password: str) -> str:
     stdin이 터미널이 아니면 caddy는 첫 줄을 읽고 끝 줄바꿈을 떼어 낸다(줄바꿈이 없으면 실패 —
     v2.11.7에서 확인)."""
     image = f"pureiron/control-web:{RELEASE}"
-    hashed = subprocess.run(
-        ["docker", "run", "--rm", "-i", "--entrypoint", "caddy", image, "hash-password"],
-        input=password + "\n",
-        capture_output=True,
-        text=True,
-        timeout=COMMAND_TIMEOUT_S,
-        check=True,
-    ).stdout.strip()
+    hashed = (
+        subprocess.run(
+            ["docker", "run", "--rm", "-i", "--entrypoint", "caddy", image, "hash-password"],
+            input=(password + "\n").encode(),  # 바이트 그대로(줄바꿈 변환 없음 — M6-4b-1 fix r2)
+            capture_output=True,
+            timeout=COMMAND_TIMEOUT_S,
+            check=True,
+        )
+        .stdout.decode("utf-8", "replace")
+        .strip()
+    )
     return f"{UI_USER} {hashed}"
 
 
@@ -354,6 +359,30 @@ def fleet_https(site: str | None) -> dict[str, object]:
     query = "?" + urllib.parse.urlencode({"site": site}) if site else ""
     status_code, reply = _request("GET", f"/fleet{query}", "publish_viewer_token")
     return {"status": status_code, "body": reply, "via": "caddy"}
+
+
+UI_FLEET = f"https://{HOST}:{PORT}/ui/fleet"
+"""control-web 화면이 읽는 경로(`services/control-web/src/api/client.ts` `FLEET_PATH`)."""
+
+
+def fleet_ui() -> dict[str, object]:
+    """control-web과 같은 길로 `/fleet`을 읽는다(M6-4b G2-9): Caddy basic auth(`ops` + 원문
+    `ui_password`) → `/ui/fleet` → Caddy가 viewer 토큰 비밀 파일을 붙여 control-api `GET
+    /api/v1/fleet`으로 넘긴다(deploy/central/Caddyfile — 토큰을 붙이는 유일한 곳). 비밀번호는 비밀
+    파일에서만 읽고 출력·오류에 싣지 않는다. 행 전부를 돌려준다(현장 고르기는 부른 쪽)."""
+    pair = f"{UI_USER}:{read_secret('ui_password')}".encode()
+    headers = {"Authorization": "Basic " + base64.b64encode(pair).decode("ascii")}
+    request = urllib.request.Request(UI_FLEET, headers=headers)
+    try:
+        with urllib.request.urlopen(request, context=context(), timeout=HTTP_TIMEOUT_S) as response:
+            status_code, raw = response.status, response.read()
+    except urllib.error.HTTPError as exc:
+        status_code, raw = exc.code, exc.read()
+    try:
+        reply: object = json.loads(raw)
+    except ValueError:
+        reply = raw.decode("utf-8", "replace")[:500]
+    return {"status": status_code, "body": reply, "via": "caddy-ui"}
 
 
 DIRECT_FLEET = """\
@@ -532,6 +561,7 @@ def main(argv: list[str] | None = None) -> int:
     fleet_cmd = sub.add_parser("fleet")
     fleet_cmd.add_argument("--site", default=None)
     fleet_cmd.add_argument("--direct", action="store_true", help="control-api 컨테이너 안에서 조회")
+    fleet_cmd.add_argument("--ui", action="store_true", help="control-web 경로(Caddy basic auth)")
     for name in ("stop-web", "start-web", "status", "down"):
         sub.add_parser(name)
     for name in ("dump", "restore"):
@@ -545,6 +575,15 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def fleet(args: argparse.Namespace) -> dict[str, object]:
+    """`fleet`: control-web 경로(`--ui`) · control-api 직접(`--direct`) · publish 토큰 HTTPS."""
+    if args.ui:
+        return fleet_ui()
+    if args.direct:
+        return fleet_direct(args.site)
+    return fleet_https(args.site)
+
+
 def stop_web() -> dict[str, object]:
     compose("stop", "control-web")
     return {"stopped": "control-web"}
@@ -556,7 +595,7 @@ def run_command(args: argparse.Namespace) -> dict[str, object]:
         "up": lambda: up(args.ca_out),
         "register": lambda: register(args.enrollment),
         "put": lambda: put(args.site, args.gen, args.pib),
-        "fleet": lambda: fleet_direct(args.site) if args.direct else fleet_https(args.site),
+        "fleet": lambda: fleet(args),
         "stop-web": stop_web,
         "start-web": start_web,
         "status": status,

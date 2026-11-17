@@ -25,7 +25,12 @@ FAULTS = "test_g2_faults.py::test_g2_6_2_migrate_failure"
 CRASH = "test_g2_crash.py::test_g2_6_crash[reset@switching]"
 NO_EXT_A = "test_g2_no_external.py::test_g2_no_external[site-a]"
 NO_EXT_B = "test_g2_no_external.py::test_g2_no_external[site-b]"
-EVERY = [ROLLBACK, FAULTS, SCHEDULED, ISOLATION, CRASH, NO_EXT_A, NO_EXT_B]
+REVERT = "test_g2_revert.py::test_g2_4_revert[fleet_current]"
+RESUME = "test_g2_resume.py::test_g2_6_1_resume[resumed]"
+WRITES = "test_g2_writes.py::test_g2_w_writes[on_readback]"
+VIEW = "test_g2_fleet_view.py::test_g2_9_fleet_view[stale_after_block]"
+FLEET = [SCHEDULED, ISOLATION, REVERT, RESUME, WRITES, VIEW]
+EVERY = [ROLLBACK, FAULTS, *FLEET, CRASH, NO_EXT_A, NO_EXT_B]
 
 
 def line(test_id: str, when: str, outcome: str, cls: str | None = None) -> str:
@@ -178,10 +183,18 @@ def test_fleet_runs_after_site_b_and_before_crash() -> None:
     assert names.index("test_g2_draft.py") < names.index("test_g2_scheduled.py")
     assert "test_g2_approval.py" not in names  # E_APPROVAL은 릴리스 마감 fleet 리허설(★P5)
     assert names.index("test_g2_scheduled.py") < names.index("test_g2_crash.py")
+    # 4b 계획 R6: G2-2/3 → G2-4 revert → G2-6 ①(site-a) → G2-W → G2-9(site-b) → crash
+    fleet = ["test_g2_scheduled.py", "test_g2_revert.py", "test_g2_resume.py"]
+    fleet += ["test_g2_writes.py", "test_g2_fleet_view.py", "test_g2_crash.py"]
+    assert [names.index(n) for n in fleet] == sorted(names.index(n) for n in fleet)
 
 
 def test_fleet_tests_need_both_sites_and_the_central() -> None:
     assert order.sites_needed([ISOLATION]) == {"site-a", "site-b"}
+    # site-b만 쓰는 fleet 시험도 c1 쌍(두 현장 온라인)이 필요하다
+    assert order.sites_needed([VIEW]) == order.sites_needed([WRITES]) == {"site-a", "site-b"}
+    assert order.sites_needed([REVERT]) == order.sites_needed([RESUME]) == {"site-a", "site-b"}
+    assert all(order.needs_central([t]) for t in FLEET)
     assert order.needs_central([ROLLBACK, SCHEDULED])
     assert not order.needs_central([ROLLBACK, FAULTS, CRASH, NO_EXT_A, NO_EXT_B])
 
@@ -192,8 +205,12 @@ def test_fleet_tests_need_both_sites_and_the_central() -> None:
         # fleet 시험 → 두 현장의 외부 접속 0
         ([SCHEDULED], [SCHEDULED, NO_EXT_A, NO_EXT_B]),
         ([ISOLATION], [ISOLATION, NO_EXT_A, NO_EXT_B]),
-        # 외부 접속 0[site-b] → site-b를 쓰는 시나리오 전부(fleet 포함)
-        ([NO_EXT_B], [FAULTS, SCHEDULED, ISOLATION, NO_EXT_B]),
+        ([WRITES], [WRITES, NO_EXT_A, NO_EXT_B]),
+        ([REVERT, VIEW], [REVERT, VIEW, NO_EXT_A, NO_EXT_B]),
+        # 외부 접속 0의 infra 실패는 다시 돌리지 않는다 — fleet 묶음을 끌고 오지 않는다(리뷰 M2 ⓑ)
+        ([NO_EXT_B], []),
+        ([NO_EXT_A], []),
+        ([NO_EXT_A, VIEW], [VIEW, NO_EXT_A, NO_EXT_B]),
         # c0 시나리오만 → 중앙이 필요 없다
         ([ROLLBACK], [ROLLBACK, NO_EXT_A]),
     ],
@@ -203,7 +220,7 @@ def test_retry_closure_bundles_fleet_tests_with_both_sites(
 ) -> None:
     got = order.retry_closure(targets, EVERY)
     assert got == want
-    assert order.needs_central(got) is any(t in got for t in (SCHEDULED, ISOLATION))
+    assert order.needs_central(got) is any(t in got for t in FLEET)
 
 
 def test_an_unprepared_site_is_a_clear_error(tmp_path: Path) -> None:

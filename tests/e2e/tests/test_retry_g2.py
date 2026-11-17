@@ -1,5 +1,6 @@
-"""infra 재시도 대상 묶기(M6-3a 리뷰 M1) — 재시도는 새 세션(새 VM)이라 한 현장의 시나리오와 그
-현장의 외부 접속 0(맨 끝)을 함께 다시 돌린다. 합친 결과에서 다시 돈 시험은 재시도 결과로 남는다."""
+"""infra 재시도 대상 묶기(M6-3a 리뷰 M1, M6-4b-1 리뷰 M2) — 재시도는 새 세션(새 VM)이라 한 현장의
+시나리오와 그 현장의 외부 접속 0(맨 끝)을 함께 다시 돌린다. 외부 접속 0 자체의 infra 실패는 다시
+돌리지 않는다. 합친 결과에서 다시 돈 시험은 재시도 결과로 남는다."""
 
 from __future__ import annotations
 
@@ -27,9 +28,10 @@ EVERY = [INSTALL_A, INSTALL_B, ROLLBACK_4, ROLLBACK_63, FAULTS_62, NO_EXT_A, NO_
         # (b) 시나리오만 → 그 현장의 외부 접속 0을 더한다
         ([ROLLBACK_4], [ROLLBACK_4, NO_EXT_A]),
         ([FAULTS_62], [FAULTS_62, NO_EXT_B]),
-        # (a) 외부 접속 0만 → 그 현장의 시나리오 전부를 더한다
-        ([NO_EXT_A], [ROLLBACK_4, ROLLBACK_63, NO_EXT_A]),
-        ([NO_EXT_B], [FAULTS_62, NO_EXT_B]),
+        # (a) 외부 접속 0의 infra 실패는 다시 돌리지 않는다(리뷰 M2 ⓑ — infra로만 남는다)
+        ([NO_EXT_A], []),
+        ([NO_EXT_B], []),
+        ([FAULTS_62, NO_EXT_B], [FAULTS_62, NO_EXT_B]),  # 시나리오가 끌고 온 것은 다시 돈다
         # G2-1은 묶지 않는다(세션 fixture가 어차피 다시 만든다), 연쇄하지 않는다
         ([INSTALL_B], [INSTALL_B]),
         ([ROLLBACK_63, INSTALL_B], [INSTALL_B, ROLLBACK_63, NO_EXT_A]),
@@ -46,12 +48,7 @@ def test_crash_cases_are_bundled_with_site_a() -> None:
     crash = "test_g2_crash.py::test_g2_6_crash[reset@switching]"
     every = [*EVERY[:5], crash, *EVERY[5:]]
     assert order.retry_closure([crash], every) == [crash, NO_EXT_A]
-    assert order.retry_closure([NO_EXT_A], every) == [
-        ROLLBACK_4,
-        ROLLBACK_63,
-        crash,
-        NO_EXT_A,
-    ]
+    assert order.retry_closure([NO_EXT_A], every) == []
 
 
 CRASH = "test_g2_crash.py::test_g2_6_crash[kill@verified]"
@@ -82,13 +79,12 @@ def test_bundles_follow_the_order_table(monkeypatch: pytest.MonkeyPatch) -> None
     crash = "test_g2_crash.py::test_g2_crash[reset-switching]"
     table = (*order.FILES[:2], ("test_g2_crash.py", "site-a"), *order.FILES[2:])
     monkeypatch.setattr(order, "FILES", table)
-    assert order.retry_closure([NO_EXT_A], [*EVERY, crash]) == [
+    assert order.retry_closure([crash], [*EVERY, crash]) == [NO_EXT_A, crash]
+    assert order.retry_closure([ROLLBACK_4, crash], [*EVERY, crash]) == [
         ROLLBACK_4,
-        ROLLBACK_63,
         NO_EXT_A,
         crash,
     ]
-    assert order.retry_closure([crash], [*EVERY, crash]) == [NO_EXT_A, crash]
 
 
 def junit(*cases: tuple[str, str]) -> str:
@@ -208,3 +204,32 @@ def test_step_run_retries_the_bundle_and_keeps_a_failed_retry_of_an_added_test(
     assert rows[NO_EXT_A]["retried"] is True
     assert rows[ROLLBACK_4]["outcome"] == report.PASSED
     assert summary["verdict"] == "product"
+
+
+def test_a_no_external_infra_failure_alone_is_not_retried(tmp_path: Path) -> None:
+    """리뷰 M2 ⓑ: 외부 접속 0[site-b]만 infra로 실패하면 재시도하지 않는다 — 실패는 infra로 남고
+    (이력·2연속 infra 이슈), site-b 시나리오·fleet 묶음을 다시 돌려 재시도 시간 제한을 넘지
+    않는다."""
+    first = [(t, "infra" if t == NO_EXT_B else "pass") for t in EVERY]
+    calls: list[list[str]] = []
+
+    def run_pytest(path: Path, targets: list[str], timeout_s: float) -> int:
+        calls.append(targets)
+        path.write_text(junit(*first), encoding="utf-8")
+        return 1
+
+    summary = nightly.step_run(
+        "20261113T181700Z",
+        "a" * 40,
+        tmp_path,
+        run_pytest=run_pytest,
+        recover_env=lambda: pytest.fail("no retry, so no recovery"),
+        today=date(2026, 11, 13),
+        quarantine=[],
+    )
+    assert len(calls) == 1
+    assert summary["verdict"] == "infra"
+    retry = summary["retry"]
+    assert isinstance(retry, dict)
+    assert retry["targets"] == []
+    assert retry["done"] is False

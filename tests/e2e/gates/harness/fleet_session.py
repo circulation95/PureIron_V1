@@ -90,6 +90,14 @@ class Remote:
     )
     mark: Callable[[Context, Vm], None] = site.nft_mark
     vm_epoch: Callable[[Vm], float] = read_vm_epoch
+    nft: Callable[[Vm, str], None] = site.nft_apply
+    """VM 중앙 응답 필터(`fleet_scenarios.central_filter` 스크립트, G2-6 ①·G2-9)."""
+    central_in_bytes: Callable[[Vm], int] = site.central_in_bytes
+    part_bytes: Callable[[Vm], int | None] = site.part_bytes
+    poll_failures: Callable[[Vm, float], int] = site.poll_failures
+    add_user: Callable[[Vm, str, str, str], dict[str, object]] = site.add_user
+    write_tag: Callable[[Vm, str, float, str], dict[str, object]] = site.write_tag
+    live: Callable[[Vm], dict[str, object]] = site.live
     now: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
     sleep: Callable[[float], None] = time.sleep
     clock: Callable[[], float] = time.monotonic

@@ -10,7 +10,7 @@
 |---|---|
 | `m2d/run.py` | M2d 시나리오 진입점(단계 순서·CLI·결과 항목 39개). 현장 `SITE_A`(site-a, 10.77.0.10) 하나 |
 | `gates/harness/` | 공용 하네스(M6-1, G2 nightly와 같이 쓴다): `release_pair`(`ReleasePair`·지금 쌍 `DEFAULT`·nightly 쌍 `nightly()`), `sites`(`SITE_A`·`SITE_B`·VM 준비), `site`(`Site`·원격 조작·시뮬레이터), `judges`(순수 판정), `trees`(트리 기대값·G2 100태그 트리), `context`(`Context`·상태 파일·`InfraError`), `buildhost`(WSL 호출·HEAD 빌드), `hyperv`·`golden`·`vm`, WSL 스크립트 `bundles.py`·`central.py` |
-| `gates/` (G2) | `nightly.py`(실행기 — CLI·단계 순서·시간 예산), `pytest.ini`·`conftest.py`(G2 pytest 틀·실행 순서·메모리 감시), 시험 `test_g2_install.py`(G2-1)·`test_g2_rollback.py`(G2-4 + G2-6 ③)·`test_g2_faults.py`(G2-6 ②)·`test_g2_no_external.py`(맨 끝), `quarantine.yaml`, 하네스 `g2`(세션·c0 복원)·`scenarios`(시나리오)·`order`(실행 순서 표)·`memwatch`(세션 최저 메모리)·`failures`(분류)·`report`(junit·이력·status)·`collect`·`publish`·`runner`(실행기 보호)·`flake`·`preflight`·`github` |
+| `gates/` (G2) | `nightly.py`(실행기 — CLI·단계 순서·시간 예산), `pytest.ini`·`conftest.py`(G2 pytest 틀·실행 순서·메모리 감시), 시험 `test_g2_install.py`(G2-1)·`test_g2_rollback.py`(G2-4 + G2-6 ③)·`test_g2_faults.py`(G2-6 ②)·fleet 묶음 `test_g2_scheduled.py`(G2-2·G2-3)·`test_g2_revert.py`(G2-4 revert)·`test_g2_resume.py`(G2-6 ①)·`test_g2_writes.py`(G2-W)·`test_g2_fleet_view.py`(G2-9)·`test_g2_no_external.py`(맨 끝), `quarantine.yaml`, 하네스 `g2`(세션·c0 복원)·`scenarios`(시나리오)·`order`(실행 순서 표)·`memwatch`(세션 최저 메모리)·`failures`(분류)·`report`(junit·이력·status)·`collect`·`publish`·`runner`(실행기 보호)·`flake`·`preflight`·`github` |
 | `site/` | VM에 복사하는 스크립트(`probe.py`·`crash_at.py`·`site_api.py`) |
 | `infra/setup-host.ps1` | 1회 호스트 준비 |
 | `tests/` | 단위 시험(G1 `unit`) |
@@ -354,8 +354,9 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
   남은 시간으로 줄이고, 10분도 남지 않으면 재시도를 건너뛴다) + 뒷정리 15분(collect 명령당 60초 ×
   10·publish·cleanup)으로 나눈다. **g2**(M6-4a P9): workflow 190분 · run 160분 · 첫 pytest 105분 ·
   재시도 45분(M6-4 fleet 묶음과 site-b 재시도 묶음이 들어갈 몫 — "평일 run 90분"은 시간 제한이 아니라
-  실측 목표다). 평일 첫 pytest 추정은 약 72분(3b 실측 37.2분 + M6-4 약 34분, 계획 ★P5)이고 105분은 첫
-  실측 전 여유다.
+  실측 목표다). 평일 첫 pytest 추정은 약 69분(4a 실측 45.5분 + 4b-1 fleet 약 23분 — G2-4 revert 9·
+  G2-6 ① 6.5·G2-W 6·G2-9 2.5, 빌드·PUT은 4a 실측 Windows 경로 80·20초로 셈)이고 105분은 4b 실측 전
+  여유다. 주간은 약 129분(4a 전 99 + fleet 4a 7 + 4b-1 23)으로 첫 pytest 200분 안이다.
   **weekly**: workflow 270분 · run 240분 · 첫 pytest 200분 · 재시도 40분. 첫 pytest는 추정 125~171분
   (crash 한 건 5~7분 — c0 복원·번들 빌드·창 대기 150초·phase 진행·수렴 — × 18건 = 90~126분 + 나머지
   평일 몫 35~45분)의 상한에 약 1.17배를 둔다. 넘기면 junit이 없어 그 주 결과가 `pytest` 한 줄로만
@@ -367,7 +368,13 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
   못 읽으면(`gh run list` 실패) infra로 멈춘다(로컬은 `warnings`에만). 메모리가 기준 미만이고 WSL이
   답하면 WSL 페이지 캐시를 비우고 최대 120초(10초 간격) 다시 재서 판단한다(재시도 전 복구도 같다 —
   WSL은 캐시를 Windows에 늦게 돌려준다). `--judge-only`는 회수하지 않고 `measure`에 vmmemWSL·WSL
-  페이지 캐시 크기와 "회수하면 통과할 수 있음" 메모를 남긴다.
+  페이지 캐시 크기와 "회수하면 통과할 수 있음" 메모를 남긴다. WSL은 답하는데 WSL Docker가 답하지
+  않으면(Docker Desktop이 꺼진 밤) `docker desktop start`를 한다(M6-4b). WSL을 재시작했거나 Desktop을
+  시작했으면 WSL `docker ps`와 `getent hosts archive.ubuntu.com`이 60초 연속 될 때까지(10초 간격, 상한
+  420초) 기다린 뒤 다시 잰다 — 재시작 직후 이름 풀이가 흔들려 설치 번들 빌드의 apt가 실패했다. 끝내
+  안정되지 않으면 infra(`docker desktop: …`). 설치 번들 빌드(`fetch_debs.sh`·`build_updater.sh`) 실패
+  출력에 `Could not resolve`·`Temporary failure resolving`이 있으면 infra, 문구 없는 apt 실패는
+  product다.
 - VM 시작 직전 메모리: preflight의 8 GB는 HEAD 빌드·번들 **전** 값이다(그 사이 WSL 페이지 캐시가 다시
   찬다 — M6-2b 리허설에서 두 번째 VM이 `0x800705AA`). 그래서 VM을 시작하기 직전(`g2.make_room`)에 다시
   회수하고, Windows 가용 메모리가 "지금 시작할 VM 메모리 합 + 2 GB"(`VM_START_HEADROOM_GB` — 3 GiB
@@ -422,9 +429,9 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
   직전 이미지 + ready까지"다. 전체 적용 시간(스테이징부터 수렴까지)으로 대신하지 않는다.
 - infra 재시도 묶음(`order.retry_closure`): 재시도는 새 세션(새 VM, c0 새로)이라, 한 현장의 시나리오
   시험이 다시 돌면 그 현장의 `test_g2_no_external[site]`를 함께 돌리고(다시 돈 시나리오의 외부 접속을
-  본다), `test_g2_no_external[site]`가 다시 돌면 그 현장의 시나리오 시험 전부를 함께 돌린다(시나리오
-  없는 세션의 카운터로 통과하지 않게). 처음 대상 기준으로 한 번만 더하고(연쇄 없음), 현장은 순서 표에서
-  읽는다. 합친 결과에서 다시 돈 시험은 재시도 결과로 바뀐다 — 첫 세션에서 통과한 외부 접속 0도
+  본다). `test_g2_no_external[site]` 자체의 infra 실패는 다시 돌리지 않고 infra로만 남긴다(M6-4b-1 리뷰
+  M2 — 카운터를 못 읽은 것이고, 그 현장의 시나리오·fleet 묶음을 끌고 오면 재시도 시간 제한을 넘는다.
+  2연속이면 infra 이슈). 처음 대상 기준으로 한 번만 더하고(연쇄 없음), 현장은 순서 표에서 읽는다. 합친 결과에서 다시 돈 시험은 재시도 결과로 바뀐다 — 첫 세션에서 통과한 외부 접속 0도
   재시도에서 실패하면 실패로 남는다.
 - 실행 순서: `harness/order.py`의 표 하나가 정한다(G2-1 → site-a 롤백 → site-b 거부·② 마이그레이션
   실패·draft → fleet(G2-2·G2-3 — 중앙 직접 게시, 아래 절) → crash(site-a — 주간 16건이 길어 site-b 뒤로)
@@ -472,7 +479,7 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
   끝난 시험의 결과는 남고, 줄이 없는 시험은 결과가 없으며(통과로 세지 않는다) 실행은 통과가 될 수
   없다. 시간 초과였으면 그날은 다시 돌리지 않고, 크래시면 전체를 1회 다시 돌린다(그 결과로 바꾼다).
 
-### fleet 묶음 (M6-4a, ★P5)
+### fleet 묶음 (M6-4a·4b, ★P5)
 
 중앙(WSL control-api/web)이 필요한 시나리오다. 순서 표의 묶음 `fleet`(site-b 시나리오 뒤, crash 앞)이고
 현장 둘을 쓴다(`order.sites_needed`·재시도 묶음이 둘 다 본다). 평일·주간 둘 다에서 돈다.
@@ -514,11 +521,22 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
   새로 만든다.
 - **게시 gen** = max(중앙 `max_published_gen`, 현장 applied gen) + 1. c1은 중앙 0·현장 1이라 "중앙 max +
   1" = 1은 Updater에게 같은 gen(no-op)이다 — `run.py online`이 g2를 쓰는 것과 같은 이유. PUT이 201이 아니면
-  product(중앙이 서명 번들을 받지 않았다), WSL 실패는 infra.
+  product(중앙이 서명 번들을 받지 않았다), WSL 실패는 infra — 다만 그때 `/fleet`을 다시 읽어 중앙
+  `max_published_gen`이 이미 그 gen 이상이면 product다(같은 gen 재PUT은 control-api가 본문 전에 409로
+  닫아 `central.py`가 SSL EOF로 죽는다 — M6-4a 리뷰 L3). G2-2 말고는 창을 즉시 연다(`window.once` =
+  번들을 만들기 직전 now − 5분 ~ +1시간, `fleet_scenarios.publish`).
+- **시나리오마다 쓰는 현장만 c1으로 되돌린다**(중앙은 늘 함께): G2-2/3은 둘, G2-4 revert·G2-6 ①은
+  site-a, G2-W·G2-9는 site-b. 다른 현장 VM은 앞 시나리오 상태로 남지만 중앙 DB가 c1이라 desired가 없고,
+  그 현장을 쓰는 시나리오가 다시 되돌린다.
 
 | 시험(실행 순서) | 현장 | 흐름 | 판정(모두 참) |
 |---|---|---|---|
 | `test_g2_2_scheduled_update[…]`·`test_g2_3_isolation[…]` | site-a·site-b | 둘 다 c1 → site-b 스냅샷(VM 값 + 중앙 행) → site-a NEXT 번들(`window.once` = 번들을 만들기 직전 now + 4분 ~ +1시간) 빌드 → PUT → 창 → 적용 수렴 → 중앙 current | G2-2: PUT 201 · 바로 뒤 `/fleet` desired = gen·NEXT, `max_published_gen` = gen · 보고 `timeline`의 `verified` < 창 시작 · `locked` ≥ 창 시작 · `locked`→`succeeded` ≤ 120초 · `succeeded`·applied == gen · 실행 이미지 == NEXT digest · `/fleet` current = gen·NEXT. G2-3: site-b 실행 이미지 ID·content_hash·applied_gen·core StartedAt 전후 같음(못 읽은 값은 거짓) · 중앙 site-b desired·`max_published_gen` 전후 같음(행을 못 읽으면 거짓) |
+
+| `test_g2_4_revert[…]` | site-a | c1 → FAULT-h g2 PUT → 수렴(자동 롤백) → BASE g3 PUT(BASE = G2 트리) → 수렴 → 중앙 current | PUT 201 ×2 · FAULT-h: `failed`·보고 `E_HEALTH`·applied 그대로(c1 g1)·실행 이미지 BASE·경보 없음·edit-lock 해제 · BASE: `succeeded`·applied 3·이미지 BASE·경보 없음·edit-lock 해제 · `/fleet` current = 3·BASE 버전(적용되지 않았으면 기다리지 않고 거짓) |
+| `test_g2_6_1_resume[…]` | site-a | c1 → VM nft 표 `inet e2e_fleet`(중앙 10.77.0.1:28443 → VM 수신만, ssh 그대로)로 4 MiB/s 제한 → NEXT g2 PUT → `bundles/poll-*.pib.part` > 128 MiB(상한 240초, 미도달·기준 전 사라짐은 infra) → 전부 차단 → Updater `poll failed` 로그(상한 120초, 차단 → 첫 줄 초를 기록) → 카운터만 두고 해제 → 수렴 → nft 표 삭제(실패해도) | PUT 201 · 차단 뒤 `poll failed` ≥ 1 · 해제 때 `.part` ≥ 차단 때 · **해제 뒤 받은 바이트(nft 카운터, IP 길이) < 번들 크기 − `.part`/2**(처음부터 받으면 번들 크기 이상) · `succeeded`·applied = gen · 이미지 NEXT · 해제 뒤 10분 안 |
+| `test_g2_w_writes[…]` | site-b | c1 → e2e-engineer 계정(VM에서 만든 비밀번호, `add_viewer`와 같은 방식) → 태그 GOOD 대기 → 스위치 꺼짐: `line1/temp_sp`(fixture 선언 setpoint, holding 100 = 시뮬레이터 쓰기 메모리) prepare → NEXT g2 + `writes: { enabled: true }`(c1과 같은 G2 트리) PUT → 수렴 → 태그 GOOD 대기(≤ 180초, K2) → 같은 태그 prepare → confirm → 미선언 `sim/r001`(사인파 holding) prepare. 쓰기는 VM `site_api.py write`(web 경유 같은 출처 — `POST /writes` → `POST /writes/{id}/confirm`(시한 30초) → 그 사유의 `GET /audit`). 409의 실패 검사가 일부러 내는 거부(`writes_enabled`·`declared`)를 빼고 일시 검사(`tag_good`·`plan_reported`·`single_collector_session`·`device_connected`)뿐이면 5초 간격으로 다시 부른다(상한 60초, 시도 횟수 기록 — replay batch는 GOOD을 만들지만 plan 보고는 아직일 수 있다) | 꺼짐: 409·실패 검사 정확히 [`writes_enabled`]·`tag.write_rejected` 감사 행·`GET /tags` 값 전후 같음 · 켠 번들 201·`succeeded`·applied 2 · 켬: confirm 200 `CONFIRMED`·readback == 쓴 값(42.5, c1 값과 다르게)·같은 write_id의 `tag.write` 결과 행 `CONFIRMED`·`GET /tags` 값 == 쓴 값 · 미선언: 409·[`declared`]·거부 감사 행(사인파 칸의 값은 쓰기를 검출할 수 없어 보지 않는다) |
+| `test_g2_9_fleet_view[…]` | site-b | c1 → control-web 경로(`central.py fleet --ui` — Caddy basic auth `ops` + 비밀 파일의 원문, Caddy가 viewer 토큰을 붙여 `/ui/fleet` → `/api/v1/fleet`)로 읽음 → VM nft로 중앙 차단 → stale까지 → 차단 해제(실패하면 infra) → online까지 | 응답 200·`via` = control-web 경로 · 차단 전 online · 차단 뒤 120초 안 `connection` = stale · 해제 뒤 60초 안 online. 기록에 차단→stale 초·해제→online 초. 화면 규칙("최신" 배지)은 CI `fleet.spec.ts`가 실제 central 스택으로 본다(4b ★Q2 — Playwright·node 없음) |
 
 - 창 여유 4분(`fleet_scenarios.WINDOW_LEAD_S` 240초 = 빌드 85 + PUT 20 + 받아 검증할 몫 45 + 여유 90):
   번들을 만들기 직전부터 잰다. 첫 VM 실측(run 43617245939)에서 Windows 하네스 경로의 빌드가 73.6·82.6초,
@@ -590,6 +608,7 @@ c0·E10 1회)·`test_suites_g2.py`(묶음 표지·시간 예산·등록 스크�
 yml에 schedule 없음·setup-host BOM), M6-4a `test_c1_g2.py`(덤프·복원·`/fleet` 일치·준비 순서·
 heartbeat 대기·세션마다 새 c1·복원 순서·c0만이면 중앙 없음)·`test_fleet_scenarios_g2.py`(G2-2·G2-3
 판정·게시 gen·직접 PUT 흐름·창 여유 infra)·`test_partial_g2.py`(jsonl·fleet 순서·재시도 묶음), 공용 가짜
-`fleet_fakes.py`,
+`fleet_fakes.py`, M6-4b `test_fleet_4b_g2.py`(G2-4 revert·G2-6 ①·G2-W·G2-9 판정과 흐름·nft 스크립트·
+`site_api.py write`·`central.py fleet --ui`·쓰기 스위치 현장 파일),
 `test_nightly_runner.py`(이력 월별 파일·격리 줄·suite), 실패 분류 `test_failure_split.py`(빌드 시간
 초과 분류), 시작(묶음)·호스트 점검 분류·시작하지 못한 실행 `test_nightly_cron.py`). G1 `unit`에 포함된다.
