@@ -30,6 +30,7 @@ FILES: tuple[tuple[str, str], ...] = (
     ("test_g2_resume.py", "fleet"),  # G2-6 ① 내려받기 이어받기(site-a)
     ("test_g2_writes.py", "fleet"),  # G2-W 현장 쓰기 가드레일(site-b)
     ("test_g2_fleet_view.py", "fleet"),  # G2-9 중앙 화면 stale → online(site-b)
+    ("test_g2_airgap.py", "fleet"),  # G2-7 폐쇄망(site-b c0 + 중앙 c1 DB, USB) — 묶음 맨 끝
     # ---- crash(site-a) — G2-6 ④⑤ 2건 + 주간 16건(`weekly`), 매 건 c0 복원
     ("test_g2_crash.py", "crash"),
     # ---- 맨 끝: 모든 시나리오를 거친 누적 카운터

@@ -47,7 +47,10 @@ SUITES: dict[str, Suite] = {
     # 45분(새 세션 prepare·VM 약 10분 + c1 준비 약 4분 + site-b 재시도 묶음 25~30분 — 3b 리뷰
     # L2), run 160분 = 105 + 복구 약 5 + 45 + preflight 여유 5, workflow 190분 = setup 10 + run
     # 160 + tail 15 + 여유 5. "run 90분"은 시간 제한이 아니라 실측 목표다 (넘으면 사용자 결정,
-    # 계획 P11).
+    # 계획 P11). M6-4b-2: 4b-1 실측(브랜치 dispatch) 평일 run 58분 + G2-7 약 5분(c0·중앙 c1 복원
+    # 1분 + 빌드 1.5 + USB 만들기 0.3·hot-add·마운트 + apply 약 0.5 + 수렴 + export·꺼내기 0.5 +
+    # 반입·읽기 0.3 — 4b 계획 3절) + site-b G2-1 USB 설치 약 0.5분(USB 만들기 약 20초, scp 대신) =
+    # 약 63분 — 값은 그대로.
     "g2": Suite(
         "g2",
         "g2 and not weekly",
@@ -64,8 +67,8 @@ SUITES: dict[str, Suite] = {
     # `pytest` 한 줄로만 남으므로 첫 pytest에 몫을 몰고 재시도는 40분(새 세션 prepare·VM 한 대 약
     # 10분 + crash 몇 건), run 240분 = 270 - setup 10 - tail 15 - 여유 5. M6-4b-1 뒤에도 그대로:
     # 4a 전 주간 99분 + fleet 4a 약 7분 + 4b-1 약 23분 = 약 129분(+ 4b-2 5분 = 134분) < 첫 pytest
-    # 200분, 재시도 40분은 남은 run 예산(240 - 134 = 106분) 안에 든다. 주간은 dispatch로 잰 적이
-    # 아직 없다 — 4b-1 실측(주간 1회)에서 처음 잰다.
+    # 200분, 재시도 40분은 남은 run 예산(240 - 134 = 106분) 안에 든다. 4b-1 주간 실측 1시간 54분 +
+    # 4b-2 약 5.5분 = 약 120분.
     "weekly": Suite(
         "weekly",
         "g2",
