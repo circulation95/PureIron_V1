@@ -251,17 +251,13 @@ def read_dir(stick: Stick, subdir: str, out: Path, *, ops: Ops | None = None) ->
     return sorted(p for p in (out / subdir).glob("*") if p.is_file())
 
 
-def remove_leftovers(
-    *, detach_under: Callable[[Path], list[str]] = hyperv.detach_under
-) -> list[str]:
-    """preflight 정리: 지난 run이 남긴 USB 대용 디스크 — 어느 VM에 붙어 있으면 떼고, VHDX를 지운다.
+def remove_leftovers() -> list[str]:
+    """preflight 정리: 지난 run이 남긴 USB 대용 VHDX를 지운다. 연결은 따로 떼지 않는다 — USB는
+    G2 VM(`ctx.site.vm_name`)에만 붙고, `cleanup_actions`가 먼저 부르는
+    `preflight.remove_vms(G2_SITES)`가 그 VM을 지우면서 연결도 풀린다(리뷰 L5).
     실패는 정리 기록에만 남긴다(그 밤을 막지 않는다)."""
     folder = usb_dir()
     actions: list[str] = []
-    try:
-        actions += [f"usb detached {line}" for line in detach_under(folder)]
-    except hyperv.HyperVError as exc:
-        actions.append(f"usb detach (leftover) failed: {exc}")
     for vhdx in sorted(folder.glob("*.vhdx")) if folder.is_dir() else []:
         try:
             vhdx.unlink()

@@ -13,10 +13,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
+import nightly
 import pytest
 from g2_fakes import session
-from harness import g2, golden, hyperv, judges, paths, preinstall, usb
+from harness import g2, golden, hyperv, judges, paths, preflight, preinstall, usb
 from harness.context import InfraError
+from harness.github import DryRun
 from harness.vm import RemoteCommandError, Vm
 
 
@@ -266,7 +268,7 @@ def test_new_sticks_are_per_run_and_unique(e2e_root: Path) -> None:
 def test_the_hot_add_and_remove_cmdlets(monkeypatch: pytest.MonkeyPatch) -> None:
     scripts: list[str] = []
 
-    replies = iter(["", "WARNING: the drive is in use\n0", "1", "1"])
+    replies = iter(["", "WARNING: the drive is in use\n0", "1"])
 
     def run_ps(script: str, *, timeout_s: float = 300) -> str:
         scripts.append(script)
@@ -277,8 +279,6 @@ def test_the_hot_add_and_remove_cmdlets(monkeypatch: pytest.MonkeyPatch) -> None
     hyperv.attach_disk("pureiron-site-b", vhdx)
     assert hyperv.detach_disk("pureiron-site-b", vhdx) is True  # 마지막 줄 = 남은 0개
     assert hyperv.detach_disk("pureiron-site-b", vhdx) is False  # 아직 붙어 있다
-    assert hyperv.detach_under(Path("C:/PureIron_e2e/usb")) == ["1"]
-    scripts.pop(2)
     quoted = hyperv.ps_quote(str(vhdx))
     assert scripts[0] == (
         f"Add-VMHardDiskDrive -VMName 'pureiron-site-b' -ControllerType SCSI -Path {quoted}"
@@ -287,30 +287,44 @@ def test_the_hot_add_and_remove_cmdlets(monkeypatch: pytest.MonkeyPatch) -> None
     assert f"$_.Path -eq {quoted}" in scripts[1]
     assert "Remove-VMHardDiskDrive; @(Get-VMHardDiskDrive" in scripts[1]
     assert scripts[1].endswith(").Count")
-    assert "Get-VM | Get-VMHardDiskDrive" in scripts[2]
-    assert "Remove-VMHardDiskDrive" in scripts[2]
 
 
 def test_preflight_removes_usb_leftovers(e2e_root: Path) -> None:
     (e2e_root / "usb" / "old-site-b-install-aa.vhdx").write_bytes(b"x")
     (e2e_root / "usb" / "keep.txt").write_text("x", "utf-8")
-
-    def detach_under(folder: Path) -> list[str]:
-        assert folder == e2e_root / "usb"
-        return ["pureiron-site-b old.vhdx"]
-
-    assert usb.remove_leftovers(detach_under=detach_under) == [
-        "usb detached pureiron-site-b old.vhdx",
-        "usb removed old-site-b-install-aa.vhdx",
-    ]
+    (e2e_root / "vms").mkdir()
+    (e2e_root / "vms" / "disk.vhdx").write_bytes(b"x")  # VM 디스크는 건드리지 않는다
+    assert usb.remove_leftovers() == ["usb removed old-site-b-install-aa.vhdx"]
     assert [p.name for p in (e2e_root / "usb").iterdir()] == ["keep.txt"]
+    assert (e2e_root / "vms" / "disk.vhdx").exists()
+    assert usb.remove_leftovers() == []
 
-    def broken(folder: Path) -> list[str]:
-        raise hyperv.HyperVError("Get-VM failed")
 
-    assert usb.remove_leftovers(detach_under=broken) == [
-        "usb detach (leftover) failed: Get-VM failed"
-    ]
+def test_preflight_removes_the_g2_vms_before_the_usb_leftovers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """USB 연결은 VM과 함께 풀린다 — `remove_vms`(G2 VM 둘)가 VHDX 지우기보다 먼저다(리뷰 L5)."""
+    calls: list[str] = []
+
+    def remove_vms(site_list: list[object]) -> list[str]:
+        calls.append(f"remove_vms {len(site_list)}")
+        return []
+
+    monkeypatch.setattr(preflight, "remove_vms", remove_vms)
+
+    def nothing(*args: object) -> list[str]:
+        return []
+
+    monkeypatch.setattr(preflight, "prune_results", nothing)
+    monkeypatch.setattr(preflight, "prune_branches", nothing)
+
+    def usb_leftovers() -> list[str]:
+        calls.append("usb")
+        return []
+
+    nightly.cleanup_actions(DryRun(), down_central=list, usb_leftovers=usb_leftovers)
+    assert calls == ["remove_vms 2", "usb"]
+    assert {s.vm_name for s in nightly.G2_SITES} == {"pureiron-site-a", "pureiron-site-b"}
 
 
 def test_the_preinstall_probes_copy_the_bundle_from_the_usb_mount(tmp_path: Path) -> None:

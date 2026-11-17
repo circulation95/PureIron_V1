@@ -152,17 +152,6 @@ def detach_disk(name: str, vhdx: Path) -> bool:
     return bool(lines) and lines[-1].strip() == "0"
 
 
-def detach_under(directory: Path) -> list[str]:
-    """모든 VM에서 `directory` 아래 VHDX를 붙인 드라이브를 뗀다(preflight 정리 — 지난 run이 남긴
-    USB 대용 디스크). 뗀 것마다 `<VM> <경로>`."""
-    pattern = ps_quote(str(directory).rstrip("\\") + "\\*")
-    out = run_ps(
-        f"Get-VM | Get-VMHardDiskDrive | Where-Object {{ $_.Path -like {pattern} }} | "
-        "ForEach-Object { $_.VMName + ' ' + $_.Path; $_ | Remove-VMHardDiskDrive }"
-    )
-    return [line.strip() for line in out.splitlines() if line.strip()]
-
-
 def turn_off(name: str) -> None:
     run_ps(f"Stop-VM -Name {ps_quote(name)} -TurnOff -Force")
 

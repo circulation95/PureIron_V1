@@ -326,8 +326,8 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
   찾기·마운트·떼기·지우기) 실패는 infra, 설치 명령 실패는 그대로 product다. G2-1 기록에 `media`
   (usb·ssh)와 `usb`(VHDX 이름·라벨·장치·`hot_added_at`·`mounted_at`·`removed_at`·`removed`·`deleted`)가
   남고, 판정에 `install_media`(+ site-b는 `usb_mounted`·`usb_removed`)가 있다. 실패하면 G2-1 site-b도
-  빨강이다(대가 — 계획 ★P4). preflight 정리가 지난 run이 남긴 USB 연결·VHDX를 치운다
-  (`usb.remove_leftovers`). collector(compose bridge) → `10.0.0.5`는 VM 자신의 주소라 input으로 들어와 `ext_out_v4`·
+  빨강이다(대가 — 계획 ★P4). preflight 정리가 지난 run이 남긴 USB VHDX를 지운다
+  (`usb.remove_leftovers` — 연결은 먼저 도는 `remove_vms`가 VM과 함께 푼다). collector(compose bridge) → `10.0.0.5`는 VM 자신의 주소라 input으로 들어와 `ext_out_v4`·
   `ext_fwd`·`field_fwd` 어디에도 세지지 않고, 시뮬레이터 응답은 목적지가 docker bridge(172.16/12)라
   제외 대상이다(`golden` 모듈 docstring).
 - 실패 분류(`harness/failures.py`): **호출 자체**의 실패 = `infra`(실패한 시험만 1회 다시) —
