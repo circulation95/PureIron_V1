@@ -42,6 +42,9 @@ class AirgapVm:
     mounted: str = ""
     usb_files: dict[str, bytes] = field(default_factory=dict[str, bytes])
     export_rc: int = 0
+    enroll_busy: int = 0
+    """`enroll`이 Updater 잠금으로 exit 2를 낼 횟수(리뷰 M1)."""
+    enroll_rc: int = 0
     kernel_log: list[str] = field(default_factory=list[str])
 
     def run(
@@ -50,6 +53,11 @@ class AirgapVm:
         out, rc = "", 0
         if "--next-seq" in command:
             self.events.append("vm enroll --next-seq")
+            if self.enroll_busy:
+                self.enroll_busy -= 1
+                return subprocess.CompletedProcess[str]([], 2, "", "another updater is running")
+            if self.enroll_rc:
+                return subprocess.CompletedProcess[str]([], self.enroll_rc, "", "enroll refused")
             self.next_seq = max(self.next_seq, int(command.rsplit(" ", 1)[1]))
         elif "blkid" in command:
             out = "/dev/sdb\n"
@@ -81,7 +89,7 @@ class AirgapVm:
                 body = {"site_id": "site-b", "first_seq": first, "last_seq": last}
                 self.usb_files[name] = json.dumps({**body, "reports": reports}).encode()
                 self.pending = []
-                out = f"{len(reports)} report(s) -> {name}\n"
+                out = f"{len(reports)} report(s) → {name}\n"
         elif "journalctl -k" in command:
             assert "grep -F 'e2e-airgap-'" in command
             out = "\n".join(self.kernel_log)
@@ -106,6 +114,8 @@ class Airgap:
     )
     marks: dict[str, int] = field(default_factory=lambda: dict(C1_MARKS))
     nft_scripts: list[str] = field(default_factory=list[str])
+    lose_files: bool = False
+    """꺼내기(debugfs rdump)가 아무것도 내지 못한다(리뷰 M3)."""
 
 
 def airgap_flow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Airgap:
@@ -186,6 +196,8 @@ def airgap_flow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Airgap:
             (paths.E2E / "usb" / script.rsplit("/", 1)[-1].strip("'\" ")).write_bytes(b"x")
         elif "rdump" in script:
             events.append("usb read")
+            if f.lose_files:
+                return ""  # debugfs: rdump가 실패해도 종료 코드 0
             out = run.ctx.work / "airgap" / "reports"
             out.mkdir(parents=True, exist_ok=True)
             for name, data in f.vm.usb_files.items():
@@ -282,7 +294,7 @@ def test_without_the_seq_alignment_the_import_is_history_only(
     바뀌지 않아 판정이 거짓이다(코디네이터 확정 A의 근거)."""
     f = airgap_flow(tmp_path, monkeypatch)
 
-    def skipped(host: site.Shell, site_id: str, next_seq: int) -> None:
+    def skipped(host: site.Shell, site_id: str, next_seq: int, **_: object) -> None:
         f.events.append("seq alignment skipped")
 
     monkeypatch.setattr(site, "align_seq", skipped)
@@ -595,3 +607,38 @@ def test_busy_retry_waits_out_the_updater_lock() -> None:
     done = site.busy_retry(Host(), "sudo pureiron-site report export --out x", sleep=lambda s: None)
     assert done.returncode == 0
     assert len(seen) == 3
+
+
+def test_a_busy_updater_lock_on_the_seq_alignment_is_waited_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`enroll`도 Updater 잠금을 잡는다 — exit 2면 다시 묻는다(리뷰 M1)."""
+    f = airgap_flow(tmp_path, monkeypatch)
+    f.vm.enroll_busy = 1
+    checks = fleet_scenarios.airgap(f.session, f.fs, f.scenario)
+    assert failed(checks) == []
+    assert f.events.count("vm enroll --next-seq") == 2
+
+
+def test_a_refused_seq_alignment_stops_with_the_stderr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    f = airgap_flow(tmp_path, monkeypatch)
+    f.vm.enroll_rc = 1
+    with pytest.raises(E2EError, match="enroll --next-seq 10 exited 1: enroll refused"):
+        fleet_scenarios.airgap(f.session, f.fs, f.scenario)
+    assert "nft airgap" not in f.events
+
+
+def test_bundles_that_do_not_come_off_the_usb_disk_are_infra(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """export가 묶음을 썼는데 꺼낸 파일 수가 다르면 꺼내기(시험 배선) 실패 — infra, 반입 0건을
+    제품 실패로 보지 않는다(리뷰 M3). 필터·USB는 치운다."""
+    f = airgap_flow(tmp_path, monkeypatch)
+    f.lose_files = True
+    with pytest.raises(InfraError, match=r"not read: report export wrote 1 bundle\(s\), 0 came"):
+        fleet_scenarios.airgap(f.session, f.fs, f.scenario)
+    assert f.events[-2:] == ["usb read", "nft clear"]
+    assert "central offline-import" not in f.events
+    assert not list((tmp_path / "e2e" / "usb").glob("*.vhdx"))

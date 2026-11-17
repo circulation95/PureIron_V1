@@ -57,6 +57,7 @@ class FakeOps:
     events: list[str]
     attached: list[Path] = field(default_factory=list[Path])
     detach_error: bool = False
+    detach_timeout: bool = False
     scripts: list[str] = field(default_factory=list[str])
 
     def ops(self) -> usb.Ops:
@@ -75,6 +76,8 @@ class FakeOps:
             self.events.append(f"detach {vm}")
             if self.detach_error:
                 raise hyperv.HyperVError("Remove-VMHardDiskDrive failed")
+            if self.detach_timeout:
+                raise subprocess.TimeoutExpired("powershell.exe", 300)
             return 1 if vhdx in self.attached else 0
 
         return usb.Ops(
@@ -101,6 +104,7 @@ def install_once(
     *,
     fail: BaseException | None = None,
     detach_error: bool = False,
+    detach_timeout: bool = False,
     seen_after: int = 1,
     clock: Callable[[], float] = lambda: 0.0,
 ) -> tuple[list[str], list[dict[str, object]], g2.SiteRun, BaseException | None]:
@@ -110,7 +114,9 @@ def install_once(
     events: list[str] = []
     calls: list[dict[str, object]] = []
     shell = FakeShell(events, seen_after=seen_after)
-    ops = dataclasses.replace(FakeOps(events, detach_error=detach_error).ops(), clock=clock)
+    ops = dataclasses.replace(
+        FakeOps(events, detach_error=detach_error, detach_timeout=detach_timeout).ops(), clock=clock
+    )
 
     def runbook(host: object, *bundles: Path, **kwargs: object) -> float:
         events.append("runbook")
@@ -336,3 +342,14 @@ def test_the_install_media_judge_each_check_matters(site_id: str) -> None:
         for key, value in (("removed", False), ("deleted", False), ("mounted_at", None)):
             checks = judges.judge_install_media({**good, "usb": {**record, key: value}}, want)
             assert not all(checks.values()), key
+
+
+def test_a_detach_timeout_does_not_replace_the_product_failure(
+    e2e_root: Path, tmp_path: Path
+) -> None:
+    """예외 경로의 떼기 시간 초과(`run_ps` 300초)도 로그만 — 원래 제품 실패가 infra(시간 초과)로
+    바뀌지 않는다(리뷰 M2)."""
+    broken = RemoteCommandError("install.sh exited 1", 1)
+    _, _, run, raised = install_once(tmp_path, "site-b", fail=broken, detach_timeout=True)
+    assert raised is broken
+    assert usb_record(run)["removed"] is False

@@ -806,6 +806,9 @@ AIRGAP_LOG_LINES = 20
 AIRGAP_CLEAR = clear_table(AIRGAP_NFT)
 SSH_PORT = 22
 REPORTS_DIR = "reports"
+EXPORTED_MARK = "report(s) →"
+"""`pureiron-site report export`가 묶음 파일마다 찍는 줄의 표지(`<n> report(s) → <경로>`) — 꺼낸
+파일 수와 대조한다. 대기 보고가 없으면 `no pending reports`(0개 — 판정이 거짓, product)."""
 """USB 디스크 안 보고 묶음 디렉터리(`report export --out <마운트>/reports`)."""
 G2_7_ITEMS = (
     *("no_central_traffic", "succeeded", "applied_gen", "images_next"),
@@ -919,7 +922,7 @@ def airgap(
     sh = remote.shell(host)
     pair = session.pair
     next_seq, seq_note = aligned_seq(fs, AIRGAP_SITE)
-    site.align_seq(sh, AIRGAP_SITE, next_seq)
+    site.align_seq(sh, AIRGAP_SITE, next_seq, sleep=remote.sleep)
     applied = judges.updater_state(remote.probe(host)).get("applied_gen")
     if judges.as_int(applied) < 1:
         raise InfraError(f"cannot read applied gen of {AIRGAP_SITE}: {applied!r}")
@@ -947,6 +950,12 @@ def airgap(
             if any(counters.get(name) != 0 for name in AIRGAP_COUNTERS):
                 notes["airgap_log"] = airgap_log(sh)
             files = usb.read_dir(stick, REPORTS_DIR, ctx.work / "airgap", ops=ops)
+            wrote = out.stdout.count(EXPORTED_MARK)
+            if len(files) != wrote:  # debugfs는 rdump가 실패해도 0으로 끝난다(리뷰 M3)
+                raise InfraError(
+                    f"USB {stick.vhdx.name} not read: report export wrote {wrote} bundle(s), "
+                    f"{len(files)} came out of /{REPORTS_DIR}"
+                )
     finally:
         notes["filter_cleared"] = clear_filter(remote, host, ctx, AIRGAP_CLEAR)
     imports = [

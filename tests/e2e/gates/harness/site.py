@@ -318,12 +318,20 @@ def busy_retry(
     return result
 
 
-def align_seq(host: Shell, site_id: str, next_seq: int) -> None:
+def align_seq(
+    host: Shell, site_id: str, next_seq: int, *, sleep: Callable[[float], None] = time.sleep
+) -> None:
     """현장 `report_seq` 카운터를 `next_seq`로 올린다(`pureiron-site enroll --next-seq` — 키는
     그대로, 단조 증가만. 벤더 rekey 응답 반영과 같은 제품 명령). G2-7 시험 정렬: c0 VM + c1 중앙
     조합에서 VM 카운터가 중앙 수위 아래라 보고가 이력으로만 남는 것을 막는다(실제 폐쇄망 현장은
-    수위 0)."""
-    host.run(f"sudo pureiron-site enroll --site {site_id} --next-seq {next_seq}")
+    수위 0). `enroll`도 Updater 잠금을 잡으므로 exit 2면 다시(`busy_retry`), 끝내 0이 아니면
+    `E2EError`(stderr 포함 — argparse 사용 오류도 2다, 리뷰 M1)."""
+    command = f"sudo pureiron-site enroll --site {site_id} --next-seq {next_seq}"
+    done = busy_retry(host, command, timeout_s=120, sleep=sleep)
+    if done.returncode != 0:
+        raise E2EError(
+            f"enroll --next-seq {next_seq} exited {done.returncode}: {done.stderr[-TAIL_CHARS:]}"
+        )
 
 
 def converge(

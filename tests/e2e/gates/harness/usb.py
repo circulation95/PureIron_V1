@@ -205,7 +205,7 @@ def release(
     host: Shell, vm_name: str, stick: Stick, record: dict[str, object], ops: Ops, *, quiet: bool
 ) -> None:
     """VM에서 umount·장치 삭제(실패해도 계속 — 뗄 수는 있다) → hot-remove. 떼기 실패는 `quiet`면
-    로그만, 아니면 그대로 올린다(`HyperVError` = infra)."""
+    로그만(시간 초과 포함 — 원래 예외의 분류를 바꾸지 않게), 아니면 그대로 올린다(infra)."""
     device = str(record.get("device") or "")
     name = device.removeprefix("/dev/")
     drop = f"echo 1 > /sys/block/{name}/device/delete; " if name.isalnum() else ""
@@ -216,7 +216,7 @@ def release(
         log(f"[usb] umount {stick.label} failed: {exc}")
     try:
         removed = ops.detach(vm_name, stick.vhdx)
-    except hyperv.HyperVError as exc:
+    except (hyperv.HyperVError, subprocess.TimeoutExpired) as exc:  # 시간 초과도(리뷰 M2)
         record["removed"] = False
         if not quiet:
             raise
