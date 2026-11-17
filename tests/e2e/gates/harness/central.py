@@ -6,6 +6,7 @@
     uv run --no-sync python tests/e2e/gates/harness/central.py put --site site-a --gen 2 --pib PATH
     uv run --no-sync python tests/e2e/gates/harness/central.py fleet [--site site-a] [--direct]
     uv run --no-sync python tests/e2e/gates/harness/central.py fleet --ui   # control-web 경로
+    uv run --no-sync python tests/e2e/gates/harness/central.py offline-import --file PATH
     uv run --no-sync python tests/e2e/gates/harness/central.py stop-web | start-web | status | down
     uv run --no-sync python tests/e2e/gates/harness/central.py dump --name c1-<token>
     uv run --no-sync python tests/e2e/gates/harness/central.py restore --name c1-<token>
@@ -329,10 +330,11 @@ def _request(
     *,
     body: BinaryIO | None = None,
     length: int | None = None,
+    content_type: str = "application/octet-stream",
 ) -> tuple[int, object]:
     headers = {"Authorization": f"Bearer {read_secret(token_name)}"}
     if length is not None:
-        headers |= {"Content-Type": "application/octet-stream", "Content-Length": str(length)}
+        headers |= {"Content-Type": content_type, "Content-Length": str(length)}
     request = urllib.request.Request(f"{BASE_URL}{path}", data=body, method=method, headers=headers)
     timeout = UPLOAD_TIMEOUT_S if length is not None else HTTP_TIMEOUT_S
     try:
@@ -353,6 +355,21 @@ def put(site: str, gen: int, pib: Path) -> dict[str, object]:
             "PUT", f"/bundles/{site}/{gen}", "ci_token", body=body, length=pib.stat().st_size
         )
     return {"status": status_code, "body": reply}
+
+
+def offline_import(path: Path) -> dict[str, object]:
+    """`POST /offline-imports`(admin 토큰 — 비밀 파일에서만 읽는다, Caddy HTTPS, M6-4b-2 G2-7):
+    Updater `report export` 묶음 파일(`site-reports` 봉투, JSON) 그대로."""
+    with path.open("rb") as body:
+        status_code, reply = _request(
+            "POST",
+            "/offline-imports",
+            "admin_token",
+            body=body,
+            length=path.stat().st_size,
+            content_type="application/json",
+        )
+    return {"status": status_code, "body": reply, "file": path.name}
 
 
 def fleet_https(site: str | None) -> dict[str, object]:
@@ -562,6 +579,7 @@ def main(argv: list[str] | None = None) -> int:
     fleet_cmd.add_argument("--site", default=None)
     fleet_cmd.add_argument("--direct", action="store_true", help="control-api 컨테이너 안에서 조회")
     fleet_cmd.add_argument("--ui", action="store_true", help="control-web 경로(Caddy basic auth)")
+    sub.add_parser("offline-import").add_argument("--file", type=Path, required=True)
     for name in ("stop-web", "start-web", "status", "down"):
         sub.add_parser(name)
     for name in ("dump", "restore"):
@@ -596,6 +614,7 @@ def run_command(args: argparse.Namespace) -> dict[str, object]:
         "register": lambda: register(args.enrollment),
         "put": lambda: put(args.site, args.gen, args.pib),
         "fleet": lambda: fleet(args),
+        "offline-import": lambda: offline_import(args.file),
         "stop-web": stop_web,
         "start-web": start_web,
         "status": status,

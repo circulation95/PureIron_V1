@@ -1008,6 +1008,19 @@ def judge_installed(snap: dict[str, object], want_digests: dict[str, str]) -> di
     }
 
 
+def judge_install_media(evidence: dict[str, object], want: str) -> dict[str, bool]:
+    """G2-1 설치 매체(★P4): USB 기록(`usb`)이 그 현장의 매체(`want` — usb·ssh)대로 있거나 없다.
+    USB면 VHDX가 붙었다가(`hot_added_at`·`mounted_at`) 떨어지고(`removed`) 지워졌다(`deleted`)."""
+    used_usb = isinstance(evidence.get("usb"), dict)
+    checks = {"install_media": used_usb == (want == "usb")}
+    if want == "usb":
+        record = cast(dict[str, object], evidence.get("usb") or {})
+        mounted = bool(record.get("hot_added_at")) and bool(record.get("mounted_at"))
+        checks["usb_mounted"] = mounted
+        checks["usb_removed"] = record.get("removed") is True and record.get("deleted") is True
+    return checks
+
+
 def api_rows(body: object, key: str) -> list[dict[str, object]]:
     """`GET /tags`·`GET /devices` 본문의 `key` 행 목록(형식이 다르면 빈 목록)."""
     rows = cast(dict[str, object], body).get(key) if isinstance(body, dict) else None
@@ -1374,4 +1387,52 @@ def judge_writes(
         **prefixed("on_", judge_write_confirmed(on, tag, on_value)),
         "on_tag_value": written == on_value,
         **prefixed("undeclared_", judge_write_rejected(undeclared, undeclared_tag, "declared")),
+    }
+
+
+# ---------------------------------------------------------------- G2-7 폐쇄망(M6-4b-2)
+
+
+def offline_attempt(row: dict[str, object], gen: int) -> bool:
+    """`/fleet` 행의 `last_attempt`가 폐쇄망 반입(`source: offline`)으로 온 gen `gen` 성공이다."""
+    attempt = sub(row, "last_attempt")
+    return (
+        attempt.get("source") == "offline"
+        and attempt.get("generation") == gen
+        and attempt.get("result") == "succeeded"
+    )
+
+
+def judge_airgap(
+    counters: dict[str, int],
+    snap: dict[str, object],
+    imports: list[dict[str, object]],
+    row: dict[str, object],
+    ui: dict[str, object],
+    *,
+    site_id: str,
+    gen: int,
+    next_digests: dict[str, str],
+    want_counters: tuple[str, ...],
+) -> dict[str, bool]:
+    """G2-7: VM nft의 중앙(10.77.0.1) 쪽 ssh 외 카운터(`want_counters` 전부 있고 0) · USB 적용
+    `succeeded`·applied == `gen`·실행 이미지 == NEXT · `POST /offline-imports` 응답이 모두 201이고
+    반영된 보고가 1건 이상(`applied_total` — 이력만이면 거짓) · 중앙 `/fleet` 행의 `last_attempt`가
+    폐쇄망 반입 gen 성공이고 current == gen · control-web 경로(Caddy basic auth `/ui/fleet`)로 읽은
+    같은 행도 그 `last_attempt`."""
+    state = updater_state(snap)
+    applied = sum(as_int(sub(i, "body").get("applied_total")) for i in imports)
+    return {
+        "no_central_traffic": bool(want_counters)
+        and all(counters.get(name) == 0 for name in want_counters),
+        "succeeded": state.get("last_result") == "succeeded"
+        and state.get("last_attempted_gen") == gen,
+        "applied_gen": state.get("applied_gen") == gen,
+        "images_next": bool(next_digests) and running_digests(snap) == next_digests,
+        "import_201": bool(imports) and all(i.get("status") == 201 for i in imports),
+        "import_applied": applied >= 1,
+        "fleet_last_attempt": offline_attempt(row, gen),
+        "fleet_current": sub(row, "current").get("gen") == gen,
+        "via_control_web": ui.get("via") == "caddy-ui" and ui.get("status") == 200,
+        "control_web_last_attempt": offline_attempt(fleet_row(ui, site_id), gen),
     }

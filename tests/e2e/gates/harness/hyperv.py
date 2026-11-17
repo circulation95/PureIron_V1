@@ -131,6 +131,27 @@ def restore(name: str, snapshot: str) -> None:
     )
 
 
+def attach_disk(name: str, vhdx: Path) -> None:
+    """실행 중 VM의 SCSI 컨트롤러에 VHDX를 붙인다(hot-add, M6-0 탐침 ② — 위치는 Hyper-V가 빈 곳을
+    고른다). USB 대용 디스크(`usb`)."""
+    run_ps(
+        f"Add-VMHardDiskDrive -VMName {ps_quote(name)} -ControllerType SCSI "
+        f"-Path {ps_quote(str(vhdx))}"
+    )
+
+
+def detach_disk(name: str, vhdx: Path) -> bool:
+    """`vhdx`를 붙인 VM 드라이브를 뗀다(hot-remove). 뗀 뒤 같은 경로의 드라이브를 다시 세어 0이면
+    참 — 출력의 마지막 줄만 읽는다(PowerShell 5.1은 경고 스트림을 stdout에 섞는다, 리뷰 L4)."""
+    drives = (
+        f"@(Get-VMHardDiskDrive -VMName {ps_quote(name)} | "
+        f"Where-Object {{ $_.Path -eq {ps_quote(str(vhdx))} }})"
+    )
+    out = run_ps(f"{drives} | Remove-VMHardDiskDrive; {drives}.Count")
+    lines = out.splitlines()
+    return bool(lines) and lines[-1].strip() == "0"
+
+
 def turn_off(name: str) -> None:
     run_ps(f"Stop-VM -Name {ps_quote(name)} -TurnOff -Force")
 

@@ -10,7 +10,7 @@
 |---|---|
 | `m2d/run.py` | M2d 시나리오 진입점(단계 순서·CLI·결과 항목 39개). 현장 `SITE_A`(site-a, 10.77.0.10) 하나 |
 | `gates/harness/` | 공용 하네스(M6-1, G2 nightly와 같이 쓴다): `release_pair`(`ReleasePair`·지금 쌍 `DEFAULT`·nightly 쌍 `nightly()`), `sites`(`SITE_A`·`SITE_B`·VM 준비), `site`(`Site`·원격 조작·시뮬레이터), `judges`(순수 판정), `trees`(트리 기대값·G2 100태그 트리), `context`(`Context`·상태 파일·`InfraError`), `buildhost`(WSL 호출·HEAD 빌드), `hyperv`·`golden`·`vm`, WSL 스크립트 `bundles.py`·`central.py` |
-| `gates/` (G2) | `nightly.py`(실행기 — CLI·단계 순서·시간 예산), `pytest.ini`·`conftest.py`(G2 pytest 틀·실행 순서·메모리 감시), 시험 `test_g2_install.py`(G2-1)·`test_g2_rollback.py`(G2-4 + G2-6 ③)·`test_g2_faults.py`(G2-6 ②)·fleet 묶음 `test_g2_scheduled.py`(G2-2·G2-3)·`test_g2_revert.py`(G2-4 revert)·`test_g2_resume.py`(G2-6 ①)·`test_g2_writes.py`(G2-W)·`test_g2_fleet_view.py`(G2-9)·`test_g2_no_external.py`(맨 끝), `quarantine.yaml`, 하네스 `g2`(세션·c0 복원)·`scenarios`(시나리오)·`order`(실행 순서 표)·`memwatch`(세션 최저 메모리)·`failures`(분류)·`report`(junit·이력·status)·`collect`·`publish`·`runner`(실행기 보호)·`flake`·`preflight`·`github` |
+| `gates/` (G2) | `nightly.py`(실행기 — CLI·단계 순서·시간 예산), `pytest.ini`·`conftest.py`(G2 pytest 틀·실행 순서·메모리 감시), 시험 `test_g2_install.py`(G2-1)·`test_g2_rollback.py`(G2-4 + G2-6 ③)·`test_g2_faults.py`(G2-6 ②)·fleet 묶음 `test_g2_scheduled.py`(G2-2·G2-3)·`test_g2_revert.py`(G2-4 revert)·`test_g2_resume.py`(G2-6 ①)·`test_g2_writes.py`(G2-W)·`test_g2_fleet_view.py`(G2-9)·`test_g2_airgap.py`(G2-7)·`test_g2_no_external.py`(맨 끝), `quarantine.yaml`, 하네스 `g2`(세션·c0 복원)·`usb`(USB 대용 디스크)·`scenarios`(시나리오)·`order`(실행 순서 표)·`memwatch`(세션 최저 메모리)·`failures`(분류)·`report`(junit·이력·status)·`collect`·`publish`·`runner`(실행기 보호)·`flake`·`preflight`·`github` |
 | `site/` | VM에 복사하는 스크립트(`probe.py`·`crash_at.py`·`site_api.py`) |
 | `infra/setup-host.ps1` | 1회 호스트 준비 |
 | `tests/` | 단위 시험(G1 `unit`) |
@@ -316,7 +316,18 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
   100태그 전부 GOOD(`GET /tags`, viewer 로그인) · 장비 CONNECTED(`GET /devices`) · 부팅 이후 외부 접속
   카운터 0. "5분 안에"는 각 현장 `bring_up`이 c0 직후부터 live를 읽어 증명한다(직렬 모드 포함 — 판정이
   다른 현장 부팅 뒤에 시작해도 다시 읽지 않는다). 기록 `live_s`(c0부터 초)가 300보다 크면
-  `live_in_time` 거짓으로 실패다. collector(compose bridge) → `10.0.0.5`는 VM 자신의 주소라 input으로 들어와 `ext_out_v4`·
+  `live_in_time` 거짓으로 실패다. **설치 매체(M6-4b-2 ★P4)**: site-a는 설치 번들·g1 번들을 scp로,
+  **site-b는 USB 대용 디스크로** 받는다(`harness/usb.py`) — WSL `mke2fs -t ext4 -L e2e-<hex> -d` +
+  `qemu-img convert -O vhdx`(동적, 4 GiB)로 `<E2E>/usb/<run>-site-b-install-<hex>.vhdx` → Hyper-V
+  `Add-VMHardDiskDrive -ControllerType SCSI`(실행 중 hot-add) → VM에서 SCSI 다시 읽기·`blkid -t
+  LABEL=`로 장치 찾기(60초) → `/media/e2e-usb`에 `ro,nosuid,nodev,noexec` 마운트 → 같은 runbook을 마운트
+  경로에서(설치 전 변조 탐침도 그 번들의 사본) → umount·장치 삭제 → `Remove-VMHardDiskDrive` → VHDX
+  삭제. 예외 경로에서도 떼고 지우며(그때 떼기 실패는 로그만 — 원래 분류 유지), 배선(만들기·붙이기·
+  찾기·마운트·떼기·지우기) 실패는 infra, 설치 명령 실패는 그대로 product다. G2-1 기록에 `media`
+  (usb·ssh)와 `usb`(VHDX 이름·라벨·장치·`hot_added_at`·`mounted_at`·`removed_at`·`removed`·`deleted`)가
+  남고, 판정에 `install_media`(+ site-b는 `usb_mounted`·`usb_removed`)가 있다. 실패하면 G2-1 site-b도
+  빨강이다(대가 — 계획 ★P4). preflight 정리가 지난 run이 남긴 USB VHDX를 지운다
+  (`usb.remove_leftovers` — 연결은 먼저 도는 `remove_vms`가 VM과 함께 푼다). collector(compose bridge) → `10.0.0.5`는 VM 자신의 주소라 input으로 들어와 `ext_out_v4`·
   `ext_fwd`·`field_fwd` 어디에도 세지지 않고, 시뮬레이터 응답은 목적지가 docker bridge(172.16/12)라
   제외 대상이다(`golden` 모듈 docstring).
 - 실패 분류(`harness/failures.py`): **호출 자체**의 실패 = `infra`(실패한 시험만 1회 다시) —
@@ -356,7 +367,9 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
   재시도 45분(M6-4 fleet 묶음과 site-b 재시도 묶음이 들어갈 몫 — "평일 run 90분"은 시간 제한이 아니라
   실측 목표다). 평일 첫 pytest 추정은 약 69분(4a 실측 45.5분 + 4b-1 fleet 약 23분 — G2-4 revert 9·
   G2-6 ① 6.5·G2-W 6·G2-9 2.5, 빌드·PUT은 4a 실측 Windows 경로 80·20초로 셈)이고 105분은 4b 실측 전
-  여유다. 주간은 약 129분(4a 전 99 + fleet 4a 7 + 4b-1 23)으로 첫 pytest 200분 안이다.
+  여유다. 주간은 약 129분(4a 전 99 + fleet 4a 7 + 4b-1 23)으로 첫 pytest 200분 안이다. 4b-1 실측(브랜치
+  dispatch)은 평일 run 58분·주간 1시간 54분, 4b-2(G2-7 약 5분 + site-b USB 설치 약 0.5분)를 더하면 평일
+  약 63분·주간 약 120분이라 값은 그대로 둔다.
   **weekly**: workflow 270분 · run 240분 · 첫 pytest 200분 · 재시도 40분. 첫 pytest는 추정 125~171분
   (crash 한 건 5~7분 — c0 복원·번들 빌드·창 대기 150초·phase 진행·수렴 — × 18건 = 90~126분 + 나머지
   평일 몫 35~45분)의 상한에 약 1.17배를 둔다. 넘기면 junit이 없어 그 주 결과가 `pytest` 한 줄로만
@@ -434,7 +447,8 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
   2연속이면 infra 이슈). 처음 대상 기준으로 한 번만 더하고(연쇄 없음), 현장은 순서 표에서 읽는다. 합친 결과에서 다시 돈 시험은 재시도 결과로 바뀐다 — 첫 세션에서 통과한 외부 접속 0도
   재시도에서 실패하면 실패로 남는다.
 - 실행 순서: `harness/order.py`의 표 하나가 정한다(G2-1 → site-a 롤백 → site-b 거부·② 마이그레이션
-  실패·draft → fleet(G2-2·G2-3 — 중앙 직접 게시, 아래 절) → crash(site-a — 주간 16건이 길어 site-b 뒤로)
+  실패·draft → fleet(G2-2·G2-3 → G2-4 revert → G2-6 ① → G2-W → G2-9 → G2-7 — 중앙 직접 게시·폐쇄망
+  반입, 아래 절) → crash(site-a — 주간 16건이 길어 site-b 뒤로)
   → 외부 접속 0). 표에 없는 `test_g2_*.py`는
   수집 오류다.
 - 올리는 현장(M6-3b, 3a 리뷰 L3): 세션은 그 pytest에서 돌 시험(표지·노드 id로 고른 뒤)이 쓰는 현장만
@@ -527,7 +541,9 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
   번들을 만들기 직전 now − 5분 ~ +1시간, `fleet_scenarios.publish`).
 - **시나리오마다 쓰는 현장만 c1으로 되돌린다**(중앙은 늘 함께): G2-2/3은 둘, G2-4 revert·G2-6 ①은
   site-a, G2-W·G2-9는 site-b. 다른 현장 VM은 앞 시나리오 상태로 남지만 중앙 DB가 c1이라 desired가 없고,
-  그 현장을 쓰는 시나리오가 다시 되돌린다.
+  그 현장을 쓰는 시나리오가 다시 되돌린다. **G2-7만 VM을 c0로** 되돌린다(`restore_airgap` — 폐쇄망
+  현장은 온라인 설정이 없다, 중앙은 c1 DB: site-b 등록이 있어야 `POST /offline-imports`가 받는다).
+  그래서 fleet 묶음 맨 끝이다.
 
 | 시험(실행 순서) | 현장 | 흐름 | 판정(모두 참) |
 |---|---|---|---|
@@ -536,6 +552,7 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
 | `test_g2_4_revert[…]` | site-a | c1 → FAULT-h g2 PUT → 수렴(자동 롤백) → BASE g3 PUT(BASE = G2 트리) → 수렴 → 중앙 current | PUT 201 ×2 · FAULT-h: `failed`·보고 `E_HEALTH`·applied 그대로(c1 g1)·실행 이미지 BASE·경보 없음·edit-lock 해제 · BASE: `succeeded`·applied 3·이미지 BASE·경보 없음·edit-lock 해제 · `/fleet` current = 3·BASE 버전(적용되지 않았으면 기다리지 않고 거짓) |
 | `test_g2_6_1_resume[…]` | site-a | c1 → VM nft 표 `inet e2e_fleet`(중앙 10.77.0.1:28443 → VM 수신만, ssh 그대로)로 4 MiB/s 제한 → NEXT g2 PUT → `bundles/poll-*.pib.part` > 128 MiB(상한 240초, 미도달·기준 전 사라짐은 infra) → 전부 차단 → Updater `poll failed` 로그(상한 120초, 차단 → 첫 줄 초를 기록) → 카운터만 두고 해제 → 수렴 → nft 표 삭제(실패해도) | PUT 201 · 차단 뒤 `poll failed` ≥ 1 · 해제 때 `.part` ≥ 차단 때 · **해제 뒤 받은 바이트(nft 카운터, IP 길이) < 번들 크기 − `.part`/2**(처음부터 받으면 번들 크기 이상) · `succeeded`·applied = gen · 이미지 NEXT · 해제 뒤 10분 안 |
 | `test_g2_w_writes[…]` | site-b | c1 → e2e-engineer 계정(VM에서 만든 비밀번호, `add_viewer`와 같은 방식) → 태그 GOOD 대기 → 스위치 꺼짐: `line1/temp_sp`(fixture 선언 setpoint, holding 100 = 시뮬레이터 쓰기 메모리) prepare → NEXT g2 + `writes: { enabled: true }`(c1과 같은 G2 트리) PUT → 수렴 → 태그 GOOD 대기(≤ 180초, K2) → 같은 태그 prepare → confirm → 미선언 `sim/r001`(사인파 holding) prepare. 쓰기는 VM `site_api.py write`(web 경유 같은 출처 — `POST /writes` → `POST /writes/{id}/confirm`(시한 30초) → 그 사유의 `GET /audit`). 409의 실패 검사가 일부러 내는 거부(`writes_enabled`·`declared`)를 빼고 일시 검사(`tag_good`·`plan_reported`·`single_collector_session`·`device_connected`)뿐이면 5초 간격으로 다시 부른다(상한 60초, 시도 횟수 기록 — replay batch는 GOOD을 만들지만 plan 보고는 아직일 수 있다) | 꺼짐: 409·실패 검사 정확히 [`writes_enabled`]·`tag.write_rejected` 감사 행·`GET /tags` 값 전후 같음 · 켠 번들 201·`succeeded`·applied 2 · 켬: confirm 200 `CONFIRMED`·readback == 쓴 값(42.5, c1 값과 다르게)·같은 write_id의 `tag.write` 결과 행 `CONFIRMED`·`GET /tags` 값 == 쓴 값 · 미선언: 409·[`declared`]·거부 감사 행(사인파 칸의 값은 쓰기를 검출할 수 없어 보지 않는다) |
+| `test_g2_7_airgap[…]` | site-b c0 + 중앙 c1 | **seq 정렬**(아래) → VM nft 표 `inet e2e_airgap`(input·output·forward, 체인마다 ssh — VM:22와 그 응답 — 를 먼저 accept, 나머지 10.77.0.1 쪽은 counter·`log prefix "e2e-airgap-<in·out·fwd-in·fwd-out> "`·drop: `airgap_in`·`airgap_out`·`airgap_fwd_in`·`airgap_fwd_out`. input은 unicast만(`meta pkttype host`) — 10.77.0.1은 VM의 게이트웨이·DNS라 호스트 vNIC의 broadcast(NetBIOS·앱 LAN 탐색)가 LOCAL_IN에 오는데 그것은 현장이 중앙에 닿은 것이 아니다(리뷰 H1). 카운터가 0이 아니면 VM 커널 로그의 `e2e-airgap-` 줄 끝 20개를 기록 `airgap_log`에 남긴다 — collect는 커널 로그를 모으지 않는다) → NEXT g2 번들(site-b 서명, 중앙 PUT 없음, 창 즉시) → USB 대용 디스크(G2-1과 같은 만들기·hot-add·ro 마운트) → `pureiron-site apply <마운트>/<번들>`(현장 USB 절차, 잠금 exit 2면 다시) → 수렴 → 같은 디스크 `mount -o remount,rw` → `pureiron-site report export --out <마운트>/reports`(0 아니면 product) → umount·hot-remove → 카운터 읽기 → WSL에서 VHDX 사본을 raw로(`qemu-img check -r all` → `convert -O raw`) → `debugfs rdump /reports`로 꺼냄 → VHDX 삭제·nft 표 삭제(예외 경로 포함) → 꺼낸 묶음마다 호스트 `central.py offline-import`(admin 토큰은 비밀 파일에서만 — `POST /offline-imports`, 본문 그대로 JSON) → `/fleet`(publish viewer)·control-web 경로(`fleet --ui`) | nft 카운터 4개 모두 있고 0 · `succeeded`·applied 2·실행 이미지 NEXT · 반입 응답 모두 201·`applied_total` 합 ≥ 1(이력만이면 거짓) · `/fleet` site-b `last_attempt` = `source: offline`·generation 2·`succeeded`, current = 2 · control-web 경로 응답 200·`via` caddy-ui·같은 `last_attempt` |
 | `test_g2_9_fleet_view[…]` | site-b | c1 → control-web 경로(`central.py fleet --ui` — Caddy basic auth `ops` + 비밀 파일의 원문, Caddy가 viewer 토큰을 붙여 `/ui/fleet` → `/api/v1/fleet`)로 읽음 → VM nft로 중앙 차단 → stale까지 → 차단 해제(실패하면 infra) → online까지 | 응답 200·`via` = control-web 경로 · 차단 전 online · 차단 뒤 120초 안 `connection` = stale · 해제 뒤 60초 안 online. 기록에 차단→stale 초·해제→online 초. 화면 규칙("최신" 배지)은 CI `fleet.spec.ts`가 실제 central 스택으로 본다(4b ★Q2 — Playwright·node 없음) |
 
 - 창 여유 4분(`fleet_scenarios.WINDOW_LEAD_S` 240초 = 빌드 85 + PUT 20 + 받아 검증할 몫 45 + 여유 90):
@@ -546,6 +563,14 @@ eth0 전달은 여전히 `ext_fwd`다. `field_fwd`는 0 초과를 요구하지 �
   시작 → succeeded 24초)가 남아야 한다. PUT이 창 시작 45초 전보다 늦게 끝나면 `verified` < 창 시작을 볼
   수 없어 infra(빌드 호스트가 느린 것)다. G2-2 기록·로그에 `build_s`·`put_s`가 따로 남는다(늦은 PUT
   infra의 예외 문구에도).
+- **G2-7 seq 정렬(시험 정렬 — 코디네이터 확정)**: 현장 `report_seq` 카운터는 heartbeat·보고 공용이고
+  중앙은 종류별 수위보다 큰 seq만 반영한다(control-api `judge_seq`). c1 준비 때 site-b는 c0에서 온라인이
+  되며 heartbeat·g1 보고를 보냈으므로 c1 중앙 수위는 보고 ≥ 2, heartbeat N이다. c0로 되돌린 VM의 카운터는
+  1이라 그대로 내보내면 보고 seq 1·2가 이력으로만 남아 `/fleet`가 바뀌지 않는다(실제 폐쇄망 현장은 중앙
+  수위 0이라 생기지 않는 인공물). 그래서 USB 적용 전에 제품 명령 `pureiron-site enroll --site site-b
+  --next-seq N`(키 그대로, 카운터 단조 증가 — 벤더 rekey 반영 경로)으로 N = max(c1 덤프 요약
+  `last_heartbeat_seq`, `last_report_seq`) + 1을 맞춘다. 요약이 없으면 추정하지 않고 시험 오류(product)로
+  멈춘다. 값·출처(`fleet/session.json c1_fleet[site-b]`)·이유가 G2-7 기록 `seq_alignment`에 남는다.
 - 기록: 시나리오 기록은 현장 `state.json`(G2-2는 site-a, G2-3은 site-b), 세션 기록은
   `<결과>/fleet/session.json`(c1 이름·덤프 때 `/fleet` 요약·복원 횟수·준비 시간 — 비밀값 없음, 재시도 전
   `first/fleet/`로 옮긴다).
@@ -609,6 +634,9 @@ yml에 schedule 없음·setup-host BOM), M6-4a `test_c1_g2.py`(덤프·복원·`
 heartbeat 대기·세션마다 새 c1·복원 순서·c0만이면 중앙 없음)·`test_fleet_scenarios_g2.py`(G2-2·G2-3
 판정·게시 gen·직접 PUT 흐름·창 여유 infra)·`test_partial_g2.py`(jsonl·fleet 순서·재시도 묶음), 공용 가짜
 `fleet_fakes.py`, M6-4b `test_fleet_4b_g2.py`(G2-4 revert·G2-6 ①·G2-W·G2-9 판정과 흐름·nft 스크립트·
-`site_api.py write`·`central.py fleet --ui`·쓰기 스위치 현장 파일),
+`site_api.py write`·`central.py fleet --ui`·쓰기 스위치 현장 파일), M6-4b-2 `test_usb_g2.py`(USB 대용
+디스크 만들기·hot-add·라벨 장치 찾기·ro 마운트·예외 경로 떼기·VHDX 삭제·cmdlet 문자열·preflight 정리·
+site-b USB/site-a ssh 설치 매체 판정)·`test_airgap_g2.py`(G2-7 흐름 — c0 VM + c1 중앙 restore·seq 정렬
+없으면 이력만·nft ssh 예외 순서·export 실패 정리·판정 항목별·`central.py offline-import` admin 토큰),
 `test_nightly_runner.py`(이력 월별 파일·격리 줄·suite), 실패 분류 `test_failure_split.py`(빌드 시간
 초과 분류), 시작(묶음)·호스트 점검 분류·시작하지 못한 실행 `test_nightly_cron.py`). G1 `unit`에 포함된다.

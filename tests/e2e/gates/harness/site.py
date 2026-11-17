@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import cast
+from typing import Protocol, cast
 
 from harness import buildhost, golden, hyperv, judges, paths
 from harness.context import TAIL_CHARS, Context, E2EError
@@ -171,16 +171,21 @@ def install_runbook(
     runbook_fpr: str,
     runbook_bootstrap: str,
     after_upload: Callable[[], object] | None = None,
+    bundle_dir: str | None = None,
 ) -> float:
     """설치 번들 runbook(2단계 메타데이터 추출·지문 대조 → `install.sh --offline-time-confirmed`)
     → enroll → g1 apply → 서비스 시작. 걸린 초(업로드 뒤부터). 판정은 호출자가 한다.
     `after_upload`는 번들을 올린 직후·설치 전에 부른다(G2-5 설치 전 변조 탐침 — 올린 번들을 다시
-    올리지 않는다). run.py는 넘기지 않는다."""
-    for bundle in (install, g1):
-        host.put(bundle, f"{INCOMING}/{bundle.name}")
+    올리지 않는다). run.py는 넘기지 않는다. `bundle_dir`(VM 경로)을 주면 번들이 이미 거기 있다(USB
+    대용 디스크 마운트, ★P4) — 올리지 않고 같은 명령을 그 경로에서 친다. 없으면 scp로
+    `INCOMING`에."""
+    if bundle_dir is None:
+        bundle_dir = INCOMING
+        for bundle in (install, g1):
+            host.put(bundle, f"{INCOMING}/{bundle.name}")
     if after_upload is not None:
         after_upload()
-    remote_install = f"{INCOMING}/{install.name}"
+    remote_install = f"{bundle_dir}/{install.name}"
     meta = RUNBOOK_META
     started = time.monotonic()
     # runbook 2단계는 root 셸에서 친다(/root는 700, bootstrap-verify ⓪은 추출물이
@@ -211,7 +216,7 @@ def install_runbook(
         "echo PUREIRON_POLL_INTERVAL_S=10 | sudo tee -a /etc/pureiron/updater.env >/dev/null && "
         f"sudo pureiron-site enroll --site {site_id}"
     )
-    host.run(f"sudo pureiron-site apply {INCOMING}/{g1.name}", timeout_s=1800)
+    host.run(f"sudo pureiron-site apply {bundle_dir}/{g1.name}", timeout_s=1800)
     host.run("sudo systemctl start pureiron-updater")
     return time.monotonic() - started
 
@@ -219,8 +224,9 @@ def install_runbook(
 # ---------------------------------------------------------------- 외부 접속 카운터
 
 
-def nft_counters(host: Vm) -> dict[str, int]:
-    out = host.run("sudo nft -j list table inet e2e_audit").stdout
+def nft_counters(host: Vm, table: str = "e2e_audit") -> dict[str, int]:
+    """nft 표 `inet <table>` 규칙의 comment → 카운터 패킷 수(기본 외부 접속 카운터 `e2e_audit`)."""
+    out = host.run(f"sudo nft -j list table inet {table}").stdout
     counters: dict[str, int] = {}
     for entry in cast(list[dict[str, object]], json.loads(out)["nftables"]):
         rule = cast(dict[str, object] | None, entry.get("rule"))
@@ -274,17 +280,58 @@ def stage(
     """번들을 VM에 올리고 `pureiron-site apply`(동기 — 시도 전체가 이 명령 안에서 끝난다). 원격
     명령 하나의 시간 제한은 `timeout_s`(기본 `Vm.run`과 같은 600초 — run.py 경로)."""
     host.put(pib, f"{INCOMING}/{pib.name}")
-    result = subprocess.CompletedProcess[str]([], 2, "", "busy")
-    for _ in range(30):  # 서비스 tick이 잠금을 잡고 있으면 exit 2 — 잠시 뒤 다시
-        result = host.run(
-            f"sudo pureiron-site apply {INCOMING}/{pib.name}", check=False, timeout_s=timeout_s
-        )
-        if result.returncode != 2:
-            break
-        time.sleep(2)
+    result = busy_retry(
+        host, f"sudo pureiron-site apply {INCOMING}/{pib.name}", timeout_s=timeout_s
+    )
     if check and result.returncode != 0:
         raise E2EError(f"apply {pib.name} exited {result.returncode}: {result.stderr[-800:]}")
     return result
+
+
+class Shell(Protocol):
+    """VM 원격 셸 — `vm.Vm`이 만족한다(단위 시험은 가짜)."""
+
+    def run(
+        self, command: str, *, timeout_s: float = 600, check: bool = True, input: str | None = None
+    ) -> subprocess.CompletedProcess[str]: ...
+
+
+BUSY_TRIES = 30
+BUSY_EXIT = 2
+"""`pureiron-site` 종료 코드 2 = 다른 Updater 실행 중(서비스 tick이 잠금을 잡고 있다)."""
+
+
+def busy_retry(
+    host: Shell,
+    command: str,
+    *,
+    timeout_s: float = STAGE_TIMEOUT_S,
+    sleep: Callable[[float], None] = time.sleep,
+) -> subprocess.CompletedProcess[str]:
+    """`pureiron-site` 명령(`check=False`) — exit 2(잠금)면 잠시 뒤 다시(최대 `BUSY_TRIES`번)."""
+    result = subprocess.CompletedProcess[str]([], BUSY_EXIT, "", "busy")
+    for _ in range(BUSY_TRIES):
+        result = host.run(command, check=False, timeout_s=timeout_s)
+        if result.returncode != BUSY_EXIT:
+            break
+        sleep(2)
+    return result
+
+
+def align_seq(
+    host: Shell, site_id: str, next_seq: int, *, sleep: Callable[[float], None] = time.sleep
+) -> None:
+    """현장 `report_seq` 카운터를 `next_seq`로 올린다(`pureiron-site enroll --next-seq` — 키는
+    그대로, 단조 증가만. 벤더 rekey 응답 반영과 같은 제품 명령). G2-7 시험 정렬: c0 VM + c1 중앙
+    조합에서 VM 카운터가 중앙 수위 아래라 보고가 이력으로만 남는 것을 막는다(실제 폐쇄망 현장은
+    수위 0). `enroll`도 Updater 잠금을 잡으므로 exit 2면 다시(`busy_retry`), 끝내 0이 아니면
+    `E2EError`(stderr 포함 — argparse 사용 오류도 2다, 리뷰 M1)."""
+    command = f"sudo pureiron-site enroll --site {site_id} --next-seq {next_seq}"
+    done = busy_retry(host, command, timeout_s=120, sleep=sleep)
+    if done.returncode != 0:
+        raise E2EError(
+            f"enroll --next-seq {next_seq} exited {done.returncode}: {done.stderr[-TAIL_CHARS:]}"
+        )
 
 
 def converge(
