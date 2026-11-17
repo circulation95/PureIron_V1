@@ -28,11 +28,10 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol
 
 from harness import golden, hyperv, paths
 from harness.context import InfraError, log
-from harness.site import as_root
+from harness.site import Shell, as_root
 from harness.vm import REMOTE_ERRORS
 
 INSTALL_SITE = "site-b"
@@ -58,14 +57,6 @@ RESCAN = (
 def usb_dir() -> Path:
     """USB 대용 VHDX를 두는 곳 — 부를 때 `paths.E2E`를 읽는다(단위 시험이 바꾼다)."""
     return paths.E2E / "usb"
-
-
-class Shell(Protocol):
-    """VM 원격 셸 — `vm.Vm`이 만족한다(단위 시험은 가짜)."""
-
-    def run(
-        self, command: str, *, timeout_s: float = 600, check: bool = True, input: str | None = None
-    ) -> subprocess.CompletedProcess[str]: ...
 
 
 @dataclass(frozen=True)

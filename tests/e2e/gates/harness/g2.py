@@ -396,7 +396,7 @@ def install_media(site_id: str) -> str:
 
 
 class InstallHost(Protocol):
-    """설치에 쓰는 VM 셸(`usb.Shell` + `preinstall.Shell`) — `vm.Vm`이 만족한다(시험은 가짜)."""
+    """설치에 쓰는 VM 셸(`site.Shell` + `preinstall.Shell`) — `vm.Vm`이 만족한다(시험은 가짜)."""
 
     def run(
         self, command: str, *, timeout_s: float = 600, check: bool = True, input: str | None = None
