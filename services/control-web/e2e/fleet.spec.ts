@@ -1,6 +1,6 @@
 // control-web e2e(M4-3 G8): 실제 deploy/central 스택(Caddy·control-api·control-db, poll_s = 2 → stale 6s).
 // 순서가 의미 있다(serial): 경로 규칙 → 응답에 토큰 없음 → 화면 로드(수신 없음) → heartbeat 1건 → 새로고침 → online·최신
-// → 약 7초 뒤 stale·마지막 보고값 → 오류 표시.
+// → 약 7초 뒤 stale(될 때까지 새로고침, 상한 있음)·마지막 보고값 → 오류 표시.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -142,10 +142,15 @@ test("heartbeat 1건 → online·최신, 약 7초 뒤 stale·마지막 보고값
   await expect(page.locator("thead")).toContainText("중앙 수신 시각");
   await page.screenshot({ path: test.info().outputPath("online.png"), fullPage: true });
 
+  // 중앙은 벽시계로 판정하고(last_seen·now 모두 datetime.now) 시험은 단조 시계로 기다린다. CI의 WSL VM 벽시계가
+  // 기다리는 사이 1~2초 뒤로 당겨져 첫 새로고침이 online인 적이 있다(run 43731793847·44114140689) — 그래서
+  // 새로고침 → 판정을 되풀이한다. 상한은 stale 창 하나 더: 끝내 stale이 아니면 실패한다.
   const waitMs = staleAfterMs + 1000 - (Date.now() - sentAt);
   if (waitMs > 0) await page.waitForTimeout(waitMs);
-  await refresh.click();
-  await expect(row).toHaveAttribute("data-connection", "stale");
+  await expect(async () => {
+    await refresh.click();
+    await expect(row).toHaveAttribute("data-connection", "stale", { timeout: 1000 });
+  }).toPass({ timeout: staleAfterMs });
   await expect(row).toContainText("응답 없음");
   await expect(current).toContainText("마지막 보고값");
   await expect(current).toContainText(`현장 보고 시각 ${seoul(stack.reported_at)}`);
